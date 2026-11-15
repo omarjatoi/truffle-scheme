@@ -11,6 +11,8 @@ import java.util.Locale;
 import java.util.Map;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.source.Source;
+import com.oracle.truffle.api.source.SourceSection;
 
 import scheme.runtime.SchemeError;
 import scheme.runtime.value.SBytevector;
@@ -30,6 +32,10 @@ import scheme.runtime.value.SymbolTable;
  * datum comments are all handled with explicit stacks (AGENTS.md rule 4). Read errors are
  * {@link SchemeError}s of kind {@code READ} (design.md D8). The {@code #!fold-case} state belongs
  * to the reader, so it lasts across reads from the same source, as R7RS requires for ports.
+ *
+ * <p>{@link #readSyntax()} reads program text as {@link Syntax} objects (design.md D3): every
+ * datum, compound or not, is wrapped with its source section; datum labels may make the result
+ * cyclic or shared, as with {@link #read()}.
  */
 public final class Reader {
 
@@ -39,17 +45,33 @@ public final class Reader {
     private final boolean literals;
     private boolean foldCase;
     private int line = 1;
+    /** The UTF-16 index of the next character (what {@link SourceSection}s count). */
+    private int position;
     private final int[] pushback = new int[2];
     private int pushed;
+    /** For {@link #readSyntax()}; null when the text has no {@link Source}. */
+    private final Source source;
+    /** Set while {@link #readSyntax()} runs. */
+    private boolean syntax;
 
     public Reader(CharSource in, SymbolTable symbols, boolean literals) {
+        this(in, symbols, literals, null);
+    }
+
+    private Reader(CharSource in, SymbolTable symbols, boolean literals, Source source) {
         this.in = in;
         this.symbols = symbols;
         this.literals = literals;
+        this.source = source;
     }
 
     public static Reader forString(String text, SymbolTable symbols, boolean literals) {
         return new Reader(new StringCharSource(text), symbols, literals);
+    }
+
+    /** A reader over a source's text whose {@link #readSyntax()} records sections of that source. */
+    public static Reader forSource(Source source, SymbolTable symbols, boolean literals) {
+        return new Reader(new StringCharSource(source.getCharacters().toString()), symbols, literals, source);
     }
 
     // ------------------------------------------------------------------------------------------
@@ -64,12 +86,18 @@ public final class Reader {
         if (c == '\n') {
             line++;
         }
+        if (c != -1) {
+            position += Character.charCount(c);
+        }
         return c;
     }
 
     private void unread(int c) {
         if (c == '\n') {
             line--;
+        }
+        if (c != -1) {
+            position -= Character.charCount(c);
         }
         pushback[pushed++] = c;
     }
@@ -108,6 +136,8 @@ public final class Reader {
     /** The value of the last ATOM or ABBREVIATION token, or the number of a LABEL_DEF/REF. */
     private Object tokenValue;
     private int tokenLabel;
+    /** Where the last token starts. */
+    private int tokenStart;
 
     /** Skips whitespace, line comments, nested block comments and directives. */
     private void skipAtmosphere() {
@@ -172,6 +202,7 @@ public final class Reader {
 
     private Kind nextToken() {
         skipAtmosphere();
+        tokenStart = position;
         int c = next();
         switch (c) {
             case -1:
@@ -420,6 +451,8 @@ public final class Reader {
     // Data
 
     private abstract static class Frame {
+        /** Where the datum this frame reads starts (for syntax objects). */
+        int start;
     }
 
     private static final class ListFrame extends Frame {
@@ -466,6 +499,34 @@ public final class Reader {
     /** The next datum, or {@link SConstant#EOF} at the end of the input. */
     @TruffleBoundary
     public Object read() {
+        syntax = false;
+        return readDatum();
+    }
+
+    /**
+     * The next datum as a {@link Syntax} object with empty scopes, or {@link SConstant#EOF} at the
+     * end of the input. Lists are chains of {@link SPair}s whose elements are syntax objects; vector
+     * elements are syntax objects; bytevectors are plain.
+     */
+    @TruffleBoundary
+    public Object readSyntax() {
+        syntax = true;
+        try {
+            return readDatum();
+        } finally {
+            syntax = false;
+        }
+    }
+
+    private Object wrap(Object datum, int start) {
+        if (!syntax) {
+            return datum;
+        }
+        SourceSection section = source == null ? null : source.createSection(start, position - start);
+        return new Syntax(datum, ScopeSet.EMPTY, section);
+    }
+
+    private Object readDatum() {
         Deque<Frame> stack = new ArrayDeque<>();
         Map<Integer, Object> labels = null;
         while (true) {
@@ -478,16 +539,16 @@ public final class Reader {
                     }
                     throw error("unexpected end of input");
                 case OPEN:
-                    stack.push(new ListFrame());
+                    push(stack, new ListFrame());
                     continue;
                 case VECTOR:
-                    stack.push(new VectorFrame());
+                    push(stack, new VectorFrame());
                     continue;
                 case BYTEVECTOR:
-                    stack.push(new BytevectorFrame());
+                    push(stack, new BytevectorFrame());
                     continue;
                 case ABBREVIATION:
-                    stack.push(new AbbreviationFrame((SSymbol) tokenValue));
+                    push(stack, new AbbreviationFrame((SSymbol) tokenValue));
                     continue;
                 case DATUM_COMMENT:
                     stack.push(new DatumCommentFrame());
@@ -521,11 +582,13 @@ public final class Reader {
                     list.state = 1;
                     continue;
                 }
-                case CLOSE:
-                    value = close(stack);
+                case CLOSE: {
+                    int start = stack.isEmpty() ? tokenStart : stack.peek().start;
+                    value = wrap(close(stack), start);
                     break;
+                }
                 case ATOM:
-                    value = tokenValue;
+                    value = wrap(tokenValue, tokenStart);
                     break;
                 default:
                     throw new IllegalStateException(kind.toString());
@@ -540,7 +603,7 @@ public final class Reader {
                     break;
                 } else if (top instanceof AbbreviationFrame a) {
                     stack.pop();
-                    value = new SPair(a.symbol, new SPair(value, SConstant.EMPTY_LIST));
+                    value = wrap(new SPair(wrap(a.symbol, a.start), new SPair(value, SConstant.EMPTY_LIST)), a.start);
                 } else if (top instanceof LabelFrame l) {
                     stack.pop();
                     if (value == l.placeholder) {
@@ -564,7 +627,8 @@ public final class Reader {
                     vector.items.add(value);
                     break;
                 } else {
-                    if (!(value instanceof Long b) || b < 0 || b > 255) {
+                    Object element = value instanceof Syntax s ? s.datum : value;
+                    if (!(element instanceof Long b) || b < 0 || b > 255) {
                         throw error("a bytevector element must be an exact integer 0-255");
                     }
                     ((BytevectorFrame) top).bytes.write(b.intValue());
@@ -572,6 +636,11 @@ public final class Reader {
                 }
             }
         }
+    }
+
+    private void push(Deque<Frame> stack, Frame frame) {
+        frame.start = tokenStart;
+        stack.push(frame);
     }
 
     private Object close(Deque<Frame> stack) {
@@ -608,7 +677,9 @@ public final class Reader {
             if (seen.put(node, Boolean.TRUE) != null) {
                 continue;
             }
-            if (node instanceof SPair p) {
+            if (node instanceof Syntax s) {
+                stack.push(s.datum);
+            } else if (node instanceof SPair p) {
                 if (p.car == placeholder) {
                     p.car = value;
                 } else {

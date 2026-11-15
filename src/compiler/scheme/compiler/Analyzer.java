@@ -13,6 +13,8 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import scheme.compiler.Ast.Expr;
 import scheme.compiler.Ast.Lambda;
 import scheme.compiler.Ast.Var;
+import scheme.reader.ScopeSet;
+import scheme.reader.Syntax;
 import scheme.runtime.GlobalEnvironment;
 import scheme.runtime.SchemeError;
 import scheme.runtime.printer.Printer;
@@ -22,7 +24,7 @@ import scheme.runtime.value.SSymbol;
 import scheme.runtime.value.SymbolTable;
 
 /**
- * Turns data (from the reader) into the core AST (design.md D3): resolves variables, turns internal
+ * Turns syntax objects (from {@link scheme.reader.Reader#readSyntax()}) or plain data into the core AST (design.md D3): resolves variables, turns internal
  * definitions into {@code letrec*}, and records what closure and assignment conversion need (D2):
  * each lambda's free variables, and which variables are assigned or captured.
  *
@@ -31,6 +33,9 @@ import scheme.runtime.value.SymbolTable;
  *
  * <p>No Java recursion proportional to nesting depth (AGENTS.md rule 4): a work loop drives frames,
  * one per form being analyzed.
+ *
+ * <p>Scopes are ignored until the expander (M3-02); syntax objects give syntax errors their line,
+ * and quoted data is stripped to plain data.
  */
 final class Analyzer {
 
@@ -84,9 +89,24 @@ final class Analyzer {
         }
     }
 
+    /** The innermost syntax object with a source position seen so far, for errors on plain data. */
+    private Syntax current;
+
+    private static Object unwrap(Object o) {
+        return o instanceof Syntax s ? s.datum : o;
+    }
+
+    private void enter(Object form) {
+        if (form instanceof Syntax s && s.source != null) {
+            current = s;
+        }
+    }
+
     @TruffleBoundary
-    private static SchemeError syntax(String message, Object form) {
-        return new SchemeError("syntax error: " + message + ": " + Printer.print(form, Printer.Mode.WRITE));
+    private SchemeError syntax(String message, Object form) {
+        Syntax at = form instanceof Syntax s && s.source != null ? s : current;
+        String line = at == null ? "" : " (line " + at.source.getStartLine() + ")";
+        return new SchemeError("syntax error: " + message + ": " + Printer.print(Syntax.toDatum(form), Printer.Mode.WRITE) + line);
     }
 
     private Expr reference(SSymbol name, Scope scope) {
@@ -104,20 +124,20 @@ final class Analyzer {
     }
 
     private static boolean isKeyword(Object head, SSymbol keyword, Scope scope) {
-        return head == keyword && scope.lookup(keyword) == null;
+        return unwrap(head) == keyword && scope.lookup(keyword) == null;
     }
 
-    private static boolean isForm(Object datum, SSymbol keyword, Scope scope) {
-        return datum instanceof SPair p && isKeyword(p.car, keyword, scope);
+    private static boolean isForm(Object form, SSymbol keyword, Scope scope) {
+        return unwrap(form) instanceof SPair p && isKeyword(p.car, keyword, scope);
     }
 
-    /** The elements of a proper list, or a syntax error. */
-    private static List<Object> list(Object datum, Object form) {
+    /** The elements of a proper list (syntax objects stay wrapped), or a syntax error. */
+    private List<Object> list(Object datum, Object form) {
         List<Object> items = new ArrayList<>();
-        Object rest = datum;
+        Object rest = unwrap(datum);
         while (rest instanceof SPair p) {
             items.add(p.car);
-            rest = p.cdr;
+            rest = unwrap(p.cdr);
         }
         if (rest != SConstant.EMPTY_LIST) {
             throw syntax("not a proper list", form);
@@ -182,61 +202,63 @@ final class Analyzer {
 
     /** One step: an Expr for simple forms, or a Frame for compound ones. */
     private Object analyze(Analyze a) {
-        Object d = a.datum();
+        Object form = a.datum();
+        enter(form);
+        Object d = unwrap(form);
         Scope scope = a.scope();
         if (d instanceof SSymbol s) {
             return reference(s, scope);
         }
         if (!(d instanceof SPair p)) {
             if (d == SConstant.EMPTY_LIST) {
-                throw syntax("() is not an expression", d);
+                throw syntax("() is not an expression", form);
             }
-            return new Ast.Const(d);
+            return new Ast.Const(Syntax.toDatum(form));
         }
-        Object head = p.car;
+        Object head = unwrap(p.car);
         if (head instanceof SSymbol h && scope.lookup(h) == null) {
             if (h == quote) {
-                List<Object> f = list(d, d);
+                List<Object> f = list(d, form);
                 if (f.size() != 2) {
-                    throw syntax("quote takes one datum", d);
+                    throw syntax("quote takes one datum", form);
                 }
-                return new Ast.Const(f.get(1));
+                return new Ast.Const(Syntax.toDatum(f.get(1)));
             } else if (h == ifSym) {
-                List<Object> f = list(d, d);
+                List<Object> f = list(d, form);
                 if (f.size() != 3 && f.size() != 4) {
-                    throw syntax("if takes 2 or 3 subforms", d);
+                    throw syntax("if takes 2 or 3 subforms", form);
                 }
                 return new SeqLikeFrame(f.subList(1, f.size()), scope, SeqLikeFrame.IF);
             } else if (h == set) {
-                List<Object> f = list(d, d);
-                if (f.size() != 3 || !(f.get(1) instanceof SSymbol target)) {
-                    throw syntax("set! takes a variable and an expression", d);
+                List<Object> f = list(d, form);
+                if (f.size() != 3 || !(unwrap(f.get(1)) instanceof SSymbol target)) {
+                    throw syntax("set! takes a variable and an expression", form);
                 }
                 Expr ref = reference(target, scope);
                 return new SetFrame(ref, f.get(2), scope);
             } else if (h == lambda) {
-                List<Object> f = list(d, d);
+                List<Object> f = list(d, form);
                 if (f.size() < 3) {
-                    throw syntax("lambda needs formals and a body", d);
+                    throw syntax("lambda needs formals and a body", form);
                 }
-                return new LambdaFrame(f.get(1), f.subList(2, f.size()), scope, a.name(), d);
+                return new LambdaFrame(f.get(1), f.subList(2, f.size()), scope, a.name(), form);
             } else if (h == begin) {
-                List<Object> f = list(d, d);
+                List<Object> f = list(d, form);
                 if (f.size() < 2) {
-                    throw syntax("begin needs at least one expression here", d);
+                    throw syntax("begin needs at least one expression here", form);
                 }
                 return new SeqLikeFrame(f.subList(1, f.size()), scope, SeqLikeFrame.SEQ);
             } else if (h == letrecStar) {
-                return letrec(d, scope);
+                return letrec(form, scope);
             } else if (h == define) {
-                throw syntax("define is only allowed at the top level or at the start of a body", d);
+                throw syntax("define is only allowed at the top level or at the start of a body", form);
             } else if (h == importSym) {
-                throw syntax("import is only allowed at the start of a program", d);
+                throw syntax("import is only allowed at the start of a program", form);
             } else if (laterKeywords.contains(h)) {
-                throw syntax("not supported until the expander (M3)", d);
+                throw syntax("not supported until the expander (M3)", form);
             }
         }
-        return new SeqLikeFrame(list(d, d), scope, SeqLikeFrame.CALL);
+        return new SeqLikeFrame(list(d, form), scope, SeqLikeFrame.CALL);
     }
 
     // ------------------------------------------------------------------------------------------
@@ -330,10 +352,10 @@ final class Analyzer {
             this.fn.name = name;
             this.scope = new Scope(outer, fn);
             this.body = body;
-            Object rest = formals;
+            Object rest = unwrap(formals);
             while (rest instanceof SPair p) {
                 fn.params.add(bindFresh(p.car, form));
-                rest = p.cdr;
+                rest = unwrap(p.cdr);
             }
             if (rest != SConstant.EMPTY_LIST) {
                 fn.rest = bindFresh(rest, form);
@@ -341,8 +363,8 @@ final class Analyzer {
         }
 
         private Var bindFresh(Object name, Object form) {
-            if (!(name instanceof SSymbol s) || scope.vars.containsKey(s)) {
-                throw syntax("invalid or duplicate parameter " + Printer.print(name, Printer.Mode.WRITE), form);
+            if (!(unwrap(name) instanceof SSymbol s) || scope.vars.containsKey(s)) {
+                throw syntax("invalid or duplicate parameter " + Printer.print(Syntax.toDatum(name), Printer.Mode.WRITE), form);
             }
             Var v = fn.bind(s, false);
             scope.vars.put(s, v);
@@ -385,6 +407,7 @@ final class Analyzer {
             List<Object[]> defines = new ArrayList<>();
             while (!queue.isEmpty()) {
                 Object d = queue.peekFirst();
+                enter(d);
                 if (exprs.isEmpty() && isForm(d, begin, outer)) {
                     queue.pollFirst();
                     List<Object> inner = list(d, d);
@@ -451,7 +474,7 @@ final class Analyzer {
         List<Object> inits = new ArrayList<>();
         for (Object binding : list(f.get(1), form)) {
             List<Object> b = list(binding, form);
-            if (b.size() != 2 || !(b.get(0) instanceof SSymbol name) || scope.vars.containsKey(name)) {
+            if (b.size() != 2 || !(unwrap(b.get(0)) instanceof SSymbol name) || scope.vars.containsKey(name)) {
                 throw syntax("invalid letrec* binding", binding);
             }
             Var v = outer.lambda.bind(name, true);
@@ -499,17 +522,18 @@ final class Analyzer {
         if (f.size() < 2) {
             throw syntax("invalid define", form);
         }
-        Object target = f.get(1);
+        Object target = unwrap(f.get(1));
         if (target instanceof SSymbol name) {
             if (f.size() != 3) {
                 throw syntax("define takes a variable and an expression", form);
             }
             return new Object[]{name, f.get(2)};
         }
-        if (target instanceof SPair p && p.car instanceof SSymbol name && f.size() >= 3) {
-            // (define (name . formals) body ...) is (define name (lambda formals body ...))
-            Object body = ((SPair) ((SPair) form).cdr).cdr;
-            return new Object[]{name, new SPair(lambda, new SPair(p.cdr, body))};
+        if (target instanceof SPair p && unwrap(p.car) instanceof SSymbol name && f.size() >= 3) {
+            // (define (name . formals) body ...) is (define name (lambda formals body ...)), at the define's position.
+            Object body = ((SPair) unwrap(((SPair) unwrap(form)).cdr)).cdr;
+            Object lambdaForm = new SPair(lambda, new SPair(p.cdr, body));
+            return new Object[]{name, form instanceof Syntax s ? new Syntax(lambdaForm, ScopeSet.EMPTY, s.source) : lambdaForm};
         }
         throw syntax("invalid define", form);
     }
@@ -531,6 +555,7 @@ final class Analyzer {
         Object next() {
             while (!queue.isEmpty()) {
                 Object d = queue.pollFirst();
+                enter(d);
                 if (isForm(d, importSym, scope)) {
                     if (!leadingImports) {
                         throw syntax("import is only allowed at the start of a program", d);
