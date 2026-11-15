@@ -160,7 +160,7 @@ and the M0 spike results recorded there. Only M2-07 waits for the human-written
     non-tail recursion; deep data through the reader, printer and `equal?`).
   - Define the case format `mx r7rs-spec` runs: for example a program, its
     expected stdout and exit status, and the JVM limits to run it under.
-- [ ] **M2-01 · Prelude bootstrap and DynEnv**
+- [x] **M2-01 · Prelude bootstrap and DynEnv**
   - Load `src/prelude/*.scm` into every context at initialization, written in
     core forms only until the expander (M3), on top of `%`-primitives (D5).
   - `DynEnv { winders, parameterization, handlers }` as one immutable record in
