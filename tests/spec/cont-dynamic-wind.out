@@ -1,0 +1,4 @@
+(connect talk1 disconnect connect talk2 disconnect)
+(a-in)(b-in)(b-out)(a-out)escaped
+(a-in)(b-in)(b-out)(a-out)|(a-in)(b-in)(b-out)(a-out)|done
+(outer-in)(x-in)(x-out)(y-in)(y-out)(x-in)(x-out)(y-in)(y-out)(outer-out)
