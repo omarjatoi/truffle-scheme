@@ -188,7 +188,7 @@ and the M0 spike results recorded there. Only M2-07 waits for the human-written
     prompt (D6). Not exposed to Scheme programs (D4).
   - **Done when** unit tests cover nested prompts with different tags, and a
     capture across a prompt boundary.
-- [ ] **M2-04 · dynamic-wind and rewind** *(needs M2-02)*
+- [x] **M2-04 · dynamic-wind and rewind** *(needs M2-02)*
   - `dynamic-wind` in the prelude (D5). One `rewind(from, to)` for every change
     of control (continuation invocation, escape, prompt return, `exit`). It
     runs after- and before-thunks along the path through the common ancestor,

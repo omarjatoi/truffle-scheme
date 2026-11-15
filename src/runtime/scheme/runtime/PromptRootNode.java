@@ -19,7 +19,7 @@ public final class PromptRootNode extends RootNode {
     public PromptRootNode(SchemeLanguage language, CallTarget body) {
         super(language);
         this.body = DirectCallNode.create(body);
-        this.driver = new PromptDriver(language);
+        this.driver = new PromptDriver();
     }
 
     @Override
