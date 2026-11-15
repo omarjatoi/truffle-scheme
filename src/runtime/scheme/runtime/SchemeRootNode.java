@@ -108,6 +108,20 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
     }
 
     /**
+     * An error from the callee (a primitive, an arity or unbound-variable check, the trampoline) is
+     * raised in this frame (design.md D8): this call's value is what calling Scheme {@code raise}
+     * with the error object returns, so a capture in a handler (call/cc, guard) suspends this frame
+     * like any other call. An uncaught error, or one before the prelude has installed raise, goes on.
+     */
+    static Object raiseHere(SchemeError e, SchemeContext context, IndirectCallNode callNode) {
+        Object raise = context.raise;
+        if (!e.isRaisable() || !(raise instanceof SClosure closure)) {
+            throw e;
+        }
+        return trampoline(callNode.call(closure.callTarget, new Object[]{closure, e.getErrorObject()}), callNode);
+    }
+
+    /**
      * A non-tail call: calls the procedure, then runs the trampoline. Past {@link #SPILL_DEPTH}
      * nested calls it returns a spill capture instead of calling.
      */
@@ -126,6 +140,8 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
             }
             try {
                 return tortured(trampoline(callNode.call(withProcedure(procedure, arguments)), trampolineNode), cachedTarget, context);
+            } catch (SchemeError e) {
+                return raiseHere(e, context, trampolineNode);
             } finally {
                 context.callDepth--;
             }
@@ -142,6 +158,8 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
             }
             try {
                 return tortured(trampoline(trampolineNode.call(procedure.callTarget, withProcedure(procedure, arguments)), trampolineNode), procedure.callTarget, context);
+            } catch (SchemeError e) {
+                return raiseHere(e, context, trampolineNode);
             } finally {
                 context.callDepth--;
             }

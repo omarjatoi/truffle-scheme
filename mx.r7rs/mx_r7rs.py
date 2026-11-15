@@ -328,7 +328,6 @@ def r7rs_vendor_chibi(args):
 # tests/spec cases that need something a later task brings: reported as SKIPPED, naming the task.
 # Remove an entry when its task lands (tests/spec/README.md).
 _SPEC_PENDING = {
-    'cont-guard': 'M3-06 (guard, raise, with-exception-handler)',
     'tail-apply': 'M4 (apply, values, call-with-values)',
     'cont-exit': 'M4 (exit)',
     'deep-equal': 'M4 (equal?, vector)',

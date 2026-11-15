@@ -646,8 +646,6 @@ public final class Expander {
                 throw syntax(c.keyword + " is only allowed at the top level", form);
             case SYNTAX_RULES:
                 throw syntax("syntax-rules is only allowed as a transformer", form);
-            case GUARD:
-                throw syntax("%guard is not supported until M3-06", form);
             default:
                 throw new IllegalStateException("unhandled core form " + c);
         }

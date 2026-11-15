@@ -21,8 +21,7 @@ enum CoreForm {
     COND_EXPAND("cond-expand"),
     DEFINE_LIBRARY("define-library"),
     IMPORT("import"),
-    PROMPT("%prompt"),
-    GUARD("%guard");
+    PROMPT("%prompt");
 
     final String keyword;
 
