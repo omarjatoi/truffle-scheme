@@ -1,7 +1,6 @@
 # R7RS-small on GraalVM Truffle
 
-A fully conformant R7RS-small Scheme on GraalVM Truffle, with re-entrant
-multi-shot continuations and proper tail calls.
+R7RS-small Scheme on GraalVM Truffle.
 
 - `docs/design.md`: architecture and decisions
 - `docs/plan.md`: milestones, current tasks, conformance status
