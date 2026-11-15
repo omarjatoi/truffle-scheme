@@ -14,98 +14,32 @@ calls, with JIT performance.
 
 ## When the user says "start"
 
-Pick up the next piece of work and take it all the way to a merged PR.
-Several sessions may be running at once, so claim work before doing it. No
-milestone has a human gate: don't wait for approval before starting, and
-merge your own PR once it's ready.
+Take the next task all the way to a merged PR, then carry on with the next
+one. There are no human gates: don't wait for approval, and merge your own
+PR once it's green.
 
-1. **Sync.** `git fetch origin && git switch main && git pull --ff-only`
-2. **Survey.** `gh pr list --state open --json number,title,baseRefName,reviewDecision,labels`
-3. **Choose.** The first of these that applies wins:
-   1. **Changes requested.** An open PR whose review decision is
-      `CHANGES_REQUESTED` and that isn't labeled `agent:active`. Check it out
-      and address the review.
-   2. **Ready to merge.** An open task PR that isn't labeled `agent:active`
-      and whose required `Checks` and `Tests` checks are green, but that hasn't been merged (for
-      example because its session ended). Merge it as in step 6.
-   3. **Next task.** In the current milestone (the first one in
-      `docs/plan.md` with unchecked tasks), the first unchecked task that
-      meets all of these:
-      - every task it needs is either checked on `main` or done in an open
-        PR that isn't labeled `agent:active` (in which case you stack on that PR, see "Stacked
-        PRs");
-      - no open PR has a title starting with its ID.
-
-      If nothing in the current milestone qualifies, apply the same test to
-      the tasks the next milestone marks *(early)*.
-   4. **Nothing available.** If the current milestone's exit criteria are
-      met, draft the next milestone's tasks in `docs/plan.md`, in the same
-      format as the existing tasks, open a PR titled
-      `Plan: Draft the M<n> tasks`, and
-      merge it like any other PR. Otherwise, report what's blocking (failing
-      PRs, unmet dependencies) and stop.
-4. **Claim.**
-   - For an existing PR, add the label `agent:active`.
-   - For a new task, push a branch named `<id>-<short-name>` (for example
-     `m0-01-suite-bootstrap`), then open a PR (not a draft) titled
-     `<ID>: <what the change does>` with the label `agent:active`, for
-     example `M2-05: Spill deep non-tail recursion to the heap at a depth
-     threshold`. The title becomes the squash commit, so it describes the
-     change rather than repeating the task name. If the task depends
-     on an unmerged PR, stack on that PR instead (see "Stacked PRs").
-   - Create the label if it's missing: `gh label create agent:active`.
-   - If another open PR for the same ID appeared in the meantime, close
-     yours and go back to step 3.
-5. **Announce.** Say in one line what you picked and why.
-6. **Do the work** following "Working style". In the same PR, tick the
-   task's checkbox in `docs/plan.md` (outside the status block). Don't use
-   draft PRs. When it's done:
-   - Remove `agent:active`. That is the signal that the PR is done and can
-     be stacked on.
-   - Wait for the required `Checks` and `Tests` checks
-     (`gh pr checks <n> --watch`). When it's green, squash-merge it with
-     `gh pr merge <n> --squash`, or a stack with
-     `gh stack merge <top-pr> --yes --squash`. Each PR lands on `main` as
-     one commit, `<PR title> (#n)`, with an empty body (the repository's
-     squash settings), so check before merging that the title still
-     summarizes the change.
-   - If it fails, fix it on the branch. Never merge red.
-7. **Finish** with the PR link, one line of evidence for each "Done when"
-   item, and any follow-ups. Then go back to step 1 and pick up the next
-   task.
-
-## Stacked PRs
-
-Use GitHub's native stacked PRs when a task depends on work that is done
-but not merged yet, so agents don't sit waiting for merges. Drive stacks
-with the `gh stack` extension through the **gh-stack skill**
-(`gh skill install github/gh-stack`), which has the commands, the
-non-interactive flags and the recovery steps. Load it before any
-`gh stack` command. These rules are this project's policy on top of it:
-
-- **What a stack is for.** A stack covers one milestone, one feature, or
-  another logical group of work, such as the M0 spike tasks or a fan-out area
-  in M4. Everything else, including docs, tooling and unrelated fixes, is a
-  one-off PR from `main`. Don't stack unrelated work just because it happens
-  to be open at the same time.
-- **One task per layer.** Each layer is one task's branch
-  (`<id>-<short-name>`) and PR, so its diff and review cover only that task.
-  Open PRs ready for review, never as drafts (`gh stack submit --auto
-  --open`), then give each one the title from step 4 with `gh pr edit`.
-  Note the parent PR's number in the description, and check the stack with
-  `gh stack view --json`.
-- **Don't rewrite other sessions' branches.** `gh stack sync` and
-  `gh stack rebase` rebase and push the whole stack. Run them only when no
-  PR above yours is labeled `agent:active`. Otherwise rebase just your own
-  branch onto its parent and push only that branch. If you fix a PR that
-  has PRs stacked on it, say so in a comment on each PR above it. Their
-  owners restack the next time they work on them.
-- **Merging.** Merge with `gh stack merge <pr> --yes --squash`, which merges
-  that PR and every unmerged PR below it, all or nothing. Every PR in that
-  range must be done (no `agent:active`) and green. `gh pr merge` can't
-  merge a PR that is part of a stack.
-- **Depth.** Don't stack on a PR whose review decision is
-  `CHANGES_REQUESTED`. Wait until its fixes are pushed.
+1. **Sync.** `git fetch origin && git switch main && git pull --ff-only`.
+   If a PR is still open (`gh pr list`), finish it first: address its
+   review, fix red checks, or merge it if it's green.
+2. **Choose** the first unchecked task in the current milestone (the first
+   one in `docs/plan.md` with unchecked tasks) whose dependencies are
+   checked. If none qualifies, take the next milestone's *(early)* tasks.
+   If the milestone's exit criteria are met, draft the next milestone's
+   tasks in the same format, as a PR titled `Plan: Draft the M<n> tasks`.
+   Say in one line what you picked.
+3. **Work** on a branch `<id>-<short-name>`, following "Working style".
+   Tick the task's checkbox in `docs/plan.md` (outside the status block).
+   Run `mx checks && mx tests` before opening the PR.
+4. **Open the PR** (not a draft), titled `<ID>: <what the change does>`,
+   for example `M2-05: Spill deep non-tail recursion to the heap at a depth
+   threshold`. The title becomes the squash commit on `main`
+   (`<title> (#n)`, empty body), so it describes the change rather than
+   repeating the task name.
+5. **Merge** once `Checks` and `Tests` are green (`gh pr checks <n> --watch`):
+   `gh pr merge <n> --squash --delete-branch`. If a check fails, fix it on
+   the branch. Never merge red.
+6. **Finish** with the PR link and one line of evidence for each "Done
+   when" item, then go back to step 1.
 
 ## Reviewing
 
@@ -120,9 +54,7 @@ push fixes.
 Run everything inside `nix develop`. It provides GraalVM CE 25.5 (already set
 as `JAVA_HOME`; its Graal compiler is the JIT), `mx`, Python, git, `gh` and
 chibi-scheme (used for differential testing). There's no JDK to fetch by
-hand. Stacked PRs need the official `gh stack` extension and its agent
-skill: run `gh extension install github/gh-stack` and
-`gh skill install github/gh-stack` once. Truffle comes from Maven Central
+hand. Truffle comes from Maven Central
 as libraries in `mx.r7rs/suite.py`, at exactly the GraalVM version. mx refuses
 to run if the two differ (design.md D11).
 
