@@ -1,17 +1,39 @@
 package scheme.runtime;
 
-import com.oracle.truffle.api.TruffleLanguage;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 
-/** Per-context state. All I/O goes through {@link #env} (design.md D10). */
+import com.oracle.truffle.api.TruffleLanguage;
+import com.oracle.truffle.api.TruffleLanguage.ContextReference;
+import com.oracle.truffle.api.nodes.Node;
+
+import scheme.runtime.value.SymbolTable;
+
+/** Per-context state: symbols (D1), globals (D7), and the output port. All I/O goes through {@link #getEnv()} (D10). */
 public final class SchemeContext {
 
+    private static final ContextReference<SchemeContext> REFERENCE = ContextReference.create(SchemeLanguage.class);
+
     private final TruffleLanguage.Env env;
+    public final SymbolTable symbols = new SymbolTable();
+    public final GlobalEnvironment globals = new GlobalEnvironment();
+    private final PrintStream out;
 
     SchemeContext(TruffleLanguage.Env env) {
         this.env = env;
+        this.out = new PrintStream(env.out(), false, StandardCharsets.UTF_8);
+    }
+
+    public static SchemeContext get(Node node) {
+        return REFERENCE.get(node);
     }
 
     public TruffleLanguage.Env getEnv() {
         return env;
+    }
+
+    /** The current output port (until ports arrive in M4). */
+    public PrintStream out() {
+        return out;
     }
 }
