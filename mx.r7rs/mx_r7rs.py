@@ -127,29 +127,6 @@ def r7rs_unittest(args):
         _unittest_config.mode_vm_args = []
 
 
-# Gate unit tests: scheme.test only (the M0-02 spike is excluded from the gate).
-_GATE_UNITTEST_FILTER = ['scheme.test.']
-
-
-def r7rs_spike(args):
-    """run the M0 spike tests: [--compile | --bench] (default: compilation disabled)"""
-    parser = argparse.ArgumentParser(prog='mx r7rs-spike')
-    mode = parser.add_mutually_exclusive_group()
-    mode.add_argument('--compile', action='store_true', help='compile immediately; compilation failures are errors')
-    mode.add_argument('--bench', action='store_true', help='M0-03 call-site cost benchmark, normal background JIT')
-    parsed, rest = parser.parse_known_args(args)
-    if parsed.bench:
-        _unittest_config.mode_vm_args = ['-Dscheme.spike.bench=true']
-        tests = ['scheme.spike.CallSiteCostBench']
-    else:
-        _unittest_config.mode_vm_args = list(COMPILE_VM_ARGS if parsed.compile else INTERPRETER_VM_ARGS)
-        tests = ['scheme.spike.']
-    try:
-        mx_unittest.unittest(rest + tests)
-    finally:
-        _unittest_config.mode_vm_args = []
-
-
 # ---------------------------------------------------------------------------
 # Conformance, spec, differential, status
 # ---------------------------------------------------------------------------
@@ -246,10 +223,10 @@ def _gate_runner(args, tasks):
             r7rs_check([])
     with Task('R7RS unittest', tasks, tags=[_GATE_TAG]) as t:
         if t:
-            r7rs_unittest(_GATE_UNITTEST_FILTER)
+            r7rs_unittest([])
     with Task('R7RS unittest --compile', tasks, tags=[_GATE_TAG]) as t:
         if t:
-            r7rs_unittest(['--compile'] + _GATE_UNITTEST_FILTER)
+            r7rs_unittest(['--compile'])
     for title, task in _PENDING_GATE_TASKS:
         with Task(title, tasks, tags=[_GATE_TAG]) as t:
             if t:
@@ -265,5 +242,4 @@ mx.update_commands(_suite, {
     'r7rs-status': [r7rs_status, ''],
     'r7rs-check': [r7rs_check, ''],
     'r7rs-unittest': [r7rs_unittest, '[--compile] [--torture] [unittest args...]'],
-    'r7rs-spike': [r7rs_spike, '[--compile | --bench]'],
 })
