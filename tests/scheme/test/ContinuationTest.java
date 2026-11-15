@@ -106,12 +106,13 @@ public class ContinuationTest {
 
     @Test
     public void continuationsCaptureTheDynamicEnvironment() {
+        // The parameterization slot carries the marker: winders are real dynamic-wind records (M2-04).
         assertEquals("(a)", output("(define saved #f) (define done #f)" +
                         "(define (run)" +
-                        "  (%set-dynamic-env! (%make-dynamic-env '(a) '() '()))" +
+                        "  (%set-dynamic-env! (%make-dynamic-env '() '(a) '()))" +
                         "  (call/cc (lambda (k) (set! saved k)))" +
-                        "  (if done (display (%dynamic-env-winders (%current-dynamic-env)))" +
-                        "      (begin (set! done #t) (%set-dynamic-env! (%make-dynamic-env '(b) '() '())) (saved 0))))" +
+                        "  (if done (display (%dynamic-env-parameterization (%current-dynamic-env)))" +
+                        "      (begin (set! done #t) (%set-dynamic-env! (%make-dynamic-env '() '(b) '())) (saved 0))))" +
                         "(run)"));
     }
 
