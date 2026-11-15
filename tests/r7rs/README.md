@@ -1,6 +1,7 @@
 # Vendored R7RS conformance suite
 
-Read-only (AGENTS.md). These files are chibi-scheme 0.12's
+Read-only (AGENTS.md). License: chibi-scheme's BSD-3-Clause, in `COPYING`,
+which `mx r7rs-vendor-chibi` copies along with the tests. These files are chibi-scheme 0.12's
 `tests/r7rs-tests.scm`, split into one file per top-level section by
 `mx r7rs-vendor-chibi`. Each file gets the original `import` form and a
 provenance header; the section bodies are unchanged.
