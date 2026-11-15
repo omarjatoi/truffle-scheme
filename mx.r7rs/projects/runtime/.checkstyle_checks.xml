@@ -5,6 +5,11 @@
   <property name="severity" value="error"/>
   <module name="FileTabCharacter"/>
   <module name="NewlineAtEndOfFile"/>
+  <!-- The launcher is the embedder, not language code: host I/O is fine there. -->
+  <module name="SuppressionSingleFilter">
+    <property name="files" value="[\\/]src[\\/]launcher[\\/]"/>
+    <property name="checks" value="IllegalImport"/>
+  </module>
   <module name="RegexpSingleline">
     <property name="format" value="\s+$"/>
     <property name="message" value="Trailing whitespace"/>
