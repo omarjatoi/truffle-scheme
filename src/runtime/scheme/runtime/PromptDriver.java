@@ -35,10 +35,8 @@ final class PromptDriver extends Node {
 
     @Child private IndirectCallNode callNode = IndirectCallNode.create();
     @Child private ResumeNode resumeNode = PromptDriverFactory.ResumeNodeGen.create();
-    private final SchemeLanguage language;
 
-    PromptDriver(SchemeLanguage language) {
-        this.language = language;
+    PromptDriver() {
     }
 
     /**
@@ -66,7 +64,7 @@ final class PromptDriver extends Node {
                             }
                             Continuation k = new Continuation(capture.segmentsBefore(pending), capture.dynEnv, false);
                             pending = k.segments;
-                            value = call(capture.receiver, language.continuationProcedure(k));
+                            value = receive(context, capture.receiver, k, capture.dynEnv, capture.dynEnv);
                             continue;
                         }
                         default: {
@@ -75,13 +73,11 @@ final class PromptDriver extends Node {
                             if (split != null) {
                                 // A prompt flattened into this driver's pending segments.
                                 pending = split.after();
-                                context.setDynamicEnv(split.marker().dynEnv());
-                                value = call(capture.receiver, language.continuationProcedure(new Continuation(split.before(), capture.dynEnv, true)));
+                                value = receive(context, capture.receiver, new Continuation(split.before(), capture.dynEnv, true), capture.dynEnv, split.marker().dynEnv());
                             } else if (Capture.sameTag(tag, capture.tag)) {
                                 // This prompt: abort to it.
                                 pending = null;
-                                context.setDynamicEnv(promptEnv);
-                                value = call(capture.receiver, language.continuationProcedure(new Continuation(all, capture.dynEnv, true)));
+                                value = receive(context, capture.receiver, new Continuation(all, capture.dynEnv, true), capture.dynEnv, promptEnv);
                             } else if (tag == Capture.ROOT_TAG) {
                                 throw noPrompt(capture.tag);
                             } else {
@@ -114,11 +110,18 @@ final class PromptDriver extends Node {
         }
     }
 
-    Object call(Object procedure, Object argument) {
-        if (!(procedure instanceof SClosure closure)) {
-            throw notAProcedure(procedure);
-        }
-        return callNode.call(closure.callTarget, closure, argument);
+    /**
+     * Hands continuation k to a receiver through the prelude's {@code %receive} (control.scm), which
+     * rewinds from {@code from} (capture time) to {@code to} (where the receiver runs) and wraps k in
+     * a procedure. Rewinding runs Scheme thunks, so it happens in Scheme (design.md D5).
+     */
+    private Object receive(SchemeContext context, Object receiver, Continuation k, DynEnv from, DynEnv to) {
+        return callWithProcedure(receiveProcedure(context), new Object[]{null, receiver, k, from, to});
+    }
+
+    @TruffleBoundary
+    private static Object receiveProcedure(SchemeContext context) {
+        return context.globals.cell(context.symbols.intern("%receive")).read();
     }
 
     Object callThunk(Object procedure) {
@@ -128,11 +131,12 @@ final class PromptDriver extends Node {
         return callNode.call(closure.callTarget, closure);
     }
 
-    /** {@code arguments} already includes the procedure at index 0. */
+    /** Index 0 of {@code arguments} is (or is set to) the procedure. */
     private Object callWithProcedure(Object procedure, Object[] arguments) {
         if (!(procedure instanceof SClosure closure)) {
             throw notAProcedure(procedure);
         }
+        arguments[0] = closure;
         return callNode.call(closure.callTarget, arguments);
     }
 
