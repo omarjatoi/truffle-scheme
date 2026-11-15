@@ -134,7 +134,7 @@ the spike is still running.
     block comments, `#;` datum comments, and `#!fold-case` /
     `#!no-fold-case`.
   - No Java recursion proportional to nesting depth (rule 4).
-- [ ] **M1-05 · Core compiler, call protocol and trampoline** *(needs M0-04 go)*
+- [x] **M1-05 · Core compiler, call protocol and trampoline** *(needs M0-04 go)*
   - Core forms (D3) → Bytecode DSL, with closure conversion and assignment
     conversion (D2).
   - `CallSiteEmitter` and the `TailCall` trampoline. Self tail calls become
