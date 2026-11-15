@@ -76,7 +76,7 @@ before anything else is built on top of them.
   - **Done when** the report has overhead numbers and evidence (graphs dumped
     with `-Djdk.graal.Dump`, or compilation traces) of whether the capture
     branch is folded away at call sites that never see a capture.
-- [ ] **M0-04 · Decision** *(human)*
+- [x] **M0-04 · Decision** *(human; done by an agent at the maintainer's request)*
   - Fill in the "Spike-dependent" box in design.md with the results.
   - Record go/no-go in the Decisions section.
   - Delete `scheme.spike`.

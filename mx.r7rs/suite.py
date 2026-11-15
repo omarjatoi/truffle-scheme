@@ -154,22 +154,6 @@ suite = {
             "checkstyle": "scheme.runtime",
             "testProject": True,
         },
-        # M0-02 spike: throwaway, deleted at M0-04. Interpreter and tests in one
-        # test project; its tests run only via `mx r7rs-spike`, never in the gate.
-        "scheme.spike": {
-            "dir": "mx.r7rs/projects/spike",
-            "sourceDirs": ["../../../src/spike"],
-            "dependencies": [
-                "TRUFFLE_API",
-                "mx:JUNIT",
-                "POLYGLOT",
-                "TRUFFLE_RUNTIME",
-            ],
-            "annotationProcessors": ["TRUFFLE_DSL_PROCESSOR"],
-            "javaCompliance": "25+",
-            "checkstyle": "scheme.runtime",
-            "testProject": True,
-        },
     },
 
     "distributions": {
@@ -209,30 +193,6 @@ suite = {
             "useModulePath": True,
             "dependencies": ["scheme.test"],
             "distDependencies": ["SCHEME"],
-            "exclude": [
-                "mx:JUNIT",
-                "COLLECTIONS",
-                "WORD",
-                "NATIVEIMAGE",
-                "JNIUTILS",
-                "NATIVEBRIDGE",
-                "POLYGLOT",
-                "TRUFFLE_API",
-                "TRUFFLE_COMPILER",
-                "TRUFFLE_RUNTIME",
-            ],
-            "testDistribution": True,
-            "unittestConfig": "r7rs",
-            "maven": False,
-        },
-        "SCHEME_SPIKE_TEST": {
-            "moduleInfo": {
-                "name": "scheme.spike",
-                "exports": ["scheme.spike to junit"],
-                "opens": ["scheme.spike to junit"],
-            },
-            "useModulePath": True,
-            "dependencies": ["scheme.spike"],
             "exclude": [
                 "mx:JUNIT",
                 "COLLECTIONS",
