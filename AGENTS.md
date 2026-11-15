@@ -145,7 +145,9 @@ mx r7rs-diff path/to/file.scm             # run under chibi and under us; compar
 mx r7rs-diff-all                          # every program in tests/diff/ (a gate task)
 mx r7rs-status                            # regenerate the status block in docs/plan.md
 mx r7rs-check                             # rule 1: Java builtins never call Scheme
-mx gate --tags fast                       # build, style, rule checks, unittest, r7rs, spec, torture
+mx eclipseformat                          # format Java code (GraalVM's Eclipse formatter settings)
+mx spotbugs                               # Java static analysis (SpotBugs)
+mx gate --tags fast                       # build, checkstyle, format, spotbugs, rule checks, unittest, r7rs, spec, torture
 ```
 
 Before opening a PR: `mx gate --tags fast`. If you touched `src/runtime` or
@@ -207,6 +209,8 @@ name the task that brings them.
   never `java.io` or `java.nio` directly. Text operations use `Locale.ROOT`.
 - Primitive errors throw `SchemeError`, never a raw Java exception
   (design.md D8).
+- Format Java with `mx eclipseformat` before committing. The gate fails if the
+  formatter would change anything, and also runs checkstyle and SpotBugs.
 - Only projects that need generated code list `TRUFFLE_DSL_PROCESSOR` in
   `annotationProcessors`. Keep it that way
   so edits elsewhere don't re-run the processor.
