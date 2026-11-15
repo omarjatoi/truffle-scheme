@@ -237,7 +237,7 @@ They follow design.md D3, D4, D5 and D7.
   - Errors from the compiler name the source line.
   - **Done when** unit tests cover syntax-object construction and stripping
     (`syntax->datum`), and a syntax error in a program reports its line.
-- [ ] **M3-02 · Expander core** *(early; needs M3-01)*
+- [x] **M3-02 · Expander core** *(early; needs M3-01)*
   - The sets-of-scopes expander (Flatt 2016) in Java, replacing the
     `Analyzer`. It expands the core forms (D3) into the existing core AST:
     `quote`, `lambda`, `if`, `set!`, `define`, `begin`, `letrec*`,

@@ -54,6 +54,45 @@ public final class ScopeSet {
         return contains(scope) ? remove(scope) : add(scope);
     }
 
+    /** This set plus every scope in {@code other}. */
+    public ScopeSet union(ScopeSet other) {
+        if (other.isEmpty() || other == this) {
+            return this;
+        }
+        if (isEmpty()) {
+            return other;
+        }
+        ScopeSet result = this;
+        for (Scope s : other.scopes) {
+            result = result.add(s);
+        }
+        return result;
+    }
+
+    /** Flips every scope in {@code other}: the symmetric difference. */
+    public ScopeSet flipAll(ScopeSet other) {
+        if (other.isEmpty()) {
+            return this;
+        }
+        if (isEmpty()) {
+            return other;
+        }
+        ScopeSet result = this;
+        for (Scope s : other.scopes) {
+            result = result.flip(s);
+        }
+        return result;
+    }
+
+    /** This set without any scope in {@code other}. */
+    public ScopeSet minus(ScopeSet other) {
+        ScopeSet result = this;
+        for (Scope s : other.scopes) {
+            result = result.remove(s);
+        }
+        return result;
+    }
+
     public boolean isSubsetOf(ScopeSet other) {
         for (Scope s : scopes) {
             if (!other.contains(s)) {

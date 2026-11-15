@@ -15,7 +15,7 @@ import scheme.runtime.SchemeRootNode;
 import scheme.runtime.SchemeRootNodeGen;
 import scheme.runtime.value.SConstant;
 
-/** The front end (a {@link SchemeCompiler} service): read syntax objects, analyze, generate one program root (design.md D6). */
+/** The front end (a {@link SchemeCompiler} service): read syntax objects, expand, generate one program root (design.md D6). */
 public final class ProgramCompiler implements SchemeCompiler {
 
     @Override
@@ -25,7 +25,11 @@ public final class ProgramCompiler implements SchemeCompiler {
         for (Object datum = reader.readSyntax(); datum != SConstant.EOF; datum = reader.readSyntax()) {
             forms.add(datum);
         }
-        Ast.Lambda program = new Analyzer(context.symbols, context.globals).analyzeProgram(forms);
+        if (context.syntacticEnvironment == null) {
+            context.syntacticEnvironment = new SyntacticEnvironment();
+        }
+        SyntacticEnvironment top = (SyntacticEnvironment) context.syntacticEnvironment;
+        Ast.Lambda program = new Expander(context.symbols, context.globals, top).expandProgram(forms);
         SchemeRootNode[] root = new SchemeRootNode[1];
         SchemeRootNodeGen.create(language, BytecodeConfig.DEFAULT, b -> root[0] = new CodeGenerator(b).generate(program));
         return root[0].getCallTarget();

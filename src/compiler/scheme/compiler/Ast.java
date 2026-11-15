@@ -8,7 +8,7 @@ import java.util.Map;
 import scheme.runtime.GlobalCell;
 import scheme.runtime.value.SSymbol;
 
-/** The core AST (design.md D3) that the analyzer produces and the code generator consumes. */
+/** The core AST (design.md D3) that the expander produces and the code generator consumes. */
 final class Ast {
 
     private Ast() {
