@@ -7,8 +7,9 @@ calls, with JIT performance.
 ## Read first
 
 - `docs/design.md`: architecture and the **Decisions** section. Don't
-  re-propose an option listed there as rejected. If you think a decision is
-  wrong, say so in the PR description and stop.
+  re-propose an option listed there as rejected without new evidence. If you
+  think a decision is wrong, change it in `docs/design.md` in a PR of its
+  own that says why, before (not in) the task that depends on it.
 - `docs/plan.md`: current milestone, task checklist, and the generated status
   block. Your task is one checklist item there.
 
@@ -124,7 +125,6 @@ summary shows per-section results. Steps whose task hasn't landed yet report
   back.
 - Merge a PR whose `Checks` or `Tests` check isn't green, or bypass branch
   protection.
-- Edit `docs/design.md`. Propose changes in the PR description instead.
 - Change the GraalVM or Truffle version (nixpkgs in `flake.lock` and the
   Truffle libraries in `suite.py` move together), change `mxversion`, add
   libraries, or change `flake.nix`/`flake.lock`, unless the task says to.
