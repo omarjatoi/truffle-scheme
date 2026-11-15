@@ -12,35 +12,71 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Every job runs inside the Nix dev shell, which provides everything: GraalVM CE 25.5
+# (JAVA_HOME), mx, Python, chibi-scheme. Each step runs one step of `mx checks` or
+# `mx tests`, so a failure names exactly what broke.
 jobs:
-  # The required check on main (ruleset): the full mx gate, i.e. build, style,
-  # rule checks, unit tests, and the conformance status-block check.
-  gate:
-    name: Build and test (mx gate)
+  # Required check on main: build and static checks.
+  checks:
+    name: Checks
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-
-      # The dev shell provides everything: GraalVM CE 25.5 (JAVA_HOME), mx, Python, chibi-scheme.
       - uses: DeterminateSystems/determinate-nix-action@v3
-
-      # Maven jars (Truffle, JUnit, checkstyle, ...) that mx downloads, keyed by the pinned versions.
+      # Maven jars (Truffle, JUnit, checkstyle, SpotBugs, ...) that mx downloads, keyed by the pinned versions.
       - uses: actions/cache@v4
         with:
           path: ~/.mx/cache
           key: mx-cache-${{ runner.os }}-${{ hashFiles('mx.r7rs/suite.py', 'flake.lock') }}
           restore-keys: mx-cache-${{ runner.os }}-
-
       - name: Dev shell
         run: nix develop --command sh -c 'java -version && mx --version'
+      - name: ECJ build (warnings are errors)
+        run: nix develop --command mx checks ecj
+      - name: javac build (warnings are errors)
+        run: nix develop --command mx checks build
+      - name: suite.py is canonical
+        run: nix develop --command mx checks canonical overlap sources
+      - name: Checkstyle
+        run: nix develop --command mx checks checkstyle
+      - name: Format (Eclipse formatter)
+        run: nix develop --command mx checks format
+      - name: SpotBugs
+        run: nix develop --command mx checks spotbugs
+      - name: Rule checks (AGENTS.md)
+        run: nix develop --command mx checks rules
 
-      - name: mx gate
-        run: nix develop --command mx gate
+  # Required check on main: all tests.
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/determinate-nix-action@v3
+      - uses: actions/cache@v4
+        with:
+          path: ~/.mx/cache
+          key: mx-cache-${{ runner.os }}-${{ hashFiles('mx.r7rs/suite.py', 'flake.lock') }}
+          restore-keys: mx-cache-${{ runner.os }}-
+      - name: Build
+        run: nix develop --command mx build
+      - name: Unit tests
+        run: nix develop --command mx tests unittest
+      - name: Unit tests (compile immediately)
+        run: nix develop --command mx tests unittest-compile
+      - name: Conformance status block is up to date
+        run: nix develop --command mx tests conformance
+      - name: Differential tests (tests/diff vs chibi-scheme)
+        run: nix develop --command mx tests diff
+      - name: Spec tests
+        run: nix develop --command mx tests spec
+      - name: Torture
+        run: nix develop --command mx tests torture
 
-  # Progress tracking, not a merge gate: the main ruleset requires only
-  # "Build and test (mx gate)",
-  # and continue-on-error keeps a failing run from marking the workflow red.
+  # Progress tracking, not a merge gate: the main ruleset requires only Checks and
+  # Tests, and continue-on-error keeps a failing run from marking the workflow red.
   # Each run's per-section table is in the workflow run summary.
   conformance:
     name: Conformance (${{ matrix.mode }})
