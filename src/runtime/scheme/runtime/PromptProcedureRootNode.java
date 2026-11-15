@@ -14,7 +14,7 @@ public final class PromptProcedureRootNode extends RootNode {
 
     PromptProcedureRootNode(SchemeLanguage language) {
         super(language);
-        this.driver = new PromptDriver(language);
+        this.driver = new PromptDriver();
     }
 
     @Override

@@ -6,6 +6,8 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 
 import scheme.runtime.BuiltinLibrary;
 import scheme.runtime.Capture;
+import scheme.runtime.Continuation;
+import scheme.runtime.InvokeContinuation;
 import scheme.runtime.DynEnv;
 import scheme.runtime.PrimitiveNode;
 import scheme.runtime.PrimitiveSpec;
@@ -13,6 +15,7 @@ import scheme.runtime.SchemeContext;
 import scheme.runtime.SchemeError;
 import scheme.runtime.printer.Printer;
 import scheme.runtime.value.SChar;
+import scheme.runtime.value.MultipleValues;
 import scheme.runtime.value.SConstant;
 import scheme.runtime.value.SErrorObject;
 import scheme.runtime.value.SPair;
@@ -50,6 +53,10 @@ public final class Builtins implements BuiltinLibrary {
                         new PrimitiveSpec("call/cc", 1, 1, CallCC::new),
                         new PrimitiveSpec("call-with-current-continuation", 1, 1, CallCC::new),
                         new PrimitiveSpec("%capture-to-prompt", 2, 2, CaptureToPrompt::new),
+                        new PrimitiveSpec("%apply-continuation", 2, 2, () -> new ContinuationOps(ContinuationOps.APPLY)),
+                        new PrimitiveSpec("%reinstate", 2, 2, () -> new ContinuationOps(ContinuationOps.REINSTATE)),
+                        new PrimitiveSpec("%continuation-composable?", 1, 1, () -> new ContinuationOps(ContinuationOps.COMPOSABLE)),
+                        new PrimitiveSpec("%continuation-dynamic-env", 1, 1, () -> new ContinuationOps(ContinuationOps.DYNAMIC_ENV)),
                         new PrimitiveSpec("%error", 1, -1, ErrorPrimitive::new),
                         new PrimitiveSpec("%current-dynamic-env", 0, 0, () -> new DynamicEnv(DynamicEnv.CURRENT)),
                         new PrimitiveSpec("%set-dynamic-env!", 1, 1, () -> new DynamicEnv(DynamicEnv.SET)),
@@ -339,6 +346,61 @@ public final class Builtins implements BuiltinLibrary {
         @Override
         public Object execute(Object[] args) {
             return Capture.delimited(args[0], args[1], SchemeContext.get(this).getDynamicEnv());
+        }
+    }
+
+    /**
+     * Continuation transfers for the prelude's %continue (control.scm). None calls Scheme (rule 1):
+     * {@code %apply-continuation} throws to the root prompt, {@code %reinstate} returns a request that
+     * travels to the nearest prompt.
+     */
+    static final class ContinuationOps extends PrimitiveNode {
+        static final int APPLY = 0;
+        static final int REINSTATE = 1;
+        static final int COMPOSABLE = 2;
+        static final int DYNAMIC_ENV = 3;
+
+        private final int kind;
+
+        ContinuationOps(int kind) {
+            this.kind = kind;
+        }
+
+        @Override
+        public Object execute(Object[] args) {
+            Continuation k = continuation(args[0]);
+            switch (kind) {
+                case APPLY:
+                    throw new InvokeContinuation(k, values(args[1]));
+                case REINSTATE:
+                    return Capture.reinstate(k, values(args[1]), SchemeContext.get(this).getDynamicEnv());
+                case COMPOSABLE:
+                    return k.composable;
+                default:
+                    return k.dynEnv;
+            }
+        }
+
+        private static Continuation continuation(Object value) {
+            if (value instanceof Continuation k) {
+                return k;
+            }
+            throw notAContinuation(value);
+        }
+
+        /** A list of values: one value is itself, otherwise MultipleValues (design.md D1). */
+        @TruffleBoundary
+        private static Object values(Object list) {
+            java.util.ArrayList<Object> items = new java.util.ArrayList<>();
+            for (Object l = list; l instanceof SPair p; l = p.cdr) {
+                items.add(p.car);
+            }
+            return items.size() == 1 ? items.get(0) : new MultipleValues(items.toArray());
+        }
+
+        @TruffleBoundary
+        private static SchemeError notAContinuation(Object value) {
+            return new SchemeError("not a continuation: " + Printer.print(value, Printer.Mode.WRITE));
         }
     }
 }
