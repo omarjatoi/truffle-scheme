@@ -18,6 +18,7 @@ public final class SchemeContext {
     public final SymbolTable symbols = new SymbolTable();
     public final GlobalEnvironment globals = new GlobalEnvironment();
     private final PrintStream out;
+    private DynEnv dynamicEnv = DynEnv.INITIAL;
 
     SchemeContext(TruffleLanguage.Env env) {
         this.env = env;
@@ -30,6 +31,15 @@ public final class SchemeContext {
 
     public TruffleLanguage.Env getEnv() {
         return env;
+    }
+
+    /** The current dynamic environment (design.md "Dynamic environment"). */
+    public DynEnv getDynamicEnv() {
+        return dynamicEnv;
+    }
+
+    public void setDynamicEnv(DynEnv dynamicEnv) {
+        this.dynamicEnv = dynamicEnv;
     }
 
     /** The current output port (until ports arrive in M4). */

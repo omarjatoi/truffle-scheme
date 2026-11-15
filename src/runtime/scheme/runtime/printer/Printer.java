@@ -10,6 +10,8 @@ import java.util.Locale;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 
+import scheme.runtime.DynEnv;
+
 import scheme.runtime.value.MultipleValues;
 import scheme.runtime.value.SBigInteger;
 import scheme.runtime.value.SBytevector;
@@ -303,6 +305,8 @@ public final class Printer {
             out.append(name == null ? "#<procedure>" : "#<procedure " + name + ">");
         } else if (v instanceof SRecord r) {
             out.append("#<record ").append(r.type.name).append('>');
+        } else if (v instanceof DynEnv) {
+            out.append("#<dynamic-environment>");
         } else if (v instanceof SRecordType t) {
             out.append("#<record-type ").append(t.name).append('>');
         } else {
