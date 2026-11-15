@@ -6,6 +6,7 @@ matching entry in `_PENDING_GATE_TASKS`.
 """
 
 import argparse
+import difflib
 import hashlib
 import os
 import re
@@ -332,12 +333,62 @@ def r7rs_spec(args):
     _not_implemented('r7rs-spec', 'M2 (tests/spec is written by a human before M2 starts)')
 
 
+def _run_ours(file, vm_args):
+    """Runs one program with scheme.launcher.SchemeMain. Returns (exit status, stdout, stderr)."""
+    out, err = mx.OutputCapture(), mx.OutputCapture()
+    rc = mx.run_java(mx.get_runtime_jvm_args(['SCHEME_LAUNCHER']) + _TRUFFLE_VM_ARGS + vm_args
+                     + ['-m', 'scheme.launcher/scheme.launcher.SchemeMain', file],
+                     out=out, err=err, nonZeroIsFatal=False)
+    return rc, out.data, err.data
+
+
+def _run_chibi(file):
+    out, err = mx.OutputCapture(), mx.OutputCapture()
+    rc = mx.run(['chibi-scheme', file], out=out, err=err, nonZeroIsFatal=False)
+    return rc, out.data, err.data
+
+
+def _tail(text, lines=5):
+    return '\n'.join('    ' + l for l in text.rstrip('\n').splitlines()[-lines:]) or '    (empty)'
+
+
+def r7rs_diff_all(args):
+    """run every program in tests/diff/ through r7rs-diff; fail if any differs"""
+    diff_dir = join(_suite.dir, 'tests', 'diff')
+    files = sorted(f for f in os.listdir(diff_dir) if f.endswith('.scm'))
+    different = [f for f in files if r7rs_diff(args + [join(diff_dir, f)]) != 0]
+    if different:
+        mx.abort(f'r7rs-diff: {len(different)} of {len(files)} programs in tests/diff/ differ from chibi-scheme: {different}')
+    mx.log(f'r7rs-diff: all {len(files)} programs in tests/diff/ match chibi-scheme')
+
+
 def r7rs_diff(args):
-    """run a file under chibi and under our implementation, then diff stdout and exit status"""
+    """run a file under chibi-scheme and under our implementation; compare stdout and exit status"""
     parser = argparse.ArgumentParser(prog='mx r7rs-diff')
-    parser.add_argument('file', help='Scheme file to run')
-    parser.parse_args(args)
-    _not_implemented('r7rs-diff', 'M1-02 (differential runner)')
+    parser.add_argument('file', help='Scheme program to run')
+    parser.add_argument('--torture', action='store_true', help='capture + resume at every non-tail call (ours)')
+    parser.add_argument('--compile', action='store_true', help='compile immediately; compilation failures are errors (ours)')
+    parsed = parser.parse_args(args)
+    if not exists(parsed.file):
+        mx.abort(f'no such file: {parsed.file}')
+    chibi_rc, chibi_out, chibi_err = _run_chibi(parsed.file)
+    ours_rc, ours_out, ours_err = _run_ours(parsed.file, r7rs_vm_args(compile=parsed.compile, torture=parsed.torture))
+    if chibi_rc == ours_rc and chibi_out == ours_out:
+        mx.log(f'r7rs-diff: same (exit {ours_rc}, {len(ours_out)} chars of stdout): {parsed.file}')
+        return 0
+    mx.log(f'r7rs-diff: DIFFERENT: {parsed.file}')
+    if chibi_out != ours_out:
+        diff = difflib.unified_diff(chibi_out.splitlines(keepends=True), ours_out.splitlines(keepends=True),
+                                    fromfile='chibi-scheme stdout', tofile='scheme stdout')
+        mx.log(''.join(diff).rstrip('\n'))
+        if any(o and not o.endswith('\n') for o in (chibi_out, ours_out)):
+            mx.log('(the diff ignores a missing final newline; compare exact stdout below)')
+            mx.log(f'  chibi-scheme: {chibi_out!r}')
+            mx.log(f'  scheme:       {ours_out!r}')
+    mx.log(f'exit status: chibi-scheme {chibi_rc}, scheme {ours_rc}')
+    mx.log('chibi-scheme stderr (tail):\n' + _tail(chibi_err))
+    mx.log('scheme stderr (tail):\n' + _tail(ours_err))
+    return 1
 
 
 _STATUS_BEGIN = '<!-- status:begin -->'
@@ -454,6 +505,9 @@ def _gate_runner(args, tasks):
     with Task('R7RS conformance status', tasks, tags=[_GATE_TAG]) as t:
         if t:
             r7rs_status(['--check'])
+    with Task('R7RS differential smoke', tasks, tags=[_GATE_TAG]) as t:
+        if t:
+            r7rs_diff_all([])
     with Task('R7RS unittest', tasks, tags=[_GATE_TAG]) as t:
         if t:
             r7rs_unittest([])
@@ -471,7 +525,8 @@ mx_gate.add_gate_runner(_suite, _gate_runner)
 mx.update_commands(_suite, {
     'r7rs-test': [r7rs_test, '[section] [--torture] [--compile]'],
     'r7rs-spec': [r7rs_spec, ''],
-    'r7rs-diff': [r7rs_diff, 'file.scm'],
+    'r7rs-diff': [r7rs_diff, 'file.scm [--compile] [--torture]'],
+    'r7rs-diff-all': [r7rs_diff_all, '[--compile] [--torture]'],
     'r7rs-status': [r7rs_status, ''],
     'r7rs-check': [r7rs_check, ''],
     'r7rs-vendor-chibi': [r7rs_vendor_chibi, 'path/to/r7rs-tests.scm --version <chibi version>'],

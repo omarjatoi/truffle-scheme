@@ -121,7 +121,7 @@ the spike is still running.
     task fails if that block is stale.
   - **Done when** every section runs (all failing is expected) and the status
     block is generated.
-- [ ] **M1-02 · Differential runner** *(spike-independent)*
+- [x] **M1-02 · Differential runner** *(spike-independent)*
   - `mx r7rs-diff file.scm` runs the file under chibi and under our
     implementation, then compares stdout and exit status (design.md D8).
 - [ ] **M1-03 · Value types and printer** *(spike-independent)*
