@@ -18,20 +18,20 @@ Pick up the next piece of work and take it all the way to a PR. Several
 sessions may be running at once, so claim work before doing it.
 
 1. **Sync.** `git fetch origin && git switch main && git pull --ff-only`
-2. **Survey.** `gh pr list --state open --json number,title,isDraft,reviewDecision,labels`
+2. **Survey.** `gh pr list --state open --json number,title,baseRefName,reviewDecision,labels`
 3. **Choose.** The first of these that applies wins:
    1. **Changes requested.** An open PR whose review decision is
       `CHANGES_REQUESTED` and that isn't labeled `agent:active`. Check it out
       and address the review.
-   2. **Review needed.** An open, non-draft PR for a task in a human-gated
+   2. **Review needed.** An open PR not labeled `agent:active`, for a task in a human-gated
       milestone (see `docs/plan.md`) that has no comment starting with
       `Agent review`. Review it as described under "Reviewing".
    3. **Next task.** In the current milestone (the first one in
       `docs/plan.md` with unchecked tasks), the first unchecked task that
       meets all of these:
       - it isn't marked *(human)*;
-      - every task it needs is either checked on `main` or done in an open,
-        non-draft PR (in which case you stack on that PR, see "Stacked
+      - every task it needs is either checked on `main` or done in an open
+        PR that isn't labeled `agent:active` (in which case you stack on that PR, see "Stacked
         PRs");
       - no open PR has a title starting with its ID.
    4. **Nothing available.** If the current milestone's exit criteria are
@@ -42,7 +42,7 @@ sessions may be running at once, so claim work before doing it.
 4. **Claim.**
    - For an existing PR, add the label `agent:active`.
    - For a new task, push a branch named `<id>-<short-name>` (for example
-     `m0-01-suite-bootstrap`), then open a draft PR titled
+     `m0-01-suite-bootstrap`), then open a PR (not a draft) titled
      `<ID>: <task name>` with the label `agent:active`. If the task depends
      on an unmerged PR, branch from that PR and stack on it instead (see
      "Stacked PRs").
@@ -54,7 +54,8 @@ sessions may be running at once, so claim work before doing it.
    chat and wait for "go". Otherwise, carry on.
 7. **Do the work** following "Working style". In the same PR, tick the
    task's checkbox in `docs/plan.md` (outside the status block). When it's
-   done, mark the PR ready for review and remove `agent:active`.
+   done, remove `agent:active`. That is the signal that the PR is ready for
+   review and can be stacked on. Don't use draft PRs.
 8. **Finish** with the PR link, one line of evidence for each "Done when"
    item, and any follow-ups.
 
@@ -67,11 +68,14 @@ sit waiting for merges. Independent tasks still branch from `main`.
 - **Starting a stacked task.** Check out the top of the stack you depend on
   (`gh stack checkout <pr-number>`). If that PR isn't in a stack yet,
   check out its branch. Then create your branch on top of it with
-  `gh stack add <id>-<short-name>`, push it, and open the draft PR with
-  `gh pr create --draft --base <parent-branch>`. Then attach it to the
-  stack with `gh stack link <parent-branch> <your-branch>` (bottom to top).
-  `gh stack link` sets and repairs the base of each PR. Don't use
-  `gh stack submit` to claim work, because it doesn't open drafts.
+  `gh stack add <id>-<short-name>`, push it, and open the PR with
+  `gh pr create --base <parent-branch>`. Then link it into the stack with
+  `gh stack link <parent-branch> <your-branch>`, listing branches bottom to
+  top. `gh stack link` sets and repairs the base of each PR.
+- **Always link.** A PR whose base is another PR's branch must be linked with
+  `gh stack link` so GitHub shows it as part of a stack. Changing the base
+  with `gh pr edit --base` alone isn't enough. Check the result with
+  `gh stack view`.
 - **One layer per PR.** Each PR's base is the branch below it, so its diff
   and its review cover only its own task. Note the parent PR's number in
   the PR description.
