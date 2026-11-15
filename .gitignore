@@ -25,3 +25,5 @@ eclipse-launches/
 mx.r7rs/projects/**
 !mx.r7rs/projects/*/
 !mx.r7rs/projects/runtime/.checkstyle_checks.xml
+# backup that `mx eclipseformat` writes when it changes files
+eclipseformat.backup.zip

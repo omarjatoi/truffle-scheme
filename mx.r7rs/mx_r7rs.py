@@ -495,10 +495,20 @@ def _gate_runner(args, tasks):
     with Task('R7RS build', tasks, tags=[_GATE_TAG]) as t:
         if t:
             mx.command_function('build')([])
+    # GraalVM's own style tools, as in the full gate's Checkstyle, CodeFormatCheck and
+    # SpotBugs tasks, so `mx gate --tags fast` catches what CI would.
     with Task('R7RS style', tasks, tags=[_GATE_TAG]) as t:
         if t:
-            if mx.command_function('checkstyle')([]) != 0:
+            if mx.command_function('checkstyle')(['--primary']) != 0:
                 t.abort('Checkstyle warnings were found')
+    with Task('R7RS format', tasks, tags=[_GATE_TAG]) as t:
+        if t:
+            if mx.command_function('eclipseformat')(['--primary']) != 0:
+                t.abort('The formatter changed files: review the changes made by `mx eclipseformat` and commit them')
+    with Task('R7RS spotbugs', tasks, tags=[_GATE_TAG]) as t:
+        if t:
+            if mx.command_function('spotbugs')(['--primary']) != 0:
+                t.abort('SpotBugs warnings were found')
     with Task('R7RS rule checks', tasks, tags=[_GATE_TAG]) as t:
         if t:
             r7rs_check([])
