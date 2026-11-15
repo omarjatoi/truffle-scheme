@@ -3,6 +3,9 @@ package scheme.compiler;
 /** The core forms (design.md D3), each bound to its name unless shadowed. */
 enum CoreForm {
     QUOTE("quote"),
+    QUASIQUOTE("quasiquote"),
+    UNQUOTE("unquote"),
+    UNQUOTE_SPLICING("unquote-splicing"),
     LAMBDA("lambda"),
     IF("if"),
     SET("set!"),

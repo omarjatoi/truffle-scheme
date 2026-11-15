@@ -72,5 +72,10 @@
       (begin (%rewind (%current-dynamic-env) (%continuation-dynamic-env k))
              (%apply-continuation k values))))
 
+;; call-with-values calls the producer in a non-tail position, so it lives here (D5); apply makes
+;; the call to the consumer a tail call.
+(define (call-with-values producer consumer)
+  (apply consumer (%values->list (producer))))
+
 ;; The prompt driver hands captured continuations to receivers through %receive.
 (%set-receive! %receive)
