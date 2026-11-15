@@ -30,7 +30,9 @@ sessions may be running at once, so claim work before doing it.
       `docs/plan.md` with unchecked tasks), the first unchecked task that
       meets all of these:
       - it isn't marked *(human)*;
-      - every task it needs is checked;
+      - every task it needs is either checked on `main` or done in an open,
+        non-draft PR (in which case you stack on that PR, see "Stacked
+        PRs");
       - no open PR has a title starting with its ID.
    4. **Nothing available.** If the current milestone's exit criteria are
       met, draft the next milestone's tasks in `docs/plan.md`, in the same
@@ -41,7 +43,9 @@ sessions may be running at once, so claim work before doing it.
    - For an existing PR, add the label `agent:active`.
    - For a new task, push a branch named `<id>-<short-name>` (for example
      `m0-01-suite-bootstrap`), then open a draft PR titled
-     `<ID>: <task name>` with the label `agent:active`.
+     `<ID>: <task name>` with the label `agent:active`. If the task depends
+     on an unmerged PR, branch from that PR and stack on it instead (see
+     "Stacked PRs").
    - Create the label if it's missing: `gh label create agent:active`.
    - If another open PR for the same ID appeared in the meantime, close
      yours and go back to step 3.
@@ -53,6 +57,37 @@ sessions may be running at once, so claim work before doing it.
    done, mark the PR ready for review and remove `agent:active`.
 8. **Finish** with the PR link, one line of evidence for each "Done when"
    item, and any follow-ups.
+
+## Stacked PRs
+
+Use GitHub's native stacked PRs (the official `gh stack` extension) when a
+task depends on work that is done but not merged yet. That way agents don't
+sit waiting for merges. Independent tasks still branch from `main`.
+
+- **Starting a stacked task.** Check out the top of the stack you depend on
+  (`gh stack checkout <pr-number>`). If that PR isn't in a stack yet,
+  check out its branch. Then create your branch on top of it with
+  `gh stack add <id>-<short-name>`, push it, and open the draft PR with
+  `gh pr create --draft --base <parent-branch>`. Then attach it to the
+  stack with `gh stack link <parent-branch> <your-branch>` (bottom to top).
+  `gh stack link` sets and repairs the base of each PR. Don't use
+  `gh stack submit` to claim work, because it doesn't open drafts.
+- **One layer per PR.** Each PR's base is the branch below it, so its diff
+  and its review cover only its own task. Note the parent PR's number in
+  the PR description.
+- **Keeping up to date.** Before you work on a stacked branch, and before
+  you push, run `git fetch origin` and then `gh stack rebase --downstack`.
+  That picks up review fixes from the PRs below yours and replays your
+  commits onto the merge target once a PR below has merged. Then push with
+  `gh stack push`.
+- **Don't rewrite other sessions' branches.** Only rebase or push a branch
+  above yours if its PR isn't labeled `agent:active`. If you fix a PR that
+  has PRs stacked on it, say so in a comment on each PR above it. Their
+  owners restack the next time they work on them.
+- **Merging is still human-only.** A human merges stacks bottom-up,
+  normally with `gh stack merge`. Agents never run `gh stack merge`.
+- **Depth.** Don't stack on a PR whose review decision is
+  `CHANGES_REQUESTED`. Wait until its fixes are pushed.
 
 ## Reviewing
 
@@ -67,7 +102,8 @@ push fixes.
 Run everything inside `nix develop`. It provides `mx`, Python, git, `gh` and
 chibi-scheme (used for differential testing). `mx` manages the JDK: run
 `mx fetch-jdk labsjdk-ce-latest` once and set `JAVA_HOME` to the path it
-prints. The Truffle version is pinned by the `truffle` suite import in
+prints. Stacked PRs need the official `gh stack` extension: run
+`gh extension install github/gh-stack` once. The Truffle version is pinned by the `truffle` suite import in
 `mx.r7rs/suite.py`, not by your shell.
 
 ## Commands
@@ -117,7 +153,7 @@ any Bytecode DSL operation, also run the `--compile` command. CI runs the full
   `docs/plan.md` (CI rewrites it). If a test looks wrong, explain why in the
   PR and stop.
 - Skip, disable, or loosen a test to make it pass.
-- Merge a PR. Only a human merges.
+- Merge a PR or a stack (`gh stack merge`). Only a human merges.
 - Edit `docs/design.md`. Propose changes in the PR description instead.
 - Change the `truffle` suite import version or `mxversion` in `suite.py`,
   add libraries, or change `flake.nix`/`flake.lock`, unless the task says to.
