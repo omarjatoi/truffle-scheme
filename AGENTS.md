@@ -14,8 +14,10 @@ calls, with JIT performance.
 
 ## When the user says "start"
 
-Pick up the next piece of work and take it all the way to a PR. Several
-sessions may be running at once, so claim work before doing it.
+Pick up the next piece of work and take it all the way to a merged PR.
+Several sessions may be running at once, so claim work before doing it. No
+milestone has a human gate: don't wait for approval before starting, and
+merge your own PR once it's ready.
 
 1. **Sync.** `git fetch origin && git switch main && git pull --ff-only`
 2. **Survey.** `gh pr list --state open --json number,title,baseRefName,reviewDecision,labels`
@@ -23,9 +25,9 @@ sessions may be running at once, so claim work before doing it.
    1. **Changes requested.** An open PR whose review decision is
       `CHANGES_REQUESTED` and that isn't labeled `agent:active`. Check it out
       and address the review.
-   2. **Review needed.** An open PR not labeled `agent:active`, for a task in a human-gated
-      milestone (see `docs/plan.md`) that has no comment starting with
-      `Agent review`. Review it as described under "Reviewing".
+   2. **Ready to merge.** An open task PR that isn't labeled `agent:active`
+      and whose `gate` check is green, but that hasn't been merged (for
+      example because its session ended). Merge it as in step 6.
    3. **Next task.** In the current milestone (the first one in
       `docs/plan.md` with unchecked tasks), the first unchecked task that
       meets all of these:
@@ -36,9 +38,9 @@ sessions may be running at once, so claim work before doing it.
       - no open PR has a title starting with its ID.
    4. **Nothing available.** If the current milestone's exit criteria are
       met, draft the next milestone's tasks in `docs/plan.md`, in the same
-      format as the existing tasks, and open a PR titled `Plan: M<n> tasks`
-      for human review. Otherwise, report what's blocking (unmerged PRs,
-      human tasks) and stop.
+      format as the existing tasks, open a PR titled `Plan: M<n> tasks`, and
+      merge it like any other PR. Otherwise, report what's blocking (failing
+      PRs, *(human)* tasks) and stop.
 4. **Claim.**
    - For an existing PR, add the label `agent:active`.
    - For a new task, push a branch named `<id>-<short-name>` (for example
@@ -50,14 +52,18 @@ sessions may be running at once, so claim work before doing it.
    - If another open PR for the same ID appeared in the meantime, close
      yours and go back to step 3.
 5. **Announce.** Say in one line what you picked and why.
-6. **Gate.** If the task is in a human-gated milestone, post a short plan in
-   chat and wait for "go". Otherwise, carry on.
-7. **Do the work** following "Working style". In the same PR, tick the
-   task's checkbox in `docs/plan.md` (outside the status block). When it's
-   done, remove `agent:active`. That is the signal that the PR is ready for
-   review and can be stacked on. Don't use draft PRs.
-8. **Finish** with the PR link, one line of evidence for each "Done when"
-   item, and any follow-ups.
+6. **Do the work** following "Working style". In the same PR, tick the
+   task's checkbox in `docs/plan.md` (outside the status block). Don't use
+   draft PRs. When it's done:
+   - Remove `agent:active`. That is the signal that the PR is done and can
+     be stacked on.
+   - Wait for the `gate` check (`gh pr checks <n> --watch`). When it's green,
+     merge with `gh pr merge <n> --merge`. For a stack, merge it bottom-up
+     with `gh stack merge <stack> --merge --yes`.
+   - If `gate` fails, fix it on the branch. Never merge red.
+7. **Finish** with the PR link, one line of evidence for each "Done when"
+   item, and any follow-ups. Then go back to step 1 and pick up the next
+   task.
 
 ## Stacked PRs
 
@@ -94,14 +100,15 @@ sit waiting for merges.
   above yours if its PR isn't labeled `agent:active`. If you fix a PR that
   has PRs stacked on it, say so in a comment on each PR above it. Their
   owners restack the next time they work on them.
-- **Merging is still human-only.** A human merges stacks bottom-up,
-  normally with `gh stack merge`. Agents never run `gh stack merge`.
+- **Merging.** Merge a stack bottom-up with `gh stack merge`, once every PR
+  being merged is done (no `agent:active`) and green. You can merge just the
+  lower part of a stack with `gh stack merge <pr-number>`.
 - **Depth.** Don't stack on a PR whose review decision is
   `CHANGES_REQUESTED`. Wait until its fixes are pushed.
 
 ## Reviewing
 
-You didn't write the code you're reviewing. Check the PR against the rules in
+Only when asked. You didn't write the code you're reviewing. Check the PR against the rules in
 this file, the decisions in `docs/design.md`, and the task's "Done when"
 items in `docs/plan.md`. Post one PR comment that starts with `Agent review`,
 listing violations and claims without evidence, most serious first. Don't
@@ -167,7 +174,7 @@ task that brings them.
   `docs/plan.md` (CI rewrites it). If a test looks wrong, explain why in the
   PR and stop.
 - Skip, disable, or loosen a test to make it pass.
-- Merge a PR or a stack (`gh stack merge`). Only a human merges.
+- Merge a PR whose `gate` check isn't green, or bypass branch protection.
 - Edit `docs/design.md`. Propose changes in the PR description instead.
 - Change the GraalVM or Truffle version (nixpkgs in `flake.lock` and the
   Truffle libraries in `suite.py` move together), change `mxversion`, add
