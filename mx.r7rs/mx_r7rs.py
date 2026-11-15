@@ -373,6 +373,20 @@ def r7rs_space(args):
             mx.log(f'r7rs-space: {path} ok ({label}, {" ".join(limits)})')
 
 
+def r7rs_torture(args):
+    """torture mode (M2-06): unit tests, tests/diff/, and every conformance case that passes normally"""
+    r7rs_unittest(['--torture'])
+    r7rs_diff_all(['--torture'])
+    sections = [s[0] for s in _sections()]
+    normal = _run_conformance(sections, r7rs_vm_args())
+    tortured = _run_conformance(sections, r7rs_vm_args(torture=True))
+    worse = [f'{s}: {normal[s]["pass"]} normally, {tortured[s]["pass"]} under torture' for s in sections if tortured[s]['pass'] < normal[s]['pass']]
+    if worse:
+        mx.abort('r7rs-torture: sections that pass less under torture:\n  ' + '\n  '.join(worse))
+    total = sum(normal[s]['pass'] for s in sections)
+    mx.log(f'r7rs-torture: unit tests, tests/diff/ and conformance ({total} passing normally) all pass under torture')
+
+
 def r7rs_diff_all(args):
     """run every program in tests/diff/ through r7rs-diff; fail if any differs"""
     diff_dir = join(_suite.dir, 'tests', 'diff')
@@ -538,7 +552,6 @@ _CHECKS = {
 # an entry when its task lands.
 _PENDING_TESTS = {
     'spec': 'M2 (tests/spec is written by a human before M2 starts)',
-    'torture': 'M2',
 }
 
 _TESTS = {
@@ -548,7 +561,7 @@ _TESTS = {
     'diff': ('tests/diff/ matches chibi-scheme', lambda: r7rs_diff_all([])),
     'space': ('tail loop and deep recursion under small JVM limits (M1-06, M2-05)', lambda: r7rs_space([])),
     'spec': ('tests/spec', None),
-    'torture': ('conformance suite under --torture', None),
+    'torture': ('everything that passes normally passes under --torture (M2-06)', lambda: r7rs_torture([])),
 }
 
 
@@ -599,6 +612,7 @@ mx.update_commands(_suite, {
     'r7rs-diff': [r7rs_diff, 'file.scm [--compile] [--torture]'],
     'r7rs-diff-all': [r7rs_diff_all, '[--compile] [--torture]'],
     'r7rs-space': [r7rs_space, ''],
+    'r7rs-torture': [r7rs_torture, ''],
     'r7rs-status': [r7rs_status, ''],
     'r7rs-check': [r7rs_check, ''],
     'r7rs-vendor-chibi': [r7rs_vendor_chibi, 'path/to/r7rs-tests.scm --version <chibi version>'],
