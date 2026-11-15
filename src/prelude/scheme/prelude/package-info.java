@@ -1,2 +1,6 @@
-/** Standard libraries (.sld) and prelude Scheme code, shipped as resources (design.md D7). Empty until M3. */
+/**
+ * The prelude (design.md D5, D7): Scheme sources loaded into every context, in the order the
+ * {@code load-order} resource lists. Core forms only until the expander (M3), which turns these
+ * into the standard libraries (.sld).
+ */
 package scheme.prelude;
