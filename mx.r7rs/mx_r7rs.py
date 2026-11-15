@@ -179,9 +179,8 @@ def _run_conformance(section_ids, vm_args):
     out = mx.OutputCapture()
     jvm_args = mx.get_runtime_jvm_args(['SCHEME_LAUNCHER'])
     rc = mx.run_java(jvm_args + _TRUFFLE_VM_ARGS + vm_args
-                     # tests/lib (the (chibi test) shim) is passed once the language has a
-                     # library search path (design.md D7, M3).
-                     + ['-m', 'scheme.launcher/scheme.launcher.ConformanceRunner'] + files,
+                     # tests/lib holds the (chibi test) shim the sections import.
+                     + ['-m', 'scheme.launcher/scheme.launcher.ConformanceRunner', '-I', join(_suite.dir, 'tests', 'lib')] + files,
                      out=out, err=out, nonZeroIsFatal=False)
     results = {}
     current = None

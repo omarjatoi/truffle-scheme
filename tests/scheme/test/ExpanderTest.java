@@ -102,8 +102,8 @@ public class ExpanderTest {
         assertEquals("(begin (lambda (if.1) if.1) (if 1 2 3))", show("(lambda (if) if) (if 1 2 3)"));
         // A body definition shadows a keyword for the rest of the body.
         assertEquals("(lambda () (letrec* ((define.1 1)) define.1))", show("(lambda () (define define 1) define)"));
-        // A top-level definition shadows a keyword for the forms after it.
-        assertEquals("(begin (if 1 2 3) (define if list) (if 1 2 3))", show("(if 1 2 3) (define if list) (if 1 2 3)"));
+        // A top-level definition shadows a keyword (in the whole program, R7RS §5.1).
+        assertEquals("(begin (define if list) (if 1 2 3))", show("(define if list) (if 1 2 3)"));
         // A keyword shadowed by a variable is a variable for set! too.
         assertEquals("(lambda (begin.1) (set! begin.1 1))", show("(lambda (begin) (set! begin 1))"));
     }
@@ -134,7 +134,7 @@ public class ExpanderTest {
         assertTrue(showError("(lambda (1) 1)").getMessage().contains("invalid parameter 1"));
         assertTrue(showError("(define-syntax m 5)").getMessage().contains("not a transformer"));
         assertTrue(showError("(%guard (e (#t 1)) 2)").getMessage().contains("M3-06"));
-        assertTrue(showError("(include \"x.scm\")").getMessage().contains("M3-04"));
+        assertTrue(showError("(include \"x.scm\")").getMessage().contains("cannot find file x.scm"));
         assertTrue(showError("(display 1)\n(syntax-rules ())").getMessage().contains("line 2"));
     }
 

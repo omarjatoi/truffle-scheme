@@ -149,9 +149,12 @@ final class PromptDriver extends Node {
         return callWithProcedure(receiveProcedure(context), new Object[]{null, receiver, k, from, to});
     }
 
-    @TruffleBoundary
     private static Object receiveProcedure(SchemeContext context) {
-        return context.globals.cell(context.symbols.intern("%receive")).read();
+        Object receive = context.receive;
+        if (receive == null) {
+            throw new IllegalStateException("the prelude has not installed %receive");
+        }
+        return receive;
     }
 
     Object callThunk(Object procedure) {

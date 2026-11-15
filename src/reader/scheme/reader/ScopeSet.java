@@ -21,6 +21,11 @@ public final class ScopeSet {
         return scopes.length == 0;
     }
 
+    /** The {@code i}th scope, in id order. */
+    public Scope get(int i) {
+        return scopes[i];
+    }
+
     public boolean contains(Scope scope) {
         return Arrays.binarySearch(scopes, scope) >= 0;
     }

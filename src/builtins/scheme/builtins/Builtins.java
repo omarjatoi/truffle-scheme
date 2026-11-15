@@ -61,6 +61,7 @@ public final class Builtins implements BuiltinLibrary {
                         new PrimitiveSpec("%continuation-composable?", 1, 1, () -> new ContinuationOps(ContinuationOps.COMPOSABLE)),
                         new PrimitiveSpec("%continuation-dynamic-env", 1, 1, () -> new ContinuationOps(ContinuationOps.DYNAMIC_ENV)),
                         new PrimitiveSpec("%error", 1, -1, ErrorPrimitive::new),
+                        new PrimitiveSpec("%set-receive!", 1, 1, SetReceive::new),
                         new PrimitiveSpec("%current-dynamic-env", 0, 0, () -> new DynamicEnv(DynamicEnv.CURRENT)),
                         new PrimitiveSpec("%set-dynamic-env!", 1, 1, () -> new DynamicEnv(DynamicEnv.SET)),
                         new PrimitiveSpec("%make-dynamic-env", 3, 3, () -> new DynamicEnv(DynamicEnv.MAKE)),
@@ -257,6 +258,15 @@ public final class Builtins implements BuiltinLibrary {
                 context.out().print(Printer.print(value, mode));
             }
             context.out().flush();
+        }
+    }
+
+    /** Installs the prelude's %receive (control.scm), which the prompt driver calls. */
+    static final class SetReceive extends PrimitiveNode {
+        @Override
+        public Object execute(Object[] args) {
+            SchemeContext.get(this).receive = args[0];
+            return SConstant.UNSPECIFIED;
         }
     }
 

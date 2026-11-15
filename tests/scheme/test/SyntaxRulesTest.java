@@ -138,12 +138,26 @@ public class SyntaxRulesTest {
     }
 
     /**
-     * Chibi's section 4.3, run through {@link #HARNESS} instead of the (chibi test) shim. Its
-     * leading {@code import} is ignored until libraries (M3-04).
+     * Chibi's section 4.3, run through {@link #HARNESS} instead of the (chibi test) shim: without
+     * its leading {@code import}, so {@code test} is the harness's.
      */
     @Test
     public void chibiSection() throws IOException {
-        assertEquals(25, cases(SuiteReadSyntaxTest.resource("/r7rs/4.3.scm")));
+        assertEquals(25, cases(withoutImport(SuiteReadSyntaxTest.resource("/r7rs/4.3.scm"))));
+    }
+
+    /** The text without its first {@code (import ...)} form (whose comments have balanced parentheses). */
+    private static String withoutImport(String text) {
+        int start = text.indexOf("\n(import");
+        int depth = 0;
+        for (int i = start + 1; i < text.length(); i++) {
+            char c = text.charAt(i);
+            depth += c == '(' ? 1 : c == ')' ? -1 : 0;
+            if (depth == 0) {
+                return text.substring(0, start + 1) + text.substring(i + 1);
+            }
+        }
+        throw new IllegalArgumentException("no import form");
     }
 
     // ------------------------------------------------------------------------------------------
