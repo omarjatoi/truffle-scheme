@@ -226,6 +226,90 @@ and the M0 spike results recorded there. Only M2-07 waits for the human-written
 
 ## M3 · Expander and prelude
 
+Tasks marked *(early)* need nothing from M2 that is still open (M2-00 and M2-07
+only add the spec tests and their runner), so they can start before M2's exit.
+They follow design.md D3, D4, D5 and D7.
+
+- [ ] **M3-01 · Syntax objects and source positions** *(early)*
+  - The reader can produce syntax objects: a datum, its set of scopes, and
+    its source position (`SourceSection`), with no Java recursion (rule 4).
+    `read` still produces plain data.
+  - Errors from the compiler name the source line.
+  - **Done when** unit tests cover syntax-object construction and stripping
+    (`syntax->datum`), and a syntax error in a program reports its line.
+- [ ] **M3-02 · Expander core** *(early; needs M3-01)*
+  - The sets-of-scopes expander (Flatt 2016) in Java, replacing the
+    `Analyzer`. It expands the core forms (D3) into the existing core AST:
+    `quote`, `lambda`, `if`, `set!`, `define`, `begin`, `letrec*`,
+    `define-syntax`, `let-syntax`, `letrec-syntax`, and the internal
+    `%prompt`/`%guard`.
+  - It handles internal definition contexts, and definitions that macros
+    expand into. No Java recursion proportional to nesting depth (rule 4).
+  - **Done when** every existing test passes on the new expander, and unit
+    tests cover scope resolution: shadowing, keywords shadowed by local
+    variables, and definition contexts.
+- [ ] **M3-03 · syntax-rules** *(early; needs M3-02)*
+  - Hygienic `syntax-rules` with literals, `_`, ellipsis at any depth, tail
+    patterns after an ellipsis, vector and dotted patterns, and a custom
+    ellipsis identifier (R7RS §4.3.2).
+  - **Done when** unit tests cover R7RS §4.3's examples, including the
+    hygiene ones (`my-or` with a `temp` binding, `if` shadowed at the use
+    site), and chibi section 4.3's `syntax-rules` cases pass when run
+    through the test shim directly.
+- [ ] **M3-04 · Libraries** *(early; needs M3-02)*
+  - `define-library` with `export` (and `rename`), `import` sets (`only`,
+    `except`, `prefix`, `rename`), `include`, `include-ci`, `include-library-declarations`
+    and `cond-expand` (feature identifiers and `(library ...)`).
+  - Each library is instantiated once per context on first import, its
+    globals are cells, and assigning to an imported binding is an error (D7).
+  - The primitives become the internal library `(r7rs %primitives)`, and
+    the prelude moves into standard library `.sld` files under
+    `src/prelude/` (D7).
+  - User libraries are found on a search path (`-I dir`, read through
+    `TruffleFile`, D10). Programs (R7RS §5.1) are an import set plus a body.
+    The conformance runner passes `tests/lib` so `(chibi test)` resolves.
+  - **Done when** unit tests cover library instantiation, the import set
+    forms, renamed exports, `cond-expand`, and `include`, and every vendored
+    section *starts* (imports resolve), so the status block shows real
+    numbers.
+- [ ] **M3-05 · Derived syntax** *(needs M3-03, M3-04)*
+  - R7RS §7.3's `syntax-rules` definitions in the prelude: `let`, `let*`,
+    `letrec`, named `let`, `let-values`, `let*-values`, `define-values`,
+    `cond` (with `=>`), `case` (with `=>`), `and`, `or`, `when`, `unless`,
+    `do`, `case-lambda`, and `delay`, `delay-force` and `make-promise` (the
+    space-safe reference implementation, D9).
+  - `quasiquote` (with nesting and vectors) in the expander.
+  - Named `let` and `do` must still compile their self tail calls to loops.
+  - **Done when** R7RS §4.2's examples pass as unit tests, and
+    `tests/diff/` programs using the derived forms match chibi.
+- [ ] **M3-06 · guard, parameterize and records** *(needs M3-05)*
+  - `raise`, `raise-continuable`, `with-exception-handler` and `error` in
+    the prelude through `DynEnv.handlers` (D8). Primitive errors are raised
+    in the frame that called the primitive (D8).
+  - `guard` as `%guard` (D4): capture to the guard's prompt, rewind, evaluate
+    the clauses in the guard's continuation, and if none matches, reinstate
+    the segment and `raise-continuable` in the original dynamic environment.
+  - `make-parameter` and `parameterize` through
+    `DynEnv.parameterization`, with converters.
+  - `define-record-type` on `SRecord`/`SRecordType` (D1).
+  - **Done when** R7RS §4.2.7 (guard) and §4.2.6 (parameterize) examples,
+    §6.11's exception examples, and record tests pass, and the same holds
+    under `--torture`.
+- [ ] **M3-07 · Fan-out layout** *(needs M3-04)*
+  - One builtins file, one prelude file and one registration point per M4
+    area (numeric tower, characters and strings, lists and vectors,
+    bytevectors, control and exceptions, I/O and ports, `eval` and
+    environments, process context and time), so parallel M4 agents don't
+    edit the same files.
+  - **Done when** each area's files exist with a stub, AGENTS.md says which
+    files belong to which area, and adding a primitive to one area touches
+    only that area's files.
+- [ ] **M3-08 · Sections 4.x and 5** *(needs M3-05, M3-06, M3-07)*
+  - Whatever chibi sections 4.1, 4.2, 4.3 and 5 still need, from the areas'
+    files.
+  - **Done when** those four sections pass in full, normally and under
+    `--torture`, and the status block shows it.
+
 **Exit:**
 - The sets-of-scopes expander (D3), `define-library`, `import`, `include`
   and `cond-expand` work.
