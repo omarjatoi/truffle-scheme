@@ -65,11 +65,12 @@ merge your own PR once it's ready.
    - Remove `agent:active`. That is the signal that the PR is done and can
      be stacked on.
    - Wait for the required `Checks` and `Tests` checks
-     (`gh pr checks <n> --watch`). When it's green,
-     squash-merge with `gh pr merge <n> --squash`. For a stack, merge it
-     bottom-up with `gh stack merge <stack> --squash --yes`. The squash
-     commit is the PR title alone, so make sure the title still describes
-     the change.
+     (`gh pr checks <n> --watch`). When it's green, squash-merge it as one
+     commit whose message is the PR title and nothing else:
+     `gh pr merge <n> --squash --subject "<PR title>" --body ""`. Keep
+     `main`'s history clean: no merge commits, no branch commits, no
+     ` (#n)` suffix. Before merging, check that the title still summarizes
+     the change. For a stack, see "Stacked PRs".
    - If it fails, fix it on the branch. Never merge red.
 7. **Finish** with the PR link, one line of evidence for each "Done when"
    item, and any follow-ups. Then go back to step 1 and pick up the next
@@ -110,9 +111,13 @@ sit waiting for merges.
   above yours if its PR isn't labeled `agent:active`. If you fix a PR that
   has PRs stacked on it, say so in a comment on each PR above it. Their
   owners restack the next time they work on them.
-- **Merging.** Squash-merge a stack bottom-up with `gh stack merge --squash`, once every PR
-  being merged is done (no `agent:active`) and green. You can merge just the
-  lower part of a stack with `gh stack merge <pr-number>`.
+- **Merging.** Merge a stack bottom-up, one PR at a time, with the same
+  `gh pr merge <n> --squash --subject "<PR title>" --body ""` as a single PR,
+  once every PR being merged is done (no `agent:active`) and green. Don't
+  use `gh stack merge`: it can't set the commit message. After each merge,
+  run `git fetch origin && gh stack rebase --downstack && gh stack push` so
+  the next PR targets `main` and holds only its own changes, then wait for
+  its checks before merging it.
 - **Depth.** Don't stack on a PR whose review decision is
   `CHANGES_REQUESTED`. Wait until its fixes are pushed.
 
