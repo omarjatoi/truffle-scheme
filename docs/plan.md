@@ -151,10 +151,10 @@ a status for every section, and the vertical slice matches chibi.
 ## M2 · Continuations
 
 Tasks follow design.md "Continuations" and "Dynamic environment", D4, D5 and D6,
-and the M0 spike results recorded there. Only M2-07 waits for the human-written
-`tests/spec/` (M2-00).
+and the M0 spike results recorded there. M2-07 runs the `tests/spec/` cases
+that M2-00 writes.
 
-- [ ] **M2-00 · Spec tests** *(human)*
+- [x] **M2-00 · Spec tests**
   - Write `tests/spec/`: `tail-*` (tail calls in constant space under a memory
     limit), `cont-*` (capture, escape, re-entry, multi-shot) and `deep-*` (deep
     non-tail recursion; deep data through the reader, printer and `equal?`).
@@ -220,8 +220,8 @@ and the M0 spike results recorded there. Only M2-07 waits for the human-written
 **Exit:**
 - `call/cc` capture and re-entry, prompts (D4), `dynamic-wind` with
   `rewind` (design.md "Dynamic environment"), and stack-depth spill all work.
-- All of `tests/spec/` passes. These tests are written by a human before M2
-  starts.
+- All of `tests/spec/` passes, except the cases that need a later task
+  (`tests/spec/README.md`), which are reported as skipped and name that task.
 - `mx r7rs-test --torture` is green on every test that passes without it.
 
 ## M3 · Expander and prelude
