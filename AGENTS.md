@@ -12,9 +12,59 @@ calls, with JIT performance.
 - `docs/plan.md`: current milestone, task checklist, and the generated status
   block. Your task is one checklist item there.
 
+## When the user says "start"
+
+Pick up the next piece of work and take it all the way to a PR. Several
+sessions may be running at once, so claim work before doing it.
+
+1. **Sync.** `git fetch origin && git switch main && git pull --ff-only`
+2. **Survey.** `gh pr list --state open --json number,title,isDraft,reviewDecision,labels`
+3. **Choose.** The first of these that applies wins:
+   1. **Changes requested.** An open PR whose review decision is
+      `CHANGES_REQUESTED` and that isn't labeled `agent:active`. Check it out
+      and address the review.
+   2. **Review needed.** An open, non-draft PR for a task in a human-gated
+      milestone (see `docs/plan.md`) that has no comment starting with
+      `Agent review`. Review it as described under "Reviewing".
+   3. **Next task.** In the current milestone (the first one in
+      `docs/plan.md` with unchecked tasks), the first unchecked task that
+      meets all of these:
+      - it isn't marked *(human)*;
+      - every task it needs is checked;
+      - no open PR has a title starting with its ID.
+   4. **Nothing available.** If the current milestone's exit criteria are
+      met, draft the next milestone's tasks in `docs/plan.md`, in the same
+      format as the existing tasks, and open a PR titled `Plan: M<n> tasks`
+      for human review. Otherwise, report what's blocking (unmerged PRs,
+      human tasks) and stop.
+4. **Claim.**
+   - For an existing PR, add the label `agent:active`.
+   - For a new task, push a branch named `<id>-<short-name>` (for example
+     `m0-01-suite-bootstrap`), then open a draft PR titled
+     `<ID>: <task name>` with the label `agent:active`.
+   - Create the label if it's missing: `gh label create agent:active`.
+   - If another open PR for the same ID appeared in the meantime, close
+     yours and go back to step 3.
+5. **Announce.** Say in one line what you picked and why.
+6. **Gate.** If the task is in a human-gated milestone, post a short plan in
+   chat and wait for "go". Otherwise, carry on.
+7. **Do the work** following "Working style". In the same PR, tick the
+   task's checkbox in `docs/plan.md` (outside the status block). When it's
+   done, mark the PR ready for review and remove `agent:active`.
+8. **Finish** with the PR link, one line of evidence for each "Done when"
+   item, and any follow-ups.
+
+## Reviewing
+
+You didn't write the code you're reviewing. Check the PR against the rules in
+this file, the decisions in `docs/design.md`, and the task's "Done when"
+items in `docs/plan.md`. Post one PR comment that starts with `Agent review`,
+listing violations and claims without evidence, most serious first. Don't
+push fixes.
+
 ## Environment
 
-Run everything inside `nix develop`. It provides `mx`, Python, git and
+Run everything inside `nix develop`. It provides `mx`, Python, git, `gh` and
 chibi-scheme (used for differential testing). `mx` manages the JDK: run
 `mx fetch-jdk labsjdk-ce-latest` once and set `JAVA_HOME` to the path it
 prints. The Truffle version is pinned by the `truffle` suite import in
@@ -67,6 +117,7 @@ any Bytecode DSL operation, also run the `--compile` command. CI runs the full
   `docs/plan.md` (CI rewrites it). If a test looks wrong, explain why in the
   PR and stop.
 - Skip, disable, or loosen a test to make it pass.
+- Merge a PR. Only a human merges.
 - Edit `docs/design.md`. Propose changes in the PR description instead.
 - Change the `truffle` suite import version or `mxversion` in `suite.py`,
   add libraries, or change `flake.nix`/`flake.lock`, unless the task says to.

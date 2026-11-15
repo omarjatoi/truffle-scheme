@@ -9,3 +9,7 @@ multi-shot continuations and proper tail calls.
 
 Development: `nix develop` (or `direnv allow`), then see `AGENTS.md` for
 commands.
+
+To run an agent session, open a coding agent in the repo and say `start`.
+It picks the next available task from `docs/plan.md` and takes it to a PR
+(see "When the user says start" in `AGENTS.md`).
