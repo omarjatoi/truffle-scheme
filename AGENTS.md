@@ -99,12 +99,13 @@ push fixes.
 
 ## Environment
 
-Run everything inside `nix develop`. It provides `mx`, Python, git, `gh` and
-chibi-scheme (used for differential testing). `mx` manages the JDK: run
-`mx fetch-jdk labsjdk-ce-latest` once and set `JAVA_HOME` to the path it
-prints. Stacked PRs need the official `gh stack` extension: run
-`gh extension install github/gh-stack` once. The Truffle version is pinned by the `truffle` suite import in
-`mx.r7rs/suite.py`, not by your shell.
+Run everything inside `nix develop`. It provides GraalVM CE 25.5 (already set
+as `JAVA_HOME`; its Graal compiler is the JIT), `mx`, Python, git, `gh` and
+chibi-scheme (used for differential testing). There's no JDK to fetch by
+hand. Stacked PRs need the official `gh stack` extension: run
+`gh extension install github/gh-stack` once. Truffle comes from Maven Central
+as libraries in `mx.r7rs/suite.py`, at exactly the GraalVM version. mx refuses
+to run if the two differ (design.md D11).
 
 ## Commands
 
@@ -118,7 +119,7 @@ mx unittest                               # JUnit tests in tests/r7rs.test
 mx r7rs-test                              # chibi suite, interpreter only (the fast loop)
 mx r7rs-test 6.10                         # one conformance section
 mx r7rs-test --torture                    # capture + resume at every non-tail call
-mx --dy /compiler r7rs-test --compile     # Graal JIT built from source; compile immediately; failures are errors
+mx r7rs-test --compile                    # Graal JIT; compile immediately; failures are errors
 mx r7rs-spec                              # tests/spec (tail-call space, continuations, depth)
 mx r7rs-diff path/to/file.scm             # run under chibi and under us, diff the output
 mx r7rs-status                            # regenerate the status block in docs/plan.md
@@ -155,8 +156,9 @@ any Bytecode DSL operation, also run the `--compile` command. CI runs the full
 - Skip, disable, or loosen a test to make it pass.
 - Merge a PR or a stack (`gh stack merge`). Only a human merges.
 - Edit `docs/design.md`. Propose changes in the PR description instead.
-- Change the `truffle` suite import version or `mxversion` in `suite.py`,
-  add libraries, or change `flake.nix`/`flake.lock`, unless the task says to.
+- Change the GraalVM or Truffle version (nixpkgs in `flake.lock` and the
+  Truffle libraries in `suite.py` move together), change `mxversion`, add
+  libraries, or change `flake.nix`/`flake.lock`, unless the task says to.
 
 ## Truffle conventions
 
@@ -178,8 +180,8 @@ any Bytecode DSL operation, also run the `--compile` command. CI runs the full
   never `java.io` or `java.nio` directly. Text operations use `Locale.ROOT`.
 - Primitive errors throw `SchemeError`, never a raw Java exception
   (design.md D8).
-- Only projects that need generated code list
-  `truffle:TRUFFLE_DSL_PROCESSOR` in `annotationProcessors`. Keep it that way
+- Only projects that need generated code list `TRUFFLE_DSL_PROCESSOR` in
+  `annotationProcessors`. Keep it that way
   so edits elsewhere don't re-run the processor.
 
 ## Working style
@@ -196,9 +198,9 @@ any Bytecode DSL operation, also run the `--compile` command. CI runs the full
 ## Layout
 
 ```
-mx.r7rs/suite.py           projects, distributions, pinned truffle import
+mx.r7rs/suite.py           projects, distributions, Truffle libraries (pinned to the GraalVM version)
 mx.r7rs/mx_r7rs.py         custom mx commands + gate tasks
-flake.nix, flake.lock      dev shell: mx, Python, chibi-scheme
+flake.nix, flake.lock      dev shell: GraalVM 25.5, mx, Python, gh, chibi-scheme
 src/r7rs.reader/           reader + datum labels
 src/r7rs.compiler/         expander + core AST -> Bytecode DSL builder calls
 src/r7rs.runtime/          Bytecode DSL root + operations, continuations
