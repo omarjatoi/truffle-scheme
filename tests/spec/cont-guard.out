@@ -1,0 +1,5 @@
+(in)(out)(caught boom)
+(in)(out)(in)(out)(outer 42)
+41
+1
+(caught late)
