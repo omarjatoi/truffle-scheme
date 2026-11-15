@@ -70,7 +70,7 @@ before anything else is built on top of them.
   - **Report:** whether Truffle's frame copy is enough to resume a
     `ContinuationRootNode` more than once, which APIs were used, how block
     scoping behaved, and any gaps or workarounds.
-- [ ] **M0-03 · Spike: cost of the call-site check under the JIT** *(needs M0-02)*
+- [x] **M0-03 · Spike: cost of the call-site check under the JIT** *(needs M0-02)*
   - Compare `fib(30)` and `tak` with and without the call → `IsCapture` →
     `SuspendFrame` protocol, on the GraalVM 25.5 JIT.
   - **Done when** the report has overhead numbers and evidence (graphs dumped

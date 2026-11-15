@@ -4,6 +4,7 @@ import com.oracle.truffle.api.bytecode.BytecodeRootNode;
 import com.oracle.truffle.api.bytecode.ContinuationRootNode;
 import com.oracle.truffle.api.bytecode.GenerateBytecode;
 import com.oracle.truffle.api.bytecode.Operation;
+import com.oracle.truffle.api.bytecode.Variadic;
 import com.oracle.truffle.api.bytecode.Yield;
 import com.oracle.truffle.api.dsl.Bind;
 import com.oracle.truffle.api.dsl.Cached;
@@ -40,6 +41,39 @@ public abstract class SpikeNode extends RootNode implements BytecodeRootNode {
         static Object doIndirect(FnRef fn, Object box, Object mode,
                         @Cached IndirectCallNode callNode) {
             return callNode.call(fn.target, box, mode);
+        }
+    }
+
+    /** M0-03: calls a function with any number of arguments (fib, tak). */
+    @Operation
+    public static final class CallN {
+        @Specialization(guards = "fn == cachedFn", limit = "3")
+        static Object doDirect(FnRef fn, @Variadic Object[] args,
+                        @Cached("fn") FnRef cachedFn,
+                        @Cached("create(cachedFn.target)") DirectCallNode callNode) {
+            return callNode.call(args);
+        }
+
+        @Specialization(replaces = "doDirect")
+        static Object doIndirect(FnRef fn, @Variadic Object[] args,
+                        @Cached IndirectCallNode callNode) {
+            return callNode.call(fn.target, args);
+        }
+    }
+
+    @Operation
+    public static final class Sub {
+        @Specialization
+        static long doLong(long left, long right) {
+            return left - right;
+        }
+    }
+
+    @Operation
+    public static final class Lt {
+        @Specialization
+        static boolean doLong(long left, long right) {
+            return left < right;
         }
     }
 
