@@ -160,6 +160,7 @@ suite = {
             # SCHEME reaches the module path via SCHEME_TEST's distDependencies.
             "dependencies": [
                 "scheme.reader",
+                "scheme.compiler",
                 "scheme.launcher",
                 "mx:JUNIT",
                 "POLYGLOT",
@@ -184,6 +185,7 @@ suite = {
                     "scheme.runtime.BuiltinLibrary",
                 ],
                 "exports": [
+                    "scheme.compiler",
                     "scheme.reader",
                     "scheme.runtime",
                     "scheme.runtime.printer",

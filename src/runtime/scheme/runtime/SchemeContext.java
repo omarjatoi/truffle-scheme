@@ -18,6 +18,12 @@ public final class SchemeContext {
     public final SymbolTable symbols = new SymbolTable();
     public final GlobalEnvironment globals = new GlobalEnvironment();
     private final PrintStream out;
+    /**
+     * The top-level syntactic bindings (macros, shadowed keywords), which persist from one program to
+     * the next. Owned by the compiler ({@code scheme.compiler.SyntacticEnvironment}), which sits
+     * above the runtime.
+     */
+    public Object syntacticEnvironment;
     private DynEnv dynamicEnv = DynEnv.INITIAL;
     /** Nested non-tail calls since the root prompt (stack-depth spill, design.md "Continuations"). */
     public int callDepth;
