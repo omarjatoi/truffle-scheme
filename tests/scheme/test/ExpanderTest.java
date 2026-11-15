@@ -133,7 +133,6 @@ public class ExpanderTest {
         assertTrue(showError("(set! lambda 1)").getMessage().contains("set! of a syntax keyword"));
         assertTrue(showError("(lambda (1) 1)").getMessage().contains("invalid parameter 1"));
         assertTrue(showError("(define-syntax m 5)").getMessage().contains("not a transformer"));
-        assertTrue(showError("(%guard (e (#t 1)) 2)").getMessage().contains("M3-06"));
         assertTrue(showError("(include \"x.scm\")").getMessage().contains("cannot find file x.scm"));
         assertTrue(showError("(display 1)\n(syntax-rules ())").getMessage().contains("line 2"));
     }

@@ -282,7 +282,7 @@ They follow design.md D3, D4, D5 and D7.
   - Named `let` and `do` must still compile their self tail calls to loops.
   - **Done when** R7RS §4.2's examples pass as unit tests, and
     `tests/diff/` programs using the derived forms match chibi.
-- [ ] **M3-06 · guard, parameterize and records** *(needs M3-05)*
+- [x] **M3-06 · guard, parameterize and records** *(needs M3-05)*
   - `raise`, `raise-continuable`, `with-exception-handler` and `error` in
     the prelude through `DynEnv.handlers` (D8). Primitive errors are raised
     in the frame that called the primitive (D8).

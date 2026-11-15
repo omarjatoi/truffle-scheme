@@ -11,5 +11,9 @@
    ;; control.scm
    dynamic-wind call-with-values %rewind %receive %continue
    ;; lazy.scm
-   make-promise promise? force)
-  (include "syntax.scm" "lists.scm" "control.scm" "lazy.scm"))
+   make-promise promise? force
+   ;; exceptions.scm, parameters.scm, records.scm
+   with-exception-handler raise raise-continuable error guard make-parameter parameterize
+   define-record-type)
+  (include "syntax.scm" "lists.scm" "control.scm" "lazy.scm" "exceptions.scm" "parameters.scm"
+           "records.scm"))

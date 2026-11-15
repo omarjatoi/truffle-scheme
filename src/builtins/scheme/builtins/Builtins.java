@@ -25,6 +25,7 @@ import scheme.runtime.value.SErrorObject;
 import scheme.runtime.value.SPair;
 import scheme.runtime.value.SVector;
 import scheme.runtime.value.SString;
+import scheme.runtime.value.SSymbol;
 
 /**
  * The primitives M1 needs (arithmetic, comparison, pairs, output). Every one is a leaf: none calls
@@ -35,7 +36,7 @@ public final class Builtins implements BuiltinLibrary {
 
     @Override
     public List<PrimitiveSpec> primitives() {
-        return List.of(
+        List<PrimitiveSpec> all = new java.util.ArrayList<>(List.of(
                         new PrimitiveSpec("+", 0, -1, Add::new),
                         new PrimitiveSpec("-", 1, -1, Sub::new),
                         new PrimitiveSpec("*", 0, -1, Mul::new),
@@ -59,6 +60,8 @@ public final class Builtins implements BuiltinLibrary {
                         new PrimitiveSpec("null?", 1, 1, () -> new TypeTest(TypeTest.NULL)),
                         new PrimitiveSpec("pair?", 1, 1, () -> new TypeTest(TypeTest.PAIR)),
                         new PrimitiveSpec("not", 1, 1, () -> new TypeTest(TypeTest.FALSE)),
+                        new PrimitiveSpec("symbol?", 1, 1, () -> new TypeTest(TypeTest.SYMBOL)),
+                        new PrimitiveSpec("string?", 1, 1, () -> new TypeTest(TypeTest.STRING)),
                         new PrimitiveSpec("eq?", 2, 2, Eq::new),
                         new PrimitiveSpec("display", 1, 1, () -> new Output(Printer.Mode.DISPLAY)),
                         new PrimitiveSpec("write", 1, 1, () -> new Output(Printer.Mode.WRITE)),
@@ -80,7 +83,9 @@ public final class Builtins implements BuiltinLibrary {
                         new PrimitiveSpec("%dynamic-env?", 1, 1, () -> new DynamicEnv(DynamicEnv.TEST)),
                         new PrimitiveSpec("%dynamic-env-winders", 1, 1, () -> new DynamicEnv(DynamicEnv.WINDERS)),
                         new PrimitiveSpec("%dynamic-env-parameterization", 1, 1, () -> new DynamicEnv(DynamicEnv.PARAMETERIZATION)),
-                        new PrimitiveSpec("%dynamic-env-handlers", 1, 1, () -> new DynamicEnv(DynamicEnv.HANDLERS)));
+                        new PrimitiveSpec("%dynamic-env-handlers", 1, 1, () -> new DynamicEnv(DynamicEnv.HANDLERS))));
+        all.addAll(ExceptionsAndRecords.primitives());
+        return all;
     }
 
     static final class Add extends PrimitiveNode {
@@ -335,6 +340,8 @@ public final class Builtins implements BuiltinLibrary {
         static final int NULL = 0;
         static final int PAIR = 1;
         static final int FALSE = 2;
+        static final int SYMBOL = 3;
+        static final int STRING = 4;
 
         private final int kind;
 
@@ -348,6 +355,8 @@ public final class Builtins implements BuiltinLibrary {
             return switch (kind) {
                 case NULL -> x == SConstant.EMPTY_LIST;
                 case PAIR -> x instanceof SPair;
+                case SYMBOL -> x instanceof SSymbol;
+                case STRING -> x instanceof SString;
                 default -> x instanceof Boolean b && !b;
             };
         }

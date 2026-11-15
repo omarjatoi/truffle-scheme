@@ -34,6 +34,10 @@ import scheme.runtime.value.SClosure;
  */
 final class PromptDriver extends Node {
 
+    /** An error to raise for the innermost pending frame. */
+    private record PendingRaise(Object condition) {
+    }
+
     @Child private IndirectCallNode callNode = IndirectCallNode.create();
     @Child private ResumeNode resumeNode = PromptDriverFactory.ResumeNodeGen.create();
 
@@ -48,8 +52,16 @@ final class PromptDriver extends Node {
         DynEnv promptEnv = context.getDynamicEnv();
         SegmentList pending = initialPending;
         Object value = first;
+        // True while calling raise for the innermost pending segment (see the SchemeError catch).
+        boolean raising = false;
         while (true) {
             try {
+                if (value instanceof PendingRaise r) {
+                    raising = true;
+                    value = callWithProcedure(context.raise, new Object[]{null, r.condition()});
+                    raising = false;
+                    continue;
+                }
                 if (value instanceof Capture capture) {
                     switch (capture.kind) {
                         case REINSTATE: {
@@ -129,6 +141,23 @@ final class PromptDriver extends Node {
                     }
                     // A PromptMarker: that prompt returns the value normally.
                 }
+            } catch (SchemeError e) {
+                // An error escaped a frame this driver called (a resumed segment, a tail call, a
+                // spilled call). Unsegmented, it would have reached the call site of the next pending
+                // frame, which raises it there (design.md D8): so raise it for that frame. If raise
+                // itself fails, that frame is unwound too, and the error goes to the one after it.
+                if (raising) {
+                    raising = false;
+                    pending = pending.tail;
+                }
+                while (pending != null && !(pending.head instanceof Capture.Segment)) {
+                    // A flattened inner prompt: the error leaves it, to the frame that installed it.
+                    pending = pending.tail;
+                }
+                if (!e.isRaisable() || !(context.raise instanceof SClosure) || pending == null) {
+                    throw e;
+                }
+                value = new PendingRaise(e.getErrorObject());
             } catch (InvokeContinuation e) {
                 if (tag != Capture.ROOT_TAG) {
                     throw e;

@@ -27,6 +27,8 @@ public final class SchemeContext {
     public Object compilerState;
     /** The prelude's {@code %receive} (control.scm), installed by {@code %set-receive!}. */
     public Object receive;
+    /** The prelude's {@code raise} (exceptions.scm), installed by {@code %set-raise!} (design.md D8). */
+    public Object raise;
     private DynEnv dynamicEnv = DynEnv.INITIAL;
     /** Nested non-tail calls since the root prompt (stack-depth spill, design.md "Continuations"). */
     public int callDepth;
