@@ -230,7 +230,7 @@ Tasks marked *(early)* need nothing from M2 that is still open (M2-00 and M2-07
 only add the spec tests and their runner), so they can start before M2's exit.
 They follow design.md D3, D4, D5 and D7.
 
-- [ ] **M3-01 · Syntax objects and source positions** *(early)*
+- [x] **M3-01 · Syntax objects and source positions** *(early)*
   - The reader can produce syntax objects: a datum, its set of scopes, and
     its source position (`SourceSection`), with no Java recursion (rule 4).
     `read` still produces plain data.

@@ -42,7 +42,7 @@ public class SyntaxTest {
         SPair list = (SPair) form.datum;
         Syntax define = (Syntax) list.car;
         assertSame(symbols.intern("define"), define.datum);
-        assertEquals(1, define.source.getStartColumn());
+        assertEquals(2, define.source.getStartColumn());
         Syntax call = (Syntax) ((SPair) ((SPair) list.cdr).cdr).car;
         assertEquals(2, call.source.getStartLine());
         assertEquals(3, call.source.getStartColumn());
