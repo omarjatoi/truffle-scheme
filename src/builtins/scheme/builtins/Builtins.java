@@ -5,6 +5,7 @@ import java.util.List;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 
 import scheme.runtime.BuiltinLibrary;
+import scheme.runtime.Capture;
 import scheme.runtime.DynEnv;
 import scheme.runtime.PrimitiveNode;
 import scheme.runtime.PrimitiveSpec;
@@ -46,6 +47,8 @@ public final class Builtins implements BuiltinLibrary {
                         new PrimitiveSpec("write", 1, 1, () -> new Output(Printer.Mode.WRITE)),
                         new PrimitiveSpec("newline", 0, 0, () -> new Output(null)),
                         // Internal primitives for the prelude (design.md D5).
+                        new PrimitiveSpec("call/cc", 1, 1, CallCC::new),
+                        new PrimitiveSpec("call-with-current-continuation", 1, 1, CallCC::new),
                         new PrimitiveSpec("%error", 1, -1, ErrorPrimitive::new),
                         new PrimitiveSpec("%current-dynamic-env", 0, 0, () -> new DynamicEnv(DynamicEnv.CURRENT)),
                         new PrimitiveSpec("%set-dynamic-env!", 1, 1, () -> new DynamicEnv(DynamicEnv.SET)),
@@ -311,6 +314,18 @@ public final class Builtins implements BuiltinLibrary {
         @TruffleBoundary
         private static SchemeError notDynEnv(Object value) {
             return new SchemeError("not a dynamic environment: " + Printer.print(value, Printer.Mode.WRITE));
+        }
+    }
+
+    /**
+     * {@code (call/cc receiver)}: starts a capture (design.md "Continuations"). It doesn't call the
+     * receiver itself (rule 1): it returns a Capture, every call site on the way out suspends its
+     * frame, and the prompt calls the receiver with the completed continuation.
+     */
+    static final class CallCC extends PrimitiveNode {
+        @Override
+        public Object execute(Object[] args) {
+            return new Capture(args[0], SchemeContext.get(this).getDynamicEnv());
         }
     }
 }
