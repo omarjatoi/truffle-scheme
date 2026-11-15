@@ -23,6 +23,8 @@ import com.oracle.truffle.api.interop.TruffleObject;
  * <li>{@link Kind#SPILL}: stack-depth spill. A call site past the depth threshold captures up to
  * the root prompt instead of calling; the root prompt makes the call ({@link #value}, an argument
  * array with the procedure at index 0) on a fresh Java stack.</li>
+ * <li>{@link Kind#TORTURE}: torture mode (M2-06). A call returned {@link #value} normally; capture
+ * up to the root prompt anyway, which resumes every frame from a copy with that value.</li>
  * </ul>
  */
 public final class Capture implements TruffleObject {
@@ -31,7 +33,8 @@ public final class Capture implements TruffleObject {
         FULL,
         DELIMITED,
         REINSTATE,
-        SPILL
+        SPILL,
+        TORTURE
     }
 
     /** One suspended frame: resumed by calling {@code root} with a copy of {@code frame}. */
@@ -80,6 +83,10 @@ public final class Capture implements TruffleObject {
 
     public static Capture reinstate(Continuation continuation, Object value, DynEnv dynEnv) {
         return new Capture(Kind.REINSTATE, null, null, dynEnv, continuation, value);
+    }
+
+    public static Capture torture(Object value, DynEnv dynEnv) {
+        return new Capture(Kind.TORTURE, ROOT_TAG, null, dynEnv, null, value);
     }
 
     public static Capture spill(Object[] arguments, DynEnv dynEnv) {

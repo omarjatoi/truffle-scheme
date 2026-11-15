@@ -94,6 +94,20 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
     static final int SPILL_DEPTH = Integer.getInteger("scheme.spillDepth", 50);
 
     /**
+     * Torture mode (M2-06, AGENTS.md rules 2 and 3): after every non-tail call of a Scheme procedure
+     * returns, capture up to the root prompt and resume from copies. A constant, so it costs nothing
+     * when off. Primitive calls are not tortured: they can't capture anything.
+     */
+    static final boolean TORTURE = Boolean.getBoolean("scheme.torture");
+
+    static Object tortured(Object result, RootCallTarget callee, SchemeContext context) {
+        if (TORTURE && !(result instanceof Capture) && !(callee.getRootNode() instanceof PrimitiveRootNode)) {
+            return Capture.torture(result, context.getDynamicEnv());
+        }
+        return result;
+    }
+
+    /**
      * A non-tail call: calls the procedure, then runs the trampoline. Past {@link #SPILL_DEPTH}
      * nested calls it returns a spill capture instead of calling.
      */
@@ -111,7 +125,7 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
                 return Capture.spill(withProcedure(procedure, arguments), context.getDynamicEnv());
             }
             try {
-                return trampoline(callNode.call(withProcedure(procedure, arguments)), trampolineNode);
+                return tortured(trampoline(callNode.call(withProcedure(procedure, arguments)), trampolineNode), cachedTarget, context);
             } finally {
                 context.callDepth--;
             }
@@ -127,7 +141,7 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
                 return Capture.spill(withProcedure(procedure, arguments), context.getDynamicEnv());
             }
             try {
-                return trampoline(trampolineNode.call(procedure.callTarget, withProcedure(procedure, arguments)), trampolineNode);
+                return tortured(trampoline(trampolineNode.call(procedure.callTarget, withProcedure(procedure, arguments)), trampolineNode), procedure.callTarget, context);
             } finally {
                 context.callDepth--;
             }

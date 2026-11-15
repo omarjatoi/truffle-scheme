@@ -205,7 +205,7 @@ and the M0 spike results recorded there. Only M2-07 waits for the human-written
     spilling moves frames to the heap, about 350 bytes each, so 10M pending
     frames would need about 3.5 GB of heap. The Java stack stays constant
     either way.
-- [ ] **M2-06 · Torture mode** *(needs M2-02)*
+- [x] **M2-06 · Torture mode** *(needs M2-02)*
   - `--torture` (`-Dscheme.torture=true`): capture and resume at every
     non-tail call, resuming every segment twice (AGENTS.md rules 2 and 3).
     `mx r7rs-test --torture`, `mx tests torture`, and a CI step.
