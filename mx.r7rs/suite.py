@@ -8,8 +8,7 @@ suite = {
     "name": "r7rs",
     "url": "https://github.com/omarjatoi/truffle-scheme",
     "groupId": "org.r7rs",
-    # SpotBugs on every non-test Java project (GraalVM's linter; the full gate's
-    # SpotBugs task, and ours in `mx gate --tags fast`).
+    # SpotBugs on every non-test Java project (GraalVM's linter; `mx checks spotbugs`).
     "spotbugs": True,
     "developer": {
         "name": "truffle-scheme contributors",
