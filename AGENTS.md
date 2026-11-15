@@ -147,6 +147,7 @@ mx r7rs-test --compile                    # Graal JIT; compile immediately; fail
 mx r7rs-spec                              # tests/spec (tail-call space, continuations, depth)
 mx r7rs-diff path/to/file.scm             # run under chibi and under us; compare stdout + exit status
 mx r7rs-diff-all                          # every program in tests/diff/ (part of mx tests)
+mx r7rs-space                             # 10M-iteration tail loop under -Xss256k -Xmx64m (part of mx tests)
 mx r7rs-status                            # regenerate the status block in docs/plan.md
 mx r7rs-check                             # rule 1: Java builtins never call Scheme
 mx eclipseformat                          # format Java code (GraalVM's Eclipse formatter settings)

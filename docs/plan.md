@@ -140,7 +140,7 @@ the spike is still running.
   - `CallSiteEmitter` and the `TailCall` trampoline. Self tail calls become
     loops.
   - Global cells with `Assumption`s (D7).
-- [ ] **M1-06 · Vertical slice** *(needs M1-02, M1-04, M1-05)*
+- [x] **M1-06 · Vertical slice** *(needs M1-02, M1-04, M1-05)*
   - A hand-written program using only core forms defines `fib`, prints
     `(fib 25)`, and matches chibi under `mx r7rs-diff`.
   - A 10M-iteration tail-recursive loop runs in constant space.
