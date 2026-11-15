@@ -63,7 +63,13 @@ sessions may be running at once, so claim work before doing it.
 
 Use GitHub's native stacked PRs (the official `gh stack` extension) when a
 task depends on work that is done but not merged yet. That way agents don't
-sit waiting for merges. Independent tasks still branch from `main`.
+sit waiting for merges.
+
+- **What a stack is for.** A stack covers one milestone, one feature, or
+  another logical group of work, such as the M0 spike tasks or a fan-out area
+  in M4. Everything else, including docs, tooling and unrelated fixes, is a
+  one-off PR from `main`. Don't stack unrelated work just because it happens
+  to be open at the same time.
 
 - **Starting a stacked task.** Check out the top of the stack you depend on
   (`gh stack checkout <pr-number>`). If that PR isn't in a stack yet,
