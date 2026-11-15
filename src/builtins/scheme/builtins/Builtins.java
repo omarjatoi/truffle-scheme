@@ -53,6 +53,7 @@ public final class Builtins implements BuiltinLibrary {
                         new PrimitiveSpec("call/cc", 1, 1, CallCC::new),
                         new PrimitiveSpec("call-with-current-continuation", 1, 1, CallCC::new),
                         new PrimitiveSpec("%capture-to-prompt", 2, 2, CaptureToPrompt::new),
+                        new PrimitiveSpec("%torture-captures", 0, 0, TortureCaptures::new),
                         new PrimitiveSpec("%apply-continuation", 2, 2, () -> new ContinuationOps(ContinuationOps.APPLY)),
                         new PrimitiveSpec("%reinstate", 2, 2, () -> new ContinuationOps(ContinuationOps.REINSTATE)),
                         new PrimitiveSpec("%continuation-composable?", 1, 1, () -> new ContinuationOps(ContinuationOps.COMPOSABLE)),
@@ -401,6 +402,14 @@ public final class Builtins implements BuiltinLibrary {
         @TruffleBoundary
         private static SchemeError notAContinuation(Object value) {
             return new SchemeError("not a continuation: " + Printer.print(value, Printer.Mode.WRITE));
+        }
+    }
+
+    /** {@code (%torture-captures)}: how many torture-mode captures this context has completed (M2-06 tests). */
+    static final class TortureCaptures extends PrimitiveNode {
+        @Override
+        public Object execute(Object[] args) {
+            return SchemeContext.get(this).tortureCaptures;
         }
     }
 }
