@@ -14,6 +14,9 @@
 ;; `mx r7rs-test` and `mx r7rs-status` count these lines. The same shim runs
 ;; under chibi-scheme (`chibi-scheme -I tests/lib ...`) to get each section's
 ;; total number of tests.
+;;
+;; approx-equal? and test-equal? are copied from chibi-scheme's lib/chibi/test.scm,
+;; Copyright (c) 2009-2021 Alex Shinn, BSD-3-Clause (see tests/r7rs/COPYING).
 
 (define-library (chibi test)
   (export test test-equal test-assert test-not test-values test-error
