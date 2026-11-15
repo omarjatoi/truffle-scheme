@@ -28,6 +28,7 @@ import scheme.runtime.printer.Printer;
 import scheme.runtime.value.SConstant;
 import scheme.runtime.value.SPair;
 import scheme.runtime.value.SSymbol;
+import scheme.runtime.value.SVector;
 import scheme.runtime.value.SymbolTable;
 
 /**
@@ -533,6 +534,12 @@ public final class Expander {
         if (step.form() instanceof Expr e) {
             return e;
         }
+        if (step.form() instanceof PrimCall call) {
+            List<Object> parts = new ArrayList<>(call.args.length + 1);
+            parts.add(new Ast.GlobalRef(call.cell));
+            parts.addAll(List.of(call.args));
+            return new SeqLikeFrame(parts, lambda, SeqLikeFrame.CALL);
+        }
         if (step.form() instanceof LambdaSpec spec) {
             return new LambdaFrame(spec.formals(), spec.body(), lambda, step.name(), spec.form());
         }
@@ -575,6 +582,14 @@ public final class Expander {
                     throw syntax("quote takes one datum", form);
                 }
                 return new Ast.Const(Syntax.toDatum(f.get(1)));
+            case QUASIQUOTE:
+                if (f.size() != 2) {
+                    throw syntax("quasiquote takes one template", form);
+                }
+                return quasiquote(f.get(1), lambda);
+            case UNQUOTE:
+            case UNQUOTE_SPLICING:
+                throw syntax(c.keyword + " outside quasiquote", form);
             case IF:
                 if (f.size() != 3 && f.size() != 4) {
                     throw syntax("if takes 2 or 3 subforms", form);
@@ -952,6 +967,138 @@ public final class Expander {
             }
         }
         return new BodyFrame(addScope(f.subList(2, f.size()), scope), lambda, form);
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // quasiquote (R7RS §4.2.8)
+
+    /** A call of a primitive, whose arguments are forms to expand, expressions, or calls. */
+    private static final class PrimCall {
+        final GlobalCell cell;
+        final Object[] args;
+        /**
+         * What this call folds to: a constant if all its arguments are constants, or the spliced
+         * expression itself for {@code (append e '())} (so {@code `(a ,@l)} shares l).
+         */
+        Object folded;
+
+        PrimCall(GlobalCell cell, Object... args) {
+            this.cell = cell;
+            this.args = args;
+        }
+    }
+
+    private GlobalCell primitive(String name) {
+        return (libraries == null ? namespace : libraries.primitives()).cell(symbols.intern(name));
+    }
+
+    private record QTask(Object template, int depth, Object[] slot, int index) {
+    }
+
+    /**
+     * Expands a quasiquote template into calls of the primitives cons, append and list->vector
+     * (which the use site can't shadow), with constant parts folded back into literals. Nested
+     * quasiquotes raise the level that unquote must reach. Built top-down on an explicit stack
+     * (rule 4).
+     */
+    private Object quasiquote(Object template, Lambda lambda) {
+        GlobalCell cons = primitive("cons");
+        GlobalCell append = primitive("append");
+        GlobalCell listToVector = primitive("list->vector");
+        Object[] root = new Object[1];
+        // Every call, each after the call that contains it.
+        List<PrimCall> calls = new ArrayList<>();
+        Deque<QTask> tasks = new ArrayDeque<>();
+        tasks.push(new QTask(template, 0, root, 0));
+        while (!tasks.isEmpty()) {
+            QTask t = tasks.pop();
+            Object d = Syntax.e(t.template());
+            Object result;
+            if (d instanceof SPair p) {
+                CoreForm head = isIdentifier(p.car) && resolve(p.car) instanceof CoreForm c ? c : null;
+                boolean special = head == CoreForm.UNQUOTE || head == CoreForm.QUASIQUOTE || head == CoreForm.UNQUOTE_SPLICING;
+                List<Object> two = special ? list(t.template()) : null;
+                if (special && two.size() != 2) {
+                    throw syntax(head.keyword + " takes one expression", t.template());
+                }
+                Object car = Syntax.e(p.car);
+                CoreForm carHead = car instanceof SPair q && isIdentifier(q.car) && resolve(q.car) instanceof CoreForm c ? c : null;
+                if (head == CoreForm.UNQUOTE && t.depth() == 0) {
+                    result = two.get(1);
+                } else if (head == CoreForm.UNQUOTE_SPLICING && t.depth() == 0) {
+                    throw syntax("unquote-splicing outside a list", t.template());
+                } else if (special) {
+                    // (unquote e), (unquote-splicing e) or (quasiquote e) at a deeper level: a list
+                    // of the keyword and e, one level in or out.
+                    int depth = t.depth() + (head == CoreForm.QUASIQUOTE ? 1 : -1);
+                    PrimCall rest = new PrimCall(cons, null, new Ast.Const(SConstant.EMPTY_LIST));
+                    PrimCall call = new PrimCall(cons, new Ast.Const(symbols.intern(head.keyword)), rest);
+                    calls.add(call);
+                    calls.add(rest);
+                    tasks.push(new QTask(two.get(1), depth, rest.args, 0));
+                    t.slot()[t.index()] = call;
+                    continue;
+                } else if (carHead == CoreForm.UNQUOTE_SPLICING && t.depth() == 0) {
+                    List<Object> splice = list(p.car);
+                    if (splice.size() != 2) {
+                        throw syntax("unquote-splicing takes one expression", p.car);
+                    }
+                    PrimCall call = new PrimCall(append, splice.get(1), null);
+                    tasks.push(new QTask(p.cdr, t.depth(), call.args, 1));
+                    result = call;
+                } else {
+                    PrimCall call = new PrimCall(cons, null, null);
+                    tasks.push(new QTask(p.cdr, t.depth(), call.args, 1));
+                    tasks.push(new QTask(p.car, t.depth(), call.args, 0));
+                    result = call;
+                }
+            } else if (d instanceof SVector v) {
+                Object elements = SConstant.EMPTY_LIST;
+                for (int i = v.elements.length - 1; i >= 0; i--) {
+                    elements = new SPair(v.elements[i], elements);
+                }
+                PrimCall call = new PrimCall(listToVector, (Object) null);
+                tasks.push(new QTask(elements, t.depth(), call.args, 0));
+                result = call;
+            } else {
+                result = new Ast.Const(Syntax.toDatum(t.template()));
+            }
+            if (result instanceof PrimCall call) {
+                calls.add(call);
+            }
+            t.slot()[t.index()] = result;
+        }
+        // Fold innermost first: a call whose arguments are all constants becomes a constant.
+        for (int i = calls.size() - 1; i >= 0; i--) {
+            PrimCall call = calls.get(i);
+            boolean constant = true;
+            for (int k = 0; k < call.args.length; k++) {
+                if (call.args[k] instanceof PrimCall inner && inner.folded != null) {
+                    call.args[k] = inner.folded;
+                }
+                constant &= call.args[k] instanceof Ast.Const;
+            }
+            if (call.cell == append && call.args[1] instanceof Ast.Const tail && tail.value == SConstant.EMPTY_LIST) {
+                call.folded = call.args[0];
+            } else if (constant && call.cell == cons) {
+                call.folded = new Ast.Const(new SPair(((Ast.Const) call.args[0]).value, ((Ast.Const) call.args[1]).value));
+            } else if (constant && call.cell == listToVector) {
+                call.folded = new Ast.Const(new SVector(listElements(((Ast.Const) call.args[0]).value), false));
+            }
+        }
+        Object result = root[0] instanceof PrimCall call && call.folded != null ? call.folded : root[0];
+        if (result instanceof Expr e) {
+            return e;
+        }
+        return new SeqLikeFrame(List.of(result), lambda, SeqLikeFrame.SEQ);
+    }
+
+    private static Object[] listElements(Object list) {
+        List<Object> items = new ArrayList<>();
+        for (Object l = list; l instanceof SPair p; l = p.cdr) {
+            items.add(p.car);
+        }
+        return items.toArray();
     }
 
     /** (%prompt tag body ...): {@code (%call-with-prompt tag (lambda () body ...))} (D4). */

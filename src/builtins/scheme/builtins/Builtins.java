@@ -13,8 +13,12 @@ import scheme.runtime.PrimitiveNode;
 import scheme.runtime.PrimitiveSpec;
 import scheme.runtime.SchemeContext;
 import scheme.runtime.SchemeError;
+import scheme.runtime.TailCall;
 import scheme.runtime.printer.Printer;
+import scheme.runtime.value.SBigInteger;
 import scheme.runtime.value.SChar;
+import scheme.runtime.value.SComplex;
+import scheme.runtime.value.SRational;
 import scheme.runtime.value.MultipleValues;
 import scheme.runtime.value.SConstant;
 import scheme.runtime.value.SErrorObject;
@@ -42,6 +46,14 @@ public final class Builtins implements BuiltinLibrary {
                         new PrimitiveSpec(">=", 1, -1, () -> new Compare(">=", Compare.GE)),
                         new PrimitiveSpec("cons", 2, 2, Cons::new),
                         new PrimitiveSpec("vector", 0, -1, MakeVector::new),
+                        new PrimitiveSpec("list->vector", 1, 1, ListToVector::new),
+                        new PrimitiveSpec("append", 0, -1, Append::new),
+                        new PrimitiveSpec("set-car!", 2, 2, () -> new SetPair(true)),
+                        new PrimitiveSpec("set-cdr!", 2, 2, () -> new SetPair(false)),
+                        new PrimitiveSpec("eqv?", 2, 2, Eqv::new),
+                        new PrimitiveSpec("values", 0, -1, Values::new),
+                        new PrimitiveSpec("%values->list", 1, 1, ValuesToList::new),
+                        new PrimitiveSpec("apply", 1, -1, Apply::new),
                         new PrimitiveSpec("car", 1, 1, () -> new PairAccess("car", true)),
                         new PrimitiveSpec("cdr", 1, 1, () -> new PairAccess("cdr", false)),
                         new PrimitiveSpec("null?", 1, 1, () -> new TypeTest(TypeTest.NULL)),
@@ -165,6 +177,134 @@ public final class Builtins implements BuiltinLibrary {
         @Override
         public Object execute(Object[] args) {
             return new SVector(args.clone(), false);
+        }
+    }
+
+    /** {@code (list->vector list)}. */
+    static final class ListToVector extends PrimitiveNode {
+        @Override
+        public Object execute(Object[] args) {
+            return new SVector(Lists.toArray("list->vector", args[0]), false);
+        }
+    }
+
+    /** {@code (append list ... obj)}: copies every list but the last, which is shared. */
+    static final class Append extends PrimitiveNode {
+        @Override
+        public Object execute(Object[] args) {
+            return append(args);
+        }
+
+        @TruffleBoundary
+        private static Object append(Object[] args) {
+            if (args.length == 0) {
+                return SConstant.EMPTY_LIST;
+            }
+            Object result = args[args.length - 1];
+            for (int i = args.length - 2; i >= 0; i--) {
+                Object[] items = Lists.toArray("append", args[i]);
+                for (int k = items.length - 1; k >= 0; k--) {
+                    result = new SPair(items[k], result);
+                }
+            }
+            return result;
+        }
+    }
+
+    static final class SetPair extends PrimitiveNode {
+        private final boolean car;
+
+        SetPair(boolean car) {
+            this.car = car;
+        }
+
+        @Override
+        public Object execute(Object[] args) {
+            if (!(args[0] instanceof SPair p)) {
+                throw Lists.notAPair(car ? "set-car!" : "set-cdr!", args[0]);
+            }
+            if (car) {
+                p.car = args[1];
+            } else {
+                p.cdr = args[1];
+            }
+            return SConstant.UNSPECIFIED;
+        }
+    }
+
+    /** {@code (eqv? a b)} (R7RS §6.1): eq?, or numbers of the same exactness and value, or equal characters. */
+    static final class Eqv extends PrimitiveNode {
+        @Override
+        public Object execute(Object[] args) {
+            return eqv(args[0], args[1]);
+        }
+
+        @TruffleBoundary
+        static boolean eqv(Object a, Object b) {
+            if (a == b) {
+                return true;
+            }
+            if (a instanceof Long || a instanceof Double || a instanceof Boolean) {
+                return a.equals(b);
+            }
+            if (a instanceof SChar x) {
+                return b instanceof SChar y && x.codePoint == y.codePoint;
+            }
+            if (a instanceof SBigInteger x) {
+                return b instanceof SBigInteger y && x.value.equals(y.value);
+            }
+            if (a instanceof SRational x) {
+                return b instanceof SRational y && x.numerator.equals(y.numerator) && x.denominator.equals(y.denominator);
+            }
+            if (a instanceof SComplex x) {
+                return b instanceof SComplex y && eqv(x.real, y.real) && eqv(x.imag, y.imag);
+            }
+            return false;
+        }
+    }
+
+    /** {@code (values obj ...)}: one value is itself, otherwise MultipleValues (design.md D1). */
+    static final class Values extends PrimitiveNode {
+        @Override
+        public Object execute(Object[] args) {
+            return args.length == 1 ? args[0] : new MultipleValues(args.clone());
+        }
+    }
+
+    /** {@code (%values->list v)}: the values a producer returned, as a list (for call-with-values). */
+    static final class ValuesToList extends PrimitiveNode {
+        @Override
+        public Object execute(Object[] args) {
+            Object[] values = args[0] instanceof MultipleValues m ? m.values : new Object[]{args[0]};
+            Object result = SConstant.EMPTY_LIST;
+            for (int i = values.length - 1; i >= 0; i--) {
+                result = new SPair(values[i], result);
+            }
+            return result;
+        }
+    }
+
+    /**
+     * {@code (apply proc arg ... list)}: returns a tail call to proc (rule 1, design.md D5), which
+     * the call site's trampoline performs in constant space.
+     */
+    static final class Apply extends PrimitiveNode {
+        @Override
+        public Object execute(Object[] args) {
+            return tailCall(args);
+        }
+
+        @TruffleBoundary
+        private static TailCall tailCall(Object[] args) {
+            if (args.length == 1) {
+                return new TailCall(args[0], new Object[]{args[0]});
+            }
+            Object[] spread = Lists.toArray("apply", args[args.length - 1]);
+            Object[] all = new Object[args.length - 1 + spread.length];
+            all[0] = args[0];
+            System.arraycopy(args, 1, all, 1, args.length - 2);
+            System.arraycopy(spread, 0, all, args.length - 1, spread.length);
+            return new TailCall(args[0], all);
         }
     }
 

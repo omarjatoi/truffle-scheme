@@ -272,7 +272,7 @@ They follow design.md D3, D4, D5 and D7.
     forms, renamed exports, `cond-expand`, and `include`, and every vendored
     section *starts* (imports resolve), so the status block shows real
     numbers.
-- [ ] **M3-05 · Derived syntax** *(needs M3-03, M3-04)*
+- [x] **M3-05 · Derived syntax** *(needs M3-03, M3-04)*
   - R7RS §7.3's `syntax-rules` definitions in the prelude: `let`, `let*`,
     `letrec`, named `let`, `let-values`, `let*-values`, `define-values`,
     `cond` (with `=>`), `case` (with `=>`), `and`, `or`, `when`, `unless`,
