@@ -211,7 +211,7 @@ that M2-00 writes.
     `mx r7rs-test --torture`, `mx tests torture`, and a CI step.
   - **Done when** everything that passes without torture passes with it: unit
     tests, `tests/diff/`, and every conformance case that passes normally.
-- [ ] **M2-07 · Spec runner** *(needs M2-00)*
+- [x] **M2-07 · Spec runner** *(needs M2-00)*
   - `mx r7rs-spec` runs `tests/spec/` in the format M2-00 defines, under each
     case's limits. Also as `mx tests spec` and a CI step.
   - **Done when** every case runs and reports pass or fail. M2's exit needs

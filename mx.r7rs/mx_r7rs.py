@@ -326,9 +326,84 @@ def r7rs_vendor_chibi(args):
            f'{os.path.relpath(out_dir, _suite.dir)}: ' + ' '.join(r[0] for r in rows))
 
 
+# tests/spec cases that need something a later task brings: reported as SKIPPED, naming the task.
+# Remove an entry when its task lands (tests/spec/README.md).
+_SPEC_PENDING = {
+    'tail-derived': 'M3-05 (derived syntax)',
+    'cont-guard': 'M3-06 (guard, raise, with-exception-handler)',
+    'tail-apply': 'M4 (apply, values, call-with-values)',
+    'cont-exit': 'M4 (exit)',
+    'deep-equal': 'M4 (equal?, vector)',
+}
+
+_SPEC_HEADER = re.compile(r'^;;\s*(limits|exit):\s*(.*?)\s*$')
+
+
+def _spec_dir():
+    return join(_suite.dir, 'tests', 'spec')
+
+
+def _spec_case(name):
+    """(JVM limits, expected exit status, expected stdout) from tests/spec/<name>.scm's leading comments and <name>.out."""
+    limits, status = [], 0
+    with open(join(_spec_dir(), name + '.scm'), encoding='utf-8') as f:
+        for line in f:
+            if not line.startswith(';;'):
+                break
+            m = _SPEC_HEADER.match(line)
+            if m and m.group(1) == 'limits':
+                limits = m.group(2).split()
+            elif m:
+                status = int(m.group(2))
+    out = join(_spec_dir(), name + '.out')
+    if not exists(out):
+        mx.abort(f'tests/spec/{name}.scm has no expected stdout tests/spec/{name}.out')
+    with open(out, encoding='utf-8', newline='') as f:
+        return limits, status, f.read()
+
+
 def r7rs_spec(args):
-    """run tests/spec (tail-call space, continuations, depth)"""
-    _not_implemented('r7rs-spec', 'M2 (tests/spec is written by a human before M2 starts)')
+    """run tests/spec (tail-call space, continuations, depth), interpreted and with the JIT: [case...]"""
+    parser = argparse.ArgumentParser(prog='mx r7rs-spec')
+    parser.add_argument('cases', nargs='*', help='case names, e.g. tail-mutual (default: all)')
+    parsed = parser.parse_args(args)
+    names = sorted(f[:-len('.scm')] for f in os.listdir(_spec_dir()) if f.endswith('.scm'))
+    unknown = [c for c in parsed.cases if c not in names]
+    if unknown:
+        mx.abort(f'mx r7rs-spec: unknown case(s) {unknown}; cases: ' + ' '.join(names))
+    stale = [c for c in _SPEC_PENDING if c not in names]
+    if stale:
+        mx.abort(f'mx r7rs-spec: _SPEC_PENDING names cases that do not exist: {stale}')
+    failed, passed, skipped = [], 0, 0
+    for name in parsed.cases or names:
+        if name in _SPEC_PENDING:
+            mx.log(f'SKIPPED {name} (not implemented until {_SPEC_PENDING[name]})')
+            skipped += 1
+            continue
+        limits, status, expected = _spec_case(name)
+        problems = []
+        for label, vm_args in (('interpreter', r7rs_vm_args()), ('JIT', [])):
+            start = time.time()
+            rc, out, err = _run_ours(join(_spec_dir(), name + '.scm'), vm_args, limits)
+            seconds = time.time() - start
+            if rc != status or out != expected:
+                detail = f'exit {rc} (expected {status})' if rc != status else 'stdout differs'
+                if out != expected:
+                    diff = list(difflib.unified_diff(expected.splitlines(keepends=True), out.splitlines(keepends=True),
+                                                     fromfile='expected', tofile='actual', n=1))
+                    detail += '\n' + ''.join(l if len(l) < 200 else l[:200] + '...\n' for l in diff[:20]).rstrip('\n')
+                problems.append(f'{label} ({seconds:.1f}s): {detail}\n  stderr:\n{_tail(err)}')
+            else:
+                mx.log(f'  {name}: {label} ok ({seconds:.1f}s)')
+        if problems:
+            failed.append(name)
+            mx.log(f'FAIL    {name} {" ".join(limits)}\n  ' + '\n  '.join(problems))
+        else:
+            passed += 1
+            mx.log(f'PASS    {name} {" ".join(limits)}')
+    mx.log(f'r7rs-spec: {passed} passed, {len(failed)} failed, {skipped} skipped')
+    if failed:
+        mx.abort('r7rs-spec: failed: ' + ' '.join(failed))
 
 
 def _run_ours(file, vm_args, jvm_args=()):
@@ -355,7 +430,8 @@ def _tail(text, lines=5):
 #   that grows per iteration.
 # - M2-05: 1M-deep non-tail recursion under a 256k Java stack: stack-depth spill keeps the stack
 #   constant; the pending frames live on the heap (about 350 bytes each).
-# tests/spec/tail-* and deep-* (M2-00) will cover these in general.
+# tests/spec/tail-self-loop and deep-recursion (M2-00) check the same things; these stay as the
+# Done-when cases of M1-06 and M2-05.
 _SPACE_CASES = [
     ('tests/diff/loop-10m.scm', '10000000\n', ['-Xss256k', '-Xmx64m']),
     # Not in tests/diff/: chibi-scheme runs out of stack space on it.
@@ -551,7 +627,6 @@ _CHECKS = {
 # Tests whose machinery doesn't exist yet: reported as SKIPPED, not failed. Remove
 # an entry when its task lands.
 _PENDING_TESTS = {
-    'spec': 'M2 (tests/spec is written by a human before M2 starts)',
 }
 
 _TESTS = {
@@ -560,7 +635,7 @@ _TESTS = {
     'conformance': ('status block in docs/plan.md is up to date', lambda: r7rs_status(['--check'])),
     'diff': ('tests/diff/ matches chibi-scheme', lambda: r7rs_diff_all([])),
     'space': ('tail loop and deep recursion under small JVM limits (M1-06, M2-05)', lambda: r7rs_space([])),
-    'spec': ('tests/spec', None),
+    'spec': ('tests/spec: tail calls, continuations, depth (M2-00, M2-07)', lambda: r7rs_spec([])),
     'torture': ('everything that passes normally passes under --torture (M2-06)', lambda: r7rs_torture([])),
 }
 
@@ -608,7 +683,7 @@ mx.update_commands(_suite, {
     'checks': [checks, '[' + ' | '.join(_CHECKS) + ']...'],
     'tests': [tests, '[' + ' | '.join(_TESTS) + ']...'],
     'r7rs-test': [r7rs_test, '[section] [--torture] [--compile]'],
-    'r7rs-spec': [r7rs_spec, ''],
+    'r7rs-spec': [r7rs_spec, '[case...]'],
     'r7rs-diff': [r7rs_diff, 'file.scm [--compile] [--torture]'],
     'r7rs-diff-all': [r7rs_diff_all, '[--compile] [--torture]'],
     'r7rs-space': [r7rs_space, ''],
