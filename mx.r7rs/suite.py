@@ -138,6 +138,17 @@ suite = {
             "javaCompliance": "25+",
             "checkstyle": "scheme.runtime",
         },
+        "scheme.launcher": {
+            # Host-side tools that embed the language: the conformance runner (M1-01).
+            "dir": "mx.r7rs/projects/launcher",
+            "sourceDirs": ["../../../src/launcher"],
+            "dependencies": [
+                "POLYGLOT",
+                "TRUFFLE_RUNTIME",
+            ],
+            "javaCompliance": "25+",
+            "checkstyle": "scheme.runtime",
+        },
         "scheme.test": {
             "dir": "mx.r7rs/projects/test",
             "sourceDirs": ["../../../tests"],
@@ -182,6 +193,26 @@ suite = {
                 "TRUFFLE_API",
             ],
             "description": "R7RS-small Scheme on GraalVM Truffle",
+            "maven": False,
+        },
+        "SCHEME_LAUNCHER": {
+            "moduleInfo": {
+                "name": "scheme.launcher",
+            },
+            "useModulePath": True,
+            "dependencies": ["scheme.launcher"],
+            "distDependencies": ["SCHEME"],
+            "exclude": [
+                "COLLECTIONS",
+                "WORD",
+                "NATIVEIMAGE",
+                "JNIUTILS",
+                "NATIVEBRIDGE",
+                "POLYGLOT",
+                "TRUFFLE_API",
+                "TRUFFLE_COMPILER",
+                "TRUFFLE_RUNTIME",
+            ],
             "maven": False,
         },
         "SCHEME_TEST": {
