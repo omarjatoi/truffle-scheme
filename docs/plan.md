@@ -128,7 +128,7 @@ the spike is still running.
   - All D1 value types, with arithmetic stubbed to fixnums and flonums only.
   - `write`, `display`, `write-shared` and `write-simple`, with cycle
     handling (D9).
-- [ ] **M1-04 · Reader** *(spike-independent; needs M1-03)*
+- [x] **M1-04 · Reader** *(spike-independent; needs M1-03)*
   - The full R7RS datum syntax: every number syntax (parsed into the D1
     types, or rejected clearly while the tower is stubbed), datum labels,
     block comments, `#;` datum comments, and `#!fold-case` /
