@@ -102,7 +102,7 @@ suite = {
         "scheme.reader": {
             "dir": "mx.r7rs/projects/reader",
             "sourceDirs": ["../../../src/reader"],
-            "dependencies": ["TRUFFLE_API"],
+            "dependencies": ["scheme.runtime"],
             "javaCompliance": "25+",
             "checkstyle": "scheme.runtime",
         },
@@ -158,7 +158,7 @@ suite = {
             # Tests drive the language through the polyglot API and the launcher;
             # SCHEME reaches the module path via SCHEME_TEST's distDependencies.
             "dependencies": [
-                "scheme.runtime",
+                "scheme.reader",
                 "scheme.launcher",
                 "mx:JUNIT",
                 "POLYGLOT",
@@ -177,6 +177,7 @@ suite = {
             "moduleInfo": {
                 "name": "scheme",
                 "exports": [
+                    "scheme.reader",
                     "scheme.runtime",
                     "scheme.runtime.printer",
                     "scheme.runtime.value",
