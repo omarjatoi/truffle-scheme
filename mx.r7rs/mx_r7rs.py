@@ -350,20 +350,27 @@ def _tail(text, lines=5):
     return '\n'.join('    ' + l for l in text.rstrip('\n').splitlines()[-lines:]) or '    (empty)'
 
 
-# M1-06: a 10M-iteration tail-recursive loop under a stack and heap far too small for anything that
-# grows per iteration. tests/spec/tail-* (M2) will cover tail calls in general.
-_SPACE_PROGRAM = ('tests/diff/loop-10m.scm', '10000000\n')
-_SPACE_LIMITS = ['-Xss256k', '-Xmx64m']
+# (program, expected stdout, JVM limits):
+# - M1-06: a 10M-iteration tail-recursive loop, under a stack and heap far too small for anything
+#   that grows per iteration.
+# - M2-05: 1M-deep non-tail recursion under a 256k Java stack: stack-depth spill keeps the stack
+#   constant; the pending frames live on the heap (about 350 bytes each).
+# tests/spec/tail-* and deep-* (M2-00) will cover these in general.
+_SPACE_CASES = [
+    ('tests/diff/loop-10m.scm', '10000000\n', ['-Xss256k', '-Xmx64m']),
+    # Not in tests/diff/: chibi-scheme runs out of stack space on it.
+    ('tests/space/deep-recursion-1m.scm', '1000000\n', ['-Xss256k', '-Xmx512m']),
+]
 
 
 def r7rs_space(args):
-    """run the 10M-iteration tail loop under -Xss256k -Xmx64m, interpreted and with the JIT"""
-    path, expected = _SPACE_PROGRAM
-    for label, vm_args in (('interpreter', r7rs_vm_args()), ('JIT', [])):
-        rc, out, err = _run_ours(join(_suite.dir, path), vm_args, _SPACE_LIMITS)
-        if rc != 0 or out != expected:
-            mx.abort(f'{path} ({label}, {" ".join(_SPACE_LIMITS)}): exit {rc}, stdout {out!r}\n{_tail(err)}')
-        mx.log(f'r7rs-space: {path} ran in constant space ({label}, {" ".join(_SPACE_LIMITS)})')
+    """run the M1-06 tail loop and the M2-05 deep recursion under small JVM limits, interpreted and with the JIT"""
+    for path, expected, limits in _SPACE_CASES:
+        for label, vm_args in (('interpreter', r7rs_vm_args()), ('JIT', [])):
+            rc, out, err = _run_ours(join(_suite.dir, path), vm_args, limits)
+            if rc != 0 or out != expected:
+                mx.abort(f'{path} ({label}, {" ".join(limits)}): exit {rc}, stdout {out!r}\n{_tail(err)}')
+            mx.log(f'r7rs-space: {path} ok ({label}, {" ".join(limits)})')
 
 
 def r7rs_diff_all(args):
@@ -539,7 +546,7 @@ _TESTS = {
     'unittest-compile': ('JUnit, compile immediately', lambda: r7rs_unittest(['--compile'])),
     'conformance': ('status block in docs/plan.md is up to date', lambda: r7rs_status(['--check'])),
     'diff': ('tests/diff/ matches chibi-scheme', lambda: r7rs_diff_all([])),
-    'space': ('10M-iteration tail loop in constant space (M1-06)', lambda: r7rs_space([])),
+    'space': ('tail loop and deep recursion under small JVM limits (M1-06, M2-05)', lambda: r7rs_space([])),
     'spec': ('tests/spec', None),
     'torture': ('conformance suite under --torture', None),
 }

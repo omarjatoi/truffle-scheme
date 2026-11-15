@@ -147,7 +147,7 @@ mx r7rs-test --compile                    # Graal JIT; compile immediately; fail
 mx r7rs-spec                              # tests/spec (tail-call space, continuations, depth)
 mx r7rs-diff path/to/file.scm             # run under chibi and under us; compare stdout + exit status
 mx r7rs-diff-all                          # every program in tests/diff/ (part of mx tests)
-mx r7rs-space                             # 10M-iteration tail loop under -Xss256k -Xmx64m (part of mx tests)
+mx r7rs-space                             # tail loop and deep recursion under -Xss256k (part of mx tests)
 mx r7rs-status                            # regenerate the status block in docs/plan.md
 mx r7rs-check                             # rule 1: Java builtins never call Scheme
 mx eclipseformat                          # format Java code (GraalVM's Eclipse formatter settings)
@@ -247,6 +247,7 @@ src/launcher/              host-side embedding: the conformance runner
 tests/r7rs/                chibi suite, vendored, read-only (see its README)
 tests/lib/                 test-only libraries, e.g. the (chibi test) shim
 tests/diff/                programs that must match chibi under mx r7rs-diff; add freely
+tests/space/               programs mx r7rs-space runs under small JVM limits
 tests/spec/                tail-call / continuation / depth cases, read-only
 tests/scheme/test/         JUnit unit tests; add freely
 ```

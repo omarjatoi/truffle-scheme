@@ -57,6 +57,17 @@ final class PromptDriver extends Node {
                             value = capture.value;
                             continue;
                         }
+                        case SPILL: {
+                            // Only the root prompt resets the depth: inner prompts pass it on.
+                            if (tag != Capture.ROOT_TAG) {
+                                capture.addOuter(pending, new Capture.PromptMarker(tag, promptEnv));
+                                return capture;
+                            }
+                            pending = capture.segmentsBefore(pending);
+                            Object[] arguments = (Object[]) capture.value;
+                            value = callWithProcedure(arguments[0], arguments);
+                            continue;
+                        }
                         case FULL: {
                             if (tag != Capture.ROOT_TAG) {
                                 capture.addOuter(pending, new Capture.PromptMarker(tag, promptEnv));
