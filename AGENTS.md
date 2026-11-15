@@ -26,7 +26,7 @@ merge your own PR once it's ready.
       `CHANGES_REQUESTED` and that isn't labeled `agent:active`. Check it out
       and address the review.
    2. **Ready to merge.** An open task PR that isn't labeled `agent:active`
-      and whose `gate` check is green, but that hasn't been merged (for
+      and whose `Build and test (mx gate)` check is green, but that hasn't been merged (for
       example because its session ended). Merge it as in step 6.
    3. **Next task.** In the current milestone (the first one in
       `docs/plan.md` with unchecked tasks), the first unchecked task that
@@ -57,10 +57,11 @@ merge your own PR once it's ready.
    draft PRs. When it's done:
    - Remove `agent:active`. That is the signal that the PR is done and can
      be stacked on.
-   - Wait for the `gate` check (`gh pr checks <n> --watch`). When it's green,
+   - Wait for the required `Build and test (mx gate)` check
+     (`gh pr checks <n> --watch`). When it's green,
      merge with `gh pr merge <n> --merge`. For a stack, merge it bottom-up
      with `gh stack merge <stack> --merge --yes`.
-   - If `gate` fails, fix it on the branch. Never merge red.
+   - If it fails, fix it on the branch. Never merge red.
 7. **Finish** with the PR link, one line of evidence for each "Done when"
    item, and any follow-ups. Then go back to step 1 and pick up the next
    task.
@@ -148,9 +149,10 @@ mx gate --tags fast                       # build, style, rule checks, unittest,
 
 Before opening a PR: `mx gate --tags fast`. If you touched `src/runtime` or
 any Bytecode DSL operation, also run the `--compile` commands. CI runs the full
-`mx gate` (required), plus a non-blocking `conformance` job (interpreter and
-`--compile`) whose run summary shows per-section results. Gate tasks whose task hasn't landed yet log `SKIPPED` and name the
-task that brings them.
+`mx gate` as the required `Build and test (mx gate)` check, plus non-blocking
+`Conformance` jobs (interpreter and `--compile`) whose run summary shows
+per-section results. Gate tasks whose task hasn't landed yet log `SKIPPED` and
+name the task that brings them.
 
 ## Rules (each one is enforced by a gate task)
 
@@ -177,7 +179,8 @@ task that brings them.
   gate fails if it's stale, so commit the regenerated block with your change. If a test looks wrong, explain why in the
   PR and stop.
 - Skip, disable, or loosen a test to make it pass.
-- Merge a PR whose `gate` check isn't green, or bypass branch protection.
+- Merge a PR whose `Build and test (mx gate)` check isn't green, or bypass
+  branch protection.
 - Edit `docs/design.md`. Propose changes in the PR description instead.
 - Change the GraalVM or Truffle version (nixpkgs in `flake.lock` and the
   Truffle libraries in `suite.py` move together), change `mxversion`, add
