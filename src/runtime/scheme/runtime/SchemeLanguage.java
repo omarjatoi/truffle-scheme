@@ -6,7 +6,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.ServiceLoader;
 
 import com.oracle.truffle.api.CallTarget;
-import com.oracle.truffle.api.RootCallTarget;
 import com.oracle.truffle.api.TruffleLanguage;
 import com.oracle.truffle.api.source.Source;
 
@@ -23,7 +22,6 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
     private static final String PRELUDE = "/scheme/prelude/";
 
     private SchemeCompiler compiler;
-    private RootCallTarget continuationProcedure;
 
     @Override
     protected SchemeContext createContext(Env env) {
@@ -32,8 +30,6 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
 
     @Override
     protected void initializeContext(SchemeContext context) {
-        // Created here, not on first use: prompts run compiled, and compiled code must not create nodes.
-        continuationProcedure = new ContinuationProcedureRootNode(this).getCallTarget();
         context.globals.cell(context.symbols.intern("%call-with-prompt")).define(new SClosure(new PromptProcedureRootNode(this).getCallTarget(), NO_CAPTURES));
         for (BuiltinLibrary library : ServiceLoader.load(BuiltinLibrary.class, SchemeLanguage.class.getClassLoader())) {
             for (PrimitiveSpec spec : library.primitives()) {
@@ -91,8 +87,4 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
         return new PromptRootNode(this, compiler().compileProgram(this, context, source)).getCallTarget();
     }
 
-    /** The procedure that invokes continuation {@code k}. */
-    SClosure continuationProcedure(Continuation k) {
-        return new SClosure(continuationProcedure, new Object[]{k});
-    }
 }
