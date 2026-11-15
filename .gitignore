@@ -1,0 +1,15 @@
+mxbuild/
+mx.r7rs/env
+mx.*/__pycache__/
+*.pyc
+.direnv/
+result
+result-*
+*.class
+*.iml
+.idea/
+.vscode/
+.checkstyle
+.project
+.classpath
+.settings/
