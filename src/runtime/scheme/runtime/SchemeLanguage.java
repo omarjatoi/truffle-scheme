@@ -6,6 +6,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ServiceLoader;
 
 import com.oracle.truffle.api.CallTarget;
+import com.oracle.truffle.api.RootCallTarget;
 import com.oracle.truffle.api.TruffleLanguage;
 import com.oracle.truffle.api.source.Source;
 
@@ -22,6 +23,7 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
     private static final String PRELUDE = "/scheme/prelude/";
 
     private SchemeCompiler compiler;
+    private RootCallTarget continuationProcedure;
 
     @Override
     protected SchemeContext createContext(Env env) {
@@ -30,6 +32,8 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
 
     @Override
     protected void initializeContext(SchemeContext context) {
+        // Created here, not on first use: prompts run compiled, and compiled code must not create nodes.
+        continuationProcedure = new ContinuationProcedureRootNode(this).getCallTarget();
         for (BuiltinLibrary library : ServiceLoader.load(BuiltinLibrary.class, SchemeLanguage.class.getClassLoader())) {
             for (PrimitiveSpec spec : library.primitives()) {
                 SClosure procedure = new SClosure(new PrimitiveRootNode(this, spec).getCallTarget(), NO_CAPTURES);
@@ -47,7 +51,7 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
     private void loadPrelude(SchemeContext context) {
         for (String file : readPrelude("load-order").lines().map(String::strip).filter(l -> !l.isEmpty() && !l.startsWith("#")).toList()) {
             Source source = Source.newBuilder(ID, readPrelude(file), "prelude/" + file).internal(true).build();
-            compiler().compileProgram(this, context, source).call();
+            program(context, source).call();
         }
     }
 
@@ -78,6 +82,16 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
 
     @Override
     protected CallTarget parse(ParsingRequest request) {
-        return compiler().compileProgram(this, SchemeContext.get(null), request.getSource());
+        return program(SchemeContext.get(null), request.getSource());
+    }
+
+    /** A program with its prompt around it (design.md D6). */
+    private CallTarget program(SchemeContext context, Source source) {
+        return new PromptRootNode(this, compiler().compileProgram(this, context, source)).getCallTarget();
+    }
+
+    /** The procedure that invokes continuation {@code k}. */
+    SClosure continuationProcedure(Continuation k) {
+        return new SClosure(continuationProcedure, new Object[]{k});
     }
 }
