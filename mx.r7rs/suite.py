@@ -156,6 +156,7 @@ suite = {
             # Tests drive the language through the polyglot API and the launcher;
             # SCHEME reaches the module path via SCHEME_TEST's distDependencies.
             "dependencies": [
+                "scheme.runtime",
                 "scheme.launcher",
                 "mx:JUNIT",
                 "POLYGLOT",
@@ -173,6 +174,11 @@ suite = {
         "SCHEME": {
             "moduleInfo": {
                 "name": "scheme",
+                "exports": [
+                    "scheme.runtime",
+                    "scheme.runtime.printer",
+                    "scheme.runtime.value",
+                ],
             },
             # Run as a module, with Truffle on the module path, as embedders will.
             "useModulePath": True,
