@@ -20,6 +20,7 @@ import com.oracle.truffle.api.frame.MaterializedFrame;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.DirectCallNode;
 import com.oracle.truffle.api.nodes.IndirectCallNode;
+import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.nodes.RootNode;
 
 import scheme.runtime.value.SClosure;
@@ -84,21 +85,52 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
         return result;
     }
 
-    /** A non-tail call: calls the procedure, then runs the trampoline. */
+    /**
+     * The number of nested non-tail calls after which a call spills instead (design.md
+     * "Continuations"): it captures up to the root prompt, which makes the call on a fresh Java stack.
+     * The interpreter fits 64 nested calls in a 256k Java stack, but not 80 (M2-05), so 50 leaves a
+     * margin. Override with {@code -Dscheme.spillDepth}.
+     */
+    static final int SPILL_DEPTH = Integer.getInteger("scheme.spillDepth", 50);
+
+    /**
+     * A non-tail call: calls the procedure, then runs the trampoline. Past {@link #SPILL_DEPTH}
+     * nested calls it returns a spill capture instead of calling.
+     */
     @Operation
     public static final class Call {
         @Specialization(guards = "procedure.callTarget == cachedTarget", limit = "4")
         static Object doDirect(SClosure procedure, @Variadic Object[] arguments,
+                        @Bind Node node,
                         @Cached("procedure.callTarget") RootCallTarget cachedTarget,
                         @Cached("create(cachedTarget)") DirectCallNode callNode,
                         @Shared @Cached IndirectCallNode trampolineNode) {
-            return trampoline(callNode.call(withProcedure(procedure, arguments)), trampolineNode);
+            SchemeContext context = SchemeContext.get(node);
+            if (++context.callDepth > SPILL_DEPTH) {
+                context.callDepth--;
+                return Capture.spill(withProcedure(procedure, arguments), context.getDynamicEnv());
+            }
+            try {
+                return trampoline(callNode.call(withProcedure(procedure, arguments)), trampolineNode);
+            } finally {
+                context.callDepth--;
+            }
         }
 
         @Specialization(replaces = "doDirect")
         static Object doIndirect(SClosure procedure, @Variadic Object[] arguments,
+                        @Bind Node node,
                         @Shared @Cached IndirectCallNode trampolineNode) {
-            return trampoline(trampolineNode.call(procedure.callTarget, withProcedure(procedure, arguments)), trampolineNode);
+            SchemeContext context = SchemeContext.get(node);
+            if (++context.callDepth > SPILL_DEPTH) {
+                context.callDepth--;
+                return Capture.spill(withProcedure(procedure, arguments), context.getDynamicEnv());
+            }
+            try {
+                return trampoline(trampolineNode.call(procedure.callTarget, withProcedure(procedure, arguments)), trampolineNode);
+            } finally {
+                context.callDepth--;
+            }
         }
 
         @Fallback

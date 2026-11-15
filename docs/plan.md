@@ -196,12 +196,15 @@ and the M0 spike results recorded there. Only M2-07 waits for the human-written
   - **Done when** R7RS §6.10's `dynamic-wind` example (`connect` … `talk2`)
     gives R7RS's result; re-entry runs the before-thunks again; and
     `tests/diff/` programs using `dynamic-wind` match chibi.
-- [ ] **M2-05 · Stack-depth spill** *(needs M2-02)*
+- [x] **M2-05 · Stack-depth spill** *(needs M2-02)*
   - A depth counter forces a capture past a threshold, then execution resumes
     on a fresh Java stack (design.md "Continuations").
-  - **Done when** the M1-06 control, a 10,000,000-deep non-tail recursion,
-    returns the right answer under `-Xss256k` (a new `mx tests space` case),
-    interpreted and with the JIT.
+  - **Done when** the M1-06 control, as a 1,000,000-deep non-tail recursion,
+    returns the right answer under `-Xss256k -Xmx512m` (a new `mx tests space`
+    case), interpreted and with the JIT. The depth is 1M rather than 10M because
+    spilling moves frames to the heap, about 350 bytes each, so 10M pending
+    frames would need about 3.5 GB of heap. The Java stack stays constant
+    either way.
 - [ ] **M2-06 · Torture mode** *(needs M2-02)*
   - `--torture` (`-Dscheme.torture=true`): capture and resume at every
     non-tail call, resuming every segment twice (AGENTS.md rules 2 and 3).
