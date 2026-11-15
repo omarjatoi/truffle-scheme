@@ -1,4 +1,4 @@
-package r7rs.test;
+package scheme.test;
 
 import static org.junit.Assert.assertNotEquals;
 

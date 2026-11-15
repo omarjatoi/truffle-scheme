@@ -1,4 +1,4 @@
-package r7rs.runtime;
+package scheme.runtime;
 
 import com.oracle.truffle.api.exception.AbstractTruffleException;
 
