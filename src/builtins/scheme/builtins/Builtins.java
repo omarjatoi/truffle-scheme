@@ -1,0 +1,229 @@
+package scheme.builtins;
+
+import java.util.List;
+
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+
+import scheme.runtime.BuiltinLibrary;
+import scheme.runtime.PrimitiveNode;
+import scheme.runtime.PrimitiveSpec;
+import scheme.runtime.SchemeContext;
+import scheme.runtime.SchemeError;
+import scheme.runtime.printer.Printer;
+import scheme.runtime.value.SChar;
+import scheme.runtime.value.SConstant;
+import scheme.runtime.value.SPair;
+
+/**
+ * The primitives M1 needs (arithmetic, comparison, pairs, output). Every one is a leaf: none calls
+ * Scheme (AGENTS.md rule 1). The full set, and the {@code (r7rs %primitives)} library (design.md
+ * D7), come with M3 and M4.
+ */
+public final class Builtins implements BuiltinLibrary {
+
+    @Override
+    public List<PrimitiveSpec> primitives() {
+        return List.of(
+                        new PrimitiveSpec("+", 0, -1, Add::new),
+                        new PrimitiveSpec("-", 1, -1, Sub::new),
+                        new PrimitiveSpec("*", 0, -1, Mul::new),
+                        new PrimitiveSpec("=", 1, -1, () -> new Compare("=", Compare.EQ)),
+                        new PrimitiveSpec("<", 1, -1, () -> new Compare("<", Compare.LT)),
+                        new PrimitiveSpec(">", 1, -1, () -> new Compare(">", Compare.GT)),
+                        new PrimitiveSpec("<=", 1, -1, () -> new Compare("<=", Compare.LE)),
+                        new PrimitiveSpec(">=", 1, -1, () -> new Compare(">=", Compare.GE)),
+                        new PrimitiveSpec("cons", 2, 2, Cons::new),
+                        new PrimitiveSpec("car", 1, 1, () -> new PairAccess("car", true)),
+                        new PrimitiveSpec("cdr", 1, 1, () -> new PairAccess("cdr", false)),
+                        new PrimitiveSpec("null?", 1, 1, () -> new TypeTest(TypeTest.NULL)),
+                        new PrimitiveSpec("pair?", 1, 1, () -> new TypeTest(TypeTest.PAIR)),
+                        new PrimitiveSpec("not", 1, 1, () -> new TypeTest(TypeTest.FALSE)),
+                        new PrimitiveSpec("eq?", 2, 2, Eq::new),
+                        new PrimitiveSpec("display", 1, 1, () -> new Output(Printer.Mode.DISPLAY)),
+                        new PrimitiveSpec("write", 1, 1, () -> new Output(Printer.Mode.WRITE)),
+                        new PrimitiveSpec("newline", 0, 0, () -> new Output(null)));
+    }
+
+    static final class Add extends PrimitiveNode {
+        @Child private ArithmeticNodes.AddNode add = ArithmeticNodesFactory.AddNodeGen.create();
+
+        @Override
+        public Object execute(Object[] args) {
+            if (args.length == 0) {
+                return 0L;
+            }
+            Object acc = Arithmetic.check("+", args[0]);
+            for (int i = 1; i < args.length; i++) {
+                acc = add.execute(acc, args[i]);
+            }
+            return acc;
+        }
+    }
+
+    static final class Sub extends PrimitiveNode {
+        @Child private ArithmeticNodes.SubNode sub = ArithmeticNodesFactory.SubNodeGen.create();
+
+        @Override
+        public Object execute(Object[] args) {
+            if (args.length == 1) {
+                return sub.execute(0L, args[0]);
+            }
+            Object acc = Arithmetic.check("-", args[0]);
+            for (int i = 1; i < args.length; i++) {
+                acc = sub.execute(acc, args[i]);
+            }
+            return acc;
+        }
+    }
+
+    static final class Mul extends PrimitiveNode {
+        @Child private ArithmeticNodes.MulNode mul = ArithmeticNodesFactory.MulNodeGen.create();
+
+        @Override
+        public Object execute(Object[] args) {
+            if (args.length == 0) {
+                return 1L;
+            }
+            Object acc = Arithmetic.check("*", args[0]);
+            for (int i = 1; i < args.length; i++) {
+                acc = mul.execute(acc, args[i]);
+            }
+            return acc;
+        }
+    }
+
+    static final class Compare extends PrimitiveNode {
+        static final int EQ = 0;
+        static final int LT = 1;
+        static final int GT = 2;
+        static final int LE = 3;
+        static final int GE = 4;
+
+        private final String name;
+        private final int kind;
+        @Child private ArithmeticNodes.CompareNode compare = ArithmeticNodesFactory.CompareNodeGen.create();
+
+        Compare(String name, int kind) {
+            this.name = name;
+            this.kind = kind;
+        }
+
+        @Override
+        public Object execute(Object[] args) {
+            Arithmetic.check(name, args[0]);
+            boolean result = true;
+            for (int i = 1; i < args.length; i++) {
+                int c = compare.execute(args[i - 1], args[i]);
+                boolean ok = switch (kind) {
+                    case EQ -> c == 0;
+                    case LT -> c < 0;
+                    case GT -> c > 0;
+                    case LE -> c <= 0;
+                    default -> c >= 0;
+                };
+                result &= ok;
+            }
+            return result;
+        }
+    }
+
+    static final class Cons extends PrimitiveNode {
+        @Override
+        public Object execute(Object[] args) {
+            return new SPair(args[0], args[1]);
+        }
+    }
+
+    static final class PairAccess extends PrimitiveNode {
+        private final String name;
+        private final boolean car;
+
+        PairAccess(String name, boolean car) {
+            this.name = name;
+            this.car = car;
+        }
+
+        @Override
+        public Object execute(Object[] args) {
+            if (args[0] instanceof SPair p) {
+                return car ? p.car : p.cdr;
+            }
+            throw notAPair(name, args[0]);
+        }
+
+        @TruffleBoundary
+        private static SchemeError notAPair(String name, Object value) {
+            return new SchemeError(name + ": not a pair: " + Printer.print(value, Printer.Mode.WRITE));
+        }
+    }
+
+    static final class TypeTest extends PrimitiveNode {
+        static final int NULL = 0;
+        static final int PAIR = 1;
+        static final int FALSE = 2;
+
+        private final int kind;
+
+        TypeTest(int kind) {
+            this.kind = kind;
+        }
+
+        @Override
+        public Object execute(Object[] args) {
+            Object x = args[0];
+            return switch (kind) {
+                case NULL -> x == SConstant.EMPTY_LIST;
+                case PAIR -> x instanceof SPair;
+                default -> x instanceof Boolean b && !b;
+            };
+        }
+    }
+
+    /** eq?: identity, except that fixnums and characters compare by value (design.md D1). */
+    static final class Eq extends PrimitiveNode {
+        @Override
+        public Object execute(Object[] args) {
+            Object a = args[0];
+            Object b = args[1];
+            if (a == b) {
+                return true;
+            }
+            if (a instanceof Long x && b instanceof Long y) {
+                return x.longValue() == y.longValue();
+            }
+            if (a instanceof SChar x && b instanceof SChar y) {
+                return x.codePoint == y.codePoint;
+            }
+            if (a instanceof Boolean x && b instanceof Boolean y) {
+                return x.booleanValue() == y.booleanValue();
+            }
+            return false;
+        }
+    }
+
+    /** display, write and newline on the current output port (ports are M4). */
+    static final class Output extends PrimitiveNode {
+        /** null for newline. */
+        private final Printer.Mode mode;
+
+        Output(Printer.Mode mode) {
+            this.mode = mode;
+        }
+
+        @Override
+        public Object execute(Object[] args) {
+            print(SchemeContext.get(this), mode, mode == null ? null : args[0]);
+            return SConstant.UNSPECIFIED;
+        }
+
+        @TruffleBoundary
+        private static void print(SchemeContext context, Printer.Mode mode, Object value) {
+            if (mode == null) {
+                context.out().print('\n');
+            } else {
+                context.out().print(Printer.print(value, mode));
+            }
+            context.out().flush();
+        }
+    }
+}

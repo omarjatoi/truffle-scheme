@@ -9,7 +9,7 @@ import org.graalvm.polyglot.PolyglotException;
 import org.graalvm.polyglot.Value;
 import org.junit.Test;
 
-/** M0-01: the stub language evaluates an integer literal and nothing else. */
+/** M0-01: the language evaluates through the polyglot API; Scheme errors are guest errors. */
 public class StubLanguageTest {
 
     private static final String SCHEME = "scheme";
@@ -42,9 +42,9 @@ public class StubLanguageTest {
     }
 
     @Test
-    public void rejectsAnythingElseAsAGuestError() {
+    public void schemeErrorsAreGuestErrors() {
         try (Context context = Context.create(SCHEME)) {
-            PolyglotException e = assertThrows(PolyglotException.class, () -> context.eval(SCHEME, "(+ 1 2)"));
+            PolyglotException e = assertThrows(PolyglotException.class, () -> context.eval(SCHEME, "(car 1)"));
             assertTrue(e.isGuestException());
         }
     }

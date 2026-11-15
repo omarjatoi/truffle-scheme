@@ -1,21 +1,33 @@
 package scheme.runtime;
 
+import java.util.ServiceLoader;
+
 import com.oracle.truffle.api.CallTarget;
 import com.oracle.truffle.api.TruffleLanguage;
 
-/**
- * M0-01 stub: evaluates a single integer literal. The real front end (reader, expander, Bytecode DSL
- * compiler) replaces {@link #parse} in M1.
- */
-@TruffleLanguage.Registration(id = SchemeLanguage.ID, name = "R7RS Scheme", defaultMimeType = SchemeLanguage.MIME_TYPE, characterMimeTypes = SchemeLanguage.MIME_TYPE, contextPolicy = TruffleLanguage.ContextPolicy.SHARED)
+import scheme.runtime.value.SClosure;
+
+@TruffleLanguage.Registration(id = SchemeLanguage.ID, name = "R7RS Scheme", defaultMimeType = SchemeLanguage.MIME_TYPE, characterMimeTypes = SchemeLanguage.MIME_TYPE, contextPolicy = TruffleLanguage.ContextPolicy.EXCLUSIVE)
 public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
 
     public static final String ID = "scheme";
     public static final String MIME_TYPE = "application/x-scheme";
 
+    private static final Object[] NO_CAPTURES = new Object[0];
+
     @Override
     protected SchemeContext createContext(Env env) {
         return new SchemeContext(env);
+    }
+
+    @Override
+    protected void initializeContext(SchemeContext context) {
+        for (BuiltinLibrary library : ServiceLoader.load(BuiltinLibrary.class, SchemeLanguage.class.getClassLoader())) {
+            for (PrimitiveSpec spec : library.primitives()) {
+                SClosure procedure = new SClosure(new PrimitiveRootNode(this, spec).getCallTarget(), NO_CAPTURES);
+                context.globals.cell(context.symbols.intern(spec.name())).define(procedure);
+            }
+        }
     }
 
     /** Single-threaded contexts (design.md D10). */
@@ -26,13 +38,8 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
 
     @Override
     protected CallTarget parse(ParsingRequest request) {
-        String text = request.getSource().getCharacters().toString().strip();
-        long value;
-        try {
-            value = Long.parseLong(text);
-        } catch (NumberFormatException e) {
-            throw new SchemeError("the M0 stub only evaluates an integer literal, got: " + text);
-        }
-        return new LiteralRootNode(this, value).getCallTarget();
+        SchemeCompiler compiler = ServiceLoader.load(SchemeCompiler.class, SchemeLanguage.class.getClassLoader()).findFirst().orElseThrow(
+                        () -> new IllegalStateException("no SchemeCompiler service: is the scheme.compiler project in the distribution?"));
+        return compiler.compileProgram(this, SchemeContext.get(null), request.getSource());
     }
 }
