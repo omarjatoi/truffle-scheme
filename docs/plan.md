@@ -51,7 +51,7 @@ before anything else is built on top of them.
     - Every command in AGENTS.md either works or reports that it isn't
       implemented yet. **If any command in AGENTS.md is wrong for mx, fix
       AGENTS.md in the same PR.**
-- [ ] **M0-02 · Spike: frame copy and multi-shot resume** *(needs M0-01)*
+- [x] **M0-02 · Spike: frame copy and multi-shot resume** *(needs M0-01)*
   - Write a minimal Bytecode DSL interpreter in a throwaway project,
     `scheme.spike`, excluded from the gate and deleted at M0-04. Give it a call
     operation, a custom `@Yield SuspendFrame`, and a `Capture` marker, as in
