@@ -26,7 +26,10 @@ COMPILE_VM_ARGS = [
     '-Dpolyglot.engine.CompilationFailureAction=Throw',
 ]
 # Default for the fast loop: interpreter only.
-INTERPRETER_VM_ARGS = ['-Dpolyglot.engine.Compilation=false']
+INTERPRETER_VM_ARGS = [
+    '-Dpolyglot.engine.AllowExperimentalOptions=true',  # engine.Compilation is experimental
+    '-Dpolyglot.engine.Compilation=false',
+]
 # --torture: capture + resume at every non-tail call. The runtime ignores it until M2.
 TORTURE_VM_ARGS = ['-Dscheme.torture=true']
 
@@ -120,6 +123,22 @@ def r7rs_unittest(args):
     _unittest_config.mode_vm_args = mode
     try:
         mx_unittest.unittest(rest)
+    finally:
+        _unittest_config.mode_vm_args = []
+
+
+# Gate unit tests: scheme.test only (the M0-02 spike is excluded from the gate).
+_GATE_UNITTEST_FILTER = ['scheme.test.']
+
+
+def r7rs_spike(args):
+    """run the M0-02 continuation spike tests: [--compile] (default: compilation disabled)"""
+    parser = argparse.ArgumentParser(prog='mx r7rs-spike')
+    parser.add_argument('--compile', action='store_true', help='compile immediately; compilation failures are errors')
+    parsed, rest = parser.parse_known_args(args)
+    _unittest_config.mode_vm_args = list(COMPILE_VM_ARGS if parsed.compile else INTERPRETER_VM_ARGS)
+    try:
+        mx_unittest.unittest(rest + ['scheme.spike.'])
     finally:
         _unittest_config.mode_vm_args = []
 
@@ -220,10 +239,10 @@ def _gate_runner(args, tasks):
             r7rs_check([])
     with Task('R7RS unittest', tasks, tags=[_GATE_TAG]) as t:
         if t:
-            r7rs_unittest([])
+            r7rs_unittest(_GATE_UNITTEST_FILTER)
     with Task('R7RS unittest --compile', tasks, tags=[_GATE_TAG]) as t:
         if t:
-            r7rs_unittest(['--compile'])
+            r7rs_unittest(['--compile'] + _GATE_UNITTEST_FILTER)
     for title, task in _PENDING_GATE_TASKS:
         with Task(title, tasks, tags=[_GATE_TAG]) as t:
             if t:
@@ -239,4 +258,5 @@ mx.update_commands(_suite, {
     'r7rs-status': [r7rs_status, ''],
     'r7rs-check': [r7rs_check, ''],
     'r7rs-unittest': [r7rs_unittest, '[--compile] [--torture] [unittest args...]'],
+    'r7rs-spike': [r7rs_spike, '[--compile]'],
 })
