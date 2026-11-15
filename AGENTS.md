@@ -31,7 +31,6 @@ merge your own PR once it's ready.
    3. **Next task.** In the current milestone (the first one in
       `docs/plan.md` with unchecked tasks), the first unchecked task that
       meets all of these:
-      - it isn't marked *(human)*;
       - every task it needs is either checked on `main` or done in an open
         PR that isn't labeled `agent:active` (in which case you stack on that PR, see "Stacked
         PRs");
@@ -44,7 +43,7 @@ merge your own PR once it's ready.
       format as the existing tasks, open a PR titled
       `Plan: Draft the M<n> tasks`, and
       merge it like any other PR. Otherwise, report what's blocking (failing
-      PRs, *(human)* tasks) and stop.
+      PRs, unmet dependencies) and stop.
 4. **Claim.**
    - For an existing PR, add the label `agent:active`.
    - For a new task, push a branch named `<id>-<short-name>` (for example
@@ -53,8 +52,7 @@ merge your own PR once it's ready.
      example `M2-05: Spill deep non-tail recursion to the heap at a depth
      threshold`. The title becomes the squash commit, so it describes the
      change rather than repeating the task name. If the task depends
-     on an unmerged PR, branch from that PR and stack on it instead (see
-     "Stacked PRs").
+     on an unmerged PR, stack on that PR instead (see "Stacked PRs").
    - Create the label if it's missing: `gh label create agent:active`.
    - If another open PR for the same ID appeared in the meantime, close
      yours and go back to step 3.
@@ -65,12 +63,12 @@ merge your own PR once it's ready.
    - Remove `agent:active`. That is the signal that the PR is done and can
      be stacked on.
    - Wait for the required `Checks` and `Tests` checks
-     (`gh pr checks <n> --watch`). When it's green, squash-merge it as one
-     commit whose message is the PR title and nothing else:
-     `gh pr merge <n> --squash --subject "<PR title>" --body ""`. Keep
-     `main`'s history clean: no merge commits, no branch commits, no
-     ` (#n)` suffix. Before merging, check that the title still summarizes
-     the change. For a stack, see "Stacked PRs".
+     (`gh pr checks <n> --watch`). When it's green, squash-merge it with
+     `gh pr merge <n> --squash`, or a stack with
+     `gh stack merge <top-pr> --yes --squash`. Each PR lands on `main` as
+     one commit, `<PR title> (#n)`, with an empty body (the repository's
+     squash settings), so check before merging that the title still
+     summarizes the change.
    - If it fails, fix it on the branch. Never merge red.
 7. **Finish** with the PR link, one line of evidence for each "Done when"
    item, and any follow-ups. Then go back to step 1 and pick up the next
@@ -78,46 +76,34 @@ merge your own PR once it's ready.
 
 ## Stacked PRs
 
-Use GitHub's native stacked PRs (the official `gh stack` extension) when a
-task depends on work that is done but not merged yet. That way agents don't
-sit waiting for merges.
+Use GitHub's native stacked PRs when a task depends on work that is done
+but not merged yet, so agents don't sit waiting for merges. Drive stacks
+with the `gh stack` extension through the **gh-stack skill**
+(`gh skill install github/gh-stack`), which has the commands, the
+non-interactive flags and the recovery steps. Load it before any
+`gh stack` command. These rules are this project's policy on top of it:
 
 - **What a stack is for.** A stack covers one milestone, one feature, or
   another logical group of work, such as the M0 spike tasks or a fan-out area
   in M4. Everything else, including docs, tooling and unrelated fixes, is a
   one-off PR from `main`. Don't stack unrelated work just because it happens
   to be open at the same time.
-
-- **Starting a stacked task.** Check out the top of the stack you depend on
-  (`gh stack checkout <pr-number>`). If that PR isn't in a stack yet,
-  check out its branch. Then create your branch on top of it with
-  `gh stack add <id>-<short-name>`, push it, and open the PR with
-  `gh pr create --base <parent-branch>`. Then link it into the stack with
-  `gh stack link <parent-branch> <your-branch>`, listing branches bottom to
-  top. `gh stack link` sets and repairs the base of each PR.
-- **Always link.** A PR whose base is another PR's branch must be linked with
-  `gh stack link` so GitHub shows it as part of a stack. Changing the base
-  with `gh pr edit --base` alone isn't enough. Check the result with
-  `gh stack view`.
-- **One layer per PR.** Each PR's base is the branch below it, so its diff
-  and its review cover only its own task. Note the parent PR's number in
-  the PR description.
-- **Keeping up to date.** Before you work on a stacked branch, and before
-  you push, run `git fetch origin` and then `gh stack rebase --downstack`.
-  That picks up review fixes from the PRs below yours and replays your
-  commits onto the merge target once a PR below has merged. Then push with
-  `gh stack push`.
-- **Don't rewrite other sessions' branches.** Only rebase or push a branch
-  above yours if its PR isn't labeled `agent:active`. If you fix a PR that
+- **One task per layer.** Each layer is one task's branch
+  (`<id>-<short-name>`) and PR, so its diff and review cover only that task.
+  Open PRs ready for review, never as drafts (`gh stack submit --auto
+  --open`), then give each one the title from step 4 with `gh pr edit`.
+  Note the parent PR's number in the description, and check the stack with
+  `gh stack view --json`.
+- **Don't rewrite other sessions' branches.** `gh stack sync` and
+  `gh stack rebase` rebase and push the whole stack. Run them only when no
+  PR above yours is labeled `agent:active`. Otherwise rebase just your own
+  branch onto its parent and push only that branch. If you fix a PR that
   has PRs stacked on it, say so in a comment on each PR above it. Their
   owners restack the next time they work on them.
-- **Merging.** Merge a stack bottom-up, one PR at a time, with the same
-  `gh pr merge <n> --squash --subject "<PR title>" --body ""` as a single PR,
-  once every PR being merged is done (no `agent:active`) and green. Don't
-  use `gh stack merge`: it can't set the commit message. After each merge,
-  run `git fetch origin && gh stack rebase --downstack && gh stack push` so
-  the next PR targets `main` and holds only its own changes, then wait for
-  its checks before merging it.
+- **Merging.** Merge with `gh stack merge <pr> --yes --squash`, which merges
+  that PR and every unmerged PR below it, all or nothing. Every PR in that
+  range must be done (no `agent:active`) and green. `gh pr merge` can't
+  merge a PR that is part of a stack.
 - **Depth.** Don't stack on a PR whose review decision is
   `CHANGES_REQUESTED`. Wait until its fixes are pushed.
 
@@ -134,8 +120,9 @@ push fixes.
 Run everything inside `nix develop`. It provides GraalVM CE 25.5 (already set
 as `JAVA_HOME`; its Graal compiler is the JIT), `mx`, Python, git, `gh` and
 chibi-scheme (used for differential testing). There's no JDK to fetch by
-hand. Stacked PRs need the official `gh stack` extension: run
-`gh extension install github/gh-stack` once. Truffle comes from Maven Central
+hand. Stacked PRs need the official `gh stack` extension and its agent
+skill: run `gh extension install github/gh-stack` and
+`gh skill install github/gh-stack` once. Truffle comes from Maven Central
 as libraries in `mx.r7rs/suite.py`, at exactly the GraalVM version. mx refuses
 to run if the two differ (design.md D11).
 
@@ -195,11 +182,14 @@ summary shows per-section results. Steps whose task hasn't landed yet report
 
 ## Never
 
-- Edit anything under `tests/r7rs/` or `tests/spec/`, or edit the status block
-  in `docs/plan.md` by hand. `mx r7rs-status` regenerates the block, and the
+- Edit anything under `tests/r7rs/`, change or delete an existing case in
+  `tests/spec/`, or edit the status block in `docs/plan.md` by hand. `mx r7rs-status` regenerates the block, and the
   `mx tests` fails if it's stale, so commit the regenerated block with your change. If a test looks wrong, explain why in the
   PR and stop.
-- Skip, disable, or loosen a test to make it pass.
+- Skip, disable, or loosen a test to make it pass. That includes listing a
+  `tests/spec/` case in `_SPEC_PENDING` (`mx.r7rs/mx_r7rs.py`) once it has
+  passed: an entry goes away when the task it names lands, and never comes
+  back.
 - Merge a PR whose `Checks` or `Tests` check isn't green, or bypass branch
   protection.
 - Edit `docs/design.md`. Propose changes in the PR description instead.
@@ -238,7 +228,8 @@ summary shows per-section results. Steps whose task hasn't landed yet report
 - One task, one PR. Out-of-scope findings go under **Follow-ups** in the PR
   description. Don't fix them in the same PR.
 - Write the failing test first, in `tests/scheme/test/`. If you think a case
-  belongs in `tests/spec/`, propose it in the PR. A human adds it.
+  belongs in `tests/spec/`, add it in a separate PR whose only change is
+  the new case, in the format `tests/spec/README.md` describes.
 - If the same failure survives two different fix attempts, stop and write up
   what you tried and what you observed.
 - In the PR description, include what changed, which conformance sections
@@ -262,6 +253,6 @@ tests/r7rs/                chibi suite, vendored, read-only (see its README)
 tests/lib/                 test-only libraries, e.g. the (chibi test) shim
 tests/diff/                programs that must match chibi under mx r7rs-diff; add freely
 tests/space/               programs mx r7rs-space runs under small JVM limits
-tests/spec/                tail-call / continuation / depth cases, read-only
+tests/spec/                tail-call / continuation / depth cases; existing cases read-only
 tests/scheme/test/         JUnit unit tests; add freely
 ```
