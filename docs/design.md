@@ -1,6 +1,7 @@
 # Design
 
-R7RS-small on GraalVM Truffle, built on the Bytecode DSL (GraalVM 25.1+).
+R7RS-small on GraalVM Truffle, built on the Bytecode DSL. Target: GraalVM CE
+25.5 (Truffle 25.5.5.0.3), from nixpkgs (D11).
 Hard requirement: full R7RS-small conformance, including re-entrant multi-shot
 continuations and proper tail calls.
 
@@ -14,7 +15,10 @@ This document is human-owned. Agents propose changes in PR descriptions.
 
 - Every procedure is a Bytecode DSL root. Frame argument 0 is the closure;
   arguments follow it, and a rest argument is packed in the callee prologue.
-- **Tail calls** return a `TailCall(procedure, args)` marker. Every non-tail
+- **Tail calls** are ours to implement, because Truffle has no guest tail
+  calls. (`@GenerateBytecode(enableTailCallHandlers)` is about how the
+  interpreter dispatches its own bytecode handlers, not about guest calls.)
+  A tail call returns a `TailCall(procedure, args)` marker. Every non-tail
   call site runs a trampoline loop: call, and while the result is a
   `TailCall`, perform it. Tail calls never grow the Java stack.
 - Self tail calls in named `let` and `do` compile to loops (back-edges, OSR).
@@ -22,10 +26,11 @@ This document is human-owned. Agents propose changes in PR descriptions.
 ### Continuations: a segmented stack
 
 - `call/cc` returns a `Capture` marker. At each non-tail call site,
-  `CallSiteEmitter` emits: call → `IsCapture` check → `SuspendFrame` (a custom
-  `@Yield` operation). `SuspendFrame` adds `Segment(ContinuationRootNode,
-  MaterializedFrame)` to the capture and returns the marker to its own
-  caller, which does the same.
+  `CallSiteEmitter` emits: call → `IsCapture` check → `SuspendFrame`, a custom
+  `@Yield` operation (Truffle 25.1+). `SuspendFrame` `@Bind`s its
+  `ContinuationRootNode` and `MaterializedFrame`, adds
+  `Segment(ContinuationRootNode, MaterializedFrame)` to the capture, and
+  returns the marker to its own caller, which does the same.
 - Capture stops at the nearest **prompt** whose tag matches (see D4).
   `call/cc` uses the program's root prompt.
 - **Invoking a continuation** resumes segments from the innermost outward, each
@@ -36,17 +41,33 @@ This document is human-owned. Agents propose changes in PR descriptions.
 - **Segments are immutable.** Each resume copies the frame. This is correct
   only because of assignment conversion (D2): the frame holds no mutable
   Scheme variables, only references to shared boxes.
+- **Copying a frame** uses Truffle's own copy (25.1+):
+  `BytecodeNode.createCopiedFrame` / `BytecodeFrame.copy()`, which copies the
+  arguments and every frame slot, operand stack included, with
+  `Frame.copyTo`. The copy is passed to the segment's
+  `ContinuationRootNode` call target as `(frame, value)`. Truffle documents a
+  `ContinuationResult` as resumable only once. We never resume the original
+  frame, only fresh copies, and that is what makes multi-shot possible.
 - **Stack-depth spill.** A depth counter forces a capture past a threshold,
   then execution resumes on a fresh stack. Deep non-tail recursion never
   overflows the Java stack.
 - **Escape-only fast path (M5).** When the compiler can prove a `call/cc`'s
   `k` is only ever called directly inside the body and never captured by a
-  closure, it compiles to an escape exception instead of a capture.
+  closure, it compiles to an escape exception instead of a capture. A
+  candidate mechanism is `@GenerateBytecode(unwindExceptions = ...)` (25.5),
+  which lets the escape bypass guest exception handlers such as `%guard`.
 
-> **Spike-dependent (M0):** how to copy a `MaterializedFrame` into a form that
-> `ContinuationRootNode` accepts, and whether Graal folds the `IsCapture` check
-> at call sites that never see a capture. Update this section with the
-> results.
+> **Spike-dependent (M0):** Truffle 25.5 provides the copy itself (see
+> above). The spike must confirm that:
+> - resuming the same `ContinuationRootNode` twice with two copies of one
+>   frame gives independent executions, with no shared locals or operand
+>   stack;
+> - copies stay correct under `enableBlockScoping`, which is on by default
+>   and reuses frame slots across scopes;
+> - Graal folds the `IsCapture` check at call sites that never see a
+>   capture.
+>
+> Update this section with the results.
 
 ### Dynamic environment
 
@@ -251,21 +272,32 @@ Each entry: the decision, why, and what was rejected.
 
 ### D11. Build and tooling
 
-- **mx**, GraalVM's own build tool, the same one GraalPy and TruffleRuby use.
-  The suite `mx.r7rs` imports the `truffle` suite from `oracle/graal` at a
-  pinned commit, so the build tracks graal master and gets Bytecode DSL
-  changes before they're released. Updating the graal version is a one-line,
-  human-made change.
-- One toolchain covers building, the annotation processor (`truffle:TRUFFLE_DSL_PROCESSOR`),
-  `mx unittest`, `mx gate` (CI and the pre-PR check), the Graal JIT built
-  from source (`--dy /compiler`), IGV for compiled graphs, and
-  `mx benchmark` for M5.
-- Nix (`flake.nix`) provides only the dev shell: `mx`, Python and
-  chibi-scheme. The JDK is labsjdk, fetched with `mx fetch-jdk`.
-- *Rejected:* Bazel (too much build machinery for a project this size, and it
-  only gets released Truffle versions from Maven Central); Maven or Gradle
-  (lighter, but also releases only, and no gate, IGV or benchmark
-  integration); Buck2 (thinner open-source JVM support).
+- **Released GraalVM, from Nix.** The JDK is GraalVM CE 25.5 from nixpkgs.
+  `flake.nix` puts it on `JAVA_HOME`, and its built-in Graal compiler is the
+  JIT. Truffle comes from Maven Central as mx libraries in `mx.r7rs/suite.py`
+  (`truffle-api`, `truffle-runtime`, `truffle-compiler`,
+  `truffle-dsl-processor`, `polyglot` and their SDK dependencies), at
+  **exactly** the GraalVM version (25.5.5.0.3). `mx_r7rs.py` refuses to run if
+  the two differ.
+- **Upgrading** is a human-made change. Bump nixpkgs in `flake.lock` and the
+  Truffle library version and digests in `suite.py` together.
+- **mx** is still the build tool, the same one GraalPy and TruffleRuby use.
+  One toolchain covers building, the annotation processor
+  (`TRUFFLE_DSL_PROCESSOR`), `mx unittest`, `mx gate` (CI and the pre-PR
+  check), and `mx benchmark` for M5. Compiled graphs are dumped with
+  `-Djdk.graal.Dump` on the GraalVM JDK and viewed in a separately installed
+  IGV.
+- Nix (`flake.nix`) provides the whole dev shell: GraalVM, `mx` (copied out
+  of the store into a writable cache dir, because mx writes into its own
+  checkout), Python, `gh` and chibi-scheme. There's nothing to fetch by hand.
+- *Rejected:* importing the `truffle` suite from a pinned graal master commit
+  with a matching labsjdk (the original D11). It gets Bytecode DSL changes
+  before release, but needs a ~1.5 GB graal checkout plus a labsjdk whose
+  JVMCI version must track the graal commit, and nixpkgs can't provide that
+  JDK. Revisit only if we need an unreleased Truffle fix. Also rejected:
+  Bazel (too much build machinery for a project this size); Maven or Gradle
+  (no gate, IGV or benchmark integration); Buck2 (thinner open-source JVM
+  support).
 
 ### D12. Continuation strategy
 

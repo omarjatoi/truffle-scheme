@@ -18,13 +18,15 @@ edit it by hand._
 Set up the mx suite, then answer the two questions the design depends on
 before anything else is built on top of them.
 
-- [ ] **M0-01 · mx suite bootstrap**
+- [x] **M0-01 · mx suite bootstrap**
   - `mx.r7rs/suite.py`:
     - `mxversion`.
-    - A `truffle` suite import from `https://github.com/oracle/graal` pinned
-      to a recent master commit.
+    - The Truffle 25.5.5.0.3 jars from Maven Central as mx libraries with
+      digests (design.md D11): `truffle-api`, `truffle-runtime`,
+      `truffle-compiler`, `truffle-dsl-processor`, `polyglot`, and their SDK
+      dependencies.
     - The projects listed in AGENTS.md "Layout", as empty stubs, with
-      `truffle:TRUFFLE_DSL_PROCESSOR` only where generated code will be needed
+      `TRUFFLE_DSL_PROCESSOR` only where generated code will be needed
       (`r7rs.runtime`, `r7rs.builtins`).
     - A JUnit test project, `tests/r7rs.test`.
   - `mx.r7rs/mx_r7rs.py`: every command in AGENTS.md "Commands", registered
@@ -33,13 +35,18 @@ before anything else is built on top of them.
     `--compile` are flags the runtime reads, which do nothing until M2.
     `--compile` turns on immediate, synchronous compilation and makes
     compilation failures errors.
-  - `.github/workflows/gate.yml`: on every PR, enter the Nix dev shell,
-    fetch labsjdk, and run the full `mx gate`.
+  - A check, run on every mx invocation, that the GraalVM version on
+    `JAVA_HOME` equals the Truffle library version, failing with a clear
+    message otherwise.
+  - `.github/workflows/gate.yml`: on every PR, enter the Nix dev shell (which
+    provides GraalVM) and run the full `mx gate`.
   - **Done when:**
     - `mx build` builds a stub `TruffleLanguage` that evaluates an integer
       literal.
     - `mx unittest` runs one JUnit test against it.
-    - `mx --dy /compiler unittest` passes with the Graal JIT.
+    - The same test passes with the Graal JIT in compile-immediately mode,
+      and a test asserts that the optimizing Truffle runtime is active, not
+      the fallback runtime.
     - The gate workflow runs on the PR and passes.
     - Every command in AGENTS.md either works or reports that it isn't
       implemented yet. **If any command in AGENTS.md is wrong for mx, fix
@@ -50,20 +57,24 @@ before anything else is built on top of them.
     operation, a custom `@Yield SuspendFrame`, and a `Capture` marker, as in
     design.md "Continuations".
   - Capture across at least 3 frames, then resume the same continuation
-    **twice**, copying each frame before resuming.
+    **twice**, copying each frame before resuming with Truffle's copy
+    (`BytecodeNode.createCopiedFrame` / `BytecodeFrame.copy()`).
+  - Keep `enableBlockScoping` at its default (on), and include a capture
+    from inside a nested scope.
   - **Done when** tests show:
     - The two resumes are independent: locals and the operand stack of one
       don't leak into the other.
     - A variable in a `Box` (design.md D2) is **shared** across both resumes.
-    - It works both interpreter-only and under `--dy /compiler`.
-  - **Report:** how the frame was copied into a form `ContinuationRootNode`
-    accepts, which APIs were used, and any gaps or workarounds.
+    - It works both with compilation disabled and with `--compile`.
+  - **Report:** whether Truffle's frame copy is enough to resume a
+    `ContinuationRootNode` more than once, which APIs were used, how block
+    scoping behaved, and any gaps or workarounds.
 - [ ] **M0-03 · Spike: cost of the call-site check under the JIT** *(needs M0-02)*
   - Compare `fib(30)` and `tak` with and without the call → `IsCapture` →
-    `SuspendFrame` protocol, under `mx --dy /compiler`.
-  - **Done when** the report has overhead numbers and evidence (IGV graphs or
-    compilation traces) of whether the capture branch is folded away at call
-    sites that never see a capture.
+    `SuspendFrame` protocol, on the GraalVM 25.5 JIT.
+  - **Done when** the report has overhead numbers and evidence (graphs dumped
+    with `-Djdk.graal.Dump`, or compilation traces) of whether the capture
+    branch is folded away at call sites that never see a capture.
 - [ ] **M0-04 · Decision** *(human)*
   - Fill in the "Spike-dependent" box in design.md with the results.
   - Record go/no-go in the Decisions section.
