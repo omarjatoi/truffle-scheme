@@ -1,7 +1,7 @@
 ;; Promises (R7RS §4.2.5, §7.3, design.md D9): the procedures behind delay and delay-force (in
 ;; syntax.scm).
 
-(define %promise-tag (list 'promise))
+(define %promise-tag (cons 'promise '()))
 
 (define (%make-promise done? value) (cons %promise-tag (cons done? value)))
 

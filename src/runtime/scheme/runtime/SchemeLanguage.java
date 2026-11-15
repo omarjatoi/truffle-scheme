@@ -39,7 +39,12 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
         for (BuiltinLibrary library : ServiceLoader.load(BuiltinLibrary.class, SchemeLanguage.class.getClassLoader())) {
             for (PrimitiveSpec spec : library.primitives()) {
                 SClosure procedure = new SClosure(new PrimitiveRootNode(this, spec).getCallTarget(), NO_CAPTURES);
-                context.globals.cell(context.symbols.intern(spec.name())).define(procedure);
+                GlobalCell cell = context.globals.cell(context.symbols.intern(spec.name()));
+                if (cell.valueOrNull() != null) {
+                    // Two fan-out areas (AGENTS.md "Areas") registered the same name.
+                    throw new IllegalStateException("primitive " + spec.name() + " is registered twice");
+                }
+                cell.define(procedure);
             }
         }
         compiler().initializeContext(this, context);

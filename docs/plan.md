@@ -295,7 +295,7 @@ They follow design.md D3, D4, D5 and D7.
   - **Done when** R7RS §4.2.7 (guard) and §4.2.6 (parameterize) examples,
     §6.11's exception examples, and record tests pass, and the same holds
     under `--torture`.
-- [ ] **M3-07 · Fan-out layout** *(needs M3-04)*
+- [x] **M3-07 · Fan-out layout** *(needs M3-04)*
   - One builtins file, one prelude file and one registration point per M4
     area (numeric tower, characters and strings, lists and vectors,
     bytevectors, control and exceptions, I/O and ports, `eval` and
