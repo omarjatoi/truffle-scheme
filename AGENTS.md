@@ -41,14 +41,18 @@ merge your own PR once it's ready.
       the tasks the next milestone marks *(early)*.
    4. **Nothing available.** If the current milestone's exit criteria are
       met, draft the next milestone's tasks in `docs/plan.md`, in the same
-      format as the existing tasks, open a PR titled `Plan: M<n> tasks`, and
+      format as the existing tasks, open a PR titled
+      `Plan: Draft the M<n> tasks`, and
       merge it like any other PR. Otherwise, report what's blocking (failing
       PRs, *(human)* tasks) and stop.
 4. **Claim.**
    - For an existing PR, add the label `agent:active`.
    - For a new task, push a branch named `<id>-<short-name>` (for example
      `m0-01-suite-bootstrap`), then open a PR (not a draft) titled
-     `<ID>: <task name>` with the label `agent:active`. If the task depends
+     `<ID>: <what the change does>` with the label `agent:active`, for
+     example `M2-05: Spill deep non-tail recursion to the heap at a depth
+     threshold`. The title becomes the squash commit, so it describes the
+     change rather than repeating the task name. If the task depends
      on an unmerged PR, branch from that PR and stack on it instead (see
      "Stacked PRs").
    - Create the label if it's missing: `gh label create agent:active`.
@@ -64,8 +68,8 @@ merge your own PR once it's ready.
      (`gh pr checks <n> --watch`). When it's green,
      squash-merge with `gh pr merge <n> --squash`. For a stack, merge it
      bottom-up with `gh stack merge <stack> --squash --yes`. The squash
-     commit takes the PR's title and description, so keep the description
-     current.
+     commit is the PR title alone, so make sure the title still describes
+     the change.
    - If it fails, fix it on the branch. Never merge red.
 7. **Finish** with the PR link, one line of evidence for each "Done when"
    item, and any follow-ups. Then go back to step 1 and pick up the next
