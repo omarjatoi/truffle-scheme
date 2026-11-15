@@ -4,6 +4,8 @@ on:
   pull_request:          # every PR, including PRs stacked on other PRs
   push:
     branches: [main]
+  merge_group:           # runs the gate in a merge queue, if the repo gets one
+                         # (needs an organization-owned repo; see PR #1)
 
 permissions:
   contents: read
