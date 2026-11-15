@@ -26,7 +26,7 @@ merge your own PR once it's ready.
       `CHANGES_REQUESTED` and that isn't labeled `agent:active`. Check it out
       and address the review.
    2. **Ready to merge.** An open task PR that isn't labeled `agent:active`
-      and whose `Build and test (mx gate)` check is green, but that hasn't been merged (for
+      and whose required `Checks` and `Tests` checks are green, but that hasn't been merged (for
       example because its session ended). Merge it as in step 6.
    3. **Next task.** In the current milestone (the first one in
       `docs/plan.md` with unchecked tasks), the first unchecked task that
@@ -57,7 +57,7 @@ merge your own PR once it's ready.
    draft PRs. When it's done:
    - Remove `agent:active`. That is the signal that the PR is done and can
      be stacked on.
-   - Wait for the required `Build and test (mx gate)` check
+   - Wait for the required `Checks` and `Tests` checks
      (`gh pr checks <n> --watch`). When it's green,
      merge with `gh pr merge <n> --merge`. For a stack, merge it bottom-up
      with `gh stack merge <stack> --merge --yes`.
@@ -127,11 +127,15 @@ to run if the two differ (design.md D11).
 
 ## Commands
 
-The suite is `mx.r7rs/`. Custom commands and gate tasks live in
+The suite is `mx.r7rs/`. Custom commands live in
 `mx.r7rs/mx_r7rs.py`. A command whose task hasn't landed yet exits nonzero
 and names that task.
 
 ```
+mx checks                                 # build (ECJ + javac, warnings are errors) and static checks
+mx checks format spotbugs                 # just those steps (see `mx checks nope` for the list)
+mx tests                                  # all tests (unit, conformance status, differential, spec, torture)
+mx tests unittest diff                    # just those steps
 mx build                                  # build everything
 mx unittest                               # JUnit tests in tests/scheme/test (Graal JIT on, background)
 mx r7rs-unittest --compile                # same, compile immediately; failures are errors
@@ -142,20 +146,21 @@ mx r7rs-test --torture                    # capture + resume at every non-tail c
 mx r7rs-test --compile                    # Graal JIT; compile immediately; failures are errors
 mx r7rs-spec                              # tests/spec (tail-call space, continuations, depth)
 mx r7rs-diff path/to/file.scm             # run under chibi and under us; compare stdout + exit status
-mx r7rs-diff-all                          # every program in tests/diff/ (a gate task)
+mx r7rs-diff-all                          # every program in tests/diff/ (part of mx tests)
 mx r7rs-status                            # regenerate the status block in docs/plan.md
 mx r7rs-check                             # rule 1: Java builtins never call Scheme
-mx gate --tags fast                       # build, style, rule checks, unittest, r7rs, spec, torture
+mx eclipseformat                          # format Java code (GraalVM's Eclipse formatter settings)
+mx spotbugs                               # Java static analysis (SpotBugs)
 ```
 
-Before opening a PR: `mx gate --tags fast`. If you touched `src/runtime` or
-any Bytecode DSL operation, also run the `--compile` commands. CI runs the full
-`mx gate` as the required `Build and test (mx gate)` check, plus non-blocking
-`Conformance` jobs (interpreter and `--compile`) whose run summary shows
-per-section results. Gate tasks whose task hasn't landed yet log `SKIPPED` and
-name the task that brings them.
+Before opening a PR: `mx checks && mx tests`. If you touched `src/runtime` or
+any Bytecode DSL operation, also run `mx r7rs-test --compile`. CI runs the same
+two commands as the required `Checks` and `Tests` jobs, one step per sub-check,
+plus non-blocking `Conformance` jobs (interpreter and `--compile`) whose run
+summary shows per-section results. Steps whose task hasn't landed yet report
+`SKIPPED` and name the task that brings them. This suite doesn't use `mx gate`.
 
-## Rules (each one is enforced by a gate task)
+## Rules (each one is enforced by `mx checks` or `mx tests`)
 
 1. **Java builtins never call Scheme directly.** A builtin that must invoke a
    procedure (`apply`, `call/cc`, `call-with-values`, `eval`) returns a
@@ -177,11 +182,11 @@ name the task that brings them.
 
 - Edit anything under `tests/r7rs/` or `tests/spec/`, or edit the status block
   in `docs/plan.md` by hand. `mx r7rs-status` regenerates the block, and the
-  gate fails if it's stale, so commit the regenerated block with your change. If a test looks wrong, explain why in the
+  `mx tests` fails if it's stale, so commit the regenerated block with your change. If a test looks wrong, explain why in the
   PR and stop.
 - Skip, disable, or loosen a test to make it pass.
-- Merge a PR whose `Build and test (mx gate)` check isn't green, or bypass
-  branch protection.
+- Merge a PR whose `Checks` or `Tests` check isn't green, or bypass branch
+  protection.
 - Edit `docs/design.md`. Propose changes in the PR description instead.
 - Change the GraalVM or Truffle version (nixpkgs in `flake.lock` and the
   Truffle libraries in `suite.py` move together), change `mxversion`, add
@@ -207,6 +212,8 @@ name the task that brings them.
   never `java.io` or `java.nio` directly. Text operations use `Locale.ROOT`.
 - Primitive errors throw `SchemeError`, never a raw Java exception
   (design.md D8).
+- Format Java with `mx eclipseformat` before committing. `mx checks` fails if
+  the formatter would change anything, and also runs checkstyle and SpotBugs.
 - Only projects that need generated code list `TRUFFLE_DSL_PROCESSOR` in
   `annotationProcessors`. Keep it that way
   so edits elsewhere don't re-run the processor.
@@ -226,7 +233,7 @@ name the task that brings them.
 
 ```
 mx.r7rs/suite.py           projects, distributions, Truffle libraries (pinned to the GraalVM version)
-mx.r7rs/mx_r7rs.py         custom mx commands + gate tasks
+mx.r7rs/mx_r7rs.py         custom mx commands: checks, tests, r7rs-*
 mx.r7rs/projects/<name>/   mx project dirs: generated IDE files + checkstyle config
 flake.nix, flake.lock      dev shell: GraalVM 25.5, mx, Python, gh, chibi-scheme
 src/reader/                reader + datum labels

@@ -290,7 +290,7 @@ Each entry: the decision, why, and what was rejected.
   Truffle library version and digests in `suite.py` together.
 - **mx** is still the build tool, the same one GraalPy and TruffleRuby use.
   One toolchain covers building, the annotation processor
-  (`TRUFFLE_DSL_PROCESSOR`), `mx unittest`, `mx gate` (CI and the pre-PR
+  (`TRUFFLE_DSL_PROCESSOR`), `mx unittest`, `mx checks` and `mx tests` (CI and the pre-PR
   check), and `mx benchmark` for M5. Compiled graphs are dumped with
   `-Djdk.graal.Dump` on the GraalVM JDK and viewed in a separately installed
   IGV.
