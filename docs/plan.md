@@ -3,7 +3,8 @@
 Milestones run in order. Detailed tasks are written only for the current
 milestone. Later milestones list just their exit criteria until they start.
 
-Human-gated milestones (M0, M2): every PR gets human review, and only a human
+No milestone is human-gated. Agents merge their own PRs once `gate` is green
+(AGENTS.md). Tasks marked *(human)* are still done by a human, and only a human
 edits `docs/design.md`.
 
 <!-- status:begin -->
@@ -13,7 +14,7 @@ edit it by hand._
 
 ---
 
-## M0 · Suite bootstrap and spike (human gate)
+## M0 · Suite bootstrap and spike
 
 Set up the mx suite, then answer the two questions the design depends on
 before anything else is built on top of them.
@@ -124,7 +125,7 @@ the spike is still running.
 **Exit:** all M1 tasks done, `mx gate --tags fast` green, the harness reports
 a status for every section, and the vertical slice matches chibi.
 
-## M2 · Continuations (human gate)
+## M2 · Continuations
 
 **Exit:**
 - `call/cc` capture and re-entry, prompts (D4), `dynamic-wind` with
