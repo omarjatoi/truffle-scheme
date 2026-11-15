@@ -10,6 +10,12 @@ import com.oracle.truffle.api.source.Source;
  */
 public interface SchemeCompiler {
 
-    /** Compiles a program into one root (design.md D6). */
+    /**
+     * Sets up a new context once its primitives are defined: instantiates the standard libraries and
+     * the interaction environment that programs run in (design.md D7).
+     */
+    void initializeContext(SchemeLanguage language, SchemeContext context);
+
+    /** Compiles a program into one root (design.md D6), without its prompt. */
     CallTarget compileProgram(SchemeLanguage language, SchemeContext context, Source source);
 }

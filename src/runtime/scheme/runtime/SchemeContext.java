@@ -16,14 +16,17 @@ public final class SchemeContext {
 
     private final TruffleLanguage.Env env;
     public final SymbolTable symbols = new SymbolTable();
+    /** The primitives' namespace: the internal library (r7rs %primitives) (design.md D7). */
     public final GlobalEnvironment globals = new GlobalEnvironment();
     private final PrintStream out;
     /**
-     * The top-level syntactic bindings (macros, shadowed keywords), which persist from one program to
-     * the next. Owned by the compiler ({@code scheme.compiler.SyntacticEnvironment}), which sits
-     * above the runtime.
+     * The compiler's per-context state: libraries, the interaction environment and syntactic
+     * bindings, which persist from one program to the next. Owned by the compiler
+     * ({@code scheme.compiler.CompilerState}), which sits above the runtime.
      */
-    public Object syntacticEnvironment;
+    public Object compilerState;
+    /** The prelude's {@code %receive} (control.scm), installed by {@code %set-receive!}. */
+    public Object receive;
     private DynEnv dynamicEnv = DynEnv.INITIAL;
     /** Nested non-tail calls since the root prompt (stack-depth spill, design.md "Continuations"). */
     public int callDepth;

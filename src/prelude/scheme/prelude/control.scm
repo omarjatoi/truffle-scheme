@@ -1,5 +1,4 @@
-;; dynamic-wind and the single rewind (design.md "Dynamic environment", D5). Core forms only until
-;; the expander (M3).
+;; dynamic-wind and the single rewind (design.md "Dynamic environment", D5). Core forms only.
 ;;
 ;; A winder is (before . (after . outer)): its thunks, and the dynamic environment outside it, in
 ;; which both thunks run. DynEnv.winders is a list of winders, innermost first; nothing but
@@ -72,3 +71,6 @@
        (%current-dynamic-env))
       (begin (%rewind (%current-dynamic-env) (%continuation-dynamic-env k))
              (%apply-continuation k values))))
+
+;; The prompt driver hands captured continuations to receivers through %receive.
+(%set-receive! %receive)

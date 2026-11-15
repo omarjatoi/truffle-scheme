@@ -23,6 +23,7 @@ import scheme.runtime.GlobalCell;
 import scheme.runtime.GlobalEnvironment;
 import scheme.runtime.SchemeError;
 import scheme.runtime.SchemeLanguage;
+import scheme.runtime.value.SString;
 import scheme.runtime.printer.Printer;
 import scheme.runtime.value.SConstant;
 import scheme.runtime.value.SPair;
@@ -49,7 +50,15 @@ import scheme.runtime.value.SymbolTable;
  */
 public final class Expander {
 
-    private final GlobalEnvironment globals;
+    private final SymbolTable symbols;
+    /** The namespace that top-level definitions of this unit (a program or library body) go in. */
+    private final GlobalEnvironment namespace;
+    /** This unit's top-level scope, on every form of it; null for {@link #show}. */
+    private final Scope topScope;
+    /** null for {@link #show}, which has no libraries. */
+    private final Libraries libraries;
+    /** Where {@code include} finds files; null for {@link #show}. */
+    private final SourceDir dir;
     /** Persistent top-level bindings. */
     private final SyntacticEnvironment top;
     /** Lexical bindings of this expansion: each one's scopes include a fresh binding scope. */
@@ -61,9 +70,13 @@ public final class Expander {
     /** The innermost syntax object with a source position seen so far, for errors. */
     private Syntax current;
 
-    Expander(SymbolTable symbols, GlobalEnvironment globals, SyntacticEnvironment top) {
-        this.globals = globals;
+    Expander(SymbolTable symbols, GlobalEnvironment namespace, SyntacticEnvironment top, Scope topScope, Libraries libraries, SourceDir dir) {
+        this.symbols = symbols;
+        this.namespace = namespace;
         this.top = top;
+        this.topScope = topScope;
+        this.libraries = libraries;
+        this.dir = dir;
         for (CoreForm form : CoreForm.values()) {
             core.put(symbols.intern(form.keyword), form);
         }
@@ -83,7 +96,7 @@ public final class Expander {
         for (Object datum = reader.readSyntax(); datum != SConstant.EOF; datum = reader.readSyntax()) {
             forms.add(datum);
         }
-        return AstPrinter.print(new Expander(symbols, globals, top).expandProgram(forms).body);
+        return AstPrinter.print(new Expander(symbols, globals, top, null, null, null).expandProgram(forms).body);
     }
 
     // ------------------------------------------------------------------------------------------
@@ -101,7 +114,7 @@ public final class Expander {
         return id instanceof Syntax s ? s.scopes : ScopeSet.EMPTY;
     }
 
-    /** What the identifier refers to: a {@link CoreForm}, {@link Var}, {@link Macro} or {@link SyntacticEnvironment#GLOBAL}. */
+    /** What the identifier refers to: a {@link CoreForm}, {@link Var}, {@link Macro} or {@link GlobalCell}. */
     @TruffleBoundary
     private Object resolve(Object id) {
         SSymbol name = symbol(id);
@@ -128,7 +141,22 @@ public final class Expander {
             return best.binding();
         }
         CoreForm form = core.get(name);
-        return form != null ? form : SyntacticEnvironment.GLOBAL;
+        return form != null ? form : namespaceOf(id).cell(name);
+    }
+
+    /** The namespace an unbound identifier's variable lives in: that of its top-level scope. */
+    private GlobalEnvironment namespaceOf(Object id) {
+        ScopeSet scopes = scopes(id);
+        if (topScope != null && scopes.contains(topScope)) {
+            return namespace;
+        }
+        GlobalEnvironment other = top.namespaceOf(scopes);
+        return other != null ? other : namespace;
+    }
+
+    /** What an identifier written at this unit's top level refers to (a library's exports). */
+    Object resolveTopLevel(Object id) {
+        return resolve(topScope == null ? id : Syntax.addScope(id, topScope));
     }
 
     /** {@code free-identifier=?}: whether two identifiers refer to the same binding, for transformers. */
@@ -136,7 +164,7 @@ public final class Expander {
     public boolean freeIdentifierEquals(Object a, Object b) {
         Object x = resolve(a);
         Object y = resolve(b);
-        return x == y && (x != SyntacticEnvironment.GLOBAL || symbol(a) == symbol(b));
+        return x == y;
     }
 
     /** The binding of the form's head identifier, or null if it isn't a list headed by one. */
@@ -335,9 +363,168 @@ public final class Expander {
         }
     }
 
+    /** Expands a program or library body, adding this unit's top-level scope to its forms. */
     Lambda expandProgram(List<Object> forms) {
         Lambda program = new Lambda(null, true);
-        return (Lambda) run(new ProgramFrame(forms, program));
+        return (Lambda) run(new ProgramFrame(topScope == null ? forms : addScope(forms, topScope), program));
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // begin, include, cond-expand and import at the top level and in bodies
+
+    /** The forms that a begin, include or cond-expand splices in place of itself, or null for other forms. */
+    private List<Object> splice(Object binding, Object form) {
+        if (binding == CoreForm.BEGIN) {
+            List<Object> f = list(form);
+            return f.subList(1, f.size());
+        } else if (binding == CoreForm.INCLUDE || binding == CoreForm.INCLUDE_CI) {
+            return include(form, binding == CoreForm.INCLUDE_CI);
+        } else if (binding == CoreForm.COND_EXPAND) {
+            return condExpand(form);
+        }
+        return null;
+    }
+
+    /** (import set ...): binds each import set's names under this unit's top-level scope. */
+    private void importAll(Object form) {
+        if (libraries == null) {
+            return;
+        }
+        if (topScope == null) {
+            throw syntax("import needs a top level", form);
+        }
+        List<Object> f = list(form);
+        for (Object set : f.subList(1, f.size())) {
+            for (Map.Entry<SSymbol, Object> e : libraries.importSet(set, this).entrySet()) {
+                top.bind(e.getKey(), ScopeSet.EMPTY.add(topScope), e.getValue());
+            }
+        }
+    }
+
+    /**
+     * (include file ...) and include-ci: every form of each file, in order, with the scopes of the
+     * include form, so they mean what they would have meant written in its place.
+     */
+    List<Object> include(Object form, boolean foldCase) {
+        List<Object> f = list(form);
+        List<Object> forms = new ArrayList<>();
+        ScopeSet scopes = scopes(form);
+        for (Object name : f.subList(1, f.size())) {
+            if (!(Syntax.e(name) instanceof SString file)) {
+                throw syntax("include takes file names", form);
+            }
+            for (Object read : readFile(file.toString(), foldCase, form)) {
+                forms.add(Syntax.adjust(read, scopes, ScopeSet.EMPTY));
+            }
+        }
+        return forms;
+    }
+
+    /** Every form in a file found in {@link #dir}, as syntax. */
+    List<Object> readFile(String name, boolean foldCase, Object form) {
+        Source source = dir == null ? null : dir.find(name);
+        if (source == null) {
+            throw syntax("cannot find file " + name, form);
+        }
+        Reader reader = Reader.forSource(source, symbols, true);
+        reader.setFoldCase(foldCase);
+        List<Object> forms = new ArrayList<>();
+        for (Object datum = reader.readSyntax(); datum != SConstant.EOF; datum = reader.readSyntax()) {
+            forms.add(datum);
+        }
+        return forms;
+    }
+
+    /** (cond-expand (requirement form ...) ... [(else form ...)]): the forms of the first clause that holds. */
+    List<Object> condExpand(Object form) {
+        List<Object> f = list(form);
+        for (Object clause : f.subList(1, f.size())) {
+            List<Object> c = list(clause);
+            if (c.isEmpty()) {
+                throw syntax("invalid cond-expand clause", clause);
+            }
+            Object requirement = c.get(0);
+            if (isIdentifier(requirement) && symbol(requirement).toString().equals("else") || holds(requirement, form)) {
+                return c.subList(1, c.size());
+            }
+        }
+        return List.of();
+    }
+
+    /**
+     * Whether a feature requirement holds: a feature identifier, {@code (library name)},
+     * {@code (and ...)}, {@code (or ...)} or {@code (not req)}. Evaluated on an explicit stack
+     * (rule 4): each frame is an and, or or not with the results of its operands so far.
+     */
+    private boolean holds(Object requirement, Object form) {
+        Deque<Object[]> stack = new ArrayDeque<>();
+        Object next = requirement;
+        Boolean result = null;
+        while (true) {
+            if (next != null) {
+                Object d = Syntax.toDatum(next);
+                next = null;
+                if (d instanceof SSymbol feature) {
+                    result = Libraries.FEATURES.contains(feature.toString());
+                } else if (d instanceof SPair p && p.car instanceof SSymbol op) {
+                    List<Object> args = list(d);
+                    switch (op.toString()) {
+                        case "library":
+                            if (args.size() != 2) {
+                                throw syntax("invalid feature requirement", form);
+                            }
+                            result = libraries != null && libraries.exists(args.get(1));
+                            break;
+                        case "and":
+                        case "or":
+                        case "not":
+                            if (op.toString().equals("not") && args.size() != 2) {
+                                throw syntax("invalid feature requirement", form);
+                            }
+                            stack.push(new Object[]{op.toString(), args, 1});
+                            break;
+                        default:
+                            throw syntax("invalid feature requirement", form);
+                    }
+                } else {
+                    throw syntax("invalid feature requirement", form);
+                }
+            }
+            if (result == null) {
+                // A new and/or/not frame: evaluate its first operand, or finish it if it has none.
+                Object[] frame = stack.peek();
+                @SuppressWarnings("unchecked")
+                List<Object> args = (List<Object>) frame[1];
+                if (args.size() > 1) {
+                    next = args.get(1);
+                    frame[2] = 2;
+                    continue;
+                }
+                stack.pop();
+                result = frame[0].equals("and");
+            }
+            while (true) {
+                Object[] frame = stack.peek();
+                if (frame == null) {
+                    return result;
+                }
+                String op = (String) frame[0];
+                @SuppressWarnings("unchecked")
+                List<Object> args = (List<Object>) frame[1];
+                int index = (Integer) frame[2];
+                if (op.equals("not")) {
+                    stack.pop();
+                    result = !result;
+                } else if (op.equals("and") && !result || op.equals("or") && result || index >= args.size()) {
+                    stack.pop();
+                } else {
+                    next = args.get(index);
+                    frame[2] = index + 1;
+                    result = null;
+                    break;
+                }
+            }
+        }
     }
 
     /** One step: an Expr for simple forms, or a Frame for compound ones. */
@@ -353,12 +540,12 @@ public final class Expander {
         while (true) {
             enter(form);
             Object d = Syntax.e(form);
-            if (d instanceof SSymbol s) {
+            if (d instanceof SSymbol) {
                 Object binding = resolve(form);
                 if (binding instanceof Var v) {
                     return reference(v, lambda, form);
-                } else if (binding == SyntacticEnvironment.GLOBAL) {
-                    return new Ast.GlobalRef(globals.cell(s));
+                } else if (binding instanceof GlobalCell cell) {
+                    return new Ast.GlobalRef(cell);
                 }
                 throw syntax("syntax keyword used as an expression", form);
             }
@@ -401,8 +588,11 @@ public final class Expander {
                 Expr target;
                 if (binding instanceof Var v) {
                     target = reference(v, lambda, f.get(1));
-                } else if (binding == SyntacticEnvironment.GLOBAL) {
-                    target = new Ast.GlobalRef(globals.cell(symbol(f.get(1))));
+                } else if (binding instanceof GlobalCell cell) {
+                    if (!namespaceOf(f.get(1)).owns(cell)) {
+                        throw syntax("set! of an imported variable", form);
+                    }
+                    target = new Ast.GlobalRef(cell);
                 } else {
                     throw syntax("set! of a syntax keyword", form);
                 }
@@ -427,14 +617,24 @@ public final class Expander {
             case DEFINE:
             case DEFINE_SYNTAX:
                 throw syntax(c.keyword + " is only allowed at the top level or at the start of a body", form);
+            case INCLUDE:
+            case INCLUDE_CI:
+            case COND_EXPAND: {
+                List<Object> forms = c == CoreForm.COND_EXPAND ? condExpand(form) : include(form, c == CoreForm.INCLUDE_CI);
+                if (forms.isEmpty()) {
+                    return new Ast.Const(SConstant.UNSPECIFIED);
+                }
+                return new SeqLikeFrame(forms, lambda, SeqLikeFrame.SEQ);
+            }
             case IMPORT:
-                throw syntax("import is only allowed at the start of a program", form);
+            case DEFINE_LIBRARY:
+                throw syntax(c.keyword + " is only allowed at the top level", form);
             case SYNTAX_RULES:
                 throw syntax("syntax-rules is only allowed as a transformer", form);
             case GUARD:
                 throw syntax("%guard is not supported until M3-06", form);
             default:
-                throw syntax(c.keyword + " is not supported until M3-04", form);
+                throw new IllegalStateException("unhandled core form " + c);
         }
     }
 
@@ -608,10 +808,10 @@ public final class Expander {
                     form = expandMacro(m, form, useSite);
                     binding = headBinding(form);
                 }
-                if (binding == CoreForm.BEGIN) {
-                    List<Object> inner = list(form);
-                    for (int i = inner.size() - 1; i >= 1; i--) {
-                        queue.addFirst(inner.get(i));
+                List<Object> spliced = splice(binding, form);
+                if (spliced != null) {
+                    for (int i = spliced.size() - 1; i >= 0; i--) {
+                        queue.addFirst(spliced.get(i));
                     }
                 } else if (binding == CoreForm.DEFINE) {
                     Definition def = parseDefine(form);
@@ -760,27 +960,30 @@ public final class Expander {
             throw syntax("%prompt needs a tag and a body", form);
         }
         List<Object> parts = new ArrayList<>();
-        parts.add(new Ast.GlobalRef(globals.cell(callWithPrompt)));
+        parts.add(new Ast.GlobalRef((libraries == null ? namespace : libraries.primitives()).cell(callWithPrompt)));
         parts.add(f.get(1));
         parts.add(new LambdaFrame(SConstant.EMPTY_LIST, f.subList(2, f.size()), lambda, "%prompt", form));
         return new SeqLikeFrame(parts, lambda, SeqLikeFrame.CALL);
     }
 
-    /** The program: imports (ignored until M3-04), then top-level definitions, macros and expressions. */
+    /**
+     * A program or library body (design.md D6, R7RS §5.1). Like a body, in two passes: first each
+     * form's head is expanded in order to find imports, macro definitions and definitions, which
+     * take effect at once (so a definition covers the whole program, including references before
+     * it); then the right-hand sides and expressions are expanded in order. Definitions go in this
+     * unit's namespace and shadow imports of the same name.
+     */
     private final class ProgramFrame extends Frame {
-        final Deque<Object> queue;
         final Lambda program;
         final List<Expr> body = new ArrayList<>();
+        /** Each a form to expand, or a {cell, value, name} definition. */
+        final List<Object> items = new ArrayList<>();
+        int index;
         GlobalCell pendingDefine;
-        boolean leadingImports = true;
 
         ProgramFrame(List<Object> forms, Lambda program) {
-            this.queue = new ArrayDeque<>(forms);
             this.program = program;
-        }
-
-        @Override
-        Object next() {
+            Deque<Object> queue = new ArrayDeque<>(forms);
             while (!queue.isEmpty()) {
                 Object form = queue.pollFirst();
                 enter(form);
@@ -789,34 +992,47 @@ public final class Expander {
                     form = expandMacro(m, form, null);
                     binding = headBinding(form);
                 }
-                if (binding == CoreForm.IMPORT) {
-                    if (!leadingImports) {
-                        throw syntax("import is only allowed at the start of a program", form);
+                List<Object> spliced = splice(binding, form);
+                if (spliced != null) {
+                    for (int i = spliced.size() - 1; i >= 0; i--) {
+                        queue.addFirst(spliced.get(i));
                     }
-                    continue;
-                }
-                leadingImports = false;
-                if (binding == CoreForm.BEGIN) {
-                    List<Object> inner = list(form);
-                    for (int i = inner.size() - 1; i >= 1; i--) {
-                        queue.addFirst(inner.get(i));
+                } else if (binding == CoreForm.IMPORT) {
+                    importAll(form);
+                } else if (binding == CoreForm.DEFINE_LIBRARY) {
+                    if (libraries == null) {
+                        throw syntax("define-library needs libraries", form);
                     }
+                    libraries.declare(form, dir, Expander.this);
                 } else if (binding == CoreForm.DEFINE) {
                     Definition def = parseDefine(form);
                     SSymbol name = symbol(def.id());
-                    if (resolve(def.id()) != SyntacticEnvironment.GLOBAL) {
-                        top.bind(name, scopes(def.id()), SyntacticEnvironment.GLOBAL);
+                    GlobalCell cell = namespace.cell(name);
+                    if (resolve(def.id()) != cell) {
+                        // Shadows an import, a macro or a keyword.
+                        top.bind(name, scopes(def.id()), cell);
                     }
-                    pendingDefine = globals.cell(name);
-                    return new Expand(def.value(), program, name.toString());
+                    items.add(new Object[]{cell, def.value(), name.toString()});
                 } else if (binding == CoreForm.DEFINE_SYNTAX) {
                     Object[] def = parseDefineSyntax(form);
                     top.bind(symbol(def[0]), scopes(def[0]), transformer(def[1]));
                 } else {
-                    return new Expand(form, program, null);
+                    items.add(form);
                 }
             }
-            return DONE;
+        }
+
+        @Override
+        Object next() {
+            if (index == items.size()) {
+                return DONE;
+            }
+            Object item = items.get(index++);
+            if (item instanceof Object[] def) {
+                pendingDefine = (GlobalCell) def[0];
+                return new Expand(def[1], program, (String) def[2]);
+            }
+            return new Expand(item, program, null);
         }
 
         @Override

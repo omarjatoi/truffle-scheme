@@ -1,4 +1,4 @@
-;; List procedures that need no Java (design.md D5). Core forms only until the expander (M3).
+;; List procedures that need no Java (design.md D5). Core forms only. Included by (r7rs %prelude).
 
 (define (list . elements) elements)
 

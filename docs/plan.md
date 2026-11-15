@@ -256,7 +256,7 @@ They follow design.md D3, D4, D5 and D7.
     hygiene ones (`my-or` with a `temp` binding, `if` shadowed at the use
     site), and chibi section 4.3's `syntax-rules` cases pass when run
     through the test shim directly.
-- [ ] **M3-04 · Libraries** *(early; needs M3-02)*
+- [x] **M3-04 · Libraries** *(early; needs M3-02)*
   - `define-library` with `export` (and `rename`), `import` sets (`only`,
     `except`, `prefix`, `rename`), `include`, `include-ci`, `include-library-declarations`
     and `cond-expand` (feature identifiers and `(library ...)`).

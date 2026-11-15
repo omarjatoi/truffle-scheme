@@ -44,6 +44,12 @@ public final class Reader {
     /** Program text: strings, vectors and bytevectors are immutable literals. */
     private final boolean literals;
     private boolean foldCase;
+
+    /** Starts folding case, as if the text began with {@code #!fold-case} ({@code include-ci}). */
+    public void setFoldCase(boolean fold) {
+        this.foldCase = fold;
+    }
+
     private int line = 1;
     /** The UTF-16 index of the next character (what {@link SourceSection}s count). */
     private int position;

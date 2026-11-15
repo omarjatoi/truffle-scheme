@@ -1,4 +1,0 @@
-# The prelude's files, in load order (M2-01). Each runs as a program in every new context, after the
-# primitives are installed. Core forms only until the expander (M3).
-lists.scm
-control.scm

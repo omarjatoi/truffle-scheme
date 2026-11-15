@@ -5,13 +5,17 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 
 import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.PolyglotException;
 import org.graalvm.polyglot.Source;
+import org.graalvm.polyglot.io.IOAccess;
 
 /**
- * Runs one Scheme program file: {@code scheme.launcher.SchemeMain file.scm}. Used by
+ * Runs one Scheme program file: {@code scheme.launcher.SchemeMain [-I dir]... file.scm}, where each
+ * {@code -I dir} adds a directory to the library path (as chibi-scheme's does). Used by
  * {@code mx r7rs-diff}, which compares its stdout and exit status with chibi-scheme's (design.md
  * D8), so the exit statuses follow chibi-scheme's:
  *
@@ -41,20 +45,32 @@ public final class SchemeMain {
         System.exit(status);
     }
 
+    /** A context builder with file access and this library path (design.md D7, D10). */
+    public static Context.Builder newContext(List<String> libraryPath) {
+        return Context.newBuilder(LANGUAGE).allowIO(IOAccess.ALL).option("scheme.LibraryPath", String.join(File.pathSeparator, libraryPath));
+    }
+
     public static int run(String[] args, OutputStream out, OutputStream err) {
         PrintStream errors = new PrintStream(err, true, StandardCharsets.UTF_8);
-        if (args.length != 1) {
-            errors.println("usage: scheme.launcher.SchemeMain <file.scm>");
+        List<String> libraryPath = new ArrayList<>();
+        int i = 0;
+        while (i + 1 < args.length && args[i].equals("-I")) {
+            libraryPath.add(args[i + 1]);
+            i += 2;
+        }
+        if (args.length != i + 1) {
+            errors.println("usage: scheme.launcher.SchemeMain [-I dir]... <file.scm>");
             return EXIT_USAGE;
         }
+        String file = args[i];
         Source source;
         try {
-            source = Source.newBuilder(LANGUAGE, new File(args[0])).build();
+            source = Source.newBuilder(LANGUAGE, new File(file)).build();
         } catch (IOException e) {
-            errors.println("ERROR: cannot read " + args[0] + ": " + e.getMessage());
+            errors.println("ERROR: cannot read " + file + ": " + e.getMessage());
             return EXIT_NO_INPUT;
         }
-        try (Context context = Context.newBuilder(LANGUAGE).out(out).err(err).build()) {
+        try (Context context = newContext(libraryPath).out(out).err(err).build()) {
             context.eval(source);
             return 0;
         } catch (PolyglotException e) {

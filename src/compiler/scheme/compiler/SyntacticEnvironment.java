@@ -7,27 +7,24 @@ import java.util.Map;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 
+import scheme.reader.Scope;
 import scheme.reader.ScopeSet;
+import scheme.runtime.GlobalCell;
+import scheme.runtime.GlobalEnvironment;
 import scheme.runtime.value.SSymbol;
 
 /**
  * Bindings (Flatt 2016): for each symbol, the scope sets it is bound with and what each binding is.
- * One instance per context holds the top level, which persists from one program to the next (the
- * prelude's macros, a REPL's definitions). Libraries replace it in M3-04.
+ * One instance per context holds the top-level bindings of every library and of the interaction
+ * environment (imports, definitions, macros), each under that unit's own top-level scope; it
+ * persists from one program to the next.
  *
- * <p>A binding is a {@link CoreForm}, a lexical {@link Ast.Var}, a {@link Macro}, or
- * {@link #GLOBAL}. Core forms aren't entries: an identifier bound to nothing is a core form if its
- * name is one, else a global variable.
+ * <p>A binding is a {@link CoreForm}, a lexical {@link Ast.Var}, a {@link Macro}, or a
+ * {@link GlobalCell}. Core forms aren't entries: an identifier bound to nothing is a core form if
+ * its name is one, else the cell of that name in the namespace of its top-level scope
+ * ({@link #namespaceOf}).
  */
 public final class SyntacticEnvironment {
-
-    /** A top-level variable, whose cell is the identifier's name. */
-    static final Object GLOBAL = new Object() {
-        @Override
-        public String toString() {
-            return "global";
-        }
-    };
 
     record Macro(Transformer transformer) {
     }
@@ -36,6 +33,23 @@ public final class SyntacticEnvironment {
     }
 
     private final Map<SSymbol, List<Entry>> entries = new HashMap<>();
+    /** Each library's and the interaction environment's top-level scope, and its namespace. */
+    private final Map<Scope, GlobalEnvironment> namespaces = new HashMap<>();
+
+    void registerNamespace(Scope scope, GlobalEnvironment namespace) {
+        namespaces.put(scope, namespace);
+    }
+
+    /** The namespace of the first top-level scope among {@code scopes}, or null. */
+    GlobalEnvironment namespaceOf(ScopeSet scopes) {
+        for (int i = 0; i < scopes.size(); i++) {
+            GlobalEnvironment namespace = namespaces.get(scopes.get(i));
+            if (namespace != null) {
+                return namespace;
+            }
+        }
+        return null;
+    }
 
     /** Defines a top-level macro with a Java transformer (for tests). */
     @TruffleBoundary
