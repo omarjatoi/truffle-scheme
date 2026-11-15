@@ -5,6 +5,7 @@ import java.util.List;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 
 import scheme.runtime.BuiltinLibrary;
+import scheme.runtime.DynEnv;
 import scheme.runtime.PrimitiveNode;
 import scheme.runtime.PrimitiveSpec;
 import scheme.runtime.SchemeContext;
@@ -12,7 +13,9 @@ import scheme.runtime.SchemeError;
 import scheme.runtime.printer.Printer;
 import scheme.runtime.value.SChar;
 import scheme.runtime.value.SConstant;
+import scheme.runtime.value.SErrorObject;
 import scheme.runtime.value.SPair;
+import scheme.runtime.value.SString;
 
 /**
  * The primitives M1 needs (arithmetic, comparison, pairs, output). Every one is a leaf: none calls
@@ -41,7 +44,16 @@ public final class Builtins implements BuiltinLibrary {
                         new PrimitiveSpec("eq?", 2, 2, Eq::new),
                         new PrimitiveSpec("display", 1, 1, () -> new Output(Printer.Mode.DISPLAY)),
                         new PrimitiveSpec("write", 1, 1, () -> new Output(Printer.Mode.WRITE)),
-                        new PrimitiveSpec("newline", 0, 0, () -> new Output(null)));
+                        new PrimitiveSpec("newline", 0, 0, () -> new Output(null)),
+                        // Internal primitives for the prelude (design.md D5).
+                        new PrimitiveSpec("%error", 1, -1, ErrorPrimitive::new),
+                        new PrimitiveSpec("%current-dynamic-env", 0, 0, () -> new DynamicEnv(DynamicEnv.CURRENT)),
+                        new PrimitiveSpec("%set-dynamic-env!", 1, 1, () -> new DynamicEnv(DynamicEnv.SET)),
+                        new PrimitiveSpec("%make-dynamic-env", 3, 3, () -> new DynamicEnv(DynamicEnv.MAKE)),
+                        new PrimitiveSpec("%dynamic-env?", 1, 1, () -> new DynamicEnv(DynamicEnv.TEST)),
+                        new PrimitiveSpec("%dynamic-env-winders", 1, 1, () -> new DynamicEnv(DynamicEnv.WINDERS)),
+                        new PrimitiveSpec("%dynamic-env-parameterization", 1, 1, () -> new DynamicEnv(DynamicEnv.PARAMETERIZATION)),
+                        new PrimitiveSpec("%dynamic-env-handlers", 1, 1, () -> new DynamicEnv(DynamicEnv.HANDLERS)));
     }
 
     static final class Add extends PrimitiveNode {
@@ -224,6 +236,81 @@ public final class Builtins implements BuiltinLibrary {
                 context.out().print(Printer.print(value, mode));
             }
             context.out().flush();
+        }
+    }
+
+    /**
+     * {@code (%error message irritant ...)}: signals an error with an error object (design.md D8).
+     * The prelude uses it until {@code raise} and {@code error} exist (M3, M4).
+     */
+    static final class ErrorPrimitive extends PrimitiveNode {
+        @Override
+        public Object execute(Object[] args) {
+            throw error(args);
+        }
+
+        @TruffleBoundary
+        private static SchemeError error(Object[] args) {
+            Object message = args[0] instanceof SString ? args[0] : SString.of(Printer.print(args[0], Printer.Mode.DISPLAY));
+            Object irritants = SConstant.EMPTY_LIST;
+            for (int i = args.length - 1; i >= 1; i--) {
+                irritants = new SPair(args[i], irritants);
+            }
+            StringBuilder text = new StringBuilder(message.toString());
+            for (int i = 1; i < args.length; i++) {
+                text.append(' ').append(Printer.print(args[i], Printer.Mode.WRITE));
+            }
+            return new SchemeError(new SErrorObject(SString.of(text.toString()), irritants, SErrorObject.Kind.OTHER));
+        }
+    }
+
+    /** The dynamic environment record and the context's current one (design.md "Dynamic environment"). */
+    static final class DynamicEnv extends PrimitiveNode {
+        static final int CURRENT = 0;
+        static final int SET = 1;
+        static final int MAKE = 2;
+        static final int TEST = 3;
+        static final int WINDERS = 4;
+        static final int PARAMETERIZATION = 5;
+        static final int HANDLERS = 6;
+
+        private final int kind;
+
+        DynamicEnv(int kind) {
+            this.kind = kind;
+        }
+
+        @Override
+        public Object execute(Object[] args) {
+            switch (kind) {
+                case CURRENT:
+                    return SchemeContext.get(this).getDynamicEnv();
+                case SET:
+                    SchemeContext.get(this).setDynamicEnv(dynEnv(args[0]));
+                    return SConstant.UNSPECIFIED;
+                case MAKE:
+                    return new DynEnv(args[0], args[1], args[2]);
+                case TEST:
+                    return args[0] instanceof DynEnv;
+                case WINDERS:
+                    return dynEnv(args[0]).winders;
+                case PARAMETERIZATION:
+                    return dynEnv(args[0]).parameterization;
+                default:
+                    return dynEnv(args[0]).handlers;
+            }
+        }
+
+        private static DynEnv dynEnv(Object value) {
+            if (value instanceof DynEnv e) {
+                return e;
+            }
+            throw notDynEnv(value);
+        }
+
+        @TruffleBoundary
+        private static SchemeError notDynEnv(Object value) {
+            return new SchemeError("not a dynamic environment: " + Printer.print(value, Printer.Mode.WRITE));
         }
     }
 }
