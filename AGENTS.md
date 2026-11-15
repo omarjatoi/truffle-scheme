@@ -135,6 +135,7 @@ mx build                                  # build everything
 mx unittest                               # JUnit tests in tests/scheme/test (Graal JIT on, background)
 mx r7rs-unittest --compile                # same, compile immediately; failures are errors
 mx r7rs-test                              # chibi suite, interpreter only (the fast loop)
+mx r7rs-test -v 6.10                      # one section, listing failing tests
 mx r7rs-test 6.10                         # one conformance section
 mx r7rs-test --torture                    # capture + resume at every non-tail call
 mx r7rs-test --compile                    # Graal JIT; compile immediately; failures are errors
@@ -170,8 +171,9 @@ task that brings them.
 
 ## Never
 
-- Edit anything under `tests/r7rs/` or `tests/spec/`, or the status block in
-  `docs/plan.md` (CI rewrites it). If a test looks wrong, explain why in the
+- Edit anything under `tests/r7rs/` or `tests/spec/`, or edit the status block
+  in `docs/plan.md` by hand. `mx r7rs-status` regenerates the block, and the
+  gate fails if it's stale, so commit the regenerated block with your change. If a test looks wrong, explain why in the
   PR and stop.
 - Skip, disable, or loosen a test to make it pass.
 - Merge a PR whose `gate` check isn't green, or bypass branch protection.
@@ -228,7 +230,9 @@ src/runtime/               Bytecode DSL root + operations, continuations
                            (Capture, Segment), trampoline, DynEnv
 src/builtins/              leaf primitives only (see rule 1)
 src/prelude/               standard libraries (.sld) and prelude Scheme code
-tests/r7rs/                chibi suite, vendored, read-only
+src/launcher/              host-side embedding: the conformance runner
+tests/r7rs/                chibi suite, vendored, read-only (see its README)
+tests/lib/                 test-only libraries, e.g. the (chibi test) shim
 tests/spec/                tail-call / continuation / depth cases, read-only
 tests/scheme/test/         JUnit unit tests; add freely
 ```
