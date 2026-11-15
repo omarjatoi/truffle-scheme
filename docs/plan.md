@@ -124,7 +124,7 @@ the spike is still running.
 - [x] **M1-02 · Differential runner** *(spike-independent)*
   - `mx r7rs-diff file.scm` runs the file under chibi and under our
     implementation, then compares stdout and exit status (design.md D8).
-- [ ] **M1-03 · Value types and printer** *(spike-independent)*
+- [x] **M1-03 · Value types and printer** *(spike-independent)*
   - All D1 value types, with arithmetic stubbed to fixnums and flonums only.
   - `write`, `display`, `write-shared` and `write-simple`, with cycle
     handling (D9).
