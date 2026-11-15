@@ -19,6 +19,8 @@ public final class SchemeContext {
     public final GlobalEnvironment globals = new GlobalEnvironment();
     private final PrintStream out;
     private DynEnv dynamicEnv = DynEnv.INITIAL;
+    /** Nested non-tail calls since the root prompt (stack-depth spill, design.md "Continuations"). */
+    public int callDepth;
 
     SchemeContext(TruffleLanguage.Env env) {
         this.env = env;

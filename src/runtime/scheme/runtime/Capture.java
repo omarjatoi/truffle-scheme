@@ -20,6 +20,9 @@ import com.oracle.truffle.api.interop.TruffleObject;
  * {@link #tag}, aborts to it, and calls the receiver there with the (composable) continuation.</li>
  * <li>{@link Kind#REINSTATE}: invoking a composable continuation. Captures up to the nearest prompt
  * of any tag, then pushes the continuation's segments on top and resumes them with {@link #value}.</li>
+ * <li>{@link Kind#SPILL}: stack-depth spill. A call site past the depth threshold captures up to
+ * the root prompt instead of calling; the root prompt makes the call ({@link #value}, an argument
+ * array with the procedure at index 0) on a fresh Java stack.</li>
  * </ul>
  */
 public final class Capture implements TruffleObject {
@@ -27,7 +30,8 @@ public final class Capture implements TruffleObject {
     public enum Kind {
         FULL,
         DELIMITED,
-        REINSTATE
+        REINSTATE,
+        SPILL
     }
 
     /** One suspended frame: resumed by calling {@code root} with a copy of {@code frame}. */
@@ -76,6 +80,10 @@ public final class Capture implements TruffleObject {
 
     public static Capture reinstate(Continuation continuation, Object value, DynEnv dynEnv) {
         return new Capture(Kind.REINSTATE, null, null, dynEnv, continuation, value);
+    }
+
+    public static Capture spill(Object[] arguments, DynEnv dynEnv) {
+        return new Capture(Kind.SPILL, ROOT_TAG, null, dynEnv, null, arguments);
     }
 
     @TruffleBoundary
