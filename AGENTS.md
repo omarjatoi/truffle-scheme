@@ -141,7 +141,8 @@ mx r7rs-test 6.10                         # one conformance section
 mx r7rs-test --torture                    # capture + resume at every non-tail call
 mx r7rs-test --compile                    # Graal JIT; compile immediately; failures are errors
 mx r7rs-spec                              # tests/spec (tail-call space, continuations, depth)
-mx r7rs-diff path/to/file.scm             # run under chibi and under us, diff the output
+mx r7rs-diff path/to/file.scm             # run under chibi and under us; compare stdout + exit status
+mx r7rs-diff-all                          # every program in tests/diff/ (a gate task)
 mx r7rs-status                            # regenerate the status block in docs/plan.md
 mx r7rs-check                             # rule 1: Java builtins never call Scheme
 mx gate --tags fast                       # build, style, rule checks, unittest, r7rs, spec, torture
@@ -237,6 +238,7 @@ src/prelude/               standard libraries (.sld) and prelude Scheme code
 src/launcher/              host-side embedding: the conformance runner
 tests/r7rs/                chibi suite, vendored, read-only (see its README)
 tests/lib/                 test-only libraries, e.g. the (chibi test) shim
+tests/diff/                programs that must match chibi under mx r7rs-diff; add freely
 tests/spec/                tail-call / continuation / depth cases, read-only
 tests/scheme/test/         JUnit unit tests; add freely
 ```
