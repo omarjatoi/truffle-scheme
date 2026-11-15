@@ -9,6 +9,7 @@ import argparse
 import hashlib
 import os
 import re
+import shutil
 from os.path import exists, join
 
 import mx
@@ -292,6 +293,11 @@ def r7rs_vendor_chibi(args):
     out_dir = join(_suite.dir, 'tests', 'r7rs')
     os.makedirs(out_dir, exist_ok=True)
     digest = hashlib.sha256(text.encode('utf-8')).hexdigest()
+    # chibi-scheme is BSD-3-Clause: redistributed source must keep its notice.
+    chibi_license = join(os.path.dirname(os.path.dirname(os.path.abspath(parsed.source))), 'COPYING')
+    if not exists(chibi_license):
+        mx.abort(f"chibi-scheme's license (COPYING) not found next to tests/: {chibi_license}")
+    shutil.copyfile(chibi_license, join(out_dir, 'COPYING'))
     for section_id, title, first_line, body in sections:
         with open(join(out_dir, section_id + '.scm'), 'w', encoding='utf-8') as f:
             f.write(';; -*- coding: utf-8 -*-\n')
