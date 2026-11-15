@@ -148,7 +148,8 @@ mx gate --tags fast                       # build, style, rule checks, unittest,
 
 Before opening a PR: `mx gate --tags fast`. If you touched `src/runtime` or
 any Bytecode DSL operation, also run the `--compile` commands. CI runs the full
-`mx gate`. Gate tasks whose task hasn't landed yet log `SKIPPED` and name the
+`mx gate` (required), plus a non-blocking `conformance` job (interpreter and
+`--compile`) whose run summary shows per-section results. Gate tasks whose task hasn't landed yet log `SKIPPED` and name the
 task that brings them.
 
 ## Rules (each one is enforced by a gate task)

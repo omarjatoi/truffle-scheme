@@ -210,6 +210,7 @@ def r7rs_test(args):
     parser.add_argument('--torture', action='store_true', help='capture + resume at every non-tail call')
     parser.add_argument('--compile', action='store_true', help='compile immediately; compilation failures are errors')
     parser.add_argument('-v', '--verbose', action='store_true', help='also list failing tests')
+    parser.add_argument('--markdown', metavar='FILE', help='append a Markdown results table to FILE (e.g. $GITHUB_STEP_SUMMARY)')
     parsed = parser.parse_args(args)
     sections = _sections()
     if parsed.section:
@@ -230,6 +231,16 @@ def r7rs_test(args):
                 if line.startswith(('@@r7rs-test FAIL', '@@r7rs-test ERROR')):
                     mx.log('      ' + line[len('@@r7rs-test '):])
     mx.log(f'TOTAL {total_pass:>4}/{total}')
+    if parsed.markdown:
+        mode = ', '.join(m for m, on in (('--compile', parsed.compile), ('--torture', parsed.torture)) if on) or 'interpreter only'
+        rows = [f'### R7RS conformance ({mode}): {total_pass}/{total}', '',
+                '| Section | Passing | Tests | Note |', '|---|---:|---:|---|']
+        for section_id, title, tests in sections:
+            r = results[section_id]
+            note = '' if r['complete'] else 'aborted: ' + r['message'].replace('|', '\\|')
+            rows.append(f'| {title} | {r["pass"]} | {tests} | {note} |')
+        with open(parsed.markdown, 'a', encoding='utf-8') as f:
+            f.write('\n'.join(rows) + '\n\n')
 
 
 _SECTION_BEGIN = re.compile(r'^\(test-begin "([^"]*)"\)\s*$')
