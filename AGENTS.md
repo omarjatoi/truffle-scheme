@@ -167,6 +167,40 @@ summary shows per-section results. Steps whose task hasn't landed yet report
 - In the PR description, include what changed, which conformance sections
   changed state, any follow-ups, and anything that surprised you.
 
+## Areas
+
+M4 runs one agent per area, in parallel. Each area owns its files, so two
+areas never edit the same file. To add a primitive, add its class and its
+`PrimitiveSpec` to the area's builtins file. To add a procedure written in
+Scheme, add it to the area's prelude file and its name to the area's
+declarations file's `export`. Don't edit another area's files, the standard
+libraries (`src/prelude/scheme/prelude/scheme.*.sld`, which already export
+every R7RS name and pick up new definitions by themselves), `Builtins.java`
+or `r7rs.prelude.sld`. Builtins are in `src/builtins/scheme/builtins/`;
+prelude and declarations files are in `src/prelude/scheme/prelude/`.
+
+| Area | R7RS | Builtins | Prelude | Declarations |
+|---|---|---|---|---|
+| Numeric tower | §6.2 | `NumberPrimitives.java` (+ `Arithmetic*.java`) | `numbers.scm` | `numbers.decls.scm` |
+| Characters, strings, symbols | §6.5–6.7 | `CharStringPrimitives.java` | `chars-strings.scm` | `chars-strings.decls.scm` |
+| Lists and vectors | §6.4, §6.8 | `ListVectorPrimitives.java` (+ `Lists.java`) | `lists-vectors.scm` | `lists-vectors.decls.scm` |
+| Bytevectors | §6.9 | `BytevectorPrimitives.java` | `bytevectors.scm` | `bytevectors.decls.scm` |
+| Control and exceptions | §6.1, §6.10, §6.11 | `ControlPrimitives.java` | `control.scm` | `control.decls.scm` |
+| I/O and ports | §6.13 | `IoPrimitives.java` | `io.scm` | `io.decls.scm` |
+| `eval` and environments | §6.12 | `EvalPrimitives.java` | `eval.scm` | `eval.decls.scm` |
+| Process context and time | §6.14 | `ProcessTimePrimitives.java` | `process-time.scm` | `process-time.decls.scm` |
+
+- All areas share one namespace, `(r7rs %prelude)`, so they can use each
+  other's procedures inside procedure bodies. Top-level code in a prelude file
+  runs when the library loads, so it may only call primitives (or its own
+  area's earlier definitions).
+- A primitive's name must be unique across areas; the language refuses to
+  start if two areas register the same one.
+- An area's tests go in their own files: `tests/scheme/test/<Area>Test.java`
+  and `tests/diff/<area>-*.scm`.
+- Shared helpers (`TypePredicate.java`, `Lists.java`) are for using, not for
+  adding area-specific code to.
+
 ## Layout
 
 ```

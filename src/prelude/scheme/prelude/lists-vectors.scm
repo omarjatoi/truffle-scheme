@@ -1,4 +1,5 @@
-;; List procedures that need no Java (design.md D5). Included by (r7rs %prelude), after syntax.scm.
+;; The lists and vectors area (AGENTS.md "Areas"): list and vector procedures written in Scheme
+;; (design.md D5).
 
 (define (list . elements) elements)
 
