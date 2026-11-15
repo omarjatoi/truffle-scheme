@@ -41,13 +41,18 @@ This document is human-owned. Agents propose changes in PR descriptions.
 - **Segments are immutable.** Each resume copies the frame. This is correct
   only because of assignment conversion (D2): the frame holds no mutable
   Scheme variables, only references to shared boxes.
-- **Copying a frame** uses Truffle's own copy (25.1+):
-  `BytecodeNode.createCopiedFrame` / `BytecodeFrame.copy()`, which copies the
-  arguments and every frame slot, operand stack included, with
-  `Frame.copyTo`. The copy is passed to the segment's
-  `ContinuationRootNode` call target as `(frame, value)`. Truffle documents a
-  `ContinuationResult` as resumable only once. We never resume the original
-  frame, only fresh copies, and that is what makes multi-shot possible.
+- **Copying a frame:**
+  `Truffle.getRuntime().createMaterializedFrame(frame.getArguments().clone(), descriptor)`,
+  then `frame.copyTo(0, copy, 0, descriptor.getNumberOfSlots())`. This copies
+  the arguments and every frame slot, operand stack included. It's the same
+  copy `BytecodeFrame.copy()` makes internally, but `BytecodeFrame` doesn't
+  expose its frame, so it can't be used directly. The copy is passed to the
+  segment's `ContinuationRootNode` call target as `(copy, value)`, through a
+  `DirectCallNode` inline cache keyed on the `ContinuationRootNode`.
+- **Never resume an original frame.** Truffle documents a
+  `ContinuationResult` as resumable only once. In M0-02, resuming an original
+  frame a second time crashed with `FrameSlotTypeException`. Only fresh copies
+  are resumed, and that is what makes multi-shot possible.
 - **Stack-depth spill.** A depth counter forces a capture past a threshold,
   then execution resumes on a fresh stack. Deep non-tail recursion never
   overflows the Java stack.
@@ -57,17 +62,19 @@ This document is human-owned. Agents propose changes in PR descriptions.
   candidate mechanism is `@GenerateBytecode(unwindExceptions = ...)` (25.5),
   which lets the escape bypass guest exception handlers such as `%guard`.
 
-> **Spike-dependent (M0):** Truffle 25.5 provides the copy itself (see
-> above). The spike must confirm that:
-> - resuming the same `ContinuationRootNode` twice with two copies of one
->   frame gives independent executions, with no shared locals or operand
->   stack;
-> - copies stay correct under `enableBlockScoping`, which is on by default
->   and reuses frame slots across scopes;
-> - Graal folds the `IsCapture` check at call sites that never see a
->   capture.
->
-> Update this section with the results.
+> **Spike results (M0, Truffle 25.5): go.**
+> - **M0-02 (#7):** a capture across 3 frames, resumed 2 and 3 times from
+>   copies (above), gives independent executions. Each result equals a fresh
+>   run: no leakage of locals, pending operand-stack values, or block-scoped
+>   slots, and the capture comes from inside a nested scope with
+>   `enableBlockScoping` on. A `Box` is shared across resumes. This holds both
+>   interpreted and compiled. Resuming the original frame twice crashes.
+> - **M0-03 (#11):** with call → `IsCapture` → `SuspendFrame` at every call
+>   site, `fib(30)` and `tak(24,16,8)` compile to exactly the same IR and
+>   machine-code size as plain calls, and run within noise (about 0–2%).
+>   Return-type profiling folds `instanceof Capture`, and the `SuspendFrame`
+>   branch and the temporary local disappear. That's the best case: call
+>   sites whose callees return several types keep one type check per call.
 
 ### Dynamic environment
 
@@ -307,3 +314,5 @@ Each entry: the decision, why, and what was rejected.
   can't be cloned, internal API); full CPS conversion (gives up Truffle's frame
   virtualization on every call); escape-only `call/cc` alone (not
   conformant).
+- **Status: go** (M0-04). The M0 spike confirmed both open questions. See
+  "Spike results" under "Continuations".
