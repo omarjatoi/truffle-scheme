@@ -9,32 +9,87 @@ import com.oracle.truffle.api.frame.MaterializedFrame;
 import com.oracle.truffle.api.interop.TruffleObject;
 
 /**
- * The marker {@code call/cc} returns while a continuation is being captured (design.md
- * "Continuations"). Every non-tail call site that sees it suspends its frame into a segment
- * ({@code SuspendFrame}) and passes it up, until the prompt completes it into a {@link Continuation}
- * and calls the receiver with it.
+ * A control request travelling up the stack (design.md "Continuations", D4). Every non-tail call
+ * site that sees one suspends its frame into it ({@code SuspendFrame}) and passes it up, until a
+ * prompt driver ({@link PromptDriver}) handles it.
+ *
+ * <ul>
+ * <li>{@link Kind#FULL}: {@code call/cc}. Captures up to the program's root prompt; the receiver is
+ * called inside the captured continuation.</li>
+ * <li>{@link Kind#DELIMITED}: {@code %capture-to-prompt}. Captures up to the nearest prompt with
+ * {@link #tag}, aborts to it, and calls the receiver there with the (composable) continuation.</li>
+ * <li>{@link Kind#REINSTATE}: invoking a composable continuation. Captures up to the nearest prompt
+ * of any tag, then pushes the continuation's segments on top and resumes them with {@link #value}.</li>
+ * </ul>
  */
 public final class Capture implements TruffleObject {
+
+    public enum Kind {
+        FULL,
+        DELIMITED,
+        REINSTATE
+    }
 
     /** One suspended frame: resumed by calling {@code root} with a copy of {@code frame}. */
     public record Segment(ContinuationRootNode root, MaterializedFrame frame) {
     }
 
-    /** The procedure call/cc was given. */
-    public final Object receiver;
-    /** The dynamic environment when call/cc was called. */
-    public final DynEnv dynEnv;
-    /** Innermost first. */
-    private final List<Segment> segments = new ArrayList<>();
+    /** A prompt that a capture crossed, flattened into a segment list: {@code tag} and its dynamic environment. */
+    public record PromptMarker(Object tag, DynEnv dynEnv) {
+    }
 
-    public Capture(Object receiver, DynEnv dynEnv) {
+    /** The tag of the program's prompt (design.md D6). */
+    public static final Object ROOT_TAG = new Object() {
+        @Override
+        public String toString() {
+            return "root";
+        }
+    };
+
+    public final Kind kind;
+    public final Object tag;
+    public final Object receiver;
+    /** The dynamic environment when the capture started. */
+    public final DynEnv dynEnv;
+    /** For REINSTATE. */
+    public final Continuation continuation;
+    public final Object value;
+    /** Segments and prompt markers, innermost first. */
+    private final List<Object> segments = new ArrayList<>();
+
+    private Capture(Kind kind, Object tag, Object receiver, DynEnv dynEnv, Continuation continuation, Object value) {
+        this.kind = kind;
+        this.tag = tag;
         this.receiver = receiver;
         this.dynEnv = dynEnv;
+        this.continuation = continuation;
+        this.value = value;
+    }
+
+    public static Capture full(Object receiver, DynEnv dynEnv) {
+        return new Capture(Kind.FULL, ROOT_TAG, receiver, dynEnv, null, null);
+    }
+
+    public static Capture delimited(Object tag, Object receiver, DynEnv dynEnv) {
+        return new Capture(Kind.DELIMITED, tag, receiver, dynEnv, null, null);
+    }
+
+    public static Capture reinstate(Continuation continuation, Object value, DynEnv dynEnv) {
+        return new Capture(Kind.REINSTATE, null, null, dynEnv, continuation, value);
     }
 
     @TruffleBoundary
     public void addSegment(ContinuationRootNode root, MaterializedFrame frame) {
         segments.add(new Segment(root, frame));
+    }
+
+    /** A prompt driver passes the capture through: its pending segments, then itself as a marker. */
+    @TruffleBoundary
+    void addOuter(SegmentList pending, PromptMarker prompt) {
+        for (SegmentList l = pending; l != null; l = l.tail) {
+            segments.add(l.head);
+        }
+        segments.add(prompt);
     }
 
     /** This capture's segments, innermost first, followed by {@code outer}. */
@@ -45,5 +100,10 @@ public final class Capture implements TruffleObject {
             list = new SegmentList(segments.get(i), list);
         }
         return list;
+    }
+
+    /** eq? on tags: identity, fixnums and characters by value (design.md D1). */
+    static boolean sameTag(Object a, Object b) {
+        return a == b || (a instanceof Long x && b instanceof Long y && x.longValue() == y.longValue());
     }
 }

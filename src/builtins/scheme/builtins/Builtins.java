@@ -49,6 +49,7 @@ public final class Builtins implements BuiltinLibrary {
                         // Internal primitives for the prelude (design.md D5).
                         new PrimitiveSpec("call/cc", 1, 1, CallCC::new),
                         new PrimitiveSpec("call-with-current-continuation", 1, 1, CallCC::new),
+                        new PrimitiveSpec("%capture-to-prompt", 2, 2, CaptureToPrompt::new),
                         new PrimitiveSpec("%error", 1, -1, ErrorPrimitive::new),
                         new PrimitiveSpec("%current-dynamic-env", 0, 0, () -> new DynamicEnv(DynamicEnv.CURRENT)),
                         new PrimitiveSpec("%set-dynamic-env!", 1, 1, () -> new DynamicEnv(DynamicEnv.SET)),
@@ -325,7 +326,19 @@ public final class Builtins implements BuiltinLibrary {
     static final class CallCC extends PrimitiveNode {
         @Override
         public Object execute(Object[] args) {
-            return new Capture(args[0], SchemeContext.get(this).getDynamicEnv());
+            return Capture.full(args[0], SchemeContext.get(this).getDynamicEnv());
+        }
+    }
+
+    /**
+     * {@code (%capture-to-prompt tag receiver)}: captures up to the nearest prompt with tag, aborts to
+     * it, and calls receiver there with the composable continuation (design.md D4). Like call/cc, it
+     * only returns a Capture (rule 1).
+     */
+    static final class CaptureToPrompt extends PrimitiveNode {
+        @Override
+        public Object execute(Object[] args) {
+            return Capture.delimited(args[0], args[1], SchemeContext.get(this).getDynamicEnv());
         }
     }
 }
