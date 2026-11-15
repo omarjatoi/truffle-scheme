@@ -111,6 +111,8 @@ suite = {
             "sourceDirs": ["../../../src/runtime"],
             "dependencies": ["TRUFFLE_API"],
             "annotationProcessors": ["TRUFFLE_DSL_PROCESSOR"],
+            # Like Truffle's own DSL projects: SpotBugs skips DSL-generated classes.
+            "spotbugsIgnoresGenerated": True,
             "javaCompliance": "25+",
             "checkstyleVersion": "10.21.0",
         },
@@ -119,6 +121,8 @@ suite = {
             "sourceDirs": ["../../../src/builtins"],
             "dependencies": ["scheme.runtime"],
             "annotationProcessors": ["TRUFFLE_DSL_PROCESSOR"],
+            # Like Truffle's own DSL projects: SpotBugs skips DSL-generated classes.
+            "spotbugsIgnoresGenerated": True,
             "javaCompliance": "25+",
             "checkstyle": "scheme.runtime",
         },
