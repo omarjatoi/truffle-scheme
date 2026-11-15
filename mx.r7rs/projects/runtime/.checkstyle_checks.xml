@@ -5,9 +5,9 @@
   <property name="severity" value="error"/>
   <module name="FileTabCharacter"/>
   <module name="NewlineAtEndOfFile"/>
-  <!-- The launcher is the embedder, not language code: host I/O is fine there. -->
+  <!-- The launcher and the tests are the embedder, not language code: host I/O is fine there. -->
   <module name="SuppressionSingleFilter">
-    <property name="files" value="[\\/]src[\\/]launcher[\\/]"/>
+    <property name="files" value="[\\/](src[\\/]launcher|tests)[\\/]"/>
     <property name="checks" value="IllegalImport"/>
   </module>
   <module name="RegexpSingleline">
