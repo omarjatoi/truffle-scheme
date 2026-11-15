@@ -1,4 +1,4 @@
-name: gate
+name: CI
 
 on:
   pull_request:          # every PR, including PRs stacked on other PRs
@@ -9,11 +9,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: gate-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  # The required check on main (ruleset): the full mx gate, i.e. build, style,
+  # rule checks, unit tests, and the conformance status-block check.
   gate:
+    name: Build and test (mx gate)
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -35,11 +38,12 @@ jobs:
       - name: mx gate
         run: nix develop --command mx gate
 
-  # Progress tracking, not a merge gate: the main ruleset requires only `gate`,
+  # Progress tracking, not a merge gate: the main ruleset requires only
+  # "Build and test (mx gate)",
   # and continue-on-error keeps a failing run from marking the workflow red.
   # Each run's per-section table is in the workflow run summary.
   conformance:
-    name: conformance (${{ matrix.mode }})
+    name: Conformance (${{ matrix.mode }})
     runs-on: ubuntu-latest
     timeout-minutes: 60
     continue-on-error: true
