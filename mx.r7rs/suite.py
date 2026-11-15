@@ -117,9 +117,7 @@ suite = {
         "scheme.builtins": {
             "dir": "mx.r7rs/projects/builtins",
             "sourceDirs": ["../../../src/builtins"],
-            # mx requires declared project dependencies to be used; add
-            # "scheme.runtime" with the first builtin (M1-03).
-            "dependencies": ["TRUFFLE_API"],
+            "dependencies": ["scheme.runtime"],
             "annotationProcessors": ["TRUFFLE_DSL_PROCESSOR"],
             "javaCompliance": "25+",
             "checkstyle": "scheme.runtime",
@@ -127,8 +125,7 @@ suite = {
         "scheme.compiler": {
             "dir": "mx.r7rs/projects/compiler",
             "sourceDirs": ["../../../src/compiler"],
-            # Add "scheme.reader" and "scheme.runtime" with the first compiler code (M1-05).
-            "dependencies": ["TRUFFLE_API"],
+            "dependencies": ["scheme.reader"],
             "javaCompliance": "25+",
             "checkstyle": "scheme.runtime",
         },
@@ -176,6 +173,12 @@ suite = {
         "SCHEME": {
             "moduleInfo": {
                 "name": "scheme",
+                # The front end and the primitives are services, so the runtime (which
+                # holds the language class) needn't depend on them (scheme.runtime.SchemeCompiler).
+                "uses": [
+                    "scheme.runtime.SchemeCompiler",
+                    "scheme.runtime.BuiltinLibrary",
+                ],
                 "exports": [
                     "scheme.reader",
                     "scheme.runtime",
