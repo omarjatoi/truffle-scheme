@@ -33,11 +33,14 @@ before anything else is built on top of them.
     `--compile` are flags the runtime reads, which do nothing until M2.
     `--compile` turns on immediate, synchronous compilation and makes
     compilation failures errors.
+  - `.github/workflows/gate.yml`: on every PR, enter the Nix dev shell,
+    fetch labsjdk, and run the full `mx gate`.
   - **Done when:**
     - `mx build` builds a stub `TruffleLanguage` that evaluates an integer
       literal.
     - `mx unittest` runs one JUnit test against it.
     - `mx --dy /compiler unittest` passes with the Graal JIT.
+    - The gate workflow runs on the PR and passes.
     - Every command in AGENTS.md either works or reports that it isn't
       implemented yet. **If any command in AGENTS.md is wrong for mx, fix
       AGENTS.md in the same PR.**
@@ -61,7 +64,7 @@ before anything else is built on top of them.
   - **Done when** the report has overhead numbers and evidence (IGV graphs or
     compilation traces) of whether the capture branch is folded away at call
     sites that never see a capture.
-- [ ] **M0-04 · Decision (human)**
+- [ ] **M0-04 · Decision** *(human)*
   - Fill in the "Spike-dependent" box in design.md with the results.
   - Record go/no-go in the Decisions section.
   - Delete `r7rs.spike`.

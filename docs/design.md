@@ -192,7 +192,7 @@ Each entry: the decision, why, and what was rejected.
   are cells, and exports map names to cells. Assigning to an imported binding
   is an error.
 - Every global cell has an `Assumption` that is invalidated on redefinition.
-- Standard libraries are `.sld` files under `src/prelude/`, built on an
+- Standard libraries are `.sld` files under `src/r7rs.prelude/`, built on an
   internal primitive library `(r7rs %primitives)`. User libraries are found on
   a search path (`-I dir`).
 - `environment` returns a fresh environment importing the given libraries.
