@@ -1,6 +1,6 @@
-# R7RS-small on GraalVM Truffle
+# GraalVM Truffle Scheme
 
-R7RS-small Scheme on GraalVM Truffle.
+[R7RS-small](https://small.r7rs.org/) Scheme on GraalVM Truffle. https://www.graalvm.org/ and https://www.graalvm.org/latest/graalvm-as-a-platform/language-implementation-framework/ for additional information.
 
 - `docs/design.md`: architecture and decisions
 - `docs/plan.md`: milestones, current tasks, conformance status
