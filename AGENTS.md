@@ -119,7 +119,7 @@ and names that task.
 
 ```
 mx build                                  # build everything
-mx unittest                               # JUnit tests in tests/r7rs.test (Graal JIT on, background)
+mx unittest                               # JUnit tests in tests/scheme/test (Graal JIT on, background)
 mx r7rs-unittest --compile                # same, compile immediately; failures are errors
 mx r7rs-test                              # chibi suite, interpreter only (the fast loop)
 mx r7rs-test 6.10                         # one conformance section
@@ -132,7 +132,7 @@ mx r7rs-check                             # rule 1: Java builtins never call Sch
 mx gate --tags fast                       # build, style, rule checks, unittest, r7rs, spec, torture
 ```
 
-Before opening a PR: `mx gate --tags fast`. If you touched `r7rs.runtime` or
+Before opening a PR: `mx gate --tags fast`. If you touched `src/runtime` or
 any Bytecode DSL operation, also run the `--compile` commands. CI runs the full
 `mx gate`. Gate tasks whose task hasn't landed yet log `SKIPPED` and name the
 task that brings them.
@@ -195,7 +195,7 @@ task that brings them.
 
 - One task, one PR. Out-of-scope findings go under **Follow-ups** in the PR
   description. Don't fix them in the same PR.
-- Write the failing test first, in `tests/r7rs.test/`. If you think a case
+- Write the failing test first, in `tests/scheme/test/`. If you think a case
   belongs in `tests/spec/`, propose it in the PR. A human adds it.
 - If the same failure survives two different fix attempts, stop and write up
   what you tried and what you observed.
@@ -207,14 +207,15 @@ task that brings them.
 ```
 mx.r7rs/suite.py           projects, distributions, Truffle libraries (pinned to the GraalVM version)
 mx.r7rs/mx_r7rs.py         custom mx commands + gate tasks
+mx.r7rs/projects/<name>/   mx project dirs: generated IDE files + checkstyle config
 flake.nix, flake.lock      dev shell: GraalVM 25.5, mx, Python, gh, chibi-scheme
-src/r7rs.reader/           reader + datum labels
-src/r7rs.compiler/         expander + core AST -> Bytecode DSL builder calls
-src/r7rs.runtime/          Bytecode DSL root + operations, continuations
+src/reader/                reader + datum labels
+src/compiler/              expander + core AST -> Bytecode DSL builder calls
+src/runtime/               Bytecode DSL root + operations, continuations
                            (Capture, Segment), trampoline, DynEnv
-src/r7rs.builtins/         leaf primitives only (see rule 1)
-src/r7rs.prelude/          standard libraries (.sld) and prelude Scheme code
+src/builtins/              leaf primitives only (see rule 1)
+src/prelude/               standard libraries (.sld) and prelude Scheme code
 tests/r7rs/                chibi suite, vendored, read-only
 tests/spec/                tail-call / continuation / depth cases, read-only
-tests/r7rs.test/           JUnit unit tests; add freely
+tests/scheme/test/         JUnit unit tests; add freely
 ```

@@ -21,3 +21,7 @@ build.xml
 .factorypath
 .pydevproject
 eclipse-launches/
+# mx project directories: generated IDE files only, except the shared checkstyle config
+mx.r7rs/projects/**
+!mx.r7rs/projects/*/
+!mx.r7rs/projects/runtime/.checkstyle_checks.xml

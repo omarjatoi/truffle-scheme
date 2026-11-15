@@ -27,8 +27,8 @@ before anything else is built on top of them.
       dependencies.
     - The projects listed in AGENTS.md "Layout", as empty stubs, with
       `TRUFFLE_DSL_PROCESSOR` only where generated code will be needed
-      (`r7rs.runtime`, `r7rs.builtins`).
-    - A JUnit test project, `tests/r7rs.test`.
+      (`scheme.runtime`, `scheme.builtins`).
+    - A JUnit test project, `tests/scheme/test`.
   - `mx.r7rs/mx_r7rs.py`: every command in AGENTS.md "Commands", registered
     and wired to gate tasks. Commands whose machinery doesn't exist yet print
     a clear "not implemented until <task>" and exit nonzero. `torture` and
@@ -53,7 +53,7 @@ before anything else is built on top of them.
       AGENTS.md in the same PR.**
 - [ ] **M0-02 · Spike: frame copy and multi-shot resume** *(needs M0-01)*
   - Write a minimal Bytecode DSL interpreter in a throwaway project,
-    `r7rs.spike`, excluded from the gate and deleted at M0-04. Give it a call
+    `scheme.spike`, excluded from the gate and deleted at M0-04. Give it a call
     operation, a custom `@Yield SuspendFrame`, and a `Capture` marker, as in
     design.md "Continuations".
   - Capture across at least 3 frames, then resume the same continuation
@@ -78,7 +78,7 @@ before anything else is built on top of them.
 - [ ] **M0-04 · Decision** *(human)*
   - Fill in the "Spike-dependent" box in design.md with the results.
   - Record go/no-go in the Decisions section.
-  - Delete `r7rs.spike`.
+  - Delete `scheme.spike`.
 
 **Exit:** M0-04 done.
 
