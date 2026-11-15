@@ -70,6 +70,8 @@ jobs:
         run: nix develop --command mx tests conformance
       - name: Differential tests (tests/diff vs chibi-scheme)
         run: nix develop --command mx tests diff
+      - name: Tail loop in constant space (-Xss256k -Xmx64m)
+        run: nix develop --command mx tests space
       - name: Spec tests
         run: nix develop --command mx tests spec
       - name: Torture

@@ -331,10 +331,10 @@ def r7rs_spec(args):
     _not_implemented('r7rs-spec', 'M2 (tests/spec is written by a human before M2 starts)')
 
 
-def _run_ours(file, vm_args):
+def _run_ours(file, vm_args, jvm_args=()):
     """Runs one program with scheme.launcher.SchemeMain. Returns (exit status, stdout, stderr)."""
     out, err = mx.OutputCapture(), mx.OutputCapture()
-    rc = mx.run_java(mx.get_runtime_jvm_args(['SCHEME_LAUNCHER']) + _TRUFFLE_VM_ARGS + vm_args
+    rc = mx.run_java(list(jvm_args) + mx.get_runtime_jvm_args(['SCHEME_LAUNCHER']) + _TRUFFLE_VM_ARGS + vm_args
                      + ['-m', 'scheme.launcher/scheme.launcher.SchemeMain', file],
                      out=out, err=err, nonZeroIsFatal=False)
     return rc, out.data, err.data
@@ -348,6 +348,22 @@ def _run_chibi(file):
 
 def _tail(text, lines=5):
     return '\n'.join('    ' + l for l in text.rstrip('\n').splitlines()[-lines:]) or '    (empty)'
+
+
+# M1-06: a 10M-iteration tail-recursive loop under a stack and heap far too small for anything that
+# grows per iteration. tests/spec/tail-* (M2) will cover tail calls in general.
+_SPACE_PROGRAM = ('tests/diff/loop-10m.scm', '10000000\n')
+_SPACE_LIMITS = ['-Xss256k', '-Xmx64m']
+
+
+def r7rs_space(args):
+    """run the 10M-iteration tail loop under -Xss256k -Xmx64m, interpreted and with the JIT"""
+    path, expected = _SPACE_PROGRAM
+    for label, vm_args in (('interpreter', r7rs_vm_args()), ('JIT', [])):
+        rc, out, err = _run_ours(join(_suite.dir, path), vm_args, _SPACE_LIMITS)
+        if rc != 0 or out != expected:
+            mx.abort(f'{path} ({label}, {" ".join(_SPACE_LIMITS)}): exit {rc}, stdout {out!r}\n{_tail(err)}')
+        mx.log(f'r7rs-space: {path} ran in constant space ({label}, {" ".join(_SPACE_LIMITS)})')
 
 
 def r7rs_diff_all(args):
@@ -523,6 +539,7 @@ _TESTS = {
     'unittest-compile': ('JUnit, compile immediately', lambda: r7rs_unittest(['--compile'])),
     'conformance': ('status block in docs/plan.md is up to date', lambda: r7rs_status(['--check'])),
     'diff': ('tests/diff/ matches chibi-scheme', lambda: r7rs_diff_all([])),
+    'space': ('10M-iteration tail loop in constant space (M1-06)', lambda: r7rs_space([])),
     'spec': ('tests/spec', None),
     'torture': ('conformance suite under --torture', None),
 }
@@ -574,6 +591,7 @@ mx.update_commands(_suite, {
     'r7rs-spec': [r7rs_spec, ''],
     'r7rs-diff': [r7rs_diff, 'file.scm [--compile] [--torture]'],
     'r7rs-diff-all': [r7rs_diff_all, '[--compile] [--torture]'],
+    'r7rs-space': [r7rs_space, ''],
     'r7rs-status': [r7rs_status, ''],
     'r7rs-check': [r7rs_check, ''],
     'r7rs-vendor-chibi': [r7rs_vendor_chibi, 'path/to/r7rs-tests.scm --version <chibi version>'],
