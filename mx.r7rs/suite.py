@@ -139,7 +139,8 @@ suite = {
             "checkstyle": "scheme.runtime",
         },
         "scheme.launcher": {
-            # Host-side tools that embed the language: the conformance runner (M1-01).
+            # Host-side tools that embed the language: the conformance runner (M1-01)
+            # and SchemeMain, the program runner that mx r7rs-diff uses (M1-02).
             "dir": "mx.r7rs/projects/launcher",
             "sourceDirs": ["../../../src/launcher"],
             "dependencies": [
@@ -152,9 +153,10 @@ suite = {
         "scheme.test": {
             "dir": "mx.r7rs/projects/test",
             "sourceDirs": ["../../../tests"],
-            # Tests drive the language through the polyglot API only; SCHEME reaches
-            # the module path via SCHEME_TEST's distDependencies.
+            # Tests drive the language through the polyglot API and the launcher;
+            # SCHEME reaches the module path via SCHEME_TEST's distDependencies.
             "dependencies": [
+                "scheme.launcher",
                 "mx:JUNIT",
                 "POLYGLOT",
                 # The optimizing runtime: without it Truffle falls back to an
@@ -198,6 +200,7 @@ suite = {
         "SCHEME_LAUNCHER": {
             "moduleInfo": {
                 "name": "scheme.launcher",
+                "exports": ["scheme.launcher"],
             },
             "useModulePath": True,
             "dependencies": ["scheme.launcher"],
@@ -223,7 +226,7 @@ suite = {
             },
             "useModulePath": True,
             "dependencies": ["scheme.test"],
-            "distDependencies": ["SCHEME"],
+            "distDependencies": ["SCHEME", "SCHEME_LAUNCHER"],
             "exclude": [
                 "mx:JUNIT",
                 "COLLECTIONS",
