@@ -29,6 +29,10 @@ public final class ContinuationProcedureRootNode extends RootNode {
             System.arraycopy(arguments, 1, values, 0, values.length);
             value = new MultipleValues(values);
         }
+        if (k.composable) {
+            // Pushed onto the current continuation: travels up to the nearest prompt (design.md D4).
+            return Capture.reinstate(k, value, SchemeContext.get(this).getDynamicEnv());
+        }
         throw new InvokeContinuation(k, value);
     }
 
