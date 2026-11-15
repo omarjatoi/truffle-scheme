@@ -56,6 +56,8 @@ public final class Expander {
     private final SyntacticEnvironment local = new SyntacticEnvironment();
     private final Map<SSymbol, CoreForm> core = new HashMap<>();
     private final SSymbol callWithPrompt;
+    private final SSymbol ellipsis;
+    private final SSymbol underscore;
     /** The innermost syntax object with a source position seen so far, for errors. */
     private Syntax current;
 
@@ -66,6 +68,8 @@ public final class Expander {
             core.put(symbols.intern(form.keyword), form);
         }
         this.callWithPrompt = symbols.intern("%call-with-prompt");
+        this.ellipsis = symbols.intern("...");
+        this.underscore = symbols.intern("_");
     }
 
     /**
@@ -85,15 +89,15 @@ public final class Expander {
     // ------------------------------------------------------------------------------------------
     // Identifiers and bindings
 
-    private static boolean isIdentifier(Object o) {
+    static boolean isIdentifier(Object o) {
         return o instanceof SSymbol || o instanceof Syntax s && s.datum instanceof SSymbol;
     }
 
-    private static SSymbol symbol(Object id) {
+    static SSymbol symbol(Object id) {
         return (SSymbol) (id instanceof Syntax s ? s.datum : id);
     }
 
-    private static ScopeSet scopes(Object id) {
+    static ScopeSet scopes(Object id) {
         return id instanceof Syntax s ? s.scopes : ScopeSet.EMPTY;
     }
 
@@ -163,7 +167,7 @@ public final class Expander {
             return m;
         }
         if (headBinding(spec) == CoreForm.SYNTAX_RULES) {
-            throw syntax("syntax-rules is not supported until M3-03", spec);
+            return new Macro(new SyntaxRules(spec, this, ellipsis, underscore));
         }
         throw syntax("not a transformer", spec);
     }
@@ -177,6 +181,11 @@ public final class Expander {
         }
     }
 
+    /** A syntax error about {@code form}, naming its line (or the innermost line seen). */
+    SchemeError syntaxError(String message, Object form) {
+        return syntax(message, form);
+    }
+
     @TruffleBoundary
     private SchemeError syntax(String message, Object form) {
         Syntax at = form instanceof Syntax s && s.source != null ? s : current;
@@ -186,7 +195,7 @@ public final class Expander {
 
     /** The elements of a proper list (syntax objects stay wrapped), or a syntax error. */
     @TruffleBoundary
-    private List<Object> list(Object form) {
+    List<Object> list(Object form) {
         List<Object> items = new ArrayList<>();
         Object rest = Syntax.e(form);
         while (rest instanceof SPair p) {

@@ -111,7 +111,6 @@ public class CompilerTest {
         assertTrue(error("(set! nope 1)").getMessage().contains("unbound variable: nope"));
         assertTrue(error("(lambda (x x) x)").getMessage().contains("syntax error"));
         assertTrue(error("(define-syntax foo 1)").getMessage().contains("not a transformer"));
-        assertTrue(error("(define-syntax foo (syntax-rules () ((_) 1)))").getMessage().contains("M3-03"));
         assertTrue(error("(+ 1 \"a\")").getMessage().contains("not a number"));
     }
 }
