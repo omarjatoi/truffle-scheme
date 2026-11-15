@@ -3,9 +3,9 @@
 Milestones run in order. Detailed tasks are written only for the current
 milestone. Later milestones list just their exit criteria until they start.
 
-No milestone is human-gated. Agents merge their own PRs once `gate` is green
-(AGENTS.md). Tasks marked *(human)* are still done by a human, and only a human
-edits `docs/design.md`.
+No milestone is human-gated. Agents merge their own PRs once the required
+`Build and test (mx gate)` check is green (AGENTS.md). Tasks marked *(human)*
+are still done by a human, and only a human edits `docs/design.md`.
 
 <!-- status:begin -->
 Conformance against the vendored chibi suite (`tests/r7rs/`), interpreter
