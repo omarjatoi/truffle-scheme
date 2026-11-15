@@ -7,6 +7,7 @@ import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.GenerateInline;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.frame.FrameDescriptor;
+import com.oracle.truffle.api.frame.FrameSlotKind;
 import com.oracle.truffle.api.frame.MaterializedFrame;
 import com.oracle.truffle.api.nodes.DirectCallNode;
 import com.oracle.truffle.api.nodes.IndirectCallNode;
@@ -54,6 +55,16 @@ final class PromptDriver extends Node {
                         case REINSTATE: {
                             // Composable continuation: its segments go on top of the invoker's.
                             pending = SegmentList.concat(capture.continuation.segments, capture.segmentsBefore(pending));
+                            value = capture.value;
+                            continue;
+                        }
+                        case TORTURE: {
+                            if (tag != Capture.ROOT_TAG) {
+                                capture.addOuter(pending, new Capture.PromptMarker(tag, promptEnv));
+                                return capture;
+                            }
+                            context.tortureCaptures++;
+                            pending = capture.segmentsBefore(pending);
                             value = capture.value;
                             continue;
                         }
@@ -106,7 +117,15 @@ final class PromptDriver extends Node {
                     Object head = pending.head;
                     pending = pending.tail;
                     if (head instanceof Capture.Segment segment) {
-                        value = resumeNode.execute(segment.root(), copy(segment.frame()), value);
+                        if (SchemeRootNode.TORTURE) {
+                            // Rule 3: resuming must never change the segment. Resume one copy, then
+                            // check the original against a second, untouched copy.
+                            MaterializedFrame witness = copy(segment.frame());
+                            value = resumeNode.execute(segment.root(), copy(segment.frame()), value);
+                            checkUnchanged(segment.frame(), witness);
+                        } else {
+                            value = resumeNode.execute(segment.root(), copy(segment.frame()), value);
+                        }
                     }
                     // A PromptMarker: that prompt returns the value normally.
                 }
@@ -154,6 +173,26 @@ final class PromptDriver extends Node {
     @TruffleBoundary
     private static SchemeError notAProcedure(Object value) {
         return new SchemeError("not a procedure: " + Printer.print(value, Printer.Mode.WRITE));
+    }
+
+    /** Torture mode: the original frame of a resumed segment still equals a copy taken before. */
+    @TruffleBoundary
+    private static void checkUnchanged(MaterializedFrame original, MaterializedFrame witness) {
+        Object[] a = original.getArguments();
+        Object[] b = witness.getArguments();
+        boolean same = a.length == b.length;
+        for (int i = 0; same && i < a.length; i++) {
+            same = a[i] == b[i];
+        }
+        int slots = original.getFrameDescriptor().getNumberOfSlots();
+        for (int i = 0; same && i < slots; i++) {
+            byte tag = original.getTag(i);
+            same = tag == witness.getTag(i) && (tag == FrameSlotKind.Illegal.tag || java.util.Objects.equals(original.getValue(i), witness.getValue(i)));
+        }
+        if (!same) {
+            // An internal error, never a Scheme error (design.md D8): a resume mutated its segment.
+            throw new IllegalStateException("torture: resuming a continuation segment changed its frame (AGENTS.md rule 3)");
+        }
     }
 
     @TruffleBoundary
