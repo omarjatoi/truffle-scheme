@@ -182,7 +182,7 @@ and the M0 spike results recorded there. Only M2-07 waits for the human-written
       through the following forms (D6);
     - the same results interpreted and with `--compile`;
     - `tests/diff/` programs using `call/cc` match chibi.
-- [ ] **M2-03 · Prompts** *(needs M2-02)*
+- [x] **M2-03 · Prompts** *(needs M2-02)*
   - The internal `%prompt` with tags: a capture stops at the nearest prompt
     whose tag matches (D4). Each REPL input and each `eval` gets its own
     prompt (D6). Not exposed to Scheme programs (D4).

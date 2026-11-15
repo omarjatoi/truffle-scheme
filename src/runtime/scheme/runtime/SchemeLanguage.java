@@ -34,6 +34,7 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
     protected void initializeContext(SchemeContext context) {
         // Created here, not on first use: prompts run compiled, and compiled code must not create nodes.
         continuationProcedure = new ContinuationProcedureRootNode(this).getCallTarget();
+        context.globals.cell(context.symbols.intern("%call-with-prompt")).define(new SClosure(new PromptProcedureRootNode(this).getCallTarget(), NO_CAPTURES));
         for (BuiltinLibrary library : ServiceLoader.load(BuiltinLibrary.class, SchemeLanguage.class.getClassLoader())) {
             for (PrimitiveSpec spec : library.primitives()) {
                 SClosure procedure = new SClosure(new PrimitiveRootNode(this, spec).getCallTarget(), NO_CAPTURES);
