@@ -22,6 +22,9 @@ public final class SpikeLanguage extends TruffleLanguage<Object> {
     @Override
     protected CallTarget parse(ParsingRequest request) {
         String[] words = request.getSource().getCharacters().toString().strip().split("\\s+");
+        if (words[0].equals("bench")) {
+            return BenchRootNode.create(this, words);
+        }
         long[] values = new long[words.length - 1];
         for (int i = 1; i < words.length; i++) {
             values[i - 1] = Long.parseLong(words[i]);
