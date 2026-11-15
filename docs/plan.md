@@ -168,7 +168,7 @@ and the M0 spike results recorded there. Only M2-07 waits for the human-written
     (design.md "Dynamic environment").
   - **Done when** a prelude procedure is callable from a program, and unit tests
     cover DynEnv. The primitives used are leaves (rule 1).
-- [ ] **M2-02 · call/cc: capture and re-entry** *(needs M2-01)*
+- [x] **M2-02 · call/cc: capture and re-entry** *(needs M2-01)*
   - `call/cc` returns a `Capture` (D5). Each call site's `SuspendFrame` adds
     its segment. The program's root prompt (D6) completes the capture into a
     continuation object that also holds the current `DynEnv`.
