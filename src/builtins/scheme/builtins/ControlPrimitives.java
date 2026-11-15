@@ -1,5 +1,7 @@
 package scheme.builtins;
 
+import scheme.runtime.value.SBytevector;
+
 import java.util.List;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
@@ -42,6 +44,7 @@ final class ControlPrimitives {
         return List.of(
                         new PrimitiveSpec("eq?", 2, 2, Eq::new),
                         new PrimitiveSpec("eqv?", 2, 2, Eqv::new),
+                        new PrimitiveSpec("equal?", 2, 2, Equal::new),
                         new PrimitiveSpec("not", 1, 1, () -> new TypePredicate(x -> x instanceof Boolean b && !b)),
                         new PrimitiveSpec("values", 0, -1, Values::new),
                         new PrimitiveSpec("%values->list", 1, 1, ValuesToList::new),
@@ -506,5 +509,69 @@ final class ControlPrimitives {
     @TruffleBoundary
     static SchemeError notA(String who, String what, Object value) {
         return new SchemeError(who + ": not a " + what + ": " + Printer.print(value, Printer.Mode.WRITE));
+    }
+
+    /**
+     * {@code (equal? a b)} (R7RS §6.1): structural equality on pairs, vectors, strings and
+     * bytevectors, eqv? elsewhere. Iterative (rule 4), and it terminates on circular structure
+     * (design.md D9): a pair of objects already being compared counts as equal, which is the
+     * coinductive (bisimulation) reading of equal?.
+     */
+    static final class Equal extends PrimitiveNode {
+        @Override
+        public Object execute(Object[] args) {
+            return equal(args[0], args[1]);
+        }
+
+        @TruffleBoundary
+        static boolean equal(Object a, Object b) {
+            java.util.ArrayDeque<Object[]> todo = new java.util.ArrayDeque<>();
+            java.util.IdentityHashMap<Object, java.util.Set<Object>> seen = new java.util.IdentityHashMap<>();
+            todo.push(new Object[]{a, b});
+            while (!todo.isEmpty()) {
+                Object[] next = todo.pop();
+                Object x = next[0];
+                Object y = next[1];
+                if (Eqv.eqv(x, y)) {
+                    continue;
+                }
+                if (x instanceof SString s && y instanceof SString t) {
+                    if (!s.toString().equals(t.toString())) {
+                        return false;
+                    }
+                    continue;
+                }
+                if (x instanceof SBytevector u && y instanceof SBytevector v) {
+                    if (!java.util.Arrays.equals(u.bytes, v.bytes)) {
+                        return false;
+                    }
+                    continue;
+                }
+                boolean pairs = x instanceof SPair && y instanceof SPair;
+                boolean vectors = x instanceof SVector v1 && y instanceof SVector v2 && v1.elements.length == v2.elements.length;
+                if (!pairs && !vectors) {
+                    return false;
+                }
+                java.util.Set<Object> partners = seen.get(x);
+                if (partners == null) {
+                    partners = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+                    seen.put(x, partners);
+                }
+                if (!partners.add(y)) {
+                    continue;
+                }
+                if (pairs) {
+                    todo.push(new Object[]{((SPair) x).cdr, ((SPair) y).cdr});
+                    todo.push(new Object[]{((SPair) x).car, ((SPair) y).car});
+                } else {
+                    Object[] xs = ((SVector) x).elements;
+                    Object[] ys = ((SVector) y).elements;
+                    for (int i = xs.length - 1; i >= 0; i--) {
+                        todo.push(new Object[]{xs[i], ys[i]});
+                    }
+                }
+            }
+            return true;
+        }
     }
 }

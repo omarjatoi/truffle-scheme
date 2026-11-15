@@ -1,18 +1,22 @@
 package scheme.builtins;
 
+import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.math.MathContext;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 
 import scheme.runtime.SchemeError;
 import scheme.runtime.printer.Printer;
 import scheme.runtime.value.SBigInteger;
+import scheme.runtime.value.SRational;
 
 /**
- * The generic (slow) path of arithmetic on exact integers ({@code long}, {@link SBigInteger}) and
- * flonums. Fixnum results overflow into SBigInteger and never wrap; big results that fit in a
- * {@code long} are demoted (AGENTS.md "Truffle conventions"). Rationals and complex numbers arrive
- * with the numeric tower (M4).
+ * The generic (slow) path of arithmetic (design.md D1): exact integers ({@code long},
+ * {@link SBigInteger}), exact rationals ({@link SRational}) and flonums. Every result is canonical:
+ * big results that fit in a {@code long} are demoted, and a rational with denominator 1 is an
+ * integer (AGENTS.md "Truffle conventions"). Mixing exact and inexact gives inexact. Complex
+ * numbers arrive with the rest of the numeric tower (M4).
  */
 final class Arithmetic {
 
@@ -22,23 +26,47 @@ final class Arithmetic {
     enum Op {
         ADD,
         SUB,
-        MUL
+        MUL,
+        DIV
+    }
+
+    static boolean isExact(Object x) {
+        return x instanceof Long || x instanceof SBigInteger || x instanceof SRational;
+    }
+
+    static boolean isReal(Object x) {
+        return x instanceof Double || isExact(x);
     }
 
     @TruffleBoundary
     static Object check(String who, Object x) {
-        if (x instanceof Long || x instanceof Double || x instanceof SBigInteger) {
+        if (isReal(x)) {
             return x;
         }
         throw new SchemeError(who + ": not a number (or not supported until M4): " + Printer.print(x, Printer.Mode.WRITE));
     }
 
-    private static BigInteger big(Object x) {
-        return x instanceof Long l ? BigInteger.valueOf(l) : ((SBigInteger) x).value;
+    static BigInteger numerator(Object x) {
+        return x instanceof Long l ? BigInteger.valueOf(l) : x instanceof SBigInteger b ? b.value : ((SRational) x).numerator;
     }
 
-    private static double flo(Object x) {
-        return x instanceof Double d ? d : x instanceof Long l ? (double) l : ((SBigInteger) x).value.doubleValue();
+    static BigInteger denominator(Object x) {
+        return x instanceof SRational r ? r.denominator : BigInteger.ONE;
+    }
+
+    @TruffleBoundary
+    static double flo(Object x) {
+        if (x instanceof Double d) {
+            return d;
+        }
+        if (x instanceof Long l) {
+            return l;
+        }
+        if (x instanceof SBigInteger b) {
+            return b.value.doubleValue();
+        }
+        SRational r = (SRational) x;
+        return new BigDecimal(r.numerator).divide(new BigDecimal(r.denominator), MathContext.DECIMAL64).doubleValue();
     }
 
     @TruffleBoundary
@@ -52,15 +80,31 @@ final class Arithmetic {
                 case ADD -> x + y;
                 case SUB -> x - y;
                 case MUL -> x * y;
+                case DIV -> x / y;
             };
         }
-        BigInteger x = big(a);
-        BigInteger y = big(b);
-        return SBigInteger.normalize(switch (op) {
-            case ADD -> x.add(y);
-            case SUB -> x.subtract(y);
-            case MUL -> x.multiply(y);
-        });
+        BigInteger an = numerator(a);
+        BigInteger ad = denominator(a);
+        BigInteger bn = numerator(b);
+        BigInteger bd = denominator(b);
+        if (ad.equals(BigInteger.ONE) && bd.equals(BigInteger.ONE) && op != Op.DIV) {
+            return SBigInteger.normalize(switch (op) {
+                case ADD -> an.add(bn);
+                case SUB -> an.subtract(bn);
+                default -> an.multiply(bn);
+            });
+        }
+        return switch (op) {
+            case ADD -> SRational.make(an.multiply(bd).add(bn.multiply(ad)), ad.multiply(bd));
+            case SUB -> SRational.make(an.multiply(bd).subtract(bn.multiply(ad)), ad.multiply(bd));
+            case MUL -> SRational.make(an.multiply(bn), ad.multiply(bd));
+            case DIV -> {
+                if (bn.signum() == 0) {
+                    throw new SchemeError(who + ": division by zero");
+                }
+                yield SRational.make(an.multiply(bd), ad.multiply(bn));
+            }
+        };
     }
 
     /** -1, 0 or 1. */
@@ -71,6 +115,6 @@ final class Arithmetic {
         if (a instanceof Double || b instanceof Double) {
             return Double.compare(flo(a), flo(b));
         }
-        return big(a).compareTo(big(b));
+        return numerator(a).multiply(denominator(b)).compareTo(numerator(b).multiply(denominator(a)));
     }
 }

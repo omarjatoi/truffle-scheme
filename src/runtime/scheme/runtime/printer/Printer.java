@@ -22,6 +22,7 @@ import scheme.runtime.value.SConstant;
 import scheme.runtime.value.SErrorObject;
 import scheme.runtime.value.SPair;
 import scheme.runtime.value.SRational;
+import scheme.runtime.value.SPort;
 import scheme.runtime.value.SRecord;
 import scheme.runtime.value.SRecordType;
 import scheme.runtime.value.SString;
@@ -307,6 +308,8 @@ public final class Printer {
             out.append("#<record ").append(r.type.name).append('>');
         } else if (v instanceof DynEnv) {
             out.append("#<dynamic-environment>");
+        } else if (v instanceof SPort) {
+            out.append("#<port>");
         } else if (v instanceof SRecordType t) {
             out.append("#<record-type ").append(t.name).append('>');
         } else {
