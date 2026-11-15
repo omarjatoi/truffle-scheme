@@ -26,7 +26,7 @@ import scheme.runtime.value.SymbolTable;
 /**
  * M3-02: the sets-of-scopes expander (design.md D3). {@link Expander#show} prints the core AST with
  * each local variable renamed to {@code name.N}, so tests can see what every identifier resolved
- * to. Until {@code syntax-rules} (M3-03), macros here are Java {@link Transformer}s.
+ * to. Macros here are Java {@link Transformer}s; SyntaxRulesTest covers {@code syntax-rules}.
  */
 public class ExpanderTest {
 
@@ -133,7 +133,6 @@ public class ExpanderTest {
         assertTrue(showError("(set! lambda 1)").getMessage().contains("set! of a syntax keyword"));
         assertTrue(showError("(lambda (1) 1)").getMessage().contains("invalid parameter 1"));
         assertTrue(showError("(define-syntax m 5)").getMessage().contains("not a transformer"));
-        assertTrue(showError("(define-syntax m (syntax-rules () ((_) 1)))").getMessage().contains("M3-03"));
         assertTrue(showError("(%guard (e (#t 1)) 2)").getMessage().contains("M3-06"));
         assertTrue(showError("(include \"x.scm\")").getMessage().contains("M3-04"));
         assertTrue(showError("(display 1)\n(syntax-rules ())").getMessage().contains("line 2"));

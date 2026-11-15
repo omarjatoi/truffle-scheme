@@ -2,7 +2,7 @@ package scheme.compiler;
 
 /**
  * A macro transformer (design.md D3): maps a macro use to its expansion. {@code syntax-rules}
- * (M3-03) makes these; tests can install Java ones with
+ * makes these ({@link SyntaxRules}); tests can also install Java ones with
  * {@link SyntacticEnvironment#defineSyntax}.
  */
 @FunctionalInterface

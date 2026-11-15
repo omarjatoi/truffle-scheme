@@ -37,7 +37,7 @@ public final class SyntacticEnvironment {
 
     private final Map<SSymbol, List<Entry>> entries = new HashMap<>();
 
-    /** Defines a top-level macro, for tests until {@code syntax-rules} (M3-03). */
+    /** Defines a top-level macro with a Java transformer (for tests). */
     @TruffleBoundary
     public void defineSyntax(SSymbol name, Transformer transformer) {
         bind(name, ScopeSet.EMPTY, new Macro(transformer));

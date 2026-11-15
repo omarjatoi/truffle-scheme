@@ -19,6 +19,7 @@ import scheme.runtime.value.MultipleValues;
 import scheme.runtime.value.SConstant;
 import scheme.runtime.value.SErrorObject;
 import scheme.runtime.value.SPair;
+import scheme.runtime.value.SVector;
 import scheme.runtime.value.SString;
 
 /**
@@ -40,6 +41,7 @@ public final class Builtins implements BuiltinLibrary {
                         new PrimitiveSpec("<=", 1, -1, () -> new Compare("<=", Compare.LE)),
                         new PrimitiveSpec(">=", 1, -1, () -> new Compare(">=", Compare.GE)),
                         new PrimitiveSpec("cons", 2, 2, Cons::new),
+                        new PrimitiveSpec("vector", 0, -1, MakeVector::new),
                         new PrimitiveSpec("car", 1, 1, () -> new PairAccess("car", true)),
                         new PrimitiveSpec("cdr", 1, 1, () -> new PairAccess("cdr", false)),
                         new PrimitiveSpec("null?", 1, 1, () -> new TypeTest(TypeTest.NULL)),
@@ -155,6 +157,13 @@ public final class Builtins implements BuiltinLibrary {
         @Override
         public Object execute(Object[] args) {
             return new SPair(args[0], args[1]);
+        }
+    }
+
+    static final class MakeVector extends PrimitiveNode {
+        @Override
+        public Object execute(Object[] args) {
+            return new SVector(args.clone(), false);
         }
     }
 

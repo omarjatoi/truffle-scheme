@@ -248,7 +248,7 @@ They follow design.md D3, D4, D5 and D7.
   - **Done when** every existing test passes on the new expander, and unit
     tests cover scope resolution: shadowing, keywords shadowed by local
     variables, and definition contexts.
-- [ ] **M3-03 · syntax-rules** *(early; needs M3-02)*
+- [x] **M3-03 · syntax-rules** *(early; needs M3-02)*
   - Hygienic `syntax-rules` with literals, `_`, ellipsis at any depth, tail
     patterns after an ellipsis, vector and dotted patterns, and a custom
     ellipsis identifier (R7RS §4.3.2).
