@@ -91,53 +91,58 @@ suite = {
         },
     },
 
+    # Each project's mx directory (IDE files, checkstyle config) lives under
+    # mx.r7rs/projects/<name>, and its sources live in src/<name> (tests: tests/).
+    # A source root must not be the project directory itself: mx copies every
+    # non-Java file under a source root into the jar, including the IDE files
+    # that `mx ideinit` writes into the project directory.
     "projects": {
-        "r7rs.reader": {
-            "subDir": "src",
-            "sourceDirs": ["src"],
+        "scheme.reader": {
+            "dir": "mx.r7rs/projects/reader",
+            "sourceDirs": ["../../../src/reader"],
             "dependencies": ["TRUFFLE_API"],
             "javaCompliance": "25+",
-            "checkstyle": "r7rs.runtime",
+            "checkstyle": "scheme.runtime",
         },
-        "r7rs.runtime": {
-            "subDir": "src",
-            "sourceDirs": ["src"],
+        "scheme.runtime": {
+            "dir": "mx.r7rs/projects/runtime",
+            "sourceDirs": ["../../../src/runtime"],
             "dependencies": ["TRUFFLE_API"],
             "annotationProcessors": ["TRUFFLE_DSL_PROCESSOR"],
             "javaCompliance": "25+",
             "checkstyleVersion": "10.21.0",
         },
-        "r7rs.builtins": {
-            "subDir": "src",
-            "sourceDirs": ["src"],
+        "scheme.builtins": {
+            "dir": "mx.r7rs/projects/builtins",
+            "sourceDirs": ["../../../src/builtins"],
             # mx requires declared project dependencies to be used; add
-            # "r7rs.runtime" with the first builtin (M1-03).
+            # "scheme.runtime" with the first builtin (M1-03).
             "dependencies": ["TRUFFLE_API"],
             "annotationProcessors": ["TRUFFLE_DSL_PROCESSOR"],
             "javaCompliance": "25+",
-            "checkstyle": "r7rs.runtime",
+            "checkstyle": "scheme.runtime",
         },
-        "r7rs.compiler": {
-            "subDir": "src",
-            "sourceDirs": ["src"],
-            # Add "r7rs.reader" and "r7rs.runtime" with the first compiler code (M1-05).
+        "scheme.compiler": {
+            "dir": "mx.r7rs/projects/compiler",
+            "sourceDirs": ["../../../src/compiler"],
+            # Add "scheme.reader" and "scheme.runtime" with the first compiler code (M1-05).
             "dependencies": ["TRUFFLE_API"],
             "javaCompliance": "25+",
-            "checkstyle": "r7rs.runtime",
+            "checkstyle": "scheme.runtime",
         },
-        "r7rs.prelude": {
+        "scheme.prelude": {
             # Standard libraries (.sld) and prelude Scheme code, shipped as resources.
-            "subDir": "src",
-            "sourceDirs": ["src"],
+            "dir": "mx.r7rs/projects/prelude",
+            "sourceDirs": ["../../../src/prelude"],
             "dependencies": [],
             "javaCompliance": "25+",
-            "checkstyle": "r7rs.runtime",
+            "checkstyle": "scheme.runtime",
         },
-        "r7rs.test": {
-            "subDir": "tests",
-            "sourceDirs": ["src"],
-            # Tests drive the language through the polyglot API only; R7RS reaches
-            # the module path via R7RS_TEST's distDependencies.
+        "scheme.test": {
+            "dir": "mx.r7rs/projects/test",
+            "sourceDirs": ["../../../tests"],
+            # Tests drive the language through the polyglot API only; SCHEME reaches
+            # the module path via SCHEME_TEST's distDependencies.
             "dependencies": [
                 "mx:JUNIT",
                 "POLYGLOT",
@@ -146,24 +151,24 @@ suite = {
                 "TRUFFLE_RUNTIME",
             ],
             "javaCompliance": "25+",
-            "checkstyle": "r7rs.runtime",
+            "checkstyle": "scheme.runtime",
             "testProject": True,
         },
     },
 
     "distributions": {
-        "R7RS": {
+        "SCHEME": {
             "moduleInfo": {
-                "name": "org.r7rs",
+                "name": "scheme",
             },
             # Run as a module, with Truffle on the module path, as embedders will.
             "useModulePath": True,
             "dependencies": [
-                "r7rs.reader",
-                "r7rs.runtime",
-                "r7rs.builtins",
-                "r7rs.compiler",
-                "r7rs.prelude",
+                "scheme.reader",
+                "scheme.runtime",
+                "scheme.builtins",
+                "scheme.compiler",
+                "scheme.prelude",
             ],
             "distDependencies": [],
             # Truffle jars stay separate modules on the module path.
@@ -179,15 +184,15 @@ suite = {
             "description": "R7RS-small Scheme on GraalVM Truffle",
             "maven": False,
         },
-        "R7RS_TEST": {
+        "SCHEME_TEST": {
             "moduleInfo": {
-                "name": "org.r7rs.test",
-                "exports": ["r7rs.test to junit"],
-                "opens": ["r7rs.test to junit"],
+                "name": "scheme.test",
+                "exports": ["scheme.test to junit"],
+                "opens": ["scheme.test to junit"],
             },
             "useModulePath": True,
-            "dependencies": ["r7rs.test"],
-            "distDependencies": ["R7RS"],
+            "dependencies": ["scheme.test"],
+            "distDependencies": ["SCHEME"],
             "exclude": [
                 "mx:JUNIT",
                 "COLLECTIONS",

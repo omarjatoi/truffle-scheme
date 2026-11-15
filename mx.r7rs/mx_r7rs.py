@@ -28,7 +28,7 @@ COMPILE_VM_ARGS = [
 # Default for the fast loop: interpreter only.
 INTERPRETER_VM_ARGS = ['-Dpolyglot.engine.Compilation=false']
 # --torture: capture + resume at every non-tail call. The runtime ignores it until M2.
-TORTURE_VM_ARGS = ['-Dr7rs.torture=true']
+TORTURE_VM_ARGS = ['-Dscheme.torture=true']
 
 # Truffle on JDK 25 uses restricted native access and sun.misc.Unsafe.
 _TRUFFLE_VM_ARGS = [
@@ -92,7 +92,7 @@ def mx_post_parse_cmd_line(opts):
 # ---------------------------------------------------------------------------
 
 class _R7RSUnittestConfig(mx_unittest.MxUnittestConfig):
-    """Applied to R7RS_TEST (its "unittestConfig"). Plain `mx unittest` runs with the
+    """Applied to SCHEME_TEST (its "unittestConfig"). Plain `mx unittest` runs with the
     Graal JIT in its normal (background) mode; `mx r7rs-unittest` adds mode flags."""
 
     def __init__(self):
@@ -144,7 +144,7 @@ def r7rs_spec(args):
 
 
 def r7rs_diff(args):
-    """run a file under chibi and under r7rs, then diff stdout and exit status"""
+    """run a file under chibi and under our implementation, then diff stdout and exit status"""
     parser = argparse.ArgumentParser(prog='mx r7rs-diff')
     parser.add_argument('file', help='Scheme file to run')
     parser.parse_args(args)
@@ -178,7 +178,7 @@ def _java_files(root):
 
 def r7rs_check(args):
     """check rule 1: Java builtins never call Scheme (design.md D5)"""
-    builtins = join(_suite.dir, 'src', 'r7rs.builtins')
+    builtins = join(_suite.dir, 'src', 'builtins')
     violations = []
     for path in _java_files(builtins):
         with open(path) as f:

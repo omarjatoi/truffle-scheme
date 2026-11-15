@@ -1,4 +1,4 @@
-package r7rs.runtime;
+package scheme.runtime;
 
 import com.oracle.truffle.api.CallTarget;
 import com.oracle.truffle.api.TruffleLanguage;
@@ -7,15 +7,15 @@ import com.oracle.truffle.api.TruffleLanguage;
  * M0-01 stub: evaluates a single integer literal. The real front end (reader, expander, Bytecode DSL
  * compiler) replaces {@link #parse} in M1.
  */
-@TruffleLanguage.Registration(id = R7RSLanguage.ID, name = "R7RS Scheme", defaultMimeType = R7RSLanguage.MIME_TYPE, characterMimeTypes = R7RSLanguage.MIME_TYPE, contextPolicy = TruffleLanguage.ContextPolicy.SHARED)
-public final class R7RSLanguage extends TruffleLanguage<R7RSContext> {
+@TruffleLanguage.Registration(id = SchemeLanguage.ID, name = "R7RS Scheme", defaultMimeType = SchemeLanguage.MIME_TYPE, characterMimeTypes = SchemeLanguage.MIME_TYPE, contextPolicy = TruffleLanguage.ContextPolicy.SHARED)
+public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
 
     public static final String ID = "scheme";
     public static final String MIME_TYPE = "application/x-scheme";
 
     @Override
-    protected R7RSContext createContext(Env env) {
-        return new R7RSContext(env);
+    protected SchemeContext createContext(Env env) {
+        return new SchemeContext(env);
     }
 
     /** Single-threaded contexts (design.md D10). */
