@@ -36,6 +36,9 @@ merge your own PR once it's ready.
         PR that isn't labeled `agent:active` (in which case you stack on that PR, see "Stacked
         PRs");
       - no open PR has a title starting with its ID.
+
+      If nothing in the current milestone qualifies, apply the same test to
+      the tasks the next milestone marks *(early)*.
    4. **Nothing available.** If the current milestone's exit criteria are
       met, draft the next milestone's tasks in `docs/plan.md`, in the same
       format as the existing tasks, open a PR titled `Plan: M<n> tasks`, and
