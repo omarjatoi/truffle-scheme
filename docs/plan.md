@@ -18,7 +18,7 @@ edit it by hand._
 Set up the mx suite, then answer the two questions the design depends on
 before anything else is built on top of them.
 
-- [ ] **M0-01 · mx suite bootstrap**
+- [x] **M0-01 · mx suite bootstrap**
   - `mx.r7rs/suite.py`:
     - `mxversion`.
     - The Truffle 25.5.5.0.3 jars from Maven Central as mx libraries with
