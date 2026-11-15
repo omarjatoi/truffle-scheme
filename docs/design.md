@@ -62,7 +62,7 @@ full R7RS-small conformance comes first.
   `k` is only ever called directly inside the body and never captured by a
   closure, it compiles to an escape exception instead of a capture. A
   candidate mechanism is `@GenerateBytecode(unwindExceptions = ...)` (25.5),
-  which lets the escape bypass guest exception handlers such as `%guard`.
+  which lets the escape bypass guest exception handlers such as `guard`'s.
 
 > **Spike results (M0, Truffle 25.5): go.**
 > - **M0-02 (#7):** a capture across 3 frames, resumed 2 and 3 times from
@@ -167,11 +167,13 @@ Each entry: the decision, why, and what was rejected.
   builder calls.
 - Core forms: `quote`, `lambda`, `if`, `set!`, `define`, `begin`, `letrec*`,
   `define-syntax`, `let-syntax`, `letrec-syntax`, `syntax-rules`,
-  `include`, `include-ci`, `cond-expand`, `define-library`, `import`, plus the
-  internal forms `%prompt` and `%guard`.
+  `include`, `include-ci`, `cond-expand`, `define-library`, `import`,
+  `quasiquote` (with `unquote` and `unquote-splicing`), plus the internal form
+  `%prompt`.
 - All other derived syntax comes from the `syntax-rules` definitions in R7RS
-  §7.3, placed in the prelude. Exceptions: `guard` (D4), and anything a
-  profile later shows needs a core form.
+  §7.3, placed in the prelude. Exceptions: `guard`, which is a prelude macro
+  over the prompt-based `%guard` procedure (D4) rather than §7.3's
+  definition, and anything a profile later shows needs a core form.
 - Why: Java is fast at startup, has no bootstrapping problem, and agents can
   unit-test it. Sets of scopes is the most robust hygiene model, and it
   extends to `syntax-case` (R7RS-large, Sable) without a rewrite.
@@ -183,12 +185,18 @@ Each entry: the decision, why, and what was rejected.
 
 - The runtime supports prompts with tags. A capture stops at the nearest
   prompt with a matching tag.
-- `guard` is the internal form `%guard`. It installs a prompt and a handler.
+- `guard` is a prelude macro over the procedure `%guard`, which takes the
+  body as a thunk and the clauses as a procedure. It installs a prompt (with
+  a fresh tag) and a handler.
   On `raise`, the handler captures up to the guard's prompt (only the frames
   between `raise` and `guard`), returns to the guard frame, rewinds `DynEnv`,
   and evaluates the clauses there, in the guard's own continuation as the spec
-  requires. If no clause matches, it reinstates the captured segment and
-  re-raises with `raise-continuable` in the original dynamic environment.
+  requires. If no clause matches, it reinstates the captured segment, under a
+  new prompt with the same tag, and re-raises with `raise-continuable` in the
+  original dynamic environment.
+- It needs no expander support: `%prompt` is `%call-with-prompt` with a thunk,
+  and the capture is `%capture-to-prompt` (M2-03), so `%guard` is ordinary
+  prelude Scheme.
 - Why: the §7.3 reference `guard` captures a full continuation on every
   entry, which is too slow. A prompt gives exact R7RS semantics at a cost
   proportional to the distance between `raise` and `guard`.
