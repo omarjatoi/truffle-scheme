@@ -150,6 +150,70 @@ a status for every section, and the vertical slice matches chibi.
 
 ## M2 · Continuations
 
+Tasks follow design.md "Continuations" and "Dynamic environment", D4, D5 and D6,
+and the M0 spike results recorded there. Only M2-07 waits for the human-written
+`tests/spec/` (M2-00).
+
+- [ ] **M2-00 · Spec tests** *(human)*
+  - Write `tests/spec/`: `tail-*` (tail calls in constant space under a memory
+    limit), `cont-*` (capture, escape, re-entry, multi-shot) and `deep-*` (deep
+    non-tail recursion; deep data through the reader, printer and `equal?`).
+  - Define the case format `mx r7rs-spec` runs: for example a program, its
+    expected stdout and exit status, and the JVM limits to run it under.
+- [ ] **M2-01 · Prelude bootstrap and DynEnv**
+  - Load `src/prelude/*.scm` into every context at initialization, written in
+    core forms only until the expander (M3), on top of `%`-primitives (D5).
+  - `DynEnv { winders, parameterization, handlers }` as one immutable record in
+    a per-context slot, with `%`-primitives to read and replace it
+    (design.md "Dynamic environment").
+  - **Done when** a prelude procedure is callable from a program, and unit tests
+    cover DynEnv. The primitives used are leaves (rule 1).
+- [ ] **M2-02 · call/cc: capture and re-entry** *(needs M2-01)*
+  - `call/cc` returns a `Capture` (D5). Each call site's `SuspendFrame` adds
+    its segment. The program's root prompt (D6) completes the capture into a
+    continuation object that also holds the current `DynEnv`.
+  - Invoking a continuation resumes its segments innermost first, each from a
+    copied frame (design.md "Copying a frame"), through a `DirectCallNode`
+    inline cache keyed on the `ContinuationRootNode`. A capture during a resume
+    adds the segments not yet resumed. Never resume an original frame.
+  - **Done when** tests show:
+    - escapes, re-entry and multi-shot work (a generator; R7RS's examples);
+    - re-entering a continuation captured in one top-level form carries on
+      through the following forms (D6);
+    - the same results interpreted and with `--compile`;
+    - `tests/diff/` programs using `call/cc` match chibi.
+- [ ] **M2-03 · Prompts** *(needs M2-02)*
+  - The internal `%prompt` with tags: a capture stops at the nearest prompt
+    whose tag matches (D4). Each REPL input and each `eval` gets its own
+    prompt (D6). Not exposed to Scheme programs (D4).
+  - **Done when** unit tests cover nested prompts with different tags, and a
+    capture across a prompt boundary.
+- [ ] **M2-04 · dynamic-wind and rewind** *(needs M2-02)*
+  - `dynamic-wind` in the prelude (D5). One `rewind(from, to)` for every change
+    of control (continuation invocation, escape, prompt return, `exit`). It
+    runs after- and before-thunks along the path through the common ancestor,
+    each in its own dynamic environment.
+  - **Done when** R7RS §6.10's `dynamic-wind` example (`connect` … `talk2`)
+    gives R7RS's result; re-entry runs the before-thunks again; and
+    `tests/diff/` programs using `dynamic-wind` match chibi.
+- [ ] **M2-05 · Stack-depth spill** *(needs M2-02)*
+  - A depth counter forces a capture past a threshold, then execution resumes
+    on a fresh Java stack (design.md "Continuations").
+  - **Done when** the M1-06 control, a 10,000,000-deep non-tail recursion,
+    returns the right answer under `-Xss256k` (a new `mx tests space` case),
+    interpreted and with the JIT.
+- [ ] **M2-06 · Torture mode** *(needs M2-02)*
+  - `--torture` (`-Dscheme.torture=true`): capture and resume at every
+    non-tail call, resuming every segment twice (AGENTS.md rules 2 and 3).
+    `mx r7rs-test --torture`, `mx tests torture`, and a CI step.
+  - **Done when** everything that passes without torture passes with it: unit
+    tests, `tests/diff/`, and every conformance case that passes normally.
+- [ ] **M2-07 · Spec runner** *(needs M2-00)*
+  - `mx r7rs-spec` runs `tests/spec/` in the format M2-00 defines, under each
+    case's limits. Also as `mx tests spec` and a CI step.
+  - **Done when** every case runs and reports pass or fail. M2's exit needs
+    all of them to pass.
+
 **Exit:**
 - `call/cc` capture and re-entry, prompts (D4), `dynamic-wind` with
   `rewind` (design.md "Dynamic environment"), and stack-depth spill all work.
