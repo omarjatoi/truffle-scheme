@@ -62,8 +62,10 @@ merge your own PR once it's ready.
      be stacked on.
    - Wait for the required `Checks` and `Tests` checks
      (`gh pr checks <n> --watch`). When it's green,
-     merge with `gh pr merge <n> --merge`. For a stack, merge it bottom-up
-     with `gh stack merge <stack> --merge --yes`.
+     squash-merge with `gh pr merge <n> --squash`. For a stack, merge it
+     bottom-up with `gh stack merge <stack> --squash --yes`. The squash
+     commit takes the PR's title and description, so keep the description
+     current.
    - If it fails, fix it on the branch. Never merge red.
 7. **Finish** with the PR link, one line of evidence for each "Done when"
    item, and any follow-ups. Then go back to step 1 and pick up the next
@@ -104,7 +106,7 @@ sit waiting for merges.
   above yours if its PR isn't labeled `agent:active`. If you fix a PR that
   has PRs stacked on it, say so in a comment on each PR above it. Their
   owners restack the next time they work on them.
-- **Merging.** Merge a stack bottom-up with `gh stack merge`, once every PR
+- **Merging.** Squash-merge a stack bottom-up with `gh stack merge --squash`, once every PR
   being merged is done (no `agent:active`) and green. You can merge just the
   lower part of a stack with `gh stack merge <pr-number>`.
 - **Depth.** Don't stack on a PR whose review decision is
