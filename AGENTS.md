@@ -110,12 +110,13 @@ to run if the two differ (design.md D11).
 ## Commands
 
 The suite is `mx.r7rs/`. Custom commands and gate tasks live in
-`mx.r7rs/mx_r7rs.py`. These commands exist once M0-01 (suite bootstrap) has
-landed.
+`mx.r7rs/mx_r7rs.py`. A command whose task hasn't landed yet exits nonzero
+and names that task.
 
 ```
 mx build                                  # build everything
-mx unittest                               # JUnit tests in tests/r7rs.test
+mx unittest                               # JUnit tests in tests/r7rs.test (Graal JIT on, background)
+mx r7rs-unittest --compile                # same, compile immediately; failures are errors
 mx r7rs-test                              # chibi suite, interpreter only (the fast loop)
 mx r7rs-test 6.10                         # one conformance section
 mx r7rs-test --torture                    # capture + resume at every non-tail call
@@ -123,12 +124,14 @@ mx r7rs-test --compile                    # Graal JIT; compile immediately; fail
 mx r7rs-spec                              # tests/spec (tail-call space, continuations, depth)
 mx r7rs-diff path/to/file.scm             # run under chibi and under us, diff the output
 mx r7rs-status                            # regenerate the status block in docs/plan.md
+mx r7rs-check                             # rule 1: Java builtins never call Scheme
 mx gate --tags fast                       # build, style, rule checks, unittest, r7rs, spec, torture
 ```
 
 Before opening a PR: `mx gate --tags fast`. If you touched `r7rs.runtime` or
-any Bytecode DSL operation, also run the `--compile` command. CI runs the full
-`mx gate`.
+any Bytecode DSL operation, also run the `--compile` commands. CI runs the full
+`mx gate`. Gate tasks whose task hasn't landed yet log `SKIPPED` and name the
+task that brings them.
 
 ## Rules (each one is enforced by a gate task)
 
