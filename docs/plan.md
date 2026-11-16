@@ -374,7 +374,7 @@ parallel. Section counts are from the status block when M4 was drafted.
     `symbol=?`, `string-map` and `string-for-each` in the prelude (D5).
   - **Done when** sections 6.5 (6/17), 6.6 (0/79) and 6.7 (10/130) pass in
     full, normally and under `--torture`.
-- [ ] **M4-03 · Lists and vectors** *(early)*
+- [x] **M4-03 · Lists and vectors** *(early)*
   - R7RS §6.4 and §6.8: `list?` (tortoise and hare, D9), `make-list`,
     `list-tail` `list-ref` `list-set!` `list-copy`, `member` and `assoc` with
     an optional predicate, the `vector` procedures (`vector-copy`
