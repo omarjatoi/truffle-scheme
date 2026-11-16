@@ -14,25 +14,25 @@ edit it by hand.
 
 | Section | Passing | Tests |
 |---|---:|---:|
-| 4.1 Primitive expression types | 0 | 27 |
-| 4.2 Derived expression types | 0 | 74 |
-| 4.3 Macros | 0 | 25 |
-| 5 Program structure | 0 | 15 |
-| 6.1 Equivalence Predicates | 0 | 25 |
-| 6.2 Numbers | 0 | 211 |
-| 6.3 Booleans | 0 | 18 |
-| 6.4 Lists | 0 | 65 |
-| 6.5 Symbols | 0 | 17 |
+| 4.1 Primitive expression types | 27 | 27 |
+| 4.2 Derived expression types | 74 | 74 |
+| 4.3 Macros | 25 | 25 |
+| 5 Program structure | 15 | 15 |
+| 6.1 Equivalence Predicates | 25 | 25 |
+| 6.2 Numbers | 129 | 211 |
+| 6.3 Booleans | 10 | 18 |
+| 6.4 Lists | 39 | 65 |
+| 6.5 Symbols | 6 | 17 |
 | 6.6 Characters | 0 | 79 |
-| 6.7 Strings | 0 | 130 |
-| 6.8 Vectors | 0 | 43 |
+| 6.7 Strings | 10 | 130 |
+| 6.8 Vectors | 10 | 43 |
 | 6.9 Bytevectors | 0 | 39 |
-| 6.10 Control Features | 0 | 34 |
-| 6.11 Exceptions | 0 | 30 |
+| 6.10 Control Features | 19 | 34 |
+| 6.11 Exceptions | 14 | 30 |
 | 6.12 Environments and evaluation | 0 | 4 |
-| 6.13 Input and output | 0 | 376 |
+| 6.13 Input and output | 7 | 376 |
 | 6.14 System interface | 0 | 13 |
-| **Total** | **0** | **1225** |
+| **Total** | **410** | **1225** |
 <!-- status:end -->
 
 ---
@@ -304,7 +304,7 @@ They follow design.md D3, D4, D5 and D7.
   - **Done when** each area's files exist with a stub, AGENTS.md says which
     files belong to which area, and adding a primitive to one area touches
     only that area's files.
-- [ ] **M3-08 · Sections 4.x and 5** *(needs M3-05, M3-06, M3-07)*
+- [x] **M3-08 · Sections 4.x and 5** *(needs M3-05, M3-06, M3-07)*
   - Whatever chibi sections 4.1, 4.2, 4.3 and 5 still need, from the areas'
     files.
   - **Done when** those four sections pass in full, normally and under

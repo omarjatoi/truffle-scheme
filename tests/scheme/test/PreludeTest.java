@@ -56,9 +56,10 @@ public class PreludeTest {
         assertEquals("() () ()", output("(define e (%current-dynamic-env))" +
                         "(display (%dynamic-env-winders e)) (display \" \")" +
                         "(display (%dynamic-env-parameterization e)) (display \" \") (display (%dynamic-env-handlers e))"));
-        // Replacing the current DynEnv; the old record is unchanged (records are immutable).
-        assertEquals("(w) (p) (h) () #t #f", output("(define old (%current-dynamic-env))" +
-                        "(%set-dynamic-env! (%make-dynamic-env '(w) '(p) '(h)))" +
+        // Replacing the current DynEnv; the old record is unchanged (records are immutable). The
+        // parameterization is an alist (display looks up current-output-port in it).
+        assertEquals("(w) ((p . 1)) (h) () #t #f", output("(define old (%current-dynamic-env))" +
+                        "(%set-dynamic-env! (%make-dynamic-env '(w) '((p . 1)) '(h)))" +
                         "(define now (%current-dynamic-env))" +
                         "(display (%dynamic-env-winders now)) (display \" \") (display (%dynamic-env-parameterization now))" +
                         "(display \" \") (display (%dynamic-env-handlers now)) (display \" \") (display (%dynamic-env-winders old))" +

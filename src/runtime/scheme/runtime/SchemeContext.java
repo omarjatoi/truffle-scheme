@@ -7,6 +7,7 @@ import com.oracle.truffle.api.TruffleLanguage;
 import com.oracle.truffle.api.TruffleLanguage.ContextReference;
 import com.oracle.truffle.api.nodes.Node;
 
+import scheme.runtime.value.SPort;
 import scheme.runtime.value.SymbolTable;
 
 /** Per-context state: symbols (D1), globals (D7), and the output port. All I/O goes through {@link #getEnv()} (D10). */
@@ -19,6 +20,7 @@ public final class SchemeContext {
     /** The primitives' namespace: the internal library (r7rs %primitives) (design.md D7). */
     public final GlobalEnvironment globals = new GlobalEnvironment();
     private final PrintStream out;
+    private SPort stdoutPort;
     /**
      * The compiler's per-context state: libraries, the interaction environment and syntactic
      * bindings, which persist from one program to the next. Owned by the compiler
@@ -57,8 +59,16 @@ public final class SchemeContext {
         this.dynamicEnv = dynamicEnv;
     }
 
-    /** The current output port (until ports arrive in M4). */
+    /** The context's standard output, as a stream. */
     public PrintStream out() {
         return out;
+    }
+
+    /** The console output port: the initial value of current-output-port. */
+    public SPort stdoutPort() {
+        if (stdoutPort == null) {
+            stdoutPort = SPort.console(out);
+        }
+        return stdoutPort;
     }
 }

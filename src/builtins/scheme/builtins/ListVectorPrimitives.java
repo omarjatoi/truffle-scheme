@@ -34,6 +34,11 @@ final class ListVectorPrimitives {
                         new PrimitiveSpec("pair?", 1, 1, () -> new TypePredicate(x -> x instanceof SPair)),
                         new PrimitiveSpec("append", 0, -1, Append::new),
                         new PrimitiveSpec("vector", 0, -1, MakeVector::new),
+                        new PrimitiveSpec("vector?", 1, 1, () -> new TypePredicate(x -> x instanceof SVector)),
+                        new PrimitiveSpec("make-vector", 1, 2, MakeVectorOfLength::new),
+                        new PrimitiveSpec("vector-length", 1, 1, () -> new VectorOp(VectorOp.LENGTH)),
+                        new PrimitiveSpec("vector-ref", 2, 2, () -> new VectorOp(VectorOp.REF)),
+                        new PrimitiveSpec("vector-set!", 3, 3, () -> new VectorOp(VectorOp.SET)),
                         new PrimitiveSpec("list->vector", 1, 1, ListToVector::new));
     }
 
@@ -123,6 +128,53 @@ final class ListVectorPrimitives {
         @Override
         public Object execute(Object[] args) {
             return new SVector(Lists.toArray("list->vector", args[0]), false);
+        }
+    }
+
+    /** {@code (make-vector k [fill])}. */
+    static final class MakeVectorOfLength extends PrimitiveNode {
+        @Override
+        public Object execute(Object[] args) {
+            if (!(args[0] instanceof Long k) || k < 0 || k > Integer.MAX_VALUE - 8) {
+                throw ControlPrimitives.notA("make-vector", "valid vector length", args[0]);
+            }
+            Object[] elements = new Object[(int) (long) k];
+            java.util.Arrays.fill(elements, args.length > 1 ? args[1] : SConstant.UNSPECIFIED);
+            return new SVector(elements, false);
+        }
+    }
+
+    static final class VectorOp extends PrimitiveNode {
+        static final int LENGTH = 0;
+        static final int REF = 1;
+        static final int SET = 2;
+
+        private final int op;
+
+        VectorOp(int op) {
+            this.op = op;
+        }
+
+        @Override
+        public Object execute(Object[] args) {
+            String name = op == LENGTH ? "vector-length" : op == REF ? "vector-ref" : "vector-set!";
+            if (!(args[0] instanceof SVector v)) {
+                throw ControlPrimitives.notA(name, "vector", args[0]);
+            }
+            if (op == LENGTH) {
+                return (long) v.elements.length;
+            }
+            if (!(args[1] instanceof Long k) || k < 0 || k >= v.elements.length) {
+                throw ControlPrimitives.notA(name, "valid index for a vector of length " + v.elements.length, args[1]);
+            }
+            if (op == REF) {
+                return v.elements[(int) (long) k];
+            }
+            if (v.immutable) {
+                throw new SchemeError("vector-set!: vector is immutable (a literal)");
+            }
+            v.elements[(int) (long) k] = args[2];
+            return SConstant.UNSPECIFIED;
         }
     }
 }

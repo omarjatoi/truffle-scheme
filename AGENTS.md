@@ -192,8 +192,11 @@ prelude and declarations files are in `src/prelude/scheme/prelude/`.
 
 - All areas share one namespace, `(r7rs %prelude)`, so they can use each
   other's procedures inside procedure bodies. Top-level code in a prelude file
-  runs when the library loads, so it may only call primitives (or its own
-  area's earlier definitions).
+  runs when the library loads, so it may only call primitives and procedures
+  of areas included before it, in `r7rs.prelude.sld`'s order (numbers,
+  chars-strings, lists-vectors, bytevectors, control, io, eval,
+  process-time). For example, io.scm's `current-output-port` is a
+  `make-parameter` from control.
 - A primitive's name must be unique across areas; the language refuses to
   start if two areas register the same one.
 - An area's tests go in their own files: `tests/scheme/test/<Area>Test.java`
