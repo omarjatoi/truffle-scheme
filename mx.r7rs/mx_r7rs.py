@@ -13,6 +13,8 @@ import hashlib
 import os
 import re
 import shutil
+import signal
+import subprocess
 import tempfile
 import time
 from os.path import exists, join
@@ -1118,6 +1120,18 @@ def _bench_options_parser():
     return parser
 
 
+def _kill_children(process):
+    """On a timeout, before mx kills the process: kills its children. The RSS tracker's poller runs
+    the JVM in a session of its own, which killing the poller doesn't reach; left running, the JVM
+    keeps the output pipe open and mx waits for it forever."""
+    children = subprocess.run(['pgrep', '-P', str(process.pid)], capture_output=True, text=True, check=False).stdout
+    for pid in children.split():
+        try:
+            os.kill(int(pid), signal.SIGKILL)
+        except OSError:
+            pass
+
+
 class _R7RSBenchmarkSuite(mx_benchmark.StdOutBenchmarkSuite):
     """`mx benchmark r7rs-<set>:<program>` (or :* for every program, each in a JVM of its own).
 
@@ -1226,7 +1240,7 @@ class _R7RSBenchmarkSuite(mx_benchmark.StdOutBenchmarkSuite):
             mx.log(f'{self.name()}:{program} ({options.mode}, {options.iterations} iterations, {options.warmup} warmup'
                    + (f', count {options.count}' if options.count else '') + ')')
             rc = mx.run(command, out=out, err=out, cwd=workdir, stdin=stdin, nonZeroIsFatal=False,
-                        timeout=options.timeout or None)
+                        timeout=options.timeout or None, on_timeout=_kill_children)
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
         return rc, out.underlying.data, {'host-vm': 'truffle-scheme', 'host-vm-config': options.mode,
