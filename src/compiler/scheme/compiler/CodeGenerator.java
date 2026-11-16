@@ -48,7 +48,10 @@ final class CodeGenerator {
     private static final class State {
         final Lambda lambda;
         final Map<Var, BytecodeLocal> locals = new HashMap<>();
+        /** Where a self tail call jumps to, or null if the root has none (see {@link #selfTailCalls}). */
         BytecodeLabel loop;
+        /** Where a call of each contified loop's variable jumps to (Closures, plan.md M7-02). */
+        final Map<Lambda, BytecodeLabel> loops = new HashMap<>();
         /** The Source the open source sections belong to (design.md D13), or null. */
         Source source;
 
@@ -196,7 +199,8 @@ final class CodeGenerator {
     // Roots
 
     private void pushRoot(Lambda fn, RootHolder holder) {
-        boolean loops = !fn.program && fn.rest == null;
+        // The While a self tail call loops in costs two instructions per call: only when it can.
+        boolean loops = !fn.program && fn.rest == null && selfTailCalls(fn);
         List<Runnable> seq = new ArrayList<>();
         SourceSection[] sections = new SourceSection[1];
         seq.add(() -> {
@@ -264,6 +268,43 @@ final class CodeGenerator {
             holder.root = root;
         });
         push(seq);
+    }
+
+    /**
+     * Whether {@code fn}'s body has a tail call that {@link #call} may turn into a jump back to the
+     * start of the root: one with as many arguments as {@code fn} has parameters, other than a call
+     * of a contified loop (which jumps to that loop's start).
+     */
+    private static boolean selfTailCalls(Lambda fn) {
+        int n = fn.params.size();
+        Deque<Expr> tail = new ArrayDeque<>();
+        tail.push(fn.body);
+        while (!tail.isEmpty()) {
+            Expr e = tail.pop();
+            if (e instanceof Ast.If i) {
+                tail.push(i.consequent);
+                tail.push(i.alternative);
+            } else if (e instanceof Ast.Seq s && !s.body.isEmpty()) {
+                tail.push(s.body.get(s.body.size() - 1));
+            } else if (e instanceof Ast.Let l) {
+                tail.push(l.body);
+            } else if (e instanceof Ast.Letrec l) {
+                if (contified(l) instanceof Lambda loop) {
+                    tail.push(loop.body);
+                } else {
+                    tail.push(l.body);
+                }
+            } else if (e instanceof Ast.Call c && !(c.procedure instanceof Ast.LocalRef r && r.var.self != null && r.var.self.contified) &&
+                            c.arguments.size() == n) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** The loop {@code l} binds if it is a contified loop's letrec* (Closures), else null. */
+    private static Lambda contified(Ast.Letrec l) {
+        return l.vars.size() == 1 && l.inits.get(0) instanceof Lambda fn && fn.contified ? fn : null;
     }
 
     /**
@@ -442,6 +483,8 @@ final class CodeGenerator {
             return seq;
         } else if (e instanceof Ast.Let l) {
             return let(l, ctx);
+        } else if (e instanceof Ast.Letrec l && contified(l) instanceof Lambda loop) {
+            return contifiedLoop(loop, (Ast.Call) l.body, ctx);
         } else if (e instanceof Ast.Letrec l) {
             List<Runnable> seq = new ArrayList<>();
             seq.add(() -> {
@@ -511,12 +554,20 @@ final class CodeGenerator {
      * again binds a fresh one, as a call of the lambda would.
      */
     private List<Runnable> let(Ast.Let l, Ctx ctx) {
-        int n = l.vars.size();
         List<Runnable> seq = new ArrayList<>();
         seq.add(b::beginBlock);
+        bind(l.vars, l.inits, seq);
+        seq.add(gen(l.body, ctx));
+        seq.add(b::endBlock);
+        return seq;
+    }
+
+    /** Adds the tasks that bind {@code vars} to the values of {@code inits}, as a let does. */
+    private void bind(List<Var> vars, List<Expr> inits, List<Runnable> seq) {
+        int n = vars.size();
         for (int k = 0; k < n; k++) {
-            Var v = l.vars.get(k);
-            nameValue(l.inits.get(k), v);
+            Var v = vars.get(k);
+            nameValue(inits.get(k), v);
             boolean boxNow = v.boxed() && k == n - 1;
             seq.add(() -> {
                 createLocal(state(), v);
@@ -525,7 +576,7 @@ final class CodeGenerator {
                     b.beginMakeBox();
                 }
             });
-            seq.add(gen(l.inits.get(k), Ctx.VALUE));
+            seq.add(gen(inits.get(k), Ctx.VALUE));
             seq.add(() -> {
                 if (boxNow) {
                     b.endMakeBox();
@@ -535,7 +586,7 @@ final class CodeGenerator {
         }
         seq.add(() -> {
             for (int k = 0; k < n - 1; k++) {
-                Var v = l.vars.get(k);
+                Var v = vars.get(k);
                 if (v.boxed()) {
                     BytecodeLocal local = state().locals.get(v);
                     b.beginStoreLocal(local);
@@ -546,8 +597,37 @@ final class CodeGenerator {
                 }
             }
         });
-        seq.add(gen(l.body, ctx));
-        seq.add(b::endBlock);
+    }
+
+    /**
+     * A contified loop (Closures, plan.md M7-02), entered in tail position by {@code entry}: its
+     * parameters are bound as a let's variables are, then its body runs in a {@code While} of this
+     * root, in tail position. A call of the loop's variable stores the new arguments in the
+     * parameters (a boxed one in a fresh box, as a call would) and jumps back ({@link #call}).
+     */
+    private List<Runnable> contifiedLoop(Lambda loop, Ast.Call entry, Ctx ctx) {
+        if (ctx != Ctx.TAIL) {
+            throw new IllegalStateException("a contified loop not in tail position");
+        }
+        List<Runnable> seq = new ArrayList<>();
+        seq.add(b::beginBlock);
+        bind(loop.params, entry.arguments, seq);
+        if (!(loop.body instanceof Ast.Seq)) {
+            statements.add(loop.body);
+        }
+        seq.add(() -> {
+            b.beginWhile();
+            b.emitLoadConstant(true);
+            b.beginBlock();
+            state().loops.put(loop, b.createLabel());
+        });
+        seq.add(gen(loop.body, Ctx.TAIL));
+        seq.add(() -> {
+            b.emitLabel(state().loops.get(loop));
+            b.endBlock();
+            b.endWhile();
+            b.endBlock();
+        });
         return seq;
     }
 
@@ -560,6 +640,10 @@ final class CodeGenerator {
             return valued(CallSiteEmitter.nonTailCall(b, gen(c.procedure, Ctx.VALUE), arguments), ctx);
         }
         State st = state();
+        if (c.procedure instanceof Ast.LocalRef r && r.var.self != null && r.var.self.contified) {
+            // A call of a contified loop: it jumps back to the loop's start.
+            return selfLoop(r.var.self.params, st.loops.get(r.var.self), arguments);
+        }
         if (st.loop == null || c.arguments.size() != st.lambda.params.size()) {
             List<Runnable> seq = new ArrayList<>();
             seq.add(() -> {
@@ -577,7 +661,7 @@ final class CodeGenerator {
         int n = c.arguments.size();
         if (c.procedure instanceof Ast.LocalRef r && r.var.self == st.lambda) {
             // A self tail call by a fixed letrec* variable's name (Closures): it loops.
-            return selfLoop(st, arguments);
+            return selfLoop(st.lambda.params, st.loop, arguments);
         }
         // Possibly a self tail call: evaluate into temporaries, then loop if the procedure is the
         // running closure, else return a TailCall.
@@ -624,8 +708,11 @@ final class CodeGenerator {
         return seq;
     }
 
-    /** A tail call of the running closure: evaluate the arguments into temporaries, then loop. */
-    private List<Runnable> selfLoop(State st, List<Runnable> arguments) {
+    /**
+     * A tail call of the running closure, or of a contified loop: evaluate the arguments into
+     * temporaries, store them in the parameters, and jump to {@code start}.
+     */
+    private List<Runnable> selfLoop(List<Var> params, BytecodeLabel start, List<Runnable> arguments) {
         int n = arguments.size();
         BytecodeLocal[] temps = new BytecodeLocal[n];
         List<Runnable> seq = new ArrayList<>();
@@ -644,9 +731,9 @@ final class CodeGenerator {
         seq.add(() -> {
             for (int k = 0; k < n; k++) {
                 BytecodeLocal temp = temps[k];
-                store(st.lambda.params.get(k), () -> b.emitLoadLocal(temp));
+                store(params.get(k), () -> b.emitLoadLocal(temp));
             }
-            b.emitBranch(st.loop);
+            b.emitBranch(start);
             b.endBlock();
         });
         return seq;

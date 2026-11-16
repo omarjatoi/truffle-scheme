@@ -28,27 +28,31 @@
             (if (%circular-list? (car rest)) (loop (cdr rest)))
             (apply error message l ls)))))
 
+;; Their loops call f, so they stay procedures of their own (not loops of map's root, plan.md M7-02),
+;; small enough for Truffle to split them for each caller, so that each copy's call of f sees one
+;; procedure. Each is named after the procedure it is the loop of: stack traces, the debugger,
+;; profilers and TraceSplitting show it as map or for-each.
 (define (map f l . ls)
   (if (null? ls)
       (begin
         (%some-finite "map: every list is circular" l '())
-        (let loop ((l l) (acc '()))
-          (if (pair? l) (loop (cdr l) (cons (f (car l)) acc)) (reverse acc))))
+        (let map ((l l) (acc '()))
+          (if (pair? l) (map (cdr l) (cons (f (car l)) acc)) (reverse acc))))
       (begin
         (%some-finite "map: every list is circular" l ls)
-        (let loop ((ls (cons l ls)) (acc '()))
-          (if (%all-pairs? ls) (loop (%cdrs ls) (cons (apply f (%cars ls)) acc)) (reverse acc))))))
+        (let map ((ls (cons l ls)) (acc '()))
+          (if (%all-pairs? ls) (map (%cdrs ls) (cons (apply f (%cars ls)) acc)) (reverse acc))))))
 
 (define (for-each f l . ls)
   (if (null? ls)
       (begin
         (%some-finite "for-each: every list is circular" l '())
-        (let loop ((l l))
-          (if (pair? l) (begin (f (car l)) (loop (cdr l))))))
+        (let for-each ((l l))
+          (if (pair? l) (begin (f (car l)) (for-each (cdr l))))))
       (begin
         (%some-finite "for-each: every list is circular" l ls)
-        (let loop ((ls (cons l ls)))
-          (if (%all-pairs? ls) (begin (apply f (%cars ls)) (loop (%cdrs ls))))))))
+        (let for-each ((ls (cons l ls)))
+          (if (%all-pairs? ls) (begin (apply f (%cars ls)) (for-each (%cdrs ls))))))))
 
 ;; member and assoc take an optional equivalence predicate, which they call in a non-tail position,
 ;; so they live here (D5). The predicate gets the key first and the element second (R7RS §6.4).

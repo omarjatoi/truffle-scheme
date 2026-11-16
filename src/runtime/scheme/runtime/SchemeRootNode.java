@@ -8,6 +8,8 @@ import com.oracle.truffle.api.bytecode.ConstantOperand;
 import com.oracle.truffle.api.bytecode.ContinuationRootNode;
 import com.oracle.truffle.api.bytecode.GenerateBytecode;
 import com.oracle.truffle.api.bytecode.Operation;
+import com.oracle.truffle.api.bytecode.ShortCircuitOperation;
+import com.oracle.truffle.api.bytecode.ShortCircuitOperation.Operator;
 import com.oracle.truffle.api.bytecode.StoreBytecodeIndex;
 import com.oracle.truffle.api.bytecode.Variadic;
 import com.oracle.truffle.api.bytecode.Yield;
@@ -35,11 +37,13 @@ import scheme.runtime.value.SPair;
  * Frame argument 0 is the procedure itself; the arguments follow.
  *
  * <p>The compiler (scheme.compiler) emits these operations. Every non-tail call site comes from its
- * CallSiteEmitter (AGENTS.md rule 2): {@code Call}, then {@code IsCapture}, then
- * {@code SuspendFrame}.
+ * CallSiteEmitter (AGENTS.md rule 2): {@code CallSite(Call(...), Resumed(SuspendFrame()))}, the
+ * call's value or, for a capture, the value the suspended frame is resumed with.
  */
 @GenerateBytecode(languageClass = SchemeLanguage.class, storeBytecodeIndexInFrame = true, enableTagInstrumentation = true, enableSerialization = true, //
                 tagTreeNodeLibrary = SchemeTagTreeNodeExports.class)
+@ShortCircuitOperation(name = "CallSite", operator = Operator.OR_RETURN_VALUE, booleanConverter = SchemeRootNode.IsValue.class, //
+                javadoc = "A non-tail call site (CallSiteEmitter): Call's value, unless it is a Capture; then the frame suspends.")
 public abstract class SchemeRootNode extends RootNode implements BytecodeRootNode {
 
     // Package-private: Bytecode DSL serialization saves these with the root (the prelude image,
@@ -327,19 +331,40 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
         }
     }
 
-    @Operation
-    public static final class IsCapture {
+    /**
+     * The boolean converter of {@code CallSite}: whether a call's result is a value, not a
+     * {@link Capture}. A capture is handed to the {@link SuspendFrame} that runs next, through the
+     * context ({@link SchemeContext#suspending}): the short circuit drops the operand it converted.
+     * No Scheme code runs in between. A site that never sees a capture has only the first
+     * specialization's type check, which return-type profiling folds in compiled code (M0-03). (An
+     * {@code @Operation} only because the Truffle 25.5 DSL processor fails on a converter that
+     * isn't one.)
+     */
+    @Operation(storeBytecodeIndex = false)
+    public static final class IsValue {
         @Specialization
-        static boolean doCheck(Object value) {
-            return value instanceof Capture;
+        static boolean doCapture(Capture capture, @Bind Node node) {
+            SchemeContext.get(node).suspending = capture;
+            return false;
+        }
+
+        @Fallback
+        static boolean doValue(@SuppressWarnings("unused") Object value) {
+            return true;
         }
     }
 
-    /** Suspends this frame into the capture and passes the capture up (design.md "Continuations"). */
+    /**
+     * Suspends this frame into the capture that {@link IsValue} has just handed over, and passes the
+     * capture up (design.md "Continuations").
+     */
     @Yield
     public static final class SuspendFrame {
         @Specialization
-        static Object doSuspend(Capture capture, @Bind ContinuationRootNode root, @Bind MaterializedFrame frame) {
+        static Object doSuspend(@Bind ContinuationRootNode root, @Bind MaterializedFrame frame, @Bind Node node) {
+            SchemeContext context = SchemeContext.get(node);
+            Capture capture = context.suspending;
+            context.suspending = null;
             capture.addSegment(root, frame);
             return capture;
         }

@@ -188,6 +188,14 @@ final class Ast {
         String name;
         /** The fixed letrec* variable bound to this lambda, if any ({@link Closures}). */
         Var self;
+        /**
+         * A loop of the root that enters it, not a procedure ({@link Closures}, plan.md M7-02): the
+         * lambda of a {@code letrec*} of one variable ({@link #self}) whose body calls it, in tail
+         * position, and that only calls itself, in tail position. Its parameters are locals of that
+         * root, and its body is a {@code While} there; a call of {@link #self} stores the arguments
+         * and loops.
+         */
+        boolean contified;
 
         Lambda(Lambda parent, boolean program) {
             this.parent = parent;

@@ -46,6 +46,11 @@ public final class SchemeContext {
     private DynEnv dynamicEnv = DynEnv.INITIAL;
     /** Nested non-tail calls since the root prompt (stack-depth spill, design.md "Continuations"). */
     public int callDepth;
+    /**
+     * The capture a non-tail call site's {@code IsValue} found, for the {@code SuspendFrame} right
+     * after it (SchemeRootNode): set and cleared with no Scheme code in between.
+     */
+    Capture suspending;
     /** One Scheme object per Java object that crosses in (design.md D10). */
     final HostObjects hostObjects = new HostObjects();
     /** Torture-mode captures completed (M2-06), for tests. */

@@ -48,15 +48,46 @@ full R7RS-small conformance comes first.
   benchmarks' compilations didn't finish within the runs meant to measure
   compiled code.
 - Self tail calls in named `let` and `do` compile to loops (back-edges, OSR).
+  A root has the `While` they loop in only if its body has a tail call that
+  can be one (M7-02): it costs two instructions per call.
+- **Loops of the root that enters them (M7-02).** A named `let`, a `do`, or a
+  body's one internal procedure, entered in tail position, whose variable is
+  only ever called, in tail position of its own body, is *contified*
+  (`Closures`): its parameters are locals of the root it is in, bound as a
+  `let`'s are, and its body is a `While` there. Entering it and looping make no
+  closure, no `TailCall` and no call; a boxed parameter gets a fresh box each
+  iteration, as a call would give it. A loop whose body makes a non-tail call of
+  a procedure it can't know (a parameter, a computed procedure, or `apply`)
+  stays a procedure of its own: that call site is the one that goes
+  megamorphic, and as a small root of its own Truffle can split it for each
+  caller, where the root that enters it would often be past the splitting limit
+  (`map`'s and `for-each`'s loops, which are named after them so traces show
+  them as `map` and `for-each`).
+- **The trampoline reports loop counts (M7-02).** The tail calls a site performs
+  count as iterations of a loop of the root it is in (`LoopNode.reportLoopCount`),
+  as a self tail call's jump does, so a procedure called a few times whose sites
+  perform many tail calls is compiled.
 
 ### Continuations: a segmented stack
 
 - `call/cc` returns a `Capture` marker. At each non-tail call site,
-  `CallSiteEmitter` emits: call → `IsCapture` check → `SuspendFrame`, a custom
-  `@Yield` operation (Truffle 25.1+). `SuspendFrame` `@Bind`s its
-  `ContinuationRootNode` and `MaterializedFrame`, adds
+  `CallSiteEmitter` emits `CallSite(Call(...), Resumed(SuspendFrame()))`:
+  `CallSite` is a value-returning short circuit (`@ShortCircuitOperation`,
+  `OR_RETURN_VALUE`) whose converter, `IsValue`, is false only for a
+  `Capture`, so the call's value is the site's unless it is a capture; then
+  `SuspendFrame`, a custom `@Yield` operation (Truffle 25.1+), runs. It
+  `@Bind`s its `ContinuationRootNode` and `MaterializedFrame`, adds
   `Segment(ContinuationRootNode, MaterializedFrame)` to the capture, and
-  returns the marker to its own caller, which does the same.
+  returns the marker to its own caller, which does the same. The short circuit
+  drops the operand it converted, so `IsValue` hands the capture to
+  `SuspendFrame` through the context (`SchemeContext.suspending`, set and
+  cleared with no Scheme code between). After the call that is five
+  instructions (`dup`, `IsValue`, the branch, and on the capture path the yield
+  and `Resumed`), with no temporary: M7-02 cut it from ten (a store and loads of
+  a local, `IsCapture`, a branch, `SuspendFrame`, `Resumed`, a branch and a
+  clear), which were most of the size by which Truffle decides whether to split
+  a procedure (the bytecode's length over 6, against `SplittingMaxCalleeSize`,
+  100), and work the interpreter did at every call.
 - Capture stops at the nearest **prompt** whose tag matches (see D4).
   `call/cc` uses the program's root prompt.
 - **Invoking a continuation** resumes segments from the innermost outward, each
