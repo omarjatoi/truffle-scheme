@@ -398,6 +398,10 @@ Each entry: the decision, why, and what was rejected.
 - Nix (`flake.nix`) provides the whole dev shell: GraalVM, `mx` (copied out
   of the store into a writable cache dir, because mx writes into its own
   checkout), Python, `gh` and chibi-scheme. There's nothing to fetch by hand.
+  `nix develop .#bench` adds the other R7RS implementations (Chez, Racket,
+  Chicken, Guile, Gauche) for M5-02's comparative report
+  (`mx r7rs-bench-report`); they're kept out of the default shell so CI jobs
+  don't download them.
 - *Rejected:* importing the `truffle` suite from a pinned graal master commit
   with a matching labsjdk (the original D11). It gets Bytecode DSL changes
   before release, but needs a ~1.5 GB graal checkout plus a labsjdk whose
@@ -516,7 +520,11 @@ Each entry: the decision, why, and what was rejected.
 - With a file, it runs it as a program (D15) with the remaining arguments as
   `command-line`; `-I dir` adds to the library path; with no file, it starts
   a REPL in the interaction environment that reads until a datum is complete
-  (D13's incomplete-source signal) and prints each input's values.
+  (D13's incomplete-source signal) and prints each input's values. REPL
+  input is an interactive source: it runs in the interaction environment
+  even when it starts with `import` (which then adds to that environment),
+  and the language writes its values itself, as `write` does, one per line
+  (`isVisible` is false, so Truffle doesn't print them again).
 - The Chrome inspector, DAP and profiler tools ship as a separate optional
   distribution, and CI runs a smoke test of each against a Scheme program
   (D13's tags and source sections are what they consume).

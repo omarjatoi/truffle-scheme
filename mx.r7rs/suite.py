@@ -85,6 +85,21 @@ suite = {
             "dependencies": ["TRUFFLE_API", "TRUFFLE_COMPILER"],
             "license": "UPL",
         },
+        # The launcher framework (design.md D17) and the shadowed JLine it requires as a module.
+        "JLINE": {
+            "digest": "sha512:228ccdf13c79a4c9129343118b375ff9b606e19fbe6e968b9bdb40a9965e9073da57d6c0d0ec9151e09a98839c91c15018ae3f9fbfbc101d32862dd60f4bd3cc",
+            "maven": {"groupId": "org.graalvm.shadowed", "artifactId": "jline", "version": "25.5.5.0.3"},
+            "moduleName": "org.graalvm.shadowed.jline",
+            "dependencies": ["NATIVEIMAGE", "POLYGLOT"],
+            "license": "UPL",
+        },
+        "LAUNCHER_COMMON": {
+            "digest": "sha512:c78f2d079a0c1a9c43f3f046bb80af422ca2b46b0adee6410a5fd270d0bbe14313c97b4106064b8047e45ec7576d80ef2c7a41742e69242e81d23cb233d5680d",
+            "maven": {"groupId": "org.graalvm.sdk", "artifactId": "launcher-common", "version": "25.5.5.0.3"},
+            "moduleName": "org.graalvm.launcher",
+            "dependencies": ["COLLECTIONS", "NATIVEIMAGE", "POLYGLOT", "JLINE"],
+            "license": "UPL",
+        },
         "TRUFFLE_DSL_PROCESSOR": {
             "digest": "sha512:172b3035371ba99147feb48731fb22f28dc8b453071d31dcf406a26908c1797107b0df541c7a679c39f6db1ca390d31e25d46637bf74bb7f0cee32f942b1dadc",
             "maven": {"groupId": "org.graalvm.truffle", "artifactId": "truffle-dsl-processor", "version": "25.5.5.0.3"},
@@ -144,10 +159,12 @@ suite = {
         },
         "scheme.launcher": {
             # Host-side tools that embed the language: the conformance runner (M1-01)
-            # and SchemeMain, the program runner that mx r7rs-diff uses (M1-02).
+            # and SchemeMain, the `scheme` launcher (M6-01, design.md D17), which
+            # mx r7rs-diff and mx scheme run.
             "dir": "mx.r7rs/projects/launcher",
             "sourceDirs": ["../../../src/launcher"],
             "dependencies": [
+                "LAUNCHER_COMMON",
                 "POLYGLOT",
                 "TRUFFLE_RUNTIME",
             ],
@@ -236,6 +253,8 @@ suite = {
                 "TRUFFLE_API",
                 "TRUFFLE_COMPILER",
                 "TRUFFLE_RUNTIME",
+                "JLINE",
+                "LAUNCHER_COMMON",
             ],
             "maven": False,
         },
@@ -259,6 +278,8 @@ suite = {
                 "TRUFFLE_API",
                 "TRUFFLE_COMPILER",
                 "TRUFFLE_RUNTIME",
+                "JLINE",
+                "LAUNCHER_COMMON",
             ],
             "testDistribution": True,
             "unittestConfig": "r7rs",

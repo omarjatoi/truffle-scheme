@@ -24,7 +24,9 @@ public interface SchemeCompiler {
 
     /**
      * Compiles program text into one root (design.md D6), without its prompt: a program (first form
-     * {@code import}) in a top level of its own, other text in the interaction environment (D15).
+     * {@code import}) in a top level of its own, other text in the interaction environment (D15). An
+     * interactive source (REPL input, D17) always runs in the interaction environment, where a
+     * leading {@code import} adds to it.
      */
     CallTarget compileProgram(SchemeLanguage language, SchemeContext context, Source source);
 

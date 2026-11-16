@@ -641,7 +641,7 @@ Tasks. The *(early)* ones don't touch the compiler or the call path, so
 they can run beside M5's performance work; the others wait for the M5 tasks
 that edit the same files.
 
-- [ ] **M6-01 · The `scheme` launcher** *(early)*
+- [x] **M6-01 · The `scheme` launcher** *(early)*
   - D17: `SchemeMain` on `AbstractLanguageLauncher` (add `launcher-common` at
     the Truffle version to `suite.py`, which this task may change). A file
     runs as a program (D15) with the remaining arguments as `command-line`;
