@@ -48,7 +48,7 @@ public class SyntaxTest {
         assertEquals(3, call.source.getStartColumn());
         Syntax vector = (Syntax) ((SPair) ((SPair) call.datum).cdr).car;
         assertEquals("#(1 2)", vector.source.getCharacters().toString());
-        assertTrue(((SVector) vector.datum).elements[0] instanceof Syntax);
+        assertTrue(((SVector) vector.datum).get(0) instanceof Syntax);
         Syntax quoted = (Syntax) ((SPair) ((SPair) ((SPair) call.datum).cdr).cdr).car;
         assertEquals("'q", quoted.source.getCharacters().toString());
         assertTrue(form.scopes.isEmpty());

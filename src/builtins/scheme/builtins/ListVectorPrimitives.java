@@ -1,6 +1,5 @@
 package scheme.builtins;
 
-import java.util.Arrays;
 import java.util.List;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
@@ -39,9 +38,9 @@ final class ListVectorPrimitives {
                         new PrimitiveSpec("vector", 0, -1, MakeVector::new),
                         new PrimitiveSpec("vector?", 1, 1, () -> new TypePredicate(x -> x instanceof SVector)),
                         new PrimitiveSpec("make-vector", 1, 2, MakeVectorOfLength::new),
-                        new PrimitiveSpec("vector-length", 1, 1, () -> new VectorOp(VectorOp.LENGTH)),
-                        new PrimitiveSpec("vector-ref", 2, 2, () -> new VectorOp(VectorOp.REF)),
-                        new PrimitiveSpec("vector-set!", 3, 3, () -> new VectorOp(VectorOp.SET)),
+                        new PrimitiveSpec("vector-length", 1, 1, VectorLength::new),
+                        new PrimitiveSpec("vector-ref", 2, 2, VectorRef::new),
+                        new PrimitiveSpec("vector-set!", 3, 3, VectorSet::new),
                         new PrimitiveSpec("list->vector", 1, 1, ListToVector::new),
                         new PrimitiveSpec("list?", 1, 1, IsList::new),
                         new PrimitiveSpec("make-list", 1, 2, MakeList::new),
@@ -135,7 +134,7 @@ final class ListVectorPrimitives {
     static final class MakeVector extends PrimitiveNode {
         @Override
         public Object invoke(Object[] args) {
-            return new SVector(java.util.Arrays.copyOfRange(args, 1, args.length), false);
+            return SVector.of(java.util.Arrays.copyOfRange(args, 1, args.length), false);
         }
     }
 
@@ -143,7 +142,7 @@ final class ListVectorPrimitives {
     static final class ListToVector extends PrimitiveNode {
         @Override
         public Object invoke(Object[] args) {
-            return new SVector(Lists.toArray("list->vector", args[1]), false);
+            return SVector.of(Lists.toArray("list->vector", args[1]), false);
         }
     }
 
@@ -154,43 +153,38 @@ final class ListVectorPrimitives {
             if (!(args[1] instanceof Long k) || k < 0 || k > Integer.MAX_VALUE - 8) {
                 throw ControlPrimitives.notA("make-vector", "valid vector length", args[1]);
             }
-            Object[] elements = new Object[(int) (long) k];
-            java.util.Arrays.fill(elements, args.length > 2 ? args[2] : SConstant.UNSPECIFIED);
-            return new SVector(elements, false);
+            return SVector.filled((int) (long) k, args.length > 2 ? args[2] : SConstant.UNSPECIFIED);
         }
     }
 
-    static final class VectorOp extends PrimitiveNode {
-        static final int LENGTH = 0;
-        static final int REF = 1;
-        static final int SET = 2;
-
-        private final int op;
-
-        VectorOp(int op) {
-            this.op = op;
+    /** {@code (vector-length vector)}. */
+    static final class VectorLength extends PrimitiveNode {
+        @Override
+        public Object invoke(Object[] args) {
+            if (args[1] instanceof SVector v) {
+                return (long) v.length;
+            }
+            throw ControlPrimitives.notA("vector-length", "vector", args[1]);
         }
+    }
+
+    /** {@code (vector-ref vector k)}: specialized on the vector's storage ({@link VectorNodes}). */
+    static final class VectorRef extends PrimitiveNode {
+        @Child private VectorNodes.VectorRefNode ref = VectorNodesFactory.VectorRefNodeGen.create();
 
         @Override
         public Object invoke(Object[] args) {
-            String name = op == LENGTH ? "vector-length" : op == REF ? "vector-ref" : "vector-set!";
-            if (!(args[1] instanceof SVector v)) {
-                throw ControlPrimitives.notA(name, "vector", args[1]);
-            }
-            if (op == LENGTH) {
-                return (long) v.elements.length;
-            }
-            if (!(args[2] instanceof Long k) || k < 0 || k >= v.elements.length) {
-                throw ControlPrimitives.notA(name, "valid index for a vector of length " + v.elements.length, args[2]);
-            }
-            if (op == REF) {
-                return v.elements[(int) (long) k];
-            }
-            if (v.immutable) {
-                throw new SchemeError("vector-set!: vector is immutable (a literal)");
-            }
-            v.elements[(int) (long) k] = args[3];
-            return SConstant.UNSPECIFIED;
+            return ref.execute(args[1], args[2]);
+        }
+    }
+
+    /** {@code (vector-set! vector k obj)}: specialized on the vector's storage ({@link VectorNodes}). */
+    static final class VectorSet extends PrimitiveNode {
+        @Child private VectorNodes.VectorSetNode set = VectorNodesFactory.VectorSetNodeGen.create();
+
+        @Override
+        public Object invoke(Object[] args) {
+            return set.execute(args[1], args[2], args[3]);
         }
     }
 
@@ -384,17 +378,17 @@ final class ListVectorPrimitives {
     static final class VectorToList extends PrimitiveNode {
         @Override
         public Object invoke(Object[] args) {
-            Object[] elements = vector("vector->list", args[1]).elements;
-            int start = start("vector->list", args, 2, elements.length);
-            int end = end("vector->list", args, 3, start, elements.length);
-            return toList(elements, start, end);
+            SVector v = vector("vector->list", args[1]);
+            int start = start("vector->list", args, 2, v.length);
+            int end = end("vector->list", args, 3, start, v.length);
+            return toList(v, start, end);
         }
 
         @TruffleBoundary
-        private static Object toList(Object[] elements, int start, int end) {
+        private static Object toList(SVector v, int start, int end) {
             Object result = SConstant.EMPTY_LIST;
             for (int i = end - 1; i >= start; i--) {
-                result = new SPair(elements[i], result);
+                result = new SPair(v.get(i), result);
             }
             return result;
         }
@@ -404,18 +398,19 @@ final class ListVectorPrimitives {
     static final class VectorToString extends PrimitiveNode {
         @Override
         public Object invoke(Object[] args) {
-            Object[] elements = vector("vector->string", args[1]).elements;
-            int start = start("vector->string", args, 2, elements.length);
-            int end = end("vector->string", args, 3, start, elements.length);
-            return toString(elements, start, end);
+            SVector v = vector("vector->string", args[1]);
+            int start = start("vector->string", args, 2, v.length);
+            int end = end("vector->string", args, 3, start, v.length);
+            return toString(v, start, end);
         }
 
         @TruffleBoundary
-        private static SString toString(Object[] elements, int start, int end) {
+        private static SString toString(SVector v, int start, int end) {
             SString result = SString.make(end - start, 0);
             for (int i = start; i < end; i++) {
-                if (!(elements[i] instanceof SChar c)) {
-                    throw ControlPrimitives.notA("vector->string", "character", elements[i]);
+                Object element = v.get(i);
+                if (!(element instanceof SChar c)) {
+                    throw ControlPrimitives.notA("vector->string", "character", element);
                 }
                 result.set(i - start, c.codePoint);
             }
@@ -449,15 +444,10 @@ final class ListVectorPrimitives {
     static final class VectorCopy extends PrimitiveNode {
         @Override
         public Object invoke(Object[] args) {
-            Object[] elements = vector("vector-copy", args[1]).elements;
-            int start = start("vector-copy", args, 2, elements.length);
-            int end = end("vector-copy", args, 3, start, elements.length);
-            return new SVector(copy(elements, start, end), false);
-        }
-
-        @TruffleBoundary
-        private static Object[] copy(Object[] elements, int start, int end) {
-            return Arrays.copyOfRange(elements, start, end);
+            SVector v = vector("vector-copy", args[1]);
+            int start = start("vector-copy", args, 2, v.length);
+            int end = end("vector-copy", args, 3, start, v.length);
+            return v.copy(start, end);
         }
     }
 
@@ -465,21 +455,16 @@ final class ListVectorPrimitives {
     static final class VectorCopyInto extends PrimitiveNode {
         @Override
         public Object invoke(Object[] args) {
-            Object[] to = mutableVector("vector-copy!", args[1]).elements;
+            SVector to = mutableVector("vector-copy!", args[1]);
             int at = index("vector-copy!", args[2], to.length);
-            Object[] from = vector("vector-copy!", args[3]).elements;
+            SVector from = vector("vector-copy!", args[3]);
             int start = start("vector-copy!", args, 4, from.length);
             int end = end("vector-copy!", args, 5, start, from.length);
             if (end - start > to.length - at) {
                 throw tooLong(end - start, at, to.length);
             }
-            copy(from, start, to, at, end - start);
+            to.copyFrom(at, from, start, end);
             return SConstant.UNSPECIFIED;
-        }
-
-        @TruffleBoundary
-        private static void copy(Object[] from, int start, Object[] to, int at, int count) {
-            System.arraycopy(from, start, to, at, count);
         }
 
         @TruffleBoundary
@@ -499,19 +484,20 @@ final class ListVectorPrimitives {
         private static SVector append(Object[] args) {
             long total = 0;
             for (int i = 1; i < args.length; i++) {
-                total += vector("vector-append", args[i]).elements.length;
+                total += vector("vector-append", args[i]).length;
             }
             if (total > Integer.MAX_VALUE - 8) {
                 throw new SchemeError("vector-append: result too long");
             }
-            Object[] result = new Object[(int) total];
+            // The first vector's kind of storage, generalized by the first element that doesn't fit it.
+            SVector result = args.length == 1 ? new SVector(new Object[0], false) : ((SVector) args[1]).blank((int) total);
             int at = 0;
             for (int i = 1; i < args.length; i++) {
-                Object[] elements = ((SVector) args[i]).elements;
-                System.arraycopy(elements, 0, result, at, elements.length);
-                at += elements.length;
+                SVector v = (SVector) args[i];
+                result.copyFrom(at, v, 0, v.length);
+                at += v.length;
             }
-            return new SVector(result, false);
+            return result;
         }
     }
 
@@ -519,16 +505,11 @@ final class ListVectorPrimitives {
     static final class VectorFill extends PrimitiveNode {
         @Override
         public Object invoke(Object[] args) {
-            Object[] elements = mutableVector("vector-fill!", args[1]).elements;
-            int start = start("vector-fill!", args, 3, elements.length);
-            int end = end("vector-fill!", args, 4, start, elements.length);
-            fill(elements, start, end, args[2]);
+            SVector v = mutableVector("vector-fill!", args[1]);
+            int start = start("vector-fill!", args, 3, v.length);
+            int end = end("vector-fill!", args, 4, start, v.length);
+            v.fill(start, end, args[2]);
             return SConstant.UNSPECIFIED;
-        }
-
-        @TruffleBoundary
-        private static void fill(Object[] elements, int start, int end, Object fill) {
-            Arrays.fill(elements, start, end, fill);
         }
     }
 }

@@ -91,7 +91,7 @@ public final class Printer {
         if (node instanceof SPair) {
             return 2;
         } else if (node instanceof SVector v) {
-            return v.elements.length;
+            return v.length;
         } else if (node instanceof SErrorObject) {
             return 2;
         } else if (node instanceof MultipleValues mv) {
@@ -104,7 +104,7 @@ public final class Printer {
         if (node instanceof SPair p) {
             return index == 0 ? p.car : p.cdr;
         } else if (node instanceof SVector v) {
-            return v.elements[index];
+            return v.get(index);
         } else if (node instanceof SErrorObject e) {
             return index == 0 ? e.message : e.irritants;
         }
@@ -222,7 +222,7 @@ public final class Printer {
             tasks.push(p.car);
         } else if (v instanceof SVector vector) {
             out.append("#(");
-            tasks.push(new ElementsRest(vector.elements, 0, ")"));
+            tasks.push(new ElementsRest(vector.toArray(), 0, ")"));
         } else if (v instanceof SErrorObject e) {
             out.append("#<error ");
             tasks.push(">");

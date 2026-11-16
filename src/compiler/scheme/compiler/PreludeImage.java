@@ -87,6 +87,9 @@ final class PreludeImage {
     private static final byte BYTEVECTOR = 5;
     private static final byte SYNTAX = 6;
     private static final byte CELL = 7;
+    /** A vector with fixnum or flonum storage (M5-06): its elements are written in place. */
+    private static final byte VECTOR_LONGS = 8;
+    private static final byte VECTOR_DOUBLES = 9;
 
     // Bindings.
     private static final byte CORE_FORM = 0;
@@ -397,7 +400,7 @@ final class PreludeImage {
             if (o instanceof SPair p) {
                 return new Object[]{p.car, p.cdr};
             } else if (o instanceof SVector v) {
-                return v.elements;
+                return v.isObjects() ? v.objects() : new Object[0];
             } else if (o instanceof Syntax s) {
                 return s.source == null ? new Object[]{s.open()} : new Object[]{s.open(), s.source};
             }
@@ -464,10 +467,24 @@ final class PreludeImage {
                 values.writeByte(PAIR);
                 values.writeInt(valueIds.get(p.car));
                 values.writeInt(valueIds.get(p.cdr));
+            } else if (o instanceof SVector v && v.isLongs()) {
+                values.writeByte(VECTOR_LONGS);
+                values.writeInt(v.length);
+                for (long element : v.longs()) {
+                    values.writeLong(element);
+                }
+                values.writeBoolean(v.immutable);
+            } else if (o instanceof SVector v && v.isDoubles()) {
+                values.writeByte(VECTOR_DOUBLES);
+                values.writeInt(v.length);
+                for (double element : v.doubles()) {
+                    values.writeDouble(element);
+                }
+                values.writeBoolean(v.immutable);
             } else if (o instanceof SVector v) {
                 values.writeByte(VECTOR);
-                values.writeInt(v.elements.length);
-                for (Object element : v.elements) {
+                values.writeInt(v.length);
+                for (Object element : v.objects()) {
                     values.writeInt(valueIds.get(element));
                 }
                 values.writeBoolean(v.immutable);
@@ -643,6 +660,20 @@ final class PreludeImage {
                     Object[] elements = new Object[in.readInt()];
                     for (int i = 0; i < elements.length; i++) {
                         elements[i] = values[in.readInt()];
+                    }
+                    return new SVector(elements, in.readBoolean());
+                }
+                case VECTOR_LONGS: {
+                    long[] elements = new long[in.readInt()];
+                    for (int i = 0; i < elements.length; i++) {
+                        elements[i] = in.readLong();
+                    }
+                    return new SVector(elements, in.readBoolean());
+                }
+                case VECTOR_DOUBLES: {
+                    double[] elements = new double[in.readInt()];
+                    for (int i = 0; i < elements.length; i++) {
+                        elements[i] = in.readDouble();
                     }
                     return new SVector(elements, in.readBoolean());
                 }
