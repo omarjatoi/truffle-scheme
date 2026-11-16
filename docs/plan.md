@@ -440,7 +440,7 @@ one at a time.
   - **Done when** unit tests cover R7RS §4.3.3's `simple-let` example and
     `load` into the interaction environment and into an `environment`, and
     `tests/diff/` programs using both match chibi.
-- [ ] **M4-10 · Programs, bodies and top-level hygiene** *(needs M4-09)*
+- [x] **M4-10 · Programs, bodies and top-level hygiene** *(needs M4-09)*
   - D14: definitions after expressions in a body.
   - D15: a program's top level is its imports only; core forms are exported
     by `(r7rs %primitives)` and re-exported by the standard libraries; the

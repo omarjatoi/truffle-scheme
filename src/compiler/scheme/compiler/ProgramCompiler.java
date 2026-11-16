@@ -45,16 +45,32 @@ public final class ProgramCompiler implements SchemeCompiler {
         state.libraries = new Libraries(context.symbols, state.top, context.globals, body -> language.withPrompt(generate(language, body)).call(),
                         context.getEnv(), context.getEnv().getOptions().get(SchemeLanguage.LIBRARY_PATH));
         Source imports = Source.newBuilder(SchemeLanguage.ID, INTERACTION_IMPORTS, "interaction-environment").internal(true).build();
-        language.withPrompt(compileProgram(language, context, imports)).call();
+        language.withPrompt(compile(language, context, imports, false)).call();
     }
 
+    /**
+     * A program (R7RS §5.1: text whose first form is {@code import}) runs in a top level of its own,
+     * which has only its imports and its definitions; any other text runs in the interaction
+     * environment (design.md D15).
+     */
     @Override
     public CallTarget compileProgram(SchemeLanguage language, SchemeContext context, Source source) {
+        return compile(language, context, source, true);
+    }
+
+    private static CallTarget compile(SchemeLanguage language, SchemeContext context, Source source, boolean mayBeProgram) {
         CompilerState state = (CompilerState) context.compilerState;
         List<Object> forms = Expander.readForms(source, context.symbols, false);
         SourceDir dir = new SourceDir.Files(context.getEnv(), null).dirOf(source);
-        Expander expander = new Expander(context.symbols, state.interaction, state.top, state.interactionScope, state.libraries, dir);
-        Ast.Lambda program = expander.expandProgram(forms);
+        Ast.Lambda program;
+        if (mayBeProgram && Expander.isProgram(forms)) {
+            Scope scope = new Scope();
+            GlobalEnvironment namespace = new GlobalEnvironment();
+            state.top.registerNamespace(scope, namespace);
+            program = new Expander(context.symbols, namespace, state.top, scope, state.libraries, dir).expandIsolatedProgram(forms);
+        } else {
+            program = new Expander(context.symbols, state.interaction, state.top, state.interactionScope, state.libraries, dir).expandProgram(forms);
+        }
         if (source.hasCharacters() && source.getLength() > 0) {
             program.source = source.createSection(0, source.getLength());
         }

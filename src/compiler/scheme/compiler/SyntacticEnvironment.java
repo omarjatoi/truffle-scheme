@@ -20,9 +20,10 @@ import scheme.runtime.value.SSymbol;
  * persists from one program to the next.
  *
  * <p>A binding is a {@link CoreForm}, a lexical {@link Ast.Var}, a {@link Macro}, or a
- * {@link GlobalCell}. Core forms aren't entries: an identifier bound to nothing is a core form if
- * its name is one, else the cell of that name in the namespace of its top-level scope
- * ({@link #namespaceOf}).
+ * {@link GlobalCell}. Core forms are bindings like any other, exported by (r7rs %primitives)
+ * (design.md D15). An identifier bound to nothing is the cell of that name in the namespace of its
+ * top-level scope ({@link #namespaceOf}); only in the {@link #interaction} environment is it first a
+ * core form if its name is one.
  */
 public final class SyntacticEnvironment {
 
@@ -36,8 +37,20 @@ public final class SyntacticEnvironment {
     /** Each library's and the interaction environment's top-level scope, and its namespace. */
     private final Map<Scope, GlobalEnvironment> namespaces = new HashMap<>();
 
+    /** The interaction environment's namespace, the one where core forms are found by name (D15). */
+    private GlobalEnvironment interaction;
+
     void registerNamespace(Scope scope, GlobalEnvironment namespace) {
         namespaces.put(scope, namespace);
+    }
+
+    void registerInteraction(Scope scope, GlobalEnvironment namespace) {
+        registerNamespace(scope, namespace);
+        interaction = namespace;
+    }
+
+    boolean isInteraction(GlobalEnvironment namespace) {
+        return namespace == interaction;
     }
 
     /** The namespace of the first top-level scope among {@code scopes}, or null. */

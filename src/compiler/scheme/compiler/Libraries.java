@@ -35,7 +35,7 @@ import scheme.runtime.value.SymbolTable;
  * <p>A library comes from, in order: a {@code define-library} earlier in a program, the prelude's
  * resources ({@code (scheme base)} is {@code scheme.base.sld}), or a directory on the library path
  * ({@code (chibi test)} is {@code chibi/test.sld}). {@code (r7rs %primitives)} is built in: the
- * Java primitives.
+ * Java primitives and the core forms.
  */
 final class Libraries {
 
@@ -80,6 +80,10 @@ final class Libraries {
         Map<SSymbol, Object> exports = new LinkedHashMap<>();
         for (GlobalCell cell : primitives.cells()) {
             exports.put(cell.name, cell);
+        }
+        // Core forms are bindings like any other (design.md D15): the standard libraries re-export them.
+        for (CoreForm form : CoreForm.values()) {
+            exports.put(symbols.intern(form.keyword), form);
         }
         loaded.put("(r7rs %primitives)", new Library("(r7rs %primitives)", exports));
     }

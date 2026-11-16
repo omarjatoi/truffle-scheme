@@ -15,14 +15,17 @@ public interface SchemeCompiler {
 
     /**
      * Sets up a new context once its primitives are defined: instantiates the standard libraries and
-     * the interaction environment that programs run in (design.md D7).
+     * the interaction environment (design.md D7).
      */
     void initializeContext(SchemeLanguage language, SchemeContext context);
 
-    /** Compiles a program into one root (design.md D6), without its prompt. */
+    /**
+     * Compiles program text into one root (design.md D6), without its prompt: a program (first form
+     * {@code import}) in a top level of its own, other text in the interaction environment (D15).
+     */
     CallTarget compileProgram(SchemeLanguage language, SchemeContext context, Source source);
 
-    /** The context's interaction environment (R7RS §6.12): the one programs run in. */
+    /** The context's interaction environment (R7RS §6.12): the one REPL input runs in (design.md D15). */
     SEnvironment interactionEnvironment(SchemeContext context);
 
     /**
