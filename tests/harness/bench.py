@@ -1,6 +1,6 @@
 """Benchmarks (bench/README.md): ecraven's and Larceny's R7RS sets, run one program per JVM
 (`benchmark`), the comparative report against other implementations (`bench-report`, M5-02), and
-the subset CI checks against bench/thresholds.json (`bench-check`, M5-08).
+the subset checked against bench/thresholds.json (`bench-check`, M5-08).
 
 `bazel run //:r7rs -- <command>`; RUNTIME is the launcher's runtime, which main.py sets.
 """
@@ -26,15 +26,13 @@ import urllib.error
 import urllib.request
 from os.path import exists, join
 
+import harness
 from harness import INTERPRETER_VM_ARGS, fail, log, repo_root, tail
 
 RUNTIME = []  # [harness.Runtime] of the launcher
 
 
-def graalvm_version(release):
-    with open(release, encoding='utf-8') as f:
-        m = re.search(r'^GRAALVM_VERSION="?([^"\n]*)"?', f.read(), re.MULTILINE)
-    return m.group(1) if m else 'unknown'
+graalvm_version = harness.graalvm_version
 
 
 _BENCH_DIR = join(repo_root(), 'bench')
@@ -827,7 +825,8 @@ def _write_report_markdown(report, path):
 
 # ---------------------------------------------------------------------------
 # Performance thresholds (plan.md M5-08): a subset of ecraven's set with small workloads, measured
-# on CI's runner, and checked on every PR against bench/thresholds.json (bench/README.md)
+# on the maintainer's machine, and checked there before a PR against bench/thresholds.json
+# (bench/README.md)
 # ---------------------------------------------------------------------------
 
 _THRESHOLDS = join(_BENCH_DIR, 'thresholds.json')
@@ -979,10 +978,10 @@ def _threshold_for(samples, floor, slack):
 
 def _machine_factor(results, baselines):
     """How fast this run's machine is, relative to the baselines' runs: the median, over the
-    benchmarks measured (at least _MACHINE_FACTOR_MIN of them), of measured / baseline. GitHub's
-    runners are of several CPU types, which shifts every benchmark alike: about 0.7 to 1.4 in the
-    runs bench/thresholds.json was measured from. A median, so that a few regressed benchmarks
-    don't move it. None if too few benchmarks were measured."""
+    benchmarks measured (at least _MACHINE_FACTOR_MIN of them), of measured / baseline. A
+    machine's speed and load shift every benchmark alike (GitHub's runners, of several CPU types,
+    ranged about 0.7 to 1.4 when the thresholds were measured there, before M7-03). A median, so
+    that a few regressed benchmarks don't move it. None if too few benchmarks were measured."""
     ratios = [result['metric_ms'] / baselines[key] for key, result in results.items()
               if 'metric_ms' in result and baselines.get(key)]
     return _median(ratios) if len(ratios) >= _MACHINE_FACTOR_MIN else None
@@ -1050,7 +1049,6 @@ def _update_thresholds(runs, cases, note):
             'hosts': hosts,
             'commits': sorted({run.get('commit', '?') for run in runs}),
             'dates': sorted({run.get('date', '?')[:10] for run in runs}),
-            'ci_runs': sorted({run['ci_run'] for run in runs if run.get('ci_run')}),
         },
         'benchmarks': {case.key: entries[case.key] for case in _CHECK_CASES if case.key in entries},
     }
@@ -1069,7 +1067,7 @@ def r7rs_bench_check(args):
     parser.add_argument('--markdown', metavar='FILE', help='append the table here')
     parser.add_argument('--update', action='store_true',
                         help='rewrite the thresholds of the benchmarks chosen, from --from files, or else from --runs runs here')
-    parser.add_argument('--from', dest='sources', nargs='+', metavar='FILE', help='with --update: measurement files (--json) of CI runs')
+    parser.add_argument('--from', dest='sources', nargs='+', metavar='FILE', help='with --update: measurement files (--json) of earlier runs')
     parser.add_argument('--runs', type=int, default=3, metavar='N', help='with --update and no --from: runs to measure here (default 3)')
     parser.add_argument('--note', default='', help='with --update: where and how the runs were made')
     parser.add_argument('--measure', action='store_true', help='only measure (with --json): no thresholds, no failure')
@@ -1101,8 +1099,7 @@ def r7rs_bench_check(args):
 
     def measurement(results):
         return {'host': _host_description(), 'platform': _bench_platform(), 'commit': _git_commit(),
-                'date': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),
-                'ci_run': os.environ.get('GITHUB_RUN_ID', ''), 'results': results}
+                'date': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M UTC'), 'results': results}
 
     if options.update:
         runs = []
@@ -1184,7 +1181,7 @@ def r7rs_bench_check(args):
                  'needs new thresholds: bench/README.md "Thresholds"')
     if slower:
         log(f'WARNING: bench-check: past their thresholds, but these were measured on {measured_on} and this is '
-                f'{_bench_platform()}, where they don\'t apply (--enforce to fail anyway): {" ".join(slower)}. CI checks them.')
+                f'{_bench_platform()}, where they don\'t apply (--enforce to fail anyway): {" ".join(slower)}.')
     else:
         log(f'bench-check: all {len(cases)} benchmarks within their thresholds')
     return 0

@@ -120,9 +120,6 @@ class _Launcher:
         tail = '\n'.join('    ' + line for line in self.stderr().splitlines()[-15:]) or '    (empty)'
         return f'  stdout: {self.stdout()[-500:]!r}\n  stderr (tail):\n{tail}'
 
-    def lost_bind_race(self):
-        return not self.running() and re.search(r'(?i)address already in use|BindException', self.stderr()) is not None
-
 
 def _connect(launcher, port):
     """A socket connected to the tool's server, retried until it listens."""

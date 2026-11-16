@@ -421,7 +421,7 @@ performance. Don't add `injectBranchProbability` without evidence.
 
 The `scheme` launcher (`bazel-bin/scheme`, D17, M6-01) takes engine and compiler
 options directly: `bazel-bin/scheme --experimental-options --engine.TraceCompilation file.scm`.
-The commands that run `SchemeMain` themselves (`r7rs-diff`, benchmarks) take
+`bazel run //:r7rs -- benchmark`, which runs `SchemeMain` itself, takes
 them as JVM flags: pass `-Dpolyglot.engine.AllowExperimentalOptions=true` to the
 JVM, then any engine or compiler option as `-Dpolyglot.<option>=…`:
 
@@ -478,7 +478,8 @@ time goes to dispatch plumbing rather than instruction semantics.
    `bazel run //:r7rs -- test --compile` and `--torture` for anything in `src/runtime`
    or a DSL operation (AGENTS.md). Items 2, 3, 4 and 9 change the call
    path and need torture runs in particular.
-7. **Ratchet.** M5-08 turns the final numbers into CI thresholds.
+7. **Ratchet.** M5-08 turns the final numbers into thresholds (`bench-check`,
+   bench/README.md).
 
 ## Appendix: the programs behind §2
 

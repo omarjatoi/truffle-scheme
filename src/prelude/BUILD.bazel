@@ -4,11 +4,11 @@ load("//bazel:java.bzl", "scheme_java_library")
 # package scheme.prelude (its package-info.java makes it a package of the scheme module).
 scheme_java_library(
     name = "prelude",
-    srcs = glob(["**/*.java"]),
+    srcs = glob(["scheme/prelude/*.java"]),
     resource_strip_prefix = "src/prelude",
     resources = glob(
-        ["scheme/**"],
-        exclude = ["**/*.java"],
+        ["scheme/prelude/*"],
+        exclude = ["scheme/prelude/*.java"],
     ),
     visibility = ["//visibility:public"],
 )

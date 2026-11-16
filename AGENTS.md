@@ -259,6 +259,7 @@ MODULE.bazel               Bazel modules, TRUFFLE_VERSION, Maven artifacts (lock
 BUILD.bazel                the scheme, scheme.launcher modules (jars), the prelude image, bazel-bin/scheme
 bazel/                     the GraalVM toolchain, module jars (java_module.bzl), lint tests (lint/)
 flake.nix, flake.lock      dev shell: bazel, Python, gh, chibi-scheme, GraalVM 25.5
+.buildkite/                CI: the pipeline and its pre-command hook
 src/reader/                reader + datum labels
 src/compiler/              expander + core AST -> Bytecode DSL builder calls
 src/runtime/               Bytecode DSL root + operations, continuations
@@ -272,7 +273,8 @@ bench/r7rs-ecraven/        ecraven's R7RS benchmarks, vendored, read-only (see i
 bench/r7rs-larceny/        Larceny's R7RS benchmarks, vendored, read-only (see its README)
 bench/postlude.scm         our postlude for them; bench/README.md: running, failures
 tests/lib/                 test-only libraries: the (chibi test) and (tests scheme test) shims
-tests/harness/             test drivers and the `bazel run //:r7rs` commands (main.py)
+tests/harness/             the `bazel run //:r7rs` commands (main.py), the Python checks (check_*.py), the test macros (defs.bzl)
+tests/driver/              Java test drivers: diff, spec and space programs, conformance sections, lint checks
 tests/diff/                programs that must match chibi-scheme; add freely
 tests/space/               programs run under small JVM limits (//tests:space)
 tests/tools/               programs the tools tests debug and profile (tests/harness/tools.py names their lines)

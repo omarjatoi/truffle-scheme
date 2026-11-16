@@ -1,6 +1,6 @@
 """Runs the commands of docs/usage.md and docs/embedding.md, and checks their samples (plan.md M6-07).
 
-The test `//tests:readme` (main.py: readme_test) reads the documents' fenced blocks. Every block has a
+The test `//tests:readme` (check_readme.py) reads the documents' fenced blocks. Every block has a
 marker, an HTML comment on the line before its opening fence (blank lines in between are allowed),
 that says how CI checks it; a block without one fails the step:
 

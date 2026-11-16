@@ -3,8 +3,9 @@
 How to build and run this R7RS-small Scheme: the `scheme` launcher and REPL,
 GraalVM's debugger and profilers, the native-image launcher, and how it
 compares with other implementations. Embedding it in Java is
-[embedding.md](embedding.md). Every command here is run by CI (the readme
-check in the Tests job), which compares its output with the block after it.
+[embedding.md](embedding.md). Every command here is run by the readme test
+(`//tests:readme`, in CI's `tests` step; the native image's by
+`//tests:readme_native`), which compares its output with the block after it.
 
 ## Status
 
@@ -17,10 +18,10 @@ Both R7RS conformance suites vendored here pass:
   lists each with the R7RS text.
 
 The per-section numbers are the status block at the top of
-[docs/plan.md](plan.md), which CI regenerates on every pull request and
-fails if it is stale. It is for the interpreter; CI also runs both suites
-with every function compiled on first call (non-blocking), and the native
-launcher passes the same tests (design.md D17). Proper tail calls run in
+[docs/plan.md](plan.md), which is generated from the suites, and a test
+checks it on every commit. It is for the interpreter; CI also runs both
+suites with every function compiled on first call and under torture, and the
+native launcher passes the same tests (design.md D17). Proper tail calls run in
 constant space, deep non-tail recursion spills to the heap instead of
 overflowing the Java stack, and a torture mode captures and re-enters a
 continuation at every non-tail call; `tests/spec/` holds those cases.

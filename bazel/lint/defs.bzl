@@ -9,7 +9,7 @@ javac with -Werror is the build itself (bazel/java.bzl).
 """
 
 load("@rules_java//java/common:java_info.bzl", "JavaInfo")
-load("//tests/harness:defs.bzl", "harness_test")
+load("//bazel:jvm_test.bzl", "java_driver_test")
 
 def _rlocation(ctx, f):
     path = f.short_path
@@ -28,8 +28,8 @@ def _lint_inputs_impl(ctx):
         "generated_sources": generated,
         "processor_path": ctx.files.processor_path,
     }
-    manifest = ctx.actions.declare_file(ctx.label.name + ".json")
-    ctx.actions.write(manifest, json.encode({k: [_rlocation(ctx, f) for f in v] for k, v in lists.items()}))
+    manifest = ctx.actions.declare_file(ctx.label.name + ".txt")
+    ctx.actions.write(manifest, "".join(["%s\t%s\n" % (k, _rlocation(ctx, f)) for k, v in lists.items() for f in v]))
     return [DefaultInfo(files = depset([manifest]), runfiles = ctx.runfiles(
         files = [manifest] + ctx.files.srcs + class_jars + generated + ctx.files.processor_path,
         transitive_files = depset(transitive = [classpath, info.transitive_runtime_jars]),
@@ -37,7 +37,8 @@ def _lint_inputs_impl(ctx):
 
 _lint_inputs = rule(
     implementation = _lint_inputs_impl,
-    doc = "A java_library's sources, class jars, generated sources and classpaths, as runfiles and a JSON manifest.",
+    doc = "A java_library's sources, class jars, generated sources and classpaths, as runfiles and a manifest " +
+          "of `kind<TAB>runfiles path` lines.",
     attrs = {
         "lib": attr.label(mandatory = True, providers = [JavaInfo]),
         "processor_path": attr.label_list(allow_files = [".jar"]),
@@ -45,15 +46,12 @@ _lint_inputs = rule(
     },
 )
 
-def _rloc(label):
-    return "$(rlocationpath //bazel/lint:%s)" % label
-
-# check: (tool, its configuration or None, size)
+# check: (the tool's library and main class, its configuration or None, size)
 _CHECKS = {
-    "format": ("eclipse_format", "org.eclipse.jdt.core.prefs", "small"),
-    "checkstyle": ("checkstyle", "checkstyle.xml", "small"),
-    "ecj": ("ecj", "org.eclipse.jdt.core.prefs", "medium"),
-    "spotbugs": ("spotbugs", None, "medium"),
+    "format": ("eclipse_format_lib", "EclipseFormat", "org.eclipse.jdt.core.prefs", "small"),
+    "checkstyle": ("checkstyle_lib", "com.puppycrawl.tools.checkstyle.Main", "checkstyle.xml", "small"),
+    "ecj": ("ecj_lib", "org.eclipse.jdt.internal.compiler.batch.Main", "org.eclipse.jdt.core.prefs", "medium"),
+    "spotbugs": ("spotbugs_lib", "edu.umd.cs.findbugs.LaunchAppropriateUI", None, "medium"),
 }
 
 def java_lint(name, lib, srcs, truffle_dsl = False, spotbugs = True):
@@ -64,14 +62,16 @@ def java_lint(name, lib, srcs, truffle_dsl = False, spotbugs = True):
         processor_path = ["@jvm//:org_graalvm_truffle_truffle_dsl_processor"] if truffle_dsl else [],
         srcs = srcs,
     )
-    for check, (tool, config, size) in _CHECKS.items():
+    for check, (tool, main, config, size) in _CHECKS.items():
         if check == "spotbugs" and not spotbugs:
             continue
-        harness_test(
+        java_driver_test(
             name = "%s_%s" % (name, check),
-            args = ["lint", check, "--inputs=$(rlocationpath :%s)" % inputs, "--tool=" + _rloc(tool)] +
-                   (["--prefs=" + _rloc(config) if config.endswith(".prefs") else "--config=" + _rloc(config)] if config else []),
-            data = [":" + inputs, "//bazel/lint:" + tool] + (["//bazel/lint:" + config] if config else []),
+            args = ["--check=" + check, "--tool-main=" + main, "--inputs=$(rlocationpath :%s)" % inputs] +
+                   (["--config=$(rlocationpath //bazel/lint:%s)" % config] if config else []),
+            data = [":" + inputs] + (["//bazel/lint:" + config] if config else []),
+            main = "Lint",
             size = size,
             tags = ["lint"],
+            tool = "//bazel/lint:" + tool,
         )

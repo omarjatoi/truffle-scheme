@@ -637,7 +637,8 @@ Each entry: the decision, why, and what was rejected.
   maintainer's Mac) and the native image are local commands, by the
   maintainer's choice.
 - **Measured** when Bazel replaced mx (same commit; Apple M3 Max, 16 cores,
-  shared with other builds at load 15–25; GitHub's `ubuntu-26.04` runners):
+  shared with other builds at load 15–25; GitHub's `ubuntu-26.04` runners,
+  CI's until Buildkite replaced GitHub Actions in #113):
 
   | | mx | Bazel |
   |---|---:|---:|
@@ -656,7 +657,11 @@ Each entry: the decision, why, and what was rejected.
   a matching labsjdk: a ~1.5 GB graal checkout plus a labsjdk whose JVMCI
   version must track the graal commit; revisit only if we need an unreleased
   Truffle fix. Maven or Gradle (no test caching across machines); Buck2
-  (thinner open-source JVM support).
+  (thinner open-source JVM support). Splitting `src/runtime` into libraries
+  (values and printer below the rest): values need the context and the
+  language for interop by design (D10), so the split needs hooks, and it
+  reruns no fewer tests (every test loads the whole language) for a small
+  compile-time gain.
 
 ### D12. Continuation strategy
 
@@ -893,16 +898,17 @@ Each entry: the decision, why, and what was rejected.
     `--enable-native-access=org.graalvm.shadowed.jline`; JLine's own
     native-image configuration registers the downcalls for the native
     launcher.
-- The Chrome inspector, DAP and profiler tools ship as a separate optional
-  distribution, and CI runs a smoke test of each against a Scheme program
-  (D13's tags and source sections are what they consume).
+- The Chrome inspector, DAP and profiler tools are optional modules
+  (`//bazel:tools_modules`), which `bazel-bin/scheme` puts on the module
+  path, and CI runs a smoke test of each against a Scheme program
+  (`//tests:tools`; D13's tags and source sections are what they consume).
 - **Native image (M6-06).** `bazel build //:scheme-native` builds `scheme` as
   a native executable with the pinned GraalVM CE's `native-image` and the
   target's C toolchain (`native_image` in `bazel/java_module.bzl`: on the
   executors for a Linux target, here for this machine), from the launcher's
   module path without the tools. Truffle's runtime on that path
   makes native-image add Truffle's runtime compilation, so the executable
-  has the Graal JIT. The `SCHEME` jar carries its own configuration
+  has the Graal JIT. The language's jar (`scheme.jar`) carries its own configuration
   (`src/runtime/META-INF/native-image/org.r7rs/scheme`), so any embedder's
   image picks it up: the prelude's resources, and build-time initialization
   of the language's packages, as GraalVM's own languages have (the language
@@ -967,7 +973,7 @@ Each entry: the decision, why, and what was rejected.
     uses the JDK's `libsimdsort`, whose libm dependency nixpkgs'
     native-image resolves to glibc's static `libm.a`, and linking that into
     a dynamically linked executable fails. The baseline target is also what
-    nixpkgs' own native-image check builds with, and makes the CI artifact
+    nixpkgs' own native-image check builds with, and makes the executable
     run on any x86-64 machine.
   - Limits: the tools (inspector, DAP, profilers) are only on the JVM
     launcher (`bazel-bin/scheme`); the executable is for the platform that built

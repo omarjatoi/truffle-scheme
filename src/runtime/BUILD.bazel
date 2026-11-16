@@ -1,10 +1,16 @@
 load("//bazel:java.bzl", "scheme_java_library")
 
 # The runtime project. The Bytecode DSL root, operations, continuations and the language class,
-# and the language's native-image configuration (META-INF/native-image).
+# and the language's native-image configuration (META-INF/native-image). Its three packages refer
+# to each other (scheme.runtime, its values and its printer), so they are one library.
 scheme_java_library(
     name = "runtime",
-    srcs = glob(["**/*.java"]),
+    srcs = glob([
+        "scheme/runtime/*.java",
+        "scheme/runtime/printer/*.java",
+        "scheme/runtime/value/*.java",
+    ]),
+    bytecode_root = True,
     resource_strip_prefix = "src/runtime",
     resources = glob(["META-INF/**"]),
     truffle_dsl = True,

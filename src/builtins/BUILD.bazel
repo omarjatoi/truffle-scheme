@@ -4,7 +4,7 @@ load("//bazel:java.bzl", "scheme_java_library")
 # scheme.runtime.BuiltinLibrary service (META-INF/services).
 scheme_java_library(
     name = "builtins",
-    srcs = glob(["**/*.java"]),
+    srcs = glob(["scheme/builtins/*.java"]),
     resource_strip_prefix = "src/builtins",
     resources = glob(["META-INF/**"]),
     truffle_dsl = True,
@@ -19,6 +19,6 @@ scheme_java_library(
 # For the rule 1 check (//tests:rules).
 filegroup(
     name = "srcs",
-    srcs = glob(["**/*.java"]),
+    srcs = glob(["scheme/builtins/*.java"]),
     visibility = ["//tests:__pkg__"],
 )
