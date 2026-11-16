@@ -9,6 +9,7 @@ import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.RootCallTarget;
 import com.oracle.truffle.api.nodes.DirectCallNode;
 import com.oracle.truffle.api.nodes.IndirectCallNode;
+import com.oracle.truffle.api.nodes.LoopNode;
 import com.oracle.truffle.api.nodes.Node;
 
 import scheme.runtime.value.SClosure;
@@ -70,7 +71,12 @@ public final class Trampoline extends Node {
         return IndirectCallNode.create();
     }
 
-    /** Performs {@code value} if it is a tail call, and every tail call after it; returns the value. */
+    /**
+     * Performs {@code value} if it is a tail call, and every tail call after it; returns the value.
+     * The tail calls count as iterations of a loop of the root this site is in (plan.md M7-02), as
+     * a self tail call's jump does: a procedure called a few times whose call sites perform many tail
+     * calls (a loop through several procedures) gets compiled, and its loop with it.
+     */
     public Object run(Object value) {
         if (!(value instanceof TailCall tail)) {
             return value;
@@ -78,9 +84,12 @@ public final class Trampoline extends Node {
         // The first tail call is peeled out of the loop, so a TailCall built by a callee inlined
         // into this site never flows into the loop's phi and can stay virtual.
         Object result = first.execute(tail.procedure, tail.arguments);
+        int count = 1;
         while (result instanceof TailCall next) {
             result = rest.execute(next.procedure, next.arguments);
+            count++;
         }
+        LoopNode.reportLoopCount(this, count);
         return result;
     }
 

@@ -512,7 +512,7 @@ public final class Expander {
      * escape-only call/cc calls into %call/ec calls (M5-04).
      */
     private Lambda analyzed(Lambda unit, boolean closed) {
-        Closures.analyze(unit);
+        Closures.analyze(unit, Set.of(primitive("apply"), primitive("call-with-values")));
         Set<GlobalCell> callCC = Set.of(primitive("call/cc"), primitive("call-with-current-continuation"));
         EscapeAnalysis.rewrite(unit, closed, callCC, primitive("%call/ec"));
         return unit;

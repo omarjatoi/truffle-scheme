@@ -719,7 +719,7 @@ deferral that was never scheduled. Each task comes from a PR's follow-ups
     across 10 fresh JVMs, `nqueens`' later iterations are no slower than its
     first, and their `bench/thresholds.json` entries are re-measured
     (narrower) with the `bench-thresholds` workflow.
-- [ ] **M7-02 · Smaller call sites** *(needs M7-01)*
+- [x] **M7-02 · Smaller call sites** *(needs M7-01)*
   - Shorten the instruction sequence `CallSiteEmitter` emits at every
     non-tail call (about 10 instructions, M5-10), so `map`/`for-each`'s inner
     loop fits Truffle's splitting limit, and the interpreter does less per

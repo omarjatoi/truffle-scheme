@@ -221,14 +221,15 @@ def _dap_stopped(client, path, expected_x):
     top = frames[0]
     _check(top['name'] == 'square' and top['line'] == _BREAK_LINE and top.get('source', {}).get('path') == path,
            f'DAP: expected to stop in square at {path}:{_BREAK_LINE}, got {top["name"]} at {top.get("source", {}).get("path")}:{top["line"]}')
-    _check('loop' in names[1:], f'DAP: square\'s caller loop is not on the stack: {names}')
+    _check(names[1:2] == ['sum-squares'], f'DAP: square\'s caller sum-squares is not next on the stack: {names}')
     variables = client.variables(top['id'])
     _check(variables.get('x') == expected_x, f'DAP: expected x = {expected_x} in square, got {variables}')
-    # The caller loop (sum-squares's named let) has its parameters and the captured n (plan.md M6-05).
-    loop = client.variables(frames[names.index('loop', 1)]['id'])
-    _check(loop.get('i') == expected_x and loop.get('n') == '5' and 'acc' in loop,
-           f'DAP: expected i = {expected_x}, acc and the captured n = 5 in loop, got {loop}')
-    log(f'  dap: stopped at the breakpoint in square, stack {names}, x = {variables["x"]}, loop\'s n = {loop["n"]}')
+    # The caller runs its named let as a loop of its own (plan.md M7-02): the frame has the loop's
+    # variables and its own parameter n (plan.md M6-05).
+    caller = client.variables(frames[1]['id'])
+    _check(caller.get('i') == expected_x and caller.get('n') == '5' and 'acc' in caller,
+           f'DAP: expected i = {expected_x}, acc and n = 5 in sum-squares, got {caller}')
+    log(f'  dap: stopped at the breakpoint in square, stack {names}, x = {variables["x"]}, sum-squares\'s n = {caller["n"]}')
     return thread, top
 
 
@@ -379,7 +380,7 @@ def _cdp_paused(client, path, expected_x):
     line = top['location']['lineNumber'] + 1
     _check(top['functionName'] == 'square' and line == _BREAK_LINE and top.get('url', '').endswith(path),
            f'CDP: expected to pause in square at {path}:{_BREAK_LINE}, got {top["functionName"]} at {top.get("url")}:{line}')
-    _check('loop' in names[1:], f'CDP: square\'s caller loop is not on the stack: {names}')
+    _check(names[1:2] == ['sum-squares'], f'CDP: square\'s caller sum-squares is not next on the stack: {names}')
     variables = client.scope_variables(top)
     _check(str(variables.get('x')) == expected_x, f'CDP: expected x = {expected_x} in square, got {variables}')
     log(f'  inspect: paused at the breakpoint in square ({paused["reason"]}), stack {names}, x = {variables["x"]}')
@@ -461,15 +462,16 @@ def _profile(workdir, command, options, expected, program=_PROFILE_PROGRAM):
 def _cpusampler(workdir, commands):
     command = commands.tools
     # Rows read: ` name || total || self || file~lines:chars`. fib must be sampled at its own
-    # definition (lines 2-5), and the call tree must have fib under the loop under <program>.
+    # definition (lines 2-5), and the call tree must have fib under run-fib (whose named let is a
+    # loop of its own, plan.md M7-02) under <program>.
     histogram = _profile(workdir, command, lambda out: ['--cpusampler', '--cpusampler.Period=1ms', '--cpusampler.OutputFile=' + out],
-                         [r'^Sampling Histogram\.', r'^ fib +\|\|.*\|\| \S*profileme\.scm~2-5:', r'^ loop +\|\|.*profileme\.scm~12-15:'])
+                         [r'^Sampling Histogram\.', r'^ fib +\|\|.*\|\| \S*profileme\.scm~2-5:', r'^ run-fib +\|\|.*profileme\.scm~11-15:'])
     samples = re.search(r'Recorded (\d+) samples', histogram)
     _check(samples and int(samples.group(1)) > 0, f'cpusampler: no samples\n{histogram[:2000]}')
-    log(f'  cpusampler: histogram names fib and loop ({samples.group(1)} samples)')
+    log(f'  cpusampler: histogram names fib and run-fib ({samples.group(1)} samples)')
     _profile(workdir, command, lambda out: ['--cpusampler=calltree', '--cpusampler.Period=1ms', '--cpusampler.OutputFile=' + out],
-             [r'^Sampling Call Tree\.', r'^  <program> +\|\|', r'^   loop +\|\|.*profileme\.scm~12-15:', r'^    fib +\|\|.*profileme\.scm~2-5:'])
-    log('  cpusampler: call tree has <program> > loop > fib')
+             [r'^Sampling Call Tree\.', r'^  <program> +\|\|', r'^   run-fib +\|\|.*profileme\.scm~11-15:', r'^    fib +\|\|.*profileme\.scm~2-5:'])
+    log('  cpusampler: call tree has <program> > run-fib > fib')
     # Past the spill depth, frames wait on the heap, not the Java stack; the prompt reports them as
     # its asynchronous stack, which the sampler splices in after it (design.md "Spilled frames in
     # tools"). Every sample in spin must have every frame of down (n = 500 down to 1), and no sample
@@ -498,14 +500,14 @@ def _cpusampler(workdir, commands):
 
 def _memtracer(workdir, commands):
     # The memory tracer writes to stdout (it has no output file option). make-table's loop (lines
-    # 7-10) makes a pair and an 8-element vector per iteration, 100 iterations per call, 10 calls:
-    # 2000 allocations that the language reports (M7-07), and its own closure once per call.
+    # 7-10, a loop of make-table's own, plan.md M7-02) makes a pair and an 8-element vector per
+    # iteration, 100 iterations per call, 10 calls: 2000 allocations that the language reports
+    # (M7-07).
     histogram = _profile(workdir, commands.tools, lambda out: ['--experimental-options', '--memtracer'],
                          [r'Location Histogram with Allocation Counts\. Recorded a total of \d+ allocations\.',
-                          r'^ loop +\| +2000 .*\| \S*profileme\.scm~7-10:',
-                          r'^ make-table +\| +10 .*\| \S*profileme\.scm~6-10:'])
+                          r'^ make-table +\| +2000 .*\| \S*profileme\.scm~6-10:'])
     total = int(re.search(r'Recorded a total of (\d+) allocations', histogram).group(1))
-    _check(total >= 2010, f'memtracer: only {total} allocations\n{histogram[:2000]}')
+    _check(total >= 2000, f'memtracer: only {total} allocations\n{histogram[:2000]}')
     log(f'  memtracer: {total} allocations, 2000 of them in make-table\'s loop')
 
 
