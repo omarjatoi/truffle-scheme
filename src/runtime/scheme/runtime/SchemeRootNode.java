@@ -68,18 +68,6 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
         return new SchemeError("not a procedure: " + scheme.runtime.printer.Printer.print(value, scheme.runtime.printer.Printer.Mode.WRITE));
     }
 
-    /** Performs tail calls until a value comes back. */
-    static Object trampoline(Object first, IndirectCallNode callNode) {
-        Object result = first;
-        while (result instanceof TailCall tail) {
-            if (!(tail.procedure instanceof SClosure closure)) {
-                throw notAProcedure(tail.procedure);
-            }
-            result = callNode.call(closure.callTarget, tail.arguments);
-        }
-        return result;
-    }
-
     /**
      * The number of nested non-tail calls after which a call spills instead (design.md
      * "Continuations"): it captures up to the root prompt, which makes the call on a fresh Java stack.
@@ -108,12 +96,12 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
      * with the error object returns, so a capture in a handler (call/cc, guard) suspends this frame
      * like any other call. An uncaught error, or one before the prelude has installed raise, goes on.
      */
-    static Object raiseHere(SchemeError e, SchemeContext context, IndirectCallNode callNode) {
+    static Object raiseHere(SchemeError e, SchemeContext context, Trampoline trampoline) {
         Object raise = context.raise;
         if (!e.isRaisable() || !(raise instanceof SClosure closure)) {
             throw e;
         }
-        return trampoline(callNode.call(closure.callTarget, new Object[]{closure, e.getErrorObject()}), callNode);
+        return trampoline.run(trampoline.executeCall(closure, new Object[]{closure, e.getErrorObject()}));
     }
 
     /**
@@ -130,31 +118,38 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
      * redefined to another procedure fails the guard. The primitive neither counts toward the spill
      * depth (it doesn't nest) nor is tortured (it can't capture), and its errors are raised here, as
      * from a primitive that was called (design.md D8).
+     *
+     * <p>Each site has its own {@link Trampoline}, an inline cache of the procedures its callees
+     * tail-call (plan.md M5-10). The site reports polymorphism through it: once it has seen a second
+     * procedure, Truffle may split the procedure it is in (map's loop, for instance) for each of its
+     * callers, so that each copy's site sees fewer procedures and can inline them. (The Bytecode DSL
+     * of Truffle 25.5 generates code that doesn't compile for {@code @ReportPolymorphism} on an
+     * operation, so the cache initializers report instead.)
      */
     @Operation(storeBytecodeIndex = true)
     public static final class Call {
         @Specialization(guards = {"procedure.callTarget == cachedTarget", "primitive != null"}, limit = "4")
         static Object doPrimitive(SClosure procedure, @Variadic(startOffset = 1) Object[] arguments,
                         @Bind Node node,
-                        @Cached("procedure.callTarget") RootCallTarget cachedTarget,
+                        @Shared @Cached Trampoline trampoline,
+                        @Cached("trampoline.noteCallee(procedure.callTarget)") RootCallTarget cachedTarget,
                         @Cached("inPlace(cachedTarget)") PrimitiveSpec spec,
-                        @Cached("createNode(spec)") PrimitiveNode primitive,
-                        @Shared @Cached IndirectCallNode trampolineNode) {
+                        @Cached("createNode(spec)") PrimitiveNode primitive) {
             arguments[0] = procedure;
             try {
                 spec.checkArity(arguments.length - 1);
                 return inPlaceResult(primitive.invoke(arguments));
             } catch (SchemeError e) {
-                return raiseHere(e, SchemeContext.get(node), trampolineNode);
+                return raiseHere(e, SchemeContext.get(node), trampoline);
             }
         }
 
         @Specialization(guards = "procedure.callTarget == cachedTarget", limit = "4")
         static Object doDirect(SClosure procedure, @Variadic(startOffset = 1) Object[] arguments,
                         @Bind Node node,
-                        @Cached("procedure.callTarget") RootCallTarget cachedTarget,
-                        @Cached("create(cachedTarget)") DirectCallNode callNode,
-                        @Shared @Cached IndirectCallNode trampolineNode) {
+                        @Shared @Cached Trampoline trampoline,
+                        @Cached("trampoline.noteCallee(procedure.callTarget)") RootCallTarget cachedTarget,
+                        @Cached("create(cachedTarget)") DirectCallNode callNode) {
             arguments[0] = procedure;
             SchemeContext context = SchemeContext.get(node);
             if (++context.callDepth > SPILL_DEPTH) {
@@ -162,9 +157,9 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
                 return Capture.spill(arguments, context.getDynamicEnv());
             }
             try {
-                return tortured(trampoline(callNode.call(arguments), trampolineNode), cachedTarget, context);
+                return tortured(trampoline.run(callNode.call(arguments)), cachedTarget, context);
             } catch (SchemeError e) {
-                return raiseHere(e, context, trampolineNode);
+                return raiseHere(e, context, trampoline);
             } finally {
                 context.callDepth--;
             }
@@ -173,7 +168,8 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
         @Specialization(replaces = "doDirect")
         static Object doIndirect(SClosure procedure, @Variadic(startOffset = 1) Object[] arguments,
                         @Bind Node node,
-                        @Shared @Cached IndirectCallNode trampolineNode) {
+                        @Shared @Cached Trampoline trampoline,
+                        @Cached("trampoline.megamorphic()") IndirectCallNode callNode) {
             arguments[0] = procedure;
             SchemeContext context = SchemeContext.get(node);
             if (++context.callDepth > SPILL_DEPTH) {
@@ -181,9 +177,9 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
                 return Capture.spill(arguments, context.getDynamicEnv());
             }
             try {
-                return tortured(trampoline(trampolineNode.call(procedure.callTarget, arguments), trampolineNode), procedure.callTarget, context);
+                return tortured(trampoline.run(callNode.call(procedure.callTarget, arguments)), procedure.callTarget, context);
             } catch (SchemeError e) {
-                return raiseHere(e, context, trampolineNode);
+                return raiseHere(e, context, trampoline);
             } finally {
                 context.callDepth--;
             }

@@ -1,5 +1,6 @@
 package scheme.runtime.value;
 
+import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.RootCallTarget;
 import com.oracle.truffle.api.interop.TruffleObject;
 
@@ -7,7 +8,14 @@ import com.oracle.truffle.api.interop.TruffleObject;
 public final class SClosure implements TruffleObject {
 
     public final RootCallTarget callTarget;
-    public final Object[] captured;
+
+    /**
+     * The captured values, never written once the closure exists: a variable that {@code set!}
+     * assigns is captured as its {@code Box} (design.md D2). So when the closure is a compilation
+     * constant (a global procedure under its cell's assumption, a closure inlined with the call that
+     * made it), reading a captured value folds to a constant too (plan.md M5-10).
+     */
+    @CompilationFinal(dimensions = 1) public final Object[] captured;
 
     public SClosure(RootCallTarget callTarget, Object[] captured) {
         this.callTarget = callTarget;

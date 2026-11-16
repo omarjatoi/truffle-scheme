@@ -601,7 +601,7 @@ baseline (the fixnum-overflow fix already landed in #74):
     (A/B against M5-01's numbers), torture and both conformance suites still
     pass, and `TraceInlining` shows primitives no longer compiled as separate
     call targets on `fib`.
-- [ ] **M5-10 · Inline caches for tail calls, and splitting** *(needs M5-09)*
+- [x] **M5-10 · Inline caches for tail calls, and splitting** *(needs M5-09)*
   - An inline cache in the trampoline so tail-called procedures can be
     inlined; `Call` reports polymorphism so Truffle splits the higher-order
     prelude procedures (`map`, `for-each`, …); `@CompilationFinal` contents for
