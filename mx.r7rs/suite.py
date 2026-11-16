@@ -119,7 +119,8 @@ suite = {
         "scheme.builtins": {
             "dir": "mx.r7rs/projects/builtins",
             "sourceDirs": ["../../../src/builtins"],
-            "dependencies": ["scheme.runtime"],
+            # scheme.reader: string->number shares the reader's number parser.
+            "dependencies": ["scheme.reader"],
             "annotationProcessors": ["TRUFFLE_DSL_PROCESSOR"],
             # Like Truffle's own DSL projects: SpotBugs skips DSL-generated classes.
             "spotbugsIgnoresGenerated": True,

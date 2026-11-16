@@ -19,20 +19,20 @@ edit it by hand.
 | 4.3 Macros | 25 | 25 |
 | 5 Program structure | 15 | 15 |
 | 6.1 Equivalence Predicates | 25 | 25 |
-| 6.2 Numbers | 129 | 211 |
+| 6.2 Numbers | 211 | 211 |
 | 6.3 Booleans | 10 | 18 |
 | 6.4 Lists | 39 | 65 |
 | 6.5 Symbols | 6 | 17 |
 | 6.6 Characters | 0 | 79 |
 | 6.7 Strings | 10 | 130 |
-| 6.8 Vectors | 10 | 43 |
+| 6.8 Vectors | 11 | 43 |
 | 6.9 Bytevectors | 0 | 39 |
 | 6.10 Control Features | 19 | 34 |
 | 6.11 Exceptions | 14 | 30 |
 | 6.12 Environments and evaluation | 0 | 4 |
 | 6.13 Input and output | 7 | 376 |
 | 6.14 System interface | 0 | 13 |
-| **Total** | **410** | **1225** |
+| **Total** | **493** | **1225** |
 <!-- status:end -->
 
 ---
@@ -354,7 +354,7 @@ needs a procedure another area owns, add it to that area's files in a separate
 PR first. Every task is *(early)*: they need only M3, so they can run in
 parallel. Section counts are from the status block when M4 was drafted.
 
-- [ ] **M4-01 · Numeric tower** *(early)*
+- [x] **M4-01 · Numeric tower** *(early)*
   - The rest of R7RS §6.2 and `(scheme complex)`, `(scheme inexact)`
     (design.md D1): complex numbers (`SComplex`, same-exactness parts),
     `exact`/`inexact` on every type, `floor/` `truncate/` and the quotient
