@@ -1,8 +1,29 @@
 #!/bin/bash
-# Before every step: Determinate Nix, so the step's commands can run `nix develop`. The agents are
-# fresh containers, as root, without systemd.
+# Before every step: Determinate Nix (the agents are fresh containers, as root, without systemd),
+# the CI dev shell's environment (flake.nix .#ci: just Bazel), and Bazel's CI settings in this
+# agent's ~/.bazelrc, with the BuildBuddy key from the cluster secret. Steps then run plain `bazel`.
 set -eo pipefail
 if [ ! -e /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh ]; then
   curl -sSfL https://install.determinate.systems/nix | sh -s -- install linux --init none --no-confirm
 fi
 . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+
+# The shell's PATH and the like; the agent's own SHELL and temporary directory stay.
+shell="$SHELL" tmpdir="${TMPDIR:-/tmp}"
+eval "$(nix print-dev-env .#ci)"
+export SHELL="$shell" TMPDIR="$tmpdir"
+unset TMP TEMP TEMPDIR NIX_BUILD_TOP SOURCE_DATE_EPOCH
+
+# Only this agent's user reads it; nothing uploads it.
+umask 077
+cat > "$HOME/.bazelrc" <<EOF
+common --config=ci
+common:buildbuddy --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY
+common --build_metadata=ROLE=CI
+common --build_metadata=REPO_URL=$BUILDKITE_REPO
+common --build_metadata=COMMIT_SHA=$BUILDKITE_COMMIT
+common --build_metadata=BRANCH_NAME=$BUILDKITE_BRANCH
+EOF
+
+buildkite-agent annotate --context buildbuddy \
+  "BuildBuddy: [this commit's invocations](https://app.buildbuddy.io/history/commit/$BUILDKITE_COMMIT)"

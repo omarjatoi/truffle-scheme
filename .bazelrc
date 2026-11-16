@@ -32,7 +32,9 @@ common:ci --repository_cache=~/.cache/bazel-repository-cache
 common:ci --color=yes
 common:ci --curses=no
 common:ci --show_progress_rate_limit=30
-common:ci --announce_rc
+# Every command targets the executors' platform on CI (Linux, like the agents), so `bazel run`
+# shares `bazel test`'s configuration and analysis.
+common:ci --platforms=@toolchains_buildbuddy//platforms:linux_x86_64
 # BuildBuddy (`--config=buildbuddy`): a remote cache shared by CI and local builds, and each
 # invocation's results at app.buildbuddy.io. It needs an API key: CI passes the
 # BUILDBUDDY_API_KEY secret; locally, put `common:buildbuddy
