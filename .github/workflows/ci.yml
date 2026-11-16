@@ -62,10 +62,14 @@ jobs:
         include:
           - name: unit, status, diff
             steps: [unittest, conformance, diff]
-          - name: unit, compile immediately
+          # The two slowest steps keep all of a runner's cores busy (mx runs their JVMs in
+          # parallel), so each is split over two runners: every other test class or case.
+          - name: unit, compile immediately 1/2
             steps: [unittest-compile]
-          # tests/spec is the longest step and its JVMs keep all of a runner's cores busy,
-          # so it is split over two runners (every other case each).
+            shard: 1/2
+          - name: unit, compile immediately 2/2
+            steps: [unittest-compile]
+            shard: 2/2
           - name: spec 1/2
             steps: [spec]
             shard: 1/2
@@ -87,9 +91,9 @@ jobs:
       - name: Unit tests
         if: contains(matrix.steps, 'unittest')
         run: nix develop --command mx tests unittest
-      - name: Unit tests (compile immediately)
+      - name: Unit tests (compile immediately) ${{ matrix.shard }}
         if: contains(matrix.steps, 'unittest-compile')
-        run: nix develop --command mx tests unittest-compile
+        run: nix develop --command sh -c 'mx r7rs-unittest --compile --jobs "$(nproc)" --shard ${{ matrix.shard }}'
       - name: Conformance status block is up to date
         if: contains(matrix.steps, 'conformance')
         run: nix develop --command mx tests conformance

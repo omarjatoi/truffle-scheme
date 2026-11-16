@@ -118,18 +118,30 @@ def _default_jobs():
     return os.cpu_count() or 1
 
 
+def _shard(text, command, items):
+    """The items that `--shard I/N` selects: every Nth one, starting with the Ith. CI runs
+    shard 1/N, ..., N/N on N machines to split a step whose work saturates one machine."""
+    if text is None:
+        return items
+    m = re.fullmatch(r'(\d+)/(\d+)', text)
+    if not m or not 1 <= int(m.group(1)) <= int(m.group(2)):
+        mx.abort(f'mx {command}: --shard takes I/N with 1 <= I <= N, not {text}')
+    return items[int(m.group(1)) - 1::int(m.group(2))]
+
+
 def r7rs_unittest(args):
-    """run the JUnit tests in a given mode: [--compile] [--torture] [-j N] [unittest args...]"""
+    """run the JUnit tests in a given mode: [--compile] [--torture] [-j N] [--shard I/N] [unittest args...]"""
     parser = argparse.ArgumentParser(prog='mx r7rs-unittest')
     parser.add_argument('--compile', action='store_true', help='compile immediately; compilation failures are errors')
     parser.add_argument('--torture', action='store_true', help='capture + resume at every non-tail call (from M2)')
     parser.add_argument('-j', '--jobs', type=int, default=1, metavar='N',
                         help='split the test classes over N JVMs that run at once (default 1)')
+    parser.add_argument('--shard', metavar='I/N', help='run only every Nth test class, starting with the Ith')
     parsed, rest = parser.parse_known_args(args)
-    if parsed.jobs > 1:
+    if parsed.jobs > 1 or parsed.shard:
         if rest:
-            mx.abort(f'mx r7rs-unittest: --jobs runs every test class and takes no unittest arguments: {rest}')
-        _unittest_in_parallel(parsed.compile, parsed.torture, parsed.jobs)
+            mx.abort(f'mx r7rs-unittest: --jobs and --shard select the test classes themselves; they take no unittest arguments: {rest}')
+        _unittest_in_parallel(parsed.compile, parsed.torture, parsed.jobs, parsed.shard)
         return
     mode = list(COMPILE_VM_ARGS) if parsed.compile else []
     if parsed.torture:
@@ -144,48 +156,50 @@ def r7rs_unittest(args):
 _JUNIT_OK = re.compile(r'^OK \((\d+) tests?\)', re.MULTILINE)
 
 
-def _unittest_in_parallel(compile, torture, jobs):
-    """Splits the test classes into `jobs` shards and runs each with a nested `mx r7rs-unittest`
-    (a JVM of its own), all at once.
+def _unittest_in_parallel(compile, torture, jobs, shard):
+    """Splits the test classes (those `shard` selects) into `jobs` groups and runs each with a
+    nested `mx r7rs-unittest` (a JVM of its own), all at once.
 
     In CompileImmediately mode one JVM keeps about one core busy, so this is what makes the
-    step use the machine. Shards rather than a JVM per class, because every JVM pays for
-    startup and compiler warmup again. Results are logged in shard order; a failing shard's
+    step use the machine. Groups rather than a JVM per class, because every JVM pays for
+    startup and compiler warmup again. Results are logged in group order; a failing group's
     full output is logged."""
     # Find the classes (as `mx unittest` does) and build the JUnit harness once here, so the
     # nested runs only read mx's test-class cache and find the harness up to date.
     mx.build(['--no-daemon', '--dependencies', 'JUNIT_TOOL'])
     classes = sorted(mx_unittest.find_test_candidates(['@Theory', '@Test', '@Parameters'], None, mx.get_jdk()))
+    classes = _shard(shard, 'r7rs-unittest', classes)
     if not classes:
         mx.abort('mx r7rs-unittest: no test classes found')
-    shards = [classes[i::jobs] for i in range(min(jobs, len(classes)))]
+    groups = [classes[i::jobs] for i in range(min(jobs, len(classes)))]
     mode = ['--compile'] if compile else []
     if torture:
         mode += ['--torture']
 
-    def run(shard):
+    def run(group):
         out = mx.OutputCapture()
         start = time.time()
-        regex = '^(' + '|'.join(re.escape(c) for c in shard) + ')$'
+        regex = '^(' + '|'.join(re.escape(c) for c in group) + ')$'
         rc = mx.run_mx(['r7rs-unittest'] + mode + ['--regex', regex], suite=_suite, nonZeroIsFatal=False, out=out, err=out)
         return rc, out.data, time.time() - start
 
-    mx.log(f'r7rs-unittest: {len(classes)} test classes in {len(shards)} parallel JVMs ({" ".join(mode) or "default mode"})')
+    selection = f', shard {shard}' if shard else ''
+    mx.log(f'r7rs-unittest: {len(classes)} test classes{selection} in {len(groups)} parallel JVMs ({" ".join(mode) or "default mode"})')
     failed, tests = [], 0
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(shards)) as pool:
-        futures = [pool.submit(run, shard) for shard in shards]
-        for i, (shard, future) in enumerate(zip(shards, futures), 1):
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(groups)) as pool:
+        futures = [pool.submit(run, group) for group in groups]
+        for i, (group, future) in enumerate(zip(groups, futures), 1):
             rc, output, seconds = future.result()
             ok = _JUNIT_OK.search(output)
-            names = ' '.join(c.rsplit('.', 1)[-1] for c in shard)
+            names = ' '.join(c.rsplit('.', 1)[-1] for c in group)
             if rc == 0 and ok:
                 tests += int(ok.group(1))
-                mx.log(f'  ok      shard {i}/{len(shards)} ({ok.group(1)} tests, {seconds:.1f}s): {names}')
+                mx.log(f'  ok      JVM {i}/{len(groups)} ({ok.group(1)} tests, {seconds:.1f}s): {names}')
             else:
                 failed.append(str(i))
-                mx.log(f'  FAILED  shard {i}/{len(shards)} (exit {rc}, {seconds:.1f}s): {names}\n' + output.rstrip('\n'))
+                mx.log(f'  FAILED  JVM {i}/{len(groups)} (exit {rc}, {seconds:.1f}s): {names}\n' + output.rstrip('\n'))
     if failed:
-        mx.abort(f'r7rs-unittest: shard(s) {" ".join(failed)} of {len(shards)} failed; their output is above')
+        mx.abort(f'r7rs-unittest: JVM(s) {" ".join(failed)} of {len(groups)} failed; their output is above')
     mx.log(f'r7rs-unittest: all {len(classes)} test classes passed ({tests} tests)')
 
 
@@ -424,7 +438,7 @@ def r7rs_spec(args):
     parser.add_argument('cases', nargs='*', help='case names, e.g. tail-mutual (default: all)')
     parser.add_argument('-j', '--jobs', type=int, default=_default_jobs(), metavar='N',
                         help='JVMs to run at a time (default: the number of CPUs)')
-    parser.add_argument('--shard', metavar='I/N', help='run only every Nth case, starting with the Ith (CI splits the cases over N machines)')
+    parser.add_argument('--shard', metavar='I/N', help='run only every Nth case, starting with the Ith')
     parsed = parser.parse_args(args)
     names = sorted(f[:-len('.scm')] for f in os.listdir(_spec_dir()) if f.endswith('.scm'))
     unknown = [c for c in parsed.cases if c not in names]
@@ -442,11 +456,7 @@ def r7rs_spec(args):
     # Every case runs twice (interpreter, JIT), each in a JVM of its own under the case's limits.
     # The runs are independent, so they go in parallel; results are logged in case order.
     selected = parsed.cases or names
-    if parsed.shard:
-        m = re.fullmatch(r'(\d+)/(\d+)', parsed.shard)
-        if not m or not 1 <= int(m.group(1)) <= int(m.group(2)):
-            mx.abort(f'mx r7rs-spec: --shard takes I/N with 1 <= I <= N, not {parsed.shard}')
-        selected = selected[int(m.group(1)) - 1::int(m.group(2))]
+    selected = _shard(parsed.shard, 'r7rs-spec', selected)
     cases = {name: _spec_case(name) for name in selected if name not in _SPEC_PENDING}
     modes = (('interpreter', r7rs_vm_args()), ('JIT', []))
     _launcher_jvm_args()
@@ -778,5 +788,5 @@ mx.update_commands(_suite, {
     'r7rs-status': [r7rs_status, ''],
     'r7rs-check': [r7rs_check, ''],
     'r7rs-vendor-chibi': [r7rs_vendor_chibi, 'path/to/r7rs-tests.scm --version <chibi version>'],
-    'r7rs-unittest': [r7rs_unittest, '[--compile] [--torture] [-j N] [unittest args...]'],
+    'r7rs-unittest': [r7rs_unittest, '[--compile] [--torture] [-j N] [--shard I/N] [unittest args...]'],
 })
