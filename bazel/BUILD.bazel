@@ -52,6 +52,29 @@ java_library(
     ],
 )
 
+# The launcher framework (org.graalvm.launcher) and the shadowed JLine it requires, which the
+# scheme.launcher module needs (mx: LAUNCHER_COMMON, JLINE).
+java_library(
+    name = "launcher_modules",
+    runtime_deps = [
+        "@jvm//:org_graalvm_sdk_launcher_common",
+        "@jvm//:org_graalvm_shadowed_jline",
+    ],
+)
+
+# GraalVM's tools (mx: SCHEME_TOOLS): the Chrome inspector, the debug adapter, the CPU sampler and
+# memory tracer, and the shadowed JSON library they share. Nothing depends on them; the tools
+# smoke tests (//tests:tools) put them on the launcher's module path.
+java_library(
+    name = "tools_modules",
+    runtime_deps = [
+        "@jvm//:org_graalvm_shadowed_json",
+        "@jvm//:org_graalvm_tools_chromeinspector_tool",
+        "@jvm//:org_graalvm_tools_dap_tool",
+        "@jvm//:org_graalvm_tools_profiler_tool",
+    ],
+)
+
 # Builds a named module's jar from java_library outputs (bazel/java_module.bzl).
 java_binary(
     name = "module_jar",

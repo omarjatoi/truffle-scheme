@@ -6,6 +6,7 @@ exports_files([
     "docs/plan.md",
     "mx.r7rs/suite.py",
     "maven_install.json",
+    "mx.r7rs/mx_r7rs_tools.py",
 ])
 
 # The Truffle and GraalVM SDK modules the scheme modules require (mx's "requires", derived from
@@ -48,19 +49,23 @@ java_module_jar(
     deps = ["//bazel:truffle_runtime_modules"],
 )
 
-# mx: SCHEME_LAUNCHER. SchemeMain and the ConformanceRunner, with the optimizing runtime.
+# mx: SCHEME_LAUNCHER. SchemeMain (the `scheme` launcher, on GraalVM's launcher framework) and
+# the ConformanceRunner, with the optimizing runtime.
 java_module_jar(
     name = "scheme_launcher",
     exports = ["scheme.launcher"],
     libs = ["//src/launcher"],
     module_name = "scheme.launcher",
     requires = _SDK_MODULES + [
+        "org.graalvm.launcher",
+        "org.graalvm.shadowed.jline",
         "org.graalvm.truffle.compiler",
         "org.graalvm.truffle.runtime",
         "scheme",
     ],
     deps = [
         ":scheme",
+        "//bazel:launcher_modules",
         "//bazel:truffle_runtime_modules",
     ],
 )

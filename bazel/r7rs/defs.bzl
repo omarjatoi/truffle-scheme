@@ -211,3 +211,34 @@ def conformance_tests(name, module, runtime, suites, plan):
         size = "small",
     )
     native.test_suite(name = name, tests = [name + "_status"] + ["%s_torture_%s" % (name, s) for s in suites])
+
+# mx_r7rs_tools.SMOKE_TESTS, in its order.
+TOOLS_SMOKE_TESTS = ["help", "dap", "inspect", "cpusampler", "memtracer"]
+
+def tools_tests(name, runtime, tools_runtime, programs):
+    """GraalVM's tools against the launcher (mx r7rs-tools): `<name>_<test>` per smoke test.
+
+    Args:
+      name: prefix of the tests, and the name of their test_suite.
+      runtime: a scheme_runtime of the launcher module alone.
+      tools_runtime: the same with the tools (mx: SCHEME_TOOLS) on the module path.
+      programs: tests/tools/*.scm; the first one locates the directory.
+    """
+    tests = []
+    for test in TOOLS_SMOKE_TESTS:
+        _driver(
+            name = "%s_%s" % (name, test),
+            script = "tools_test.py",
+            args = [
+                "--runtime=$(rlocationpath %s)" % runtime,
+                "--tools-runtime=$(rlocationpath %s)" % tools_runtime,
+                "--driver=$(rlocationpath //:mx.r7rs/mx_r7rs_tools.py)",
+                "--programs=$(rlocationpath %s)" % programs[0],
+                test,
+            ],
+            data = [runtime, tools_runtime, "//:mx.r7rs/mx_r7rs_tools.py"] + programs,
+            # The DAP and Chrome DevTools clients talk to the launcher over 127.0.0.1.
+            tags = ["cpu:2", "requires-network"],
+        )
+        tests.append("%s_%s" % (name, test))
+    native.test_suite(name = name, tests = tests)

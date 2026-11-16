@@ -1,6 +1,6 @@
 load("//bazel:java.bzl", "scheme_java_library")
 load("//bazel:java_module.bzl", "java_module_jar", "scheme_runtime")
-load("//bazel/r7rs:defs.bzl", "conformance_tests", "diff_tests", "space_test", "spec_tests", "unit_tests")
+load("//bazel/r7rs:defs.bzl", "conformance_tests", "diff_tests", "space_test", "spec_tests", "tools_tests", "unit_tests")
 
 # Everything under tests/ is described here: tests/r7rs/ and tests/r7rs-larceny/ are read-only
 # vendored suites (AGENTS.md "Never"), so they get no BUILD files of their own.
@@ -139,4 +139,25 @@ conformance_tests(
         "chibi": ":chibi_suite",
         "larceny": ":larceny_suite",
     },
+)
+
+# --- Tools (mx r7rs-tools, M6-03) ---------------------------------------------------------------
+
+# The launcher with GraalVM's tools on its module path (mx: SCHEME_LAUNCHER + SCHEME_TOOLS).
+scheme_runtime(
+    name = "tools_runtime",
+    extra = ["//bazel:tools_modules"],
+    module = "//:scheme_launcher",
+)
+
+# `tools_<test>`: --help lists the tools only with them; DAP and the Chrome inspector stop at a
+# breakpoint, show the stack and locals, step and continue; the CPU sampler and memory tracer run.
+tools_tests(
+    name = "tools",
+    programs = [
+        "tools/debugme.scm",
+        "tools/profileme.scm",
+    ],
+    runtime = ":launcher_runtime",
+    tools_runtime = ":tools_runtime",
 )

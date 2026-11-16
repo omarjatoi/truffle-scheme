@@ -81,7 +81,8 @@ def _scheme_runtime_impl(ctx):
     release = [f for f in files if f.basename == "release" and f.dirname == java_runtime.java_home]
     if len(java) != 1:
         fail("scheme_runtime: cannot find bin/java in the Java runtime %s" % java_runtime.java_home)
-    module_path = ctx.attr.module[JavaModuleInfo].module_path.to_list()
+    module_path = depset(transitive = [ctx.attr.module[JavaModuleInfo].module_path] +
+                               [m[JavaInfo].transitive_runtime_jars for m in ctx.attr.extra]).to_list()
     manifest = ctx.actions.declare_file(ctx.label.name + ".json")
     ctx.actions.write(manifest, json.encode_indent({
         "java": _rlocation(ctx, java[0]),
@@ -97,6 +98,10 @@ scheme_runtime = rule(
     implementation = _scheme_runtime_impl,
     doc = "The test JDK and a module path, with a JSON manifest (`java`, `release`, `module_path`) of their runfiles paths.",
     attrs = {
+        "extra": attr.label_list(
+            doc = "More modules for the module path, e.g. tools nothing requires (mx: SCHEME_TOOLS).",
+            providers = [JavaInfo],
+        ),
         "module": attr.label(mandatory = True, providers = [JavaModuleInfo]),
         "_jdk": attr.label(default = "@bazel_tools//tools/jdk:current_java_runtime"),
     },

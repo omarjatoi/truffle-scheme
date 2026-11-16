@@ -44,6 +44,14 @@ maven.install(
         "org.graalvm.truffle:truffle-compiler:" + TRUFFLE_VERSION,
         "org.graalvm.truffle:truffle-runtime:" + TRUFFLE_VERSION,
         "org.graalvm.truffle:truffle-dsl-processor:" + TRUFFLE_VERSION,
+        # The launcher framework and the shadowed JLine it requires (scheme.launcher).
+        "org.graalvm.sdk:launcher-common:" + TRUFFLE_VERSION,
+        "org.graalvm.shadowed:jline:" + TRUFFLE_VERSION,
+        # GraalVM's tools (mx: SCHEME_TOOLS): only the tools smoke tests put them on the module path.
+        "org.graalvm.shadowed:json:" + TRUFFLE_VERSION,
+        "org.graalvm.tools:chromeinspector-tool:" + TRUFFLE_VERSION,
+        "org.graalvm.tools:dap-tool:" + TRUFFLE_VERSION,
+        "org.graalvm.tools:profiler-tool:" + TRUFFLE_VERSION,
         "junit:junit:4.13.2",
         "org.hamcrest:hamcrest-core:1.3",
     ],

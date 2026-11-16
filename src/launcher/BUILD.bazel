@@ -6,5 +6,8 @@ scheme_java_library(
     name = "launcher",
     srcs = glob(["**/*.java"]),
     visibility = ["//visibility:public"],
-    deps = ["@jvm//:org_graalvm_polyglot_polyglot"],
+    deps = [
+        "@jvm//:org_graalvm_polyglot_polyglot",
+        "@jvm//:org_graalvm_sdk_launcher_common",
+    ],
 )

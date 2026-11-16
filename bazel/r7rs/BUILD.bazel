@@ -6,6 +6,7 @@ package(default_visibility = ["//visibility:public"])
 # the targets; tests/BUILD.bazel lists them.
 exports_files([
     "conformance_test.py",
+    "tools_test.py",
     "program_test.py",
     "unit_test.py",
 ])
