@@ -805,3 +805,67 @@ launcher (`bazel-bin/scheme-native`, built on the M3 Max) passes chibi
 interpreted and with `--compile`, as the JVM does in every mode, and
 `//tests:conformance_native` and `//tests:readme_native` pass. No later
 milestone is written yet: the next one needs drafting.
+
+## M8 · Performance II
+
+Close the largest gaps the M7 report shows (docs/benchmarks.md, at
+`33ab4a03b110`): deep non-tail recursion (`ack` 38×, `divrec` 22×, `primes`
+18× the fastest implementation), peak memory (median 1.6 GB; `nboyer` 14 GB,
+`sboyer` 10 GB), and warmup (first run 5.58× against 2.34× steady state;
+`pi` 31× on its first run, 7× steady). Benchmarks and thresholds are local
+(bench/README.md); each task measures with interleaved A/B runs and keeps the
+load rule.
+
+- [ ] **M8-01 · Deep recursion** *(early)*
+  - Make deep non-tail recursion cheap: measure where `ack`, `divrec` and
+    `primes` spend their time (the spill every `scheme.spillDepth` frames,
+    capture and resume, the trampoline), then choose the spill depth from the
+    Java stack actually available instead of a fixed 50, and make a spill
+    cheaper where the profile points.
+  - **Done when** those three improve, `tests/spec/deep-*` and the space tests
+    under `-Xss256k` still pass, and torture and both suites pass.
+- [ ] **M8-02 · Memory** *(early)*
+  - Separate the JVM's heap sizing from what the programs keep alive: measure
+    live heap after GC and peak RSS with and without an `-Xmx` near the live
+    size, for `nboyer`, `sboyer`, `paraffins`, `graphs` and `ack`. Fix real
+    retention (segments, caches, the prelude image, interop tables) and report
+    heap actually used next to RSS in `bench-report`.
+  - **Done when** the report shows live heap per program, any retention found
+    is fixed with a test, and the benchmark harness runs our JVM with a
+    documented heap setting.
+- [ ] **M8-03 · Warmup** *(needs M8-01)*
+  - Shorten the gap between first-run and steady-state times: profile
+    compilation (tiers, thresholds, inlining and splitting budgets, deopts in
+    the first iteration), bignum arithmetic for `pi`, and the interpreter's
+    cost before compilation.
+  - **Done when** the first-run geometric mean improves in a regenerated
+    report and the steady state doesn't regress.
+- [ ] **M8-04 · Interpreter** *(needs M8-03)*
+  - The interpreter passes 52 of 57 programs within the report's timeout;
+    `string` became about 5% slower in it with M7-03's boxing elimination.
+    Look at the Bytecode DSL's uncached interpreter and quickening costs for
+    cold code.
+  - **Done when** the interpreter's geometric mean improves, `string` is back,
+    and more programs finish within the timeout.
+- [ ] **M8-05 · Steady-state outliers** *(needs M8-01)*
+  - Profile the remaining steady-state outliers after M8-01 (`graphs`,
+    `sboyer`, `cpstak`, `paraffins`, `lattice`, `pi`) and fix what the
+    profiles show, one PR per cause.
+  - **Done when** each fixed program improves and the steady-state geometric
+    mean improves in a regenerated report.
+- [ ] **M8-06 · Interrupting the REPL** *(early)*
+  - Ctrl-C during a computation interrupts it (Truffle safepoints,
+    `Context.interrupt` from the launcher) and returns to the prompt instead of
+    ending the process; multi-line inputs are one history entry.
+  - **Done when** the pty test interrupts a loop and keeps the session, on the
+    JVM and the native launcher.
+- [ ] **M8-07 · Native startup** *(early)*
+  - A pre-initialized context in the native image
+    (`--engine.PreinitializeContexts`, with the language's `patchContext`), so
+    the native launcher starts without restoring the prelude.
+  - **Done when** native startup is measurably faster and both suites still
+    pass through the native launcher.
+
+**Exit:** every task above is done; `docs/benchmarks.md` and
+`bench/thresholds.json` are regenerated on the final M8 code; both suites pass
+in every mode, including through the native launcher.
