@@ -87,6 +87,10 @@ jobs:
           # this runner type (bench/README.md "Thresholds").
           - name: benchmarks
             steps: [bench]
+          # README.md and docs/embedding.md (M6-07): every command block runs and prints what the
+          # block after it shows, and every code sample is the file or test region it names.
+          - name: readme
+            steps: [readme]
     steps:
       - uses: actions/checkout@v7
       - uses: DeterminateSystems/determinate-nix-action@v3
@@ -132,6 +136,10 @@ jobs:
           name: bench-check-${{ github.run_attempt }}
           path: bench-check.json
           if-no-files-found: ignore
+      - name: README commands and samples (README.md, docs/embedding.md)
+        if: contains(matrix.steps, 'readme')
+        timeout-minutes: 20
+        run: nix develop --command mx tests readme
 
   # Required check on main: all tests. It passes only if every test job above succeeded;
   # a failed, cancelled or skipped test job fails it.

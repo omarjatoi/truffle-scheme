@@ -32,6 +32,7 @@ import mx
 import mx_benchmark
 import mx_unittest
 
+import mx_r7rs_readme
 import mx_r7rs_tools
 
 _suite = mx.suite('r7rs')
@@ -915,6 +916,18 @@ def r7rs_tools(args):
     if failed:
         mx.abort('r7rs-tools: failed: ' + ' '.join(failed))
     mx.log('r7rs-tools: the inspector, DAP, the CPU sampler and the memory tracer work on Scheme programs')
+
+
+def r7rs_readme(args):
+    """run the commands of README.md and docs/embedding.md and check their samples (M6-07): [--native]"""
+    parser = argparse.ArgumentParser(prog='mx r7rs-readme')
+    parser.add_argument('--native', action='store_true',
+                        help='run only the blocks that build or use the native launcher (CI: .github/workflows/native.yml)')
+    parsed = parser.parse_args(args)
+    problems = mx_r7rs_readme.run(_suite.dir, native=parsed.native)
+    if problems:
+        mx.abort('r7rs-readme: failed:\n' + '\n'.join(problems))
+    mx.log('r7rs-readme: ' + ('the native blocks run' if parsed.native else 'every block is checked, and every command runs as documented'))
 
 
 def r7rs_native_image(args):
@@ -2508,6 +2521,7 @@ _TESTS = {
     'torture': ('everything that passes normally passes under --torture (M2-06)', lambda: r7rs_torture([])),
     'tools': ('the tools distribution: DAP, Chrome inspector, CPU sampler, memory tracer (M6-03)', lambda: r7rs_tools([])),
     'bench': ('a benchmark subset within bench/thresholds.json, measured on CI\'s runner (M5-08)', lambda: r7rs_bench_check([])),
+    'readme': ('README.md and docs/embedding.md: their commands run and their samples match (M6-07)', lambda: r7rs_readme([])),
 }
 
 
@@ -2560,6 +2574,7 @@ mx.update_commands(_suite, {
     'r7rs-diff': [r7rs_diff, 'file.scm [--compile] [--torture]'],
     'r7rs-diff-all': [r7rs_diff_all, '[--compile] [--torture]'],
     'r7rs-space': [r7rs_space, ''],
+    'r7rs-readme': [r7rs_readme, '[--native]'],
     'r7rs-tools': [r7rs_tools, '[help | dap | inspect | cpusampler | memtracer]...'],
     'r7rs-torture': [r7rs_torture, ''],
     'r7rs-status': [r7rs_status, '[--check [--native [FILE]]]'],

@@ -14,6 +14,8 @@ on:
     paths:
       - .github/workflows/native.yml
       - src/runtime/META-INF/native-image/**
+      - mx.r7rs/mx_r7rs_readme.py
+      - README.md
 
 permissions:
   contents: read
@@ -39,8 +41,10 @@ jobs:
         run: nix develop --command sh -c 'java -version && native-image --version && mx --version'
       - name: mx build
         run: nix develop --command mx build
-      - name: mx r7rs-native-image
-        run: nix develop --command mx r7rs-native-image --output native/scheme
+      # README.md's native-image blocks (M6-07): `mx r7rs-native-image --output native/scheme`, then
+      # a program run with native/scheme, checked against the README's output block.
+      - name: mx r7rs-native-image (README.md's native-image commands)
+        run: nix develop --command mx r7rs-readme --native
       - name: Startup
         run: |
           printf '(import (scheme base) (scheme write))\n(display "hello")\n(newline)\n' > hello.scm

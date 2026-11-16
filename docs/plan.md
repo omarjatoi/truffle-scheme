@@ -691,7 +691,7 @@ that edit the same files.
     to leave it for later in design.md.
   - **Done when** the launcher builds natively and runs both conformance
     suites, or the decision is recorded.
-- [ ] **M6-07 · README and embedding guide** *(needs M6-01 to M6-05)*
+- [x] **M6-07 · README and embedding guide** *(needs M6-01 to M6-05)*
   - A README with building, running (launcher, REPL, tools), the conformance
     status and benchmark report links, and an embedding guide from Java.
   - **Done when** every command in the README is run by a CI test or step.
