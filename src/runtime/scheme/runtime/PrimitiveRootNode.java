@@ -24,7 +24,7 @@ public final class PrimitiveRootNode extends RootNode {
     public PrimitiveRootNode(SchemeLanguage language, PrimitiveSpec spec) {
         super(language);
         this.spec = spec;
-        this.body = spec.factory().get();
+        this.body = spec.createNode();
     }
 
     @Override
@@ -53,7 +53,7 @@ public final class PrimitiveRootNode extends RootNode {
 
     /** A new node for {@code spec}'s primitive, for a call site of its own; null if there is no spec. */
     static PrimitiveNode createNode(PrimitiveSpec spec) {
-        return spec == null ? null : spec.factory().get();
+        return spec == null ? null : spec.createNode();
     }
 
     /** A primitive that only returns values is a leaf: inlined in every tier when it is called. */

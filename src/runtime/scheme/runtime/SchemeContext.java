@@ -7,6 +7,7 @@ import java.nio.charset.StandardCharsets;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.TruffleLanguage;
 import com.oracle.truffle.api.TruffleLanguage.ContextReference;
+import com.oracle.truffle.api.instrumentation.AllocationReporter;
 import com.oracle.truffle.api.nodes.Node;
 
 import scheme.runtime.value.SPort;
@@ -49,10 +50,13 @@ public final class SchemeContext {
     final HostObjects hostObjects = new HostObjects();
     /** Torture-mode captures completed (M2-06), for tests. */
     public long tortureCaptures;
+    /** Where allocations go to listeners such as {@code --memtracer} ({@link Allocations}). */
+    final AllocationReporter allocationReporter;
 
     SchemeContext(TruffleLanguage.Env env) {
         this.env = env;
         this.out = new PrintStream(env.out(), false, StandardCharsets.UTF_8);
+        this.allocationReporter = env.lookup(AllocationReporter.class);
     }
 
     public static SchemeContext get(Node node) {

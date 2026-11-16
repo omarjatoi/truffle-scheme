@@ -53,9 +53,10 @@ INTERPRETER_VM_ARGS = [
 # --torture: capture + resume at every non-tail call. The runtime ignores it until M2.
 TORTURE_VM_ARGS = ['-Dscheme.torture=true']
 
-# Truffle on JDK 25 uses restricted native access and sun.misc.Unsafe.
+# Truffle on JDK 25 uses restricted native access and sun.misc.Unsafe; so does JLine, for the
+# REPL's terminal (M7-07).
 _TRUFFLE_VM_ARGS = [
-    '--enable-native-access=org.graalvm.truffle',
+    '--enable-native-access=org.graalvm.truffle,org.graalvm.shadowed.jline',
     '--sun-misc-unsafe-memory-access=allow',
 ]
 
@@ -993,7 +994,7 @@ def scheme(args):
 
 
 def r7rs_tools(args):
-    """smoke-test the tools distribution (M6-03, design.md D17) against the launcher: [help|dap|inspect|cpusampler|memtracer]..."""
+    """smoke-test the tools distribution (M6-03, design.md D17) and the REPL on a terminal (M7-07) against the launcher: [help|dap|inspect|cpusampler|memtracer|terminal]..."""
     _launcher_jvm_args(tools=True)
     _launcher_jvm_args()
     commands = mx_r7rs_tools.Commands(tools=lambda launcher_args: _launcher_command(launcher_args, tools=True),
@@ -1001,7 +1002,7 @@ def r7rs_tools(args):
     failed = mx_r7rs_tools.run(args, join(_suite.dir, 'tests', 'tools'), commands)
     if failed:
         mx.abort('r7rs-tools: failed: ' + ' '.join(failed))
-    mx.log('r7rs-tools: the inspector, DAP, the CPU sampler and the memory tracer work on Scheme programs')
+    mx.log('r7rs-tools: the inspector, DAP, the CPU sampler and the memory tracer work on Scheme programs, and the REPL on a terminal')
 
 
 def r7rs_readme(args):
@@ -2605,7 +2606,7 @@ _TESTS = {
     'space': ('tail loop and deep recursion under small JVM limits (M1-06, M2-05)', lambda: r7rs_space([])),
     'spec': ('tests/spec: tail calls, continuations, depth (M2-00, M2-07)', lambda: r7rs_spec([])),
     'torture': ('everything that passes normally passes under --torture (M2-06)', lambda: r7rs_torture([])),
-    'tools': ('the tools distribution: DAP, Chrome inspector, CPU sampler, memory tracer (M6-03)', lambda: r7rs_tools([])),
+    'tools': ('the tools distribution: DAP, Chrome inspector, CPU sampler, memory tracer (M6-03); the REPL on a terminal (M7-07)', lambda: r7rs_tools([])),
     'bench': ('a benchmark subset within bench/thresholds.json, measured on CI\'s runner (M5-08)', lambda: r7rs_bench_check([])),
     'readme': ('README.md and docs/embedding.md: their commands run and their samples match (M6-07)', lambda: r7rs_readme([])),
 }
@@ -2661,7 +2662,7 @@ mx.update_commands(_suite, {
     'r7rs-diff-all': [r7rs_diff_all, '[--compile] [--torture]'],
     'r7rs-space': [r7rs_space, ''],
     'r7rs-readme': [r7rs_readme, '[--native]'],
-    'r7rs-tools': [r7rs_tools, '[help | dap | inspect | cpusampler | memtracer]...'],
+    'r7rs-tools': [r7rs_tools, '[help | dap | inspect | cpusampler | memtracer | terminal]...'],
     'r7rs-torture': [r7rs_torture, ''],
     'r7rs-status': [r7rs_status, '[--check [--native [FILE]]]'],
     'r7rs-check': [r7rs_check, ''],

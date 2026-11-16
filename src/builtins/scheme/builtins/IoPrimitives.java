@@ -1,6 +1,7 @@
 package scheme.builtins;
 
 import java.io.IOException;
+import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
@@ -16,6 +17,7 @@ import scheme.runtime.PrimitiveSpec;
 import scheme.runtime.SchemeContext;
 import scheme.runtime.SchemeError;
 import scheme.runtime.printer.Printer;
+import scheme.runtime.value.MultipleValues;
 import scheme.runtime.value.SBytevector;
 import scheme.runtime.value.SChar;
 import scheme.runtime.value.SConstant;
@@ -61,12 +63,12 @@ final class IoPrimitives {
                         new PrimitiveSpec("eof-object", 0, 0, EofObject::new),
                         new PrimitiveSpec("eof-object?", 1, 1, () -> new TypePredicate(x -> x == SConstant.EOF)),
                         // String and bytevector ports.
-                        new PrimitiveSpec("open-input-string", 1, 1, OpenInputString::new),
-                        new PrimitiveSpec("open-output-string", 0, 0, OpenOutputString::new),
-                        new PrimitiveSpec("get-output-string", 1, 1, GetOutputString::new),
-                        new PrimitiveSpec("open-input-bytevector", 1, 1, OpenInputBytevector::new),
-                        new PrimitiveSpec("open-output-bytevector", 0, 0, OpenOutputBytevector::new),
-                        new PrimitiveSpec("get-output-bytevector", 1, 1, GetOutputBytevector::new),
+                        new PrimitiveSpec("open-input-string", 1, 1, OpenInputString::new).allocating(),
+                        new PrimitiveSpec("open-output-string", 0, 0, OpenOutputString::new).allocating(),
+                        new PrimitiveSpec("get-output-string", 1, 1, GetOutputString::new).allocating(),
+                        new PrimitiveSpec("open-input-bytevector", 1, 1, OpenInputBytevector::new).allocating(),
+                        new PrimitiveSpec("open-output-bytevector", 0, 0, OpenOutputBytevector::new).allocating(),
+                        new PrimitiveSpec("get-output-bytevector", 1, 1, GetOutputBytevector::new).allocating(),
                         // File ports (R7RS §6.13.1, (scheme file)).
                         new PrimitiveSpec("open-input-file", 1, 1, () -> new OpenFile(OpenFile.TEXT_IN)),
                         new PrimitiveSpec("open-binary-input-file", 1, 1, () -> new OpenFile(OpenFile.BINARY_IN)),
@@ -95,7 +97,9 @@ final class IoPrimitives {
                         new PrimitiveSpec("%write-string", 2, 4, WriteString::new),
                         new PrimitiveSpec("%write-u8", 2, 2, WriteU8::new),
                         new PrimitiveSpec("%write-bytevector", 2, 4, WriteBytevector::new),
-                        new PrimitiveSpec("%flush-output-port", 1, 1, Flush::new));
+                        new PrimitiveSpec("%flush-output-port", 1, 1, Flush::new),
+                        // The REPL's echo of each top-level form's values (design.md D17).
+                        new PrimitiveSpec("%repl-write", 1, 1, ReplWrite::new));
     }
 
     // ------------------------------------------------------------------------------------------
@@ -596,6 +600,32 @@ final class IoPrimitives {
         @TruffleBoundary
         private static void print(SPort port, Printer.Mode mode, Object value) {
             port.write(Printer.print(value, mode));
+        }
+    }
+
+    /**
+     * The REPL's echo (design.md D17, plan.md M7-07): writes each of a top-level form's values the
+     * way {@code write} does, one per line, to the context's standard output, and returns them. An
+     * unspecified value writes nothing. The expander wraps each top-level form of an interactive
+     * source in a call to it, so an input's values appear as each of its forms completes.
+     */
+    static final class ReplWrite extends PrimitiveNode {
+        @Override
+        public Object invoke(Object[] args) {
+            write(SchemeContext.get(this).out(), args[1]);
+            return args[1];
+        }
+
+        @TruffleBoundary
+        private static void write(PrintStream out, Object result) {
+            if (result instanceof MultipleValues values) {
+                for (Object value : values.values) {
+                    out.print(Printer.print(value, Printer.Mode.WRITE) + "\n");
+                }
+            } else if (result != SConstant.UNSPECIFIED) {
+                out.print(Printer.print(result, Printer.Mode.WRITE) + "\n");
+            }
+            out.flush();
         }
     }
 

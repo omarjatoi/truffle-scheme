@@ -96,18 +96,21 @@ public final class ProgramCompiler implements SchemeCompiler {
         List<Object> forms = Expander.readForms(source, context.symbols, false);
         SourceDir dir = new SourceDir.Files(context.getEnv(), null).dirOf(source);
         Ast.Lambda program;
+        CompilerState.Environment topLevel = null;
         if (mayBeProgram && Expander.isProgram(forms)) {
             Scope scope = new Scope();
             GlobalEnvironment namespace = new GlobalEnvironment();
             state.top.registerNamespace(scope, namespace);
+            topLevel = new CompilerState.Environment(scope, namespace, false);
             program = new Expander(context.symbols, namespace, state.top, scope, state.libraries, dir).expandIsolatedProgram(forms);
         } else {
-            program = new Expander(context.symbols, state.interaction, state.top, state.interactionScope, state.libraries, dir).expandProgram(forms, false);
+            Expander expander = new Expander(context.symbols, state.interaction, state.top, state.interactionScope, state.libraries, dir);
+            program = source.isInteractive() ? expander.expandInteractive(forms) : expander.expandProgram(forms, false);
         }
         if (source.hasCharacters() && source.getLength() > 0) {
             program.source = source.createSection(0, source.getLength());
         }
-        return generate(language, program);
+        return generate(language, program, topLevel);
     }
 
     @Override
@@ -189,15 +192,19 @@ public final class ProgramCompiler implements SchemeCompiler {
 
     @Override
     @TruffleBoundary
-    public SClosure compileInFrame(SchemeLanguage language, SchemeContext context, Source source, String[] names, boolean[] boxed) {
+    public SClosure compileInFrame(SchemeLanguage language, SchemeContext context, Source source, String[] names, boolean[] boxed, Object topLevel) {
         CompilerState state = (CompilerState) context.compilerState;
-        Expander expander = new Expander(context.symbols, state.interaction, state.top, state.interactionScope, state.libraries, new SourceDir.Files(context.getEnv(), null));
+        SourceDir dir = new SourceDir.Files(context.getEnv(), null);
+        // An isolated program's frame: its own top level, whose variables only it assigns.
+        Expander expander = topLevel instanceof CompilerState.Environment program
+                        ? new Expander(context.symbols, program.namespace(), state.top, program.scope(), state.libraries, dir)
+                        : new Expander(context.symbols, state.interaction, state.top, state.interactionScope, state.libraries, dir);
         List<SSymbol> symbols = new ArrayList<>(names.length);
         for (String name : names) {
             symbols.add(context.symbols.intern(name));
         }
-        Ast.Lambda procedure = expander.expandInFrame(Expander.readForms(source, context.symbols, false), symbols, boxed);
-        return new SClosure(generate(language, procedure), NO_CAPTURES);
+        Ast.Lambda procedure = expander.expandInFrame(Expander.readForms(source, context.symbols, false), symbols, boxed, topLevel != null);
+        return new SClosure(generate(language, procedure, topLevel), NO_CAPTURES);
     }
 
     /**
@@ -279,9 +286,14 @@ public final class ProgramCompiler implements SchemeCompiler {
     }
 
     private static RootCallTarget generate(SchemeLanguage language, Ast.Lambda program) {
+        return generate(language, program, null);
+    }
+
+    /** {@code topLevel}: what each root records as the top level it was compiled in, or null for the interaction environment's or a library's. */
+    private static RootCallTarget generate(SchemeLanguage language, Ast.Lambda program, Object topLevel) {
         SchemeRootNode[] root = new SchemeRootNode[1];
         // With source information, so guest stack traces and tools see file, line and column (D13).
-        SchemeRootNodeGen.create(language, BytecodeConfig.WITH_SOURCE, b -> root[0] = new CodeGenerator(b).generate(program));
+        SchemeRootNodeGen.create(language, BytecodeConfig.WITH_SOURCE, b -> root[0] = new CodeGenerator(b, topLevel).generate(program));
         return root[0].getCallTarget();
     }
 }

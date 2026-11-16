@@ -534,7 +534,7 @@ final class PreludeImage {
             };
             SchemeRootNodeGen.serialize(new DataOutputStream(bytecodeBytes), serializer, b -> {
                 for (Ast.Lambda body : libraryBodies) {
-                    new CodeGenerator(b).generate(body);
+                    new CodeGenerator(b, null).generate(body);
                 }
             });
 

@@ -79,7 +79,7 @@ final class ControlPrimitives {
                         new PrimitiveSpec("%dynamic-env-handlers", 1, 1, () -> new DynamicEnv(DynamicEnv.HANDLERS)),
                         new PrimitiveSpec("%set-raise!", 1, 1, SetRaise::new),
                         new PrimitiveSpec("%raise-uncaught", 1, 1, RaiseUncaught::new),
-                        new PrimitiveSpec("%make-error-object", 2, 2, MakeErrorObject::new),
+                        new PrimitiveSpec("%make-error-object", 2, 2, MakeErrorObject::new).allocating(),
                         new PrimitiveSpec("error-object?", 1, 1, () -> new ErrorObjectOp(ErrorObjectOp.TEST)),
                         new PrimitiveSpec("error-object-message", 1, 1, () -> new ErrorObjectOp(ErrorObjectOp.MESSAGE)),
                         new PrimitiveSpec("error-object-irritants", 1, 1, () -> new ErrorObjectOp(ErrorObjectOp.IRRITANTS)),
@@ -539,7 +539,7 @@ final class ControlPrimitives {
                             unset[j++] = type.properties[i];
                         }
                     }
-                    spec = new PrimitiveSpec(name, given.length, given.length, () -> new RecordConstructor(type, given, unset));
+                    spec = new PrimitiveSpec(name, given.length, given.length, () -> new RecordConstructor(type, given, unset)).allocating();
                     break;
                 }
                 case PREDICATE:

@@ -40,10 +40,10 @@ final class NumberPrimitives {
     /** This area's primitives: the one list to add to. */
     static List<PrimitiveSpec> primitives() {
         return List.of(
-                        new PrimitiveSpec("+", 0, -1, Add::new),
-                        new PrimitiveSpec("-", 1, -1, Sub::new),
-                        new PrimitiveSpec("*", 0, -1, Mul::new),
-                        new PrimitiveSpec("/", 1, -1, Div::new),
+                        new PrimitiveSpec("+", 0, -1, Add::new).allocating(),
+                        new PrimitiveSpec("-", 1, -1, Sub::new).allocating(),
+                        new PrimitiveSpec("*", 0, -1, Mul::new).allocating(),
+                        new PrimitiveSpec("/", 1, -1, Div::new).allocating(),
                         new PrimitiveSpec("=", 1, -1, () -> new Compare("=", Compare.EQ)),
                         new PrimitiveSpec("<", 1, -1, () -> new Compare("<", Compare.LT)),
                         new PrimitiveSpec(">", 1, -1, () -> new Compare(">", Compare.GT)),
@@ -115,8 +115,8 @@ final class NumberPrimitives {
                         unary("exact->inexact", x -> Arithmetic.inexact(Arithmetic.check("exact->inexact", x))),
                         unary("inexact->exact", x -> Arithmetic.exact("inexact->exact", x)),
                         // Numbers and strings
-                        new PrimitiveSpec("number->string", 1, 2, NumberToString::new),
-                        new PrimitiveSpec("string->number", 1, 2, StringToNumber::new));
+                        new PrimitiveSpec("number->string", 1, 2, NumberToString::new).allocating(),
+                        new PrimitiveSpec("string->number", 1, 2, StringToNumber::new).allocating());
     }
 
     private static PrimitiveSpec unary(String name, F1 f) {

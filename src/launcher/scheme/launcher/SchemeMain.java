@@ -1,10 +1,8 @@
 package scheme.launcher;
 
-import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
@@ -22,6 +20,7 @@ import org.graalvm.polyglot.Engine;
 import org.graalvm.polyglot.EnvironmentAccess;
 import org.graalvm.polyglot.PolyglotException;
 import org.graalvm.polyglot.Source;
+import org.graalvm.polyglot.Value;
 import org.graalvm.polyglot.io.IOAccess;
 
 /**
@@ -34,8 +33,11 @@ import org.graalvm.polyglot.io.IOAccess;
  * <p>With a file, it runs the file as a program (design.md D15), and {@code command-line} returns
  * the file and the arguments after it. Each {@code -I dir} adds a directory to the library path.
  * With no file, it starts a REPL in the interaction environment: it reads lines until they hold a
- * complete input (design.md D13's incomplete-source signal), evaluates it, and writes each of its
- * values. An error prints a message and the REPL goes on; end of input ends it. The framework adds
+ * complete input (design.md D13's incomplete-source signal), evaluates it, and writes the values of
+ * each of its forms. An error prints a message and the REPL goes on; end of input ends it. It reads
+ * its lines from Scheme's console input port, so Scheme code it runs reads the same input. On a
+ * terminal, the lines come from JLine, with line editing and a history ({@link TerminalInput},
+ * plan.md M7-07). The framework adds
  * {@code --help}, {@code --version}, {@code --engine.*}, {@code --log.*} and the other standard
  * options, and the tools' options when they are on the module path.
  *
@@ -66,7 +68,7 @@ public final class SchemeMain extends AbstractLanguageLauncher {
 
     private static final String LIBRARY_PATH_OPTION = "scheme.LibraryPath";
     private static final String END_STATUS_OPTION = "--end-status=";
-    /** The prompts, written only when stdin and stdout are a terminal. */
+    /** The prompts, shown only when stdin and stdout are a terminal. */
     private static final String PROMPT = "> ";
     private static final String CONTINUATION_PROMPT = "  ";
 
@@ -166,7 +168,15 @@ public final class SchemeMain extends AbstractLanguageLauncher {
         }
         int status;
         if (file == null) {
-            status = repl(builder, System.in, System.out, System.err, isTTY(), endStatus);
+            TerminalInput terminal = isTTY() ? TerminalInput.open() : null;
+            if (terminal != null) {
+                builder.in(terminal);
+            }
+            try {
+                status = repl(builder, terminal, System.out, System.err, endStatus);
+            } finally {
+                closeQuietly(terminal);
+            }
         } else {
             status = runProgram(builder, file, programArguments, System.err, endStatus);
         }
@@ -176,12 +186,24 @@ public final class SchemeMain extends AbstractLanguageLauncher {
         }
     }
 
+    private static void closeQuietly(TerminalInput terminal) {
+        if (terminal != null) {
+            try {
+                terminal.close();
+            } catch (IOException e) {
+                System.err.println("WARNING: cannot save the REPL history: " + e.getMessage());
+            }
+        }
+    }
+
     @Override
     protected void printHelp(OptionCategory maxCategory) {
         println("Usage: scheme [option...] [-I dir]... [file.scm [arg...]]");
         println("");
         println("Runs file.scm as an R7RS program; (command-line) returns the file and its arguments.");
         println("With no file, starts a REPL that reads from stdin and writes each value.");
+        println("On a terminal, its lines can be edited, and its history is kept in ~/.scheme_history");
+        println("(or the file $" + TerminalInput.HISTORY_VARIABLE + " names; empty for none).");
         println("");
         println("Scheme options:");
         launcherOption("-I <dir>", "Add a directory to the library path (repeatable).");
@@ -232,7 +254,7 @@ public final class SchemeMain extends AbstractLanguageLauncher {
         }
         Context.Builder builder = newContext(launcher.libraryPath).in(in).out(out).err(err);
         if (launcher.file == null) {
-            return repl(builder, in, out, err, false, launcher.endStatus);
+            return repl(builder, null, out, err, launcher.endStatus);
         }
         return runProgram(builder, launcher.file, launcher.programArguments, errors, launcher.endStatus);
     }
@@ -270,25 +292,50 @@ public final class SchemeMain extends AbstractLanguageLauncher {
     }
 
     /**
-     * The REPL: reads lines from {@code in} until they hold a complete input, evaluates it in the
-     * interaction environment as an interactive source (which writes its values, design.md D17),
-     * and goes on until end of input or {@code exit}. Returns the exit status: {@code endStatus} at
-     * end of input.
+     * The REPL: reads lines until they hold a complete input, evaluates it in the interaction
+     * environment as an interactive source (which writes the values of each of its forms, design.md
+     * D17), and goes on until end of input or {@code exit}. Returns the exit status:
+     * {@code endStatus} at end of input.
+     *
+     * <p>It reads its lines with Scheme's {@code read-line} from the context's console input port,
+     * the initial {@code current-input-port}, so that it and the Scheme code it runs share one
+     * input and its buffering (plan.md M7-07): {@code (read-line)} reads the line after the one
+     * that called it, and the REPL goes on with whatever Scheme code leaves. That port reads the
+     * builder's standard input, which on a terminal is {@code terminal}, otherwise null.
      */
-    static int repl(Context.Builder builder, InputStream in, OutputStream out, OutputStream err, boolean prompt, int endStatus) {
-        BufferedReader lines = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8));
+    static int repl(Context.Builder builder, TerminalInput terminal, OutputStream out, OutputStream err, int endStatus) {
         PrintStream output = new PrintStream(out, true, StandardCharsets.UTF_8);
         PrintStream errors = new PrintStream(err, true, StandardCharsets.UTF_8);
         try (Context context = builder.arguments(LANGUAGE, new String[0]).build()) {
+            // The primitives themselves: a later definition of read-line in the session doesn't
+            // change how the REPL reads.
+            Value readLine = context.eval(internal("%read-line"));
+            Value stdin = context.eval(internal("(%stdin-port)"));
             StringBuilder input = new StringBuilder();
             int first = 1;
             int lineNumber = 0;
             while (true) {
-                if (prompt) {
-                    output.print(input.isEmpty() ? PROMPT : CONTINUATION_PROMPT);
-                    output.flush();
+                String line;
+                try {
+                    if (terminal != null) {
+                        terminal.takeInterrupted();
+                        terminal.prompt(input.isEmpty() ? PROMPT : CONTINUATION_PROMPT);
+                    }
+                    Value read = readLine.execute(stdin);
+                    line = read.isString() ? read.asString() : null;
+                } catch (PolyglotException e) {
+                    errors.println("ERROR: cannot read the input: " + e.getMessage());
+                    return EXIT_NO_INPUT;
+                } finally {
+                    if (terminal != null) {
+                        terminal.prompt("");
+                    }
                 }
-                String line = lines.readLine();
+                if (terminal != null && terminal.takeInterrupted()) {
+                    // Ctrl-C drops the unfinished input.
+                    input.setLength(0);
+                    continue;
+                }
                 if (line == null) {
                     if (!input.toString().isBlank()) {
                         // End of input inside a datum: report what the reader says about it.
@@ -297,7 +344,7 @@ public final class SchemeMain extends AbstractLanguageLauncher {
                             return status;
                         }
                     }
-                    if (prompt) {
+                    if (terminal != null) {
                         output.println();
                     }
                     return endStatus;
@@ -316,9 +363,6 @@ public final class SchemeMain extends AbstractLanguageLauncher {
                     return status;
                 }
             }
-        } catch (IOException e) {
-            errors.println("ERROR: cannot read the input: " + e.getMessage());
-            return EXIT_NO_INPUT;
         } catch (PolyglotException e) {
             // Creating the context failed, or closing it after exit or cancellation.
             if (e.isExit()) {
@@ -327,6 +371,11 @@ public final class SchemeMain extends AbstractLanguageLauncher {
             report(e, errors);
             return EXIT_UNCAUGHT_ERROR;
         }
+    }
+
+    /** Launcher code evaluated in the interaction environment, hidden from tools. */
+    private static Source internal(String text) {
+        return Source.newBuilder(LANGUAGE, text, "<repl>").internal(true).cached(false).buildLiteral();
     }
 
     /**

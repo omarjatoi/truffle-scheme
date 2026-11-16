@@ -11,7 +11,12 @@ tests/tools/:
 - `inspect`: the Chrome DevTools Protocol over a websocket (`--inspect`): the same session.
 - `cpusampler`: the CPU sampler's histogram and call tree name the program's procedures, and its
   samples of a recursion deeper than the spill depth have every frame (M6-04).
-- `memtracer`: the memory tracer runs and writes its histogram.
+- `memtracer`: the memory tracer's histogram counts the allocations of the program's procedures
+  (the language reports them, M7-07).
+- `terminal`: the REPL on a pseudo-terminal (M7-07): line editing, the history and its file, the
+  continuation prompt, Ctrl-C, and `read-line` reading what is typed next. It runs the launcher
+  without the tools, and runs `SCHEME_NATIVE_LAUNCHER` the same way if that variable names an
+  executable (the native launcher, `mx r7rs-native-image`).
 
 The DAP and CDP clients are dependency-free (the standard library only), ported from the
 exploration in #76. Every wait has a timeout, and the child JVM is killed whatever happens, so a
@@ -20,12 +25,16 @@ hung tool fails the step instead of hanging CI.
 
 import base64
 import collections
+import fcntl
 import json
 import os
+import pty
 import re
+import select
 import socket
 import struct
 import subprocess
+import termios
 import tempfile
 import time
 import urllib.request
@@ -490,12 +499,147 @@ def _cpusampler(workdir, commands):
 
 
 def _memtracer(workdir, commands):
-    # The language doesn't report allocations yet (no AllocationReporter), so the histogram is
-    # empty: this checks only that the tool runs on a Scheme program and writes its output (to
-    # stdout: the memory tracer has no output file option).
-    _profile(workdir, commands.tools, lambda out: ['--experimental-options', '--memtracer'],
-             [r'Location Histogram with Allocation Counts\. Recorded a total of \d+ allocations\.'])
-    mx.log('  memtracer: wrote its histogram')
+    # The memory tracer writes to stdout (it has no output file option). make-table's loop (lines
+    # 7-10) makes a pair and an 8-element vector per iteration, 100 iterations per call, 10 calls:
+    # 2000 allocations that the language reports (M7-07), and its own closure once per call.
+    histogram = _profile(workdir, commands.tools, lambda out: ['--experimental-options', '--memtracer'],
+                         [r'Location Histogram with Allocation Counts\. Recorded a total of \d+ allocations\.',
+                          r'^ loop +\| +2000 .*\| \S*profileme\.scm~7-10:',
+                          r'^ make-table +\| +10 .*\| \S*profileme\.scm~6-10:'])
+    total = int(re.search(r'Recorded a total of (\d+) allocations', histogram).group(1))
+    _check(total >= 2010, f'memtracer: only {total} allocations\n{histogram[:2000]}')
+    mx.log(f'  memtracer: {total} allocations, 2000 of them in make-table\'s loop')
+
+
+# ---------------------------------------------------------------------------
+# The REPL on a terminal
+# ---------------------------------------------------------------------------
+
+class _Terminal:
+    """The launcher's REPL on a pseudo-terminal: `send` types, `expect` waits for output."""
+
+    def __init__(self, command, workdir, env):
+        self.output = b''
+        self.seen = 0
+        self.pid, self.fd = pty.fork()
+        if self.pid == 0:
+            try:
+                os.chdir(workdir)
+                os.execvpe(command[0], command, env)
+            finally:
+                os._exit(127)
+        # A new pseudo-terminal is 0x0, which JLine can't draw a line in.
+        fcntl.ioctl(self.fd, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 80, 0, 0))
+
+    def send(self, text):
+        os.write(self.fd, text.encode('utf-8'))
+
+    def _read(self, timeout):
+        ready, _, _ = select.select([self.fd], [], [], timeout)
+        if not ready:
+            return False
+        try:
+            data = os.read(self.fd, 65536)
+        except OSError:  # EIO: the child closed the terminal.
+            data = b''
+        if not data:
+            return None
+        self.output += data
+        return True
+
+    def expect(self, pattern, what, timeout=_MESSAGE_TIMEOUT):
+        """Waits for the output after the last match to match `pattern` (on text without ANSI
+        escapes, with \r\n as \n)."""
+        deadline = time.time() + timeout
+        while True:
+            text = self.text()
+            match = re.compile(pattern).search(text, self.seen)
+            if match:
+                self.seen = match.end()
+                return match
+            remaining = deadline - time.time()
+            if remaining <= 0 or self._read(remaining) is None:
+                raise SmokeFailure(f'terminal: {what}: no {pattern!r} in the output\n{text[self.seen:][-1500:]!r}')
+
+    def text(self):
+        """The output so far, without ANSI escapes, with \r\n as \n."""
+        raw = self.output.decode('utf-8', 'replace')
+        raw = re.sub(r'\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[()][0-9A-B]|\x1b[=>]|\x07', '', raw)
+        return raw.replace('\r\n', '\n')
+
+    def wait(self, timeout=_EXIT_TIMEOUT):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            pid, status = os.waitpid(self.pid, os.WNOHANG)
+            if pid:
+                os.close(self.fd)
+                return os.waitstatus_to_exitcode(status)
+            self._read(0.2)
+        raise SmokeFailure(f'terminal: the REPL did not exit within {timeout}s\n{self.text()[-1500:]!r}')
+
+    def kill(self):
+        try:
+            os.kill(self.pid, 9)
+            os.waitpid(self.pid, 0)
+        except OSError:
+            pass
+
+
+def _terminal_session(workdir, command, label):
+    history = join(workdir, 'history-' + label)
+    env = dict(os.environ, SCHEME_HISTORY=history, TERM='xterm')
+    term = _Terminal(command, workdir, env)
+    try:
+        term.expect(r'> $', 'the first prompt')
+        term.send('(define x 4)\r')
+        term.expect(r'> $', 'the prompt after a definition')
+        term.send('(* x x)\r')
+        term.expect(r'\n16\n> $', 'a value')
+        # Line editing: backspace over the 3.
+        term.send('(+ 1 3\x7f2)\r')
+        term.expect(r'\n3\n> $', 'an edited line')
+        # The history: up arrow (as a terminal sends it in the keypad mode JLine sets) recalls (+ 1 2).
+        term.send('\x1bOA')
+        term.expect(r'\(\+ 1 2\)', 'the previous line, recalled')
+        term.send('\r')
+        term.expect(r'\n3\n> $', 'a recalled line')
+        # The continuation prompt inside a datum.
+        term.send('(+ 10\r')
+        term.expect(r'\n  $', 'the continuation prompt')
+        term.send('20)\r')
+        term.expect(r'\n30\n> $', 'a datum over two lines')
+        # Every form's values, and read-line reading the next line typed.
+        term.send('1 (values 2 3)\r')
+        term.expect(r'\n1\n2\n3\n> $', 'the values of every form of a line')
+        term.send('(read-line)\r')
+        term.send('typed text\r')
+        term.expect(r'\n"typed text"\n> $', 'read-line reading the next line')
+        # Ctrl-C drops the unfinished input: else (+ 1 (+ 2 2)) would be 5.
+        term.send('(+ 1\r')
+        term.expect(r'\n  $', 'the continuation prompt again')
+        term.send('\x03')
+        term.expect(r'> $', 'a fresh prompt after Ctrl-C')
+        term.send('(+ 2 2)\r')
+        term.expect(r'\n4\n> $', 'the input after Ctrl-C')
+        # Ctrl-D ends the session.
+        term.send('\x04')
+        status = term.wait()
+    finally:
+        term.kill()
+    _check(status == 0, f'terminal ({label}): exit {status}\n{term.text()[-1500:]!r}')
+    with open(history, encoding='utf-8') as f:
+        saved = f.read()
+    _check('(* x x)' in saved and '(+ 1 2)' in saved and 'typed text' not in saved,
+           f'terminal ({label}): the history file should have the REPL\'s lines and not what read-line read:\n{saved}')
+    mx.log(f'  terminal ({label}): editing, history, continuation prompt, Ctrl-C, read-line, Ctrl-D')
+
+
+def _terminal(workdir, commands):
+    _terminal_session(workdir, commands.bare([]), 'JVM')
+    native = os.environ.get('SCHEME_NATIVE_LAUNCHER')
+    if native:
+        _check(os.path.isfile(native), f'SCHEME_NATIVE_LAUNCHER={native} is not a file')
+        _terminal_session(workdir, [native], 'native')
 
 
 def _help(workdir, commands):
@@ -539,7 +683,8 @@ SMOKE_TESTS = {
     'dap': ('DAP: breakpoint, stack, locals, step over, continue', _with_free_port(_dap)),
     'inspect': ('Chrome inspector: breakpoint, call frames, scope variables, step over, resume', _with_free_port(_inspect)),
     'cpusampler': ('CPU sampler: histogram and call tree name the procedures', _cpusampler),
-    'memtracer': ('memory tracer runs and writes its histogram', _memtracer),
+    'memtracer': ('memory tracer counts the program\'s allocations', _memtracer),
+    'terminal': ('the REPL on a terminal: line editing, history, read-line', _terminal),
 }
 
 

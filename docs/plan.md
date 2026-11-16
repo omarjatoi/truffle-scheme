@@ -757,7 +757,7 @@ deferral that was never scheduled. Each task comes from a PR's follow-ups
     a program that ends (M6-06).
   - **Done when** each has a test, and the R7RS text that allows the
     behaviour is cited in design.md.
-- [ ] **M7-07 · REPL and launcher polish** *(early)*
+- [x] **M7-07 · REPL and launcher polish** *(early)*
   - Line editing and history with the JLine library M6-01 already ships
     (check the native image too); print every form's values when one input
     holds several; Scheme's `read`/`read-line` in the REPL read from the same

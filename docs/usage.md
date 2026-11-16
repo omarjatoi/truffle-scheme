@@ -112,10 +112,17 @@ goes to stderr), 66 if the file can't be read and 64 for a malformed `-I`.
 
 With no file, `mx scheme` starts a REPL in the interaction environment, which
 imports every standard library. It reads until an input is complete, so a
-definition can span lines, and writes each value of each input with `write`,
-one per line. An error prints `ERROR: ...` on stderr, and the REPL goes on.
-In a terminal it prompts with `> `; it ends at end of input (Ctrl-D) or on
-`(exit)`. Its standard input can be a file:
+definition can span lines, and writes the values of each form of an input
+with `write`, one per line, as each form completes (a line can hold several).
+An error prints `ERROR: ...` on stderr, and the REPL goes on. Scheme code it
+runs reads the same input: `(read-line)` reads the line after it. It ends at
+end of input (Ctrl-D) or on `(exit)`.
+
+In a terminal, lines can be edited, and the up and down arrows recall earlier
+ones, from a history kept in `~/.scheme_history` (or the file the
+`SCHEME_HISTORY` environment variable names; empty keeps none). It prompts
+with `> `, and with two spaces inside an unfinished datum; Ctrl-C drops the
+input typed so far. Its standard input can be a file:
 
 <!-- readme: run -->
 ```sh
@@ -130,6 +137,8 @@ mx scheme < docs/examples/session.scm
 "two"
 #\3
 #\A
+"Hi, Ada"
+3
 ```
 
 <!-- readme: file docs/examples/session.scm -->
@@ -140,6 +149,9 @@ mx scheme < docs/examples/session.scm
 (car '())
 (values 1 "two" #\3)
 (char-upcase #\a)
+(define name (read-line))
+Ada
+(string-append "Hi, " name) (string-length name)
 ```
 
 ### Options
@@ -169,7 +181,7 @@ path. Without mx, the same launcher without the tools is:
 <!-- readme: run -->
 ```sh
 MP=$(mx classpath SCHEME_LAUNCHER)
-java -p "$MP" --enable-native-access=org.graalvm.truffle --sun-misc-unsafe-memory-access=allow -m scheme.launcher/scheme.launcher.SchemeMain docs/examples/hello.scm
+java -p "$MP" --enable-native-access=org.graalvm.truffle,org.graalvm.shadowed.jline --sun-misc-unsafe-memory-access=allow -m scheme.launcher/scheme.launcher.SchemeMain docs/examples/hello.scm
 ```
 
 <!-- readme: output -->
@@ -182,7 +194,8 @@ Hello, world! Arguments: ()
 GraalVM's tools work on Scheme programs: breakpoints, stepping, the stack
 (including frames that deep recursion has spilled to the heap), Scheme's
 variables in each frame's scope, and evaluating an expression in a paused
-frame. They ship as an optional distribution, `SCHEME_TOOLS`, which
+frame (in a program's frame, with the program's own imports and
+definitions). They ship as an optional distribution, `SCHEME_TOOLS`, which
 `mx scheme` puts on the module path. CI drives each of them against a Scheme
 program on every pull request (`mx.r7rs/mx_r7rs_tools.py`).
 
@@ -204,7 +217,9 @@ mx scheme --cpusampler docs/examples/fib.scm
 ```
 
 `--cpusampler=calltree` prints a call tree instead, and
-`--cpusampler.Output=json` writes JSON. The memory tracer is experimental:
+`--cpusampler.Output=json` writes JSON. The memory tracer, which is
+experimental, counts the Scheme objects each procedure allocates (pairs,
+vectors, strings, closures, records, bignums, ...):
 
 <!-- readme: run -->
 ```sh
