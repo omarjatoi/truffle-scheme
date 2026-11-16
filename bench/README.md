@@ -37,9 +37,10 @@ Options, after `--` (anything else there is a JVM argument):
 same, only the timing loop is shorter. With the programs' own counts, one JIT
 iteration of ecraven's set takes about half an hour of JVM time (November
 2026, on a 16-core Apple M-series machine), so `r7rs-ecraven:*` with the
-defaults takes about an hour and a half; the interpreter is about 10-20 times
-slower than that, and Larceny's inputs are larger (its `takl` alone takes over
-eight minutes per run with the JIT).
+defaults takes about an hour and a half. The interpreter is about 10-40 times
+slower, and Larceny's inputs are larger: one run of its `takl` takes over
+eight minutes with the JIT, and neither its `takl` nor its `ntakl` finishes
+one run within an hour in the interpreter (so use `--timeout` there).
 
 ## What a run does and measures
 
