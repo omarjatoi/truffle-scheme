@@ -522,7 +522,7 @@ benchmark measures a conforming implementation. Benchmark first, then optimize
 against the numbers: every optimization task reports before and after on the
 M5-01 benchmarks and M5-02's report.
 
-- [ ] **M5-01 · Benchmark suites under `mx benchmark`** *(early)*
+- [x] **M5-01 · Benchmark suites under `mx benchmark`** *(early)*
   - Vendor, read-only like `tests/r7rs/` (with provenance, license and a
     re-vendor command), ecraven's `r7rs-benchmarks`
     (https://ecraven.github.io/r7rs-benchmarks/) and Larceny's
@@ -531,10 +531,15 @@ M5-01 benchmarks and M5-02's report.
     after warmup (several in-process iterations, as the suites' drivers
     allow) and peak memory, and checking each program's own result. Also an
     interpreter-only run.
-  - **Done when** every program of both sets runs and passes its own check
-    under `mx benchmark`, with results in `mx benchmark`'s JSON format; a
-    program we can't run yet is a listed failure with its reason, fixed in a
-    follow-up conformance PR.
+  - **Done when** every R7RS-small program of both sets runs and passes its
+    own check under `mx benchmark`, with results in `mx benchmark`'s JSON
+    format; a program we can't run yet is a listed failure with its reason,
+    fixed in a follow-up conformance PR. Larceny's 16 Red Edition programs
+    (`dderiv`, `bibfreq`, `bibfreq2`, `hashtable0`, `listsort`, `vecsort`,
+    `list`, `ilist`, `rlist`, `vector`, `set`, `charset`, `stream`, `lseq`,
+    `generator`, `text`) import R7RS-large libraries: they stay in the set as
+    listed failures, out of scope, as the conformance suite leaves out
+    Larceny's Red Edition tests.
 - [ ] **M5-02 · Comparative report** *(needs M5-01)*
   - Add the other R7RS implementations nixpkgs has (Chez Scheme, Gauche,
     Chicken, Guile, Racket's R7RS mode, as available) to the dev shell
@@ -602,8 +607,9 @@ M5 tasks:
   `isTrivial` leaf primitives.
 - Then boxing elimination and the uncached interpreter (with M5-03).
 
-**Exit:** both benchmark sets run under `mx benchmark` with every program
-passing its own check, the comparative report is published and reproducible,
+**Exit:** both benchmark sets run under `mx benchmark` with every R7RS-small
+program passing its own check (Larceny's Red Edition programs are listed and
+out of scope, M5-01), the comparative report is published and reproducible,
 thresholds are set from the measured baselines, and CI enforces them.
 
 ## M6 · Release
