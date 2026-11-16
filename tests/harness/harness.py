@@ -476,3 +476,24 @@ def summary(results, sections):
         note = '' if r['complete'] else '  (aborted: ' + r['message'] + ')'
         lines.append(f'{s.suite.name:<8} {s.id:<34} {r["pass"]:>4}/{s.total:<4} {s.title}{note}')
     return '\n'.join(lines)
+
+
+def _expected_results(suite):
+    """What each section of a suite gives when its tests pass: its total, but for the tests the
+    suite lists as exceptions (tests/r7rs-larceny/README.md), which fail."""
+    exceptions = suite.exceptions()
+    return {(suite.name, s.id): {'pass': s.total - len(exceptions.get(s.id, [])), 'exceptions': len(exceptions.get(s.id, [])),
+                                 'complete': True, 'message': 'ok'}
+            for s in suite.sections()}
+
+
+def expected_status_block():
+    """docs/plan.md's status block: what the conformance tests check, when they all pass."""
+    return status_block([suite_block(suite, _expected_results(suite)) for suite in suites()])
+
+
+def graalvm_version(release):
+    """The GraalVM version a JDK's `release` file names."""
+    with open(release, encoding='utf-8') as f:
+        m = re.search(r'^GRAALVM_VERSION="?([^"\n]*)"?', f.read(), re.MULTILINE)
+    return m.group(1) if m else 'unknown'

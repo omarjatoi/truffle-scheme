@@ -14,8 +14,8 @@ As commands, `bazel run //:r7rs -- <command> ...` (AGENTS.md "Commands"):
   benchmark, bench-report, bench-check, vendor-benchmarks   bench.py
   vendor-chibi, vendor-larceny                              vendor.py
 
-As Bazel tests (tests/harness/defs.bzl, bazel/lint/defs.bzl): program, conformance,
-conformance-status, conformance-native, readme, tools, rules, versions, lint.
+The tests that use Python have their own entry scripts (check_*.py); tests/driver runs the
+others in Java.
 
 The options before the command name the runfiles of the runtime and tools it uses; the targets that
 run this pass them.
@@ -25,18 +25,13 @@ import argparse
 import difflib
 import json
 import os
-import re
-import shutil
 import subprocess
 import sys
-import tempfile
-import time
-import zipfile
 from os.path import exists, join
 
 import bench
+import check_tools
 import harness
-import readme
 import tools
 import vendor
 from harness import Runtime, check, fail, log, rlocation, tail
@@ -89,112 +84,8 @@ def diff(o):
     fail('\n'.join(message))
 
 
-_SPEC_HEADER = re.compile(r'^;;\s*(limits|exit):\s*(.*?)\s*$')
-
-
-def _expect(runtime, file, limits, status, expected):
-    """Runs the program interpreted and with the JIT under the JVM limits; both runs must match."""
-    problems = []
-    for label, mode in (('interpreter', harness.vm_args()), ('JIT', [])):
-        start = time.time()
-        rc, out, err = harness.run_ours(runtime, file, mode, limits)
-        seconds = time.time() - start
-        if rc != status or out != expected:
-            detail = f'exit {rc} (expected {status})' if rc != status else 'stdout differs'
-            if out != expected:
-                detail += '\n' + _diff_text(expected, out, 'expected', 'actual')
-            problems.append(f'{label} ({seconds:.1f}s): {detail}\n  stderr:\n{tail(err)}')
-        else:
-            log(f'{os.path.basename(file)}: {label} ok ({seconds:.1f}s, {" ".join(limits)})')
-    check(not problems, f'FAIL {file} {" ".join(limits)}\n  ' + '\n  '.join(problems))
-
-
-def program(o):
-    """spec: a tests/spec case, with its `;; limits:` and `;; exit:` headers and its .out file
-    (tests/spec/README.md). space: one line of stdout expected under the given JVM limits."""
-    runtime = Runtime.from_manifest(o.runtime)
-    file = rlocation(o.file)
-    if o.kind == 'space':
-        _expect(runtime, file, o.limits.split(), 0, o.expect + '\n')
-        return
-    limits, status = [], 0
-    with open(file, encoding='utf-8') as f:
-        for line in f:
-            if not line.startswith(';;'):
-                break
-            m = _SPEC_HEADER.match(line)
-            if m and m.group(1) == 'limits':
-                limits = m.group(2).split()
-            elif m:
-                status = int(m.group(2))
-    with open(file[:-len('.scm')] + '.out', encoding='utf-8', newline='') as f:
-        _expect(runtime, file, limits, status, f.read())
-
-
-def _expected_results(suite):
-    """What each section of a suite gives when its tests pass: its total, but for the tests the
-    suite lists as exceptions (tests/r7rs-larceny/README.md), which fail."""
-    exceptions = suite.exceptions()
-    return {(suite.name, s.id): {'pass': s.total - len(exceptions.get(s.id, [])), 'exceptions': len(exceptions.get(s.id, [])),
-                                 'complete': True, 'message': 'ok'}
-            for s in suite.sections()}
-
-
-def expected_status_block():
-    """docs/plan.md's status block: what the conformance tests check, when they all pass."""
-    return harness.status_block([harness.suite_block(suite, _expected_results(suite)) for suite in harness.suites()])
-
-
-_MODES = {'interpreter': {}, 'compile': {'compile': True}, 'torture': {'torture': True}}
-
-
-def conformance_test(o):
-    """Test: one section of a suite, interpreted, compiled or under torture, passes every test but
-    the ones the suite lists as exceptions, and those fail. Writes its counts to result.json among
-    the test's outputs (conformance-report reads them)."""
-    runtime = Runtime.from_manifest(o.runtime)
-    suite = harness.suites(o.suite)[0]
-    sections = [s for s in suite.sections() if s.id == o.section]
-    check(sections, f'{o.suite} has no section {o.section}')
-    section = sections[0]
-    r = harness.run_conformance(runtime, [section], **_MODES[o.mode])[(suite.name, section.id)]
-    listed = suite.exceptions().get(section.id, [])
-    unexpected = list(harness.failing_tests(r['output']))
-    now_passing = []
-    for test in listed:
-        if test in unexpected:
-            unexpected.remove(test)
-        else:
-            now_passing.append(test)
-    expected = section.total - len(listed)
-    result = {'suite': suite.name, 'section': section.id, 'title': section.title, 'mode': o.mode, 'pass': r['pass'],
-              'total': section.total, 'expected': expected, 'complete': r['complete'], 'message': r['message']}
-    outputs = os.environ.get('TEST_UNDECLARED_OUTPUTS_DIR')
-    if outputs:
-        with open(join(outputs, 'result.json'), 'w', encoding='utf-8') as f:
-            json.dump(result, f, indent=1, sort_keys=True)
-    log(f'{suite.name} {section.id} ({o.mode}): {r["pass"]}/{section.total}, {expected} expected')
-    problems = []
-    if not r['complete']:
-        problems.append(f'aborted: {r["message"]}')
-    if unexpected:
-        problems.append('these tests fail, and the suite doesn\'t list them as exceptions:\n    ' + '\n    '.join(unexpected))
-    if now_passing:
-        problems.append(f'these tests pass now, but {suite.rel_dir}/README.md lists them as exceptions (expected '
-                        'failures): remove their rows from its Exceptions table\n    ' + '\n    '.join(now_passing))
-    if r['pass'] != expected and not problems:
-        problems.append(f'{r["pass"]} tests pass, {expected} expected')
-    check(not problems, f'{suite.name} {section.id} ({o.mode}): ' + '\n'.join(problems) + '\n\n' + tail(r['output'], 40))
-
-
-def conformance_status(o):
-    """Test: docs/plan.md's status block says what the conformance tests check."""
-    block = expected_status_block()
-    with open(rlocation(o.plan), encoding='utf-8') as f:
-        _, current = harness.replace_status_block(f.read(), block)
-    check(current == block, 'The status block in docs/plan.md is stale. Run `bazel run //:r7rs -- status` and commit '
-          'the result.\nExpected:\n' + block)
-    log('status block in docs/plan.md is up to date')
+# The conformance tests' modes (tests/harness/defs.bzl conformance_tests).
+_MODES = ('interpreter', 'compile', 'torture')
 
 
 def conformance_report(o):
@@ -242,102 +133,6 @@ def conformance_report(o):
             f.write(text)
     else:
         print(text)
-
-
-def tools_test(o):
-    """A smoke test of GraalVM's tools against the launcher (tools.py), with and without the tools jars."""
-    bare, with_tools = Runtime.from_manifest(o.runtime), Runtime.from_manifest(o.tools_runtime)
-    commands = tools.Commands(tools=lambda args: with_tools.launcher(args), bare=lambda args: bare.launcher(args))
-    programs = os.path.dirname(rlocation(o.programs)) if o.programs else join(harness.repo_root(), 'tests', 'tools')
-    failed = tools.run([o.name], programs, commands)
-    check(not failed, f'tools smoke test failed: {o.name}')
-
-
-# AGENTS.md rule 1: Java builtins never call Scheme; they return a TailCall request (design.md D5).
-_RULE1_FORBIDDEN = [
-    (re.compile(r'\b(Direct|Indirect)CallNode\b'), 'call nodes'),
-    (re.compile(r'\b\w*CallTarget\b'), 'call targets'),
-    (re.compile(r'\bInteropLibrary\b'), 'interop (can execute Scheme procedures)'),
-]
-
-
-def rules(o):
-    violations = []
-    for path in o.files:
-        with open(rlocation(path), encoding='utf-8') as f:
-            for lineno, line in enumerate(f, 1):
-                code = line.split('//', 1)[0]
-                violations += [f'{path.removeprefix("_main/")}:{lineno}: uses {what}: {line.strip()}'
-                               for pattern, what in _RULE1_FORBIDDEN if pattern.search(code)]
-    check(o.files and not violations, 'Rule 1 violated: Java builtins never call Scheme; return a TailCall request instead '
-          '(AGENTS.md rule 1, design.md D5).\n' + '\n'.join(violations))
-    log(f'rule 1 OK ({len(o.files)} files)')
-
-
-def versions(o):
-    """design.md D11: the JDK the tests run on is the GraalVM release of the Truffle libraries."""
-    runtime = Runtime.from_manifest(o.runtime)
-    graalvm = bench.graalvm_version(runtime.release)
-    with open(rlocation(o.lock), encoding='utf-8') as f:
-        lock = {coordinate: a['version'] for coordinate, a in json.load(f)['artifacts'].items()}
-    problems = [f'{c} is {v}, the JDK GraalVM {graalvm}' for c, v in sorted(lock.items())
-                if c.startswith('org.graalvm.') and v != graalvm]
-    check(not problems, 'GraalVM and Truffle versions differ (design.md D11):\n  ' + '\n  '.join(problems)
-          + '\nUpgrade them together: bazel/graalvm.bzl, TRUFFLE_VERSION in MODULE.bazel, `bazel run @jvm//:pin`.')
-    log(f'GraalVM {graalvm} = every org.graalvm artifact in the lock file')
-
-
-def lint(o):
-    """One static check of one java_library (bazel/lint/defs.bzl): format, checkstyle, ecj or spotbugs."""
-    with open(rlocation(o.inputs), encoding='utf-8') as f:
-        inputs = json.load(f)
-
-    def paths(key):
-        return [rlocation(p) for p in inputs[key]]
-
-    tmp = tempfile.mkdtemp(dir=os.environ.get('TEST_TMPDIR'))
-    tool = rlocation(o.tool)
-    if o.check == 'format':
-        command = [tool, '--check', rlocation(o.prefs)] + paths('srcs')
-    elif o.check == 'checkstyle':
-        command = [tool, '-c', rlocation(o.config)] + paths('srcs')
-    elif o.check == 'ecj':
-        # GraalVM's JDT settings, -failOnWarning; with the Truffle DSL processor, warnings are
-        # ignored (ECJ can't ignore them in generated code only).
-        with open(rlocation(o.prefs), encoding='utf-8') as f:
-            prefs = f.read()
-        processor_path = paths('processor_path')
-        if processor_path:
-            prefs = prefs.replace('=warning', '=ignore')
-        with open(join(tmp, 'jdt.prefs'), 'w', encoding='utf-8') as f:
-            f.write(prefs + '\norg.eclipse.jdt.core.compiler.problem.tasks=ignore\n')
-        command = [tool, '-g', '-d', join(tmp, 'classes'), '-classpath', os.pathsep.join(paths('classpath')), '-parameters',
-                   '--release', '25', '-encoding', 'UTF-8', '-failOnWarning', '-properties', join(tmp, 'jdt.prefs')]
-        command += (['-processorpath', os.pathsep.join(processor_path), '-s', join(tmp, 'generated')] if processor_path
-                    else ['-proc:none'])
-        os.makedirs(join(tmp, 'generated'))
-        command += paths('srcs')
-    else:
-        # SpotBugs as GraalVM runs it: -low -maxRank 15, two known false positives off, and no
-        # reports on the classes the Truffle DSL processor generated.
-        class_jars = paths('class_jars')
-        if not [n for jar in class_jars for n in zipfile.ZipFile(jar).namelist() if n.endswith('.class') and '-info' not in n]:
-            log('no classes to analyze')  # scheme.prelude is resources and a package-info
-            return
-        generated = sorted({n[:-len('.java')].replace('/', '.') for jar in paths('generated_sources')
-                            for n in zipfile.ZipFile(jar).namelist() if n.endswith('.java') and '-info' not in n})
-        exclude = join(tmp, 'exclude.xml')
-        with open(exclude, 'w', encoding='utf-8') as f:
-            f.write('<FindBugsFilter>\n'
-                    + ''.join(f'  <Match><Bug pattern="{p}"/></Match>\n' for p in
-                              ('RCN_REDUNDANT_NULLCHECK_WOULD_HAVE_BEEN_A_NPE', 'ASE_ASSERTION_WITH_SIDE_EFFECT',
-                               'ASE_ASSERTION_WITH_SIDE_EFFECT_METHOD'))
-                    + ''.join(f'  <Match><Class name="~{c.replace(".", "[.]")}.*"/></Match>\n' for c in generated)
-                    + '</FindBugsFilter>\n')
-        aux = [p for p in paths('runtime_classpath') if p not in class_jars]
-        command = [tool, '-textui', '-low', '-maxRank', '15', '-exclude', exclude, '-auxclasspath', os.pathsep.join(aux),
-                   '-exitcode'] + class_jars
-    sys.exit(subprocess.run(command).returncode)
 
 
 # ---------------------------------------------------------------------------
@@ -398,7 +193,7 @@ def status(o):
     plan = join(harness.workspace(), 'docs', 'plan.md')
     with open(plan, encoding='utf-8') as f:
         text = f.read()
-    block = expected_status_block()
+    block = harness.expected_status_block()
     new, current = harness.replace_status_block(text, block)
     if o.check:
         check(current == block, 'The status block in docs/plan.md differs from what the suites give:\n' + block)
@@ -417,51 +212,6 @@ def format_sources(o):
     files = [join(d, n) for top in ('src', 'tests') for d, _, names in os.walk(join(root, top)) for n in sorted(names)
              if n.endswith('.java')]
     sys.exit(subprocess.run([rlocation(o.formatter), '--fix', rlocation(o.prefs)] + files).returncode)
-
-
-def _shim(directory, name, verb):
-    """`name verb ...` succeeds and does nothing: the readme test depends on what it would build."""
-    path = join(directory, name)
-    with open(path, 'w', encoding='utf-8') as f:
-        f.write(f'#!/bin/sh\n[ "$1" = {verb} ] && exit 0\n'
-                f'echo "the readme test runs only \\`{name} {verb}\\`, not: {name} $*" >&2\nexit 1\n')
-    os.chmod(path, 0o755)
-
-
-def readme_test(o):
-    """Test: docs/usage.md's and docs/embedding.md's blocks (readme.py), the commands as written, in
-    a directory laid out like the checkout: `bazel-bin/` holds the targets this test depends on,
-    `bazel build` and `nix develop` do nothing (Bazel built those first), and `java` is the pinned
-    GraalVM's. With --native, only the native-image blocks, against that launcher."""
-    tmp = os.environ['TEST_TMPDIR']
-    main_repo = os.path.dirname(os.path.dirname(rlocation(o.usage)))
-    checkout, shims = join(tmp, 'checkout'), join(tmp, 'shims')
-    os.makedirs(join(checkout, 'bazel-bin'))
-    os.makedirs(shims)
-    # Copies, not runfiles symlinks: the profilers print a program's path relative to its real one.
-    shutil.copytree(join(main_repo, 'docs'), join(checkout, 'docs'))
-    os.symlink(join(main_repo, 'tests'), join(checkout, 'tests'))
-    os.symlink(rlocation(o.scheme), join(checkout, 'bazel-bin', 'scheme'))
-    os.symlink(os.path.dirname(rlocation(o.jars[0])), join(checkout, 'bazel-bin', 'scheme_jars'))
-    if o.native:
-        os.symlink(rlocation(o.native), join(checkout, 'bazel-bin', 'scheme-native'))
-    _shim(shims, 'bazel', 'build')
-    _shim(shims, 'nix', 'develop')
-    os.symlink(Runtime.from_manifest(o.runtime).java, join(shims, 'java'))
-    os.environ['PATH'] = shims + os.pathsep + os.environ.get('PATH', '')
-    problems = readme.run(checkout, native=bool(o.native))
-    check(not problems, 'readme: failed:\n' + '\n'.join(problems))
-    log('readme: ' + ('the native blocks run' if o.native else 'every block is checked, and every command runs as documented'))
-
-
-def conformance_native(o):
-    """Test: both suites through the native launcher pass what docs/plan.md's status block says."""
-    all_suites = harness.suites()
-    sections = [s for suite in all_suites for s in suite.sections()]
-    results = harness.run_conformance(None, sections, native=rlocation(o.native))
-    block = harness.status_block([harness.suite_block(suite, results) for suite in all_suites])
-    check(block == expected_status_block(), 'Through the native launcher, the suites give a different status block:\n' + block)
-    log('the native launcher passes what docs/plan.md says')
 
 
 def main():
@@ -484,35 +234,9 @@ def main():
         p.add_argument('--chibi-' + part, help=f"chibi-scheme's {part}, from its build action (tests)")
     p.add_argument('--compile', action='store_true')
     p.add_argument('--torture', action='store_true')
-    p = sub.add_parser('program')
-    p.add_argument('kind', choices=['spec', 'space'])
-    p.add_argument('file')
-    p.add_argument('--expect')
-    p.add_argument('--limits')
-    p = sub.add_parser('conformance')
-    p.add_argument('--suite', choices=['chibi', 'larceny'], required=True)
-    p.add_argument('--section', required=True)
-    p.add_argument('--mode', choices=list(_MODES), required=True)
-    p = sub.add_parser('conformance-status')
-    p.add_argument('plan')
-    p = sub.add_parser('conformance-native')
-    p.add_argument('native')
-    p = sub.add_parser('readme')
-    p.add_argument('--usage', required=True)
-    p.add_argument('--scheme', required=True)
-    p.add_argument('--jars', nargs='+', required=True, help="bazel-bin/scheme_jars' jars")
-    p.add_argument('--native', help='only the native-image blocks, against this launcher')
     p = sub.add_parser('tools')
     p.add_argument('--programs', help='a program in tests/tools (default: the checkout\'s)')
     p.add_argument('name', choices=list(tools.SMOKE_TESTS))
-    p = sub.add_parser('rules')
-    p.add_argument('files', nargs='*')
-    p = sub.add_parser('versions')
-    p.add_argument('--lock', required=True)
-    p = sub.add_parser('lint')
-    p.add_argument('check', choices=['format', 'checkstyle', 'ecj', 'spotbugs'])
-    for option in ('--inputs', '--tool', '--config'):
-        p.add_argument(option)
 
     p = sub.add_parser('test', help='the conformance suites, per section')
     p.add_argument('section', nargs='?', help="one section, e.g. 6.10 (chibi's) or base (Larceny's)")
@@ -545,10 +269,8 @@ def main():
     if o.chibi:
         vendor.CHIBI[:] = [rlocation(o.chibi)]
     commands = {
-        'diff': diff, 'program': program, 'conformance': conformance_test,
-        'conformance-status': conformance_status, 'conformance-report': conformance_report, 'tools': tools_test, 'rules': rules,
-        'versions': versions, 'lint': lint, 'test': test, 'status': status, 'format': format_sources,
-        'readme': readme_test, 'conformance-native': conformance_native,
+        'diff': diff, 'conformance-report': conformance_report, 'tools': check_tools.tools_test, 'test': test,
+        'status': status, 'format': format_sources,
     }
     if o.command in commands:
         commands[o.command](o)

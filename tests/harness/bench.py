@@ -26,15 +26,13 @@ import urllib.error
 import urllib.request
 from os.path import exists, join
 
+import harness
 from harness import INTERPRETER_VM_ARGS, fail, log, repo_root, tail
 
 RUNTIME = []  # [harness.Runtime] of the launcher
 
 
-def graalvm_version(release):
-    with open(release, encoding='utf-8') as f:
-        m = re.search(r'^GRAALVM_VERSION="?([^"\n]*)"?', f.read(), re.MULTILINE)
-    return m.group(1) if m else 'unknown'
+graalvm_version = harness.graalvm_version
 
 
 _BENCH_DIR = join(repo_root(), 'bench')

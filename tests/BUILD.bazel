@@ -106,12 +106,20 @@ unit_tests(
     ]),
 )
 
+# The test drivers (diff, spec and space programs, conformance sections), in Java: they run in
+# the pinned JDK and start the language in a child JVM (bazel/jvm_test.bzl java_driver_test).
+scheme_java_library(
+    name = "driver",
+    srcs = glob(["driver/scheme/driver/*.java"]),
+    spotbugs = False,
+)
+
 # tests/diff: `diff_<program>` and `diff_torture_<program>`, against chibi-scheme.
 diff_tests(
     name = "diff",
     srcs = glob(["diff/*.scm"]),
     chibi = "//bazel:chibi-scheme",
-    runtime = "//:launcher_runtime",
+    module = "//:launcher_module",
 )
 
 # tests/spec cases that need something a later task brings: {case: task}. Remove an entry when its
@@ -121,8 +129,8 @@ SPEC_PENDING = {}
 # tests/spec: `spec_<case>`, each with the JVM limits in its header.
 spec_tests(
     name = "spec",
+    module = "//:launcher_module",
     srcs = [f for f in glob(["spec/*.scm"]) if f.removeprefix("spec/").removesuffix(".scm") not in SPEC_PENDING],
-    runtime = "//:launcher_runtime",
 )
 
 # M1-06: a 10M-iteration tail loop under a stack and heap too small for anything that grows.
@@ -131,7 +139,7 @@ space_test(
     src = "diff/loop-10m.scm",
     expect = "10000000",
     limits = "-Xss256k -Xmx64m",
-    runtime = "//:launcher_runtime",
+    module = "//:launcher_module",
 )
 
 # M2-05: 1M-deep non-tail recursion under a 256k Java stack (chibi runs out of stack on it).
@@ -140,7 +148,7 @@ space_test(
     src = "space/deep-recursion-1m.scm",
     expect = "1000000",
     limits = "-Xss256k -Xmx512m",
-    runtime = "//:launcher_runtime",
+    module = "//:launcher_module",
 )
 
 test_suite(
@@ -195,11 +203,11 @@ LARCENY_SECTIONS = [
 # what they check.
 conformance_tests(
     name = "conformance",
+    module = "//:launcher_module",
     plan = "//:docs/plan.md",
-    runtime = "//:launcher_runtime",
     suites = {
-        "chibi": (":chibi_suite", CHIBI_SECTIONS),
-        "larceny": (":larceny_suite", LARCENY_SECTIONS),
+        "chibi": (":chibi_suite", "r7rs", CHIBI_SECTIONS),
+        "larceny": (":larceny_suite", "r7rs-larceny", LARCENY_SECTIONS),
     },
 )
 
@@ -207,8 +215,9 @@ conformance_tests(
 # few GB to build. `conformance_native`: both suites through it pass what the status block says.
 harness_test(
     name = "conformance_native",
+    check = "status",
     args = [
-        "conformance-native",
+        "native",
         "$(rlocationpath //:scheme-native)",
     ],
     data = [
@@ -244,7 +253,9 @@ _README_DATA = [
 # Every block but the native ones: commands run as written, outputs and files as shown.
 harness_test(
     name = "readme",
-    args = ["readme"] + _README_ARGS,
+    check = "readme",
+    args = _README_ARGS,
+    deps = ["readme"],
     data = _README_DATA,
     size = "large",
     tags = [
@@ -256,7 +267,9 @@ harness_test(
 # The native-image blocks, against //:scheme-native.
 harness_test(
     name = "readme_native",
-    args = ["readme"] + _README_ARGS + ["--native=$(rlocationpath //:scheme-native)"],
+    check = "readme",
+    args = _README_ARGS + ["--native=$(rlocationpath //:scheme-native)"],
+    deps = ["readme"],
     data = _README_DATA + ["//:scheme-native"],
     tags = ["manual"],
 )
@@ -277,7 +290,8 @@ tools_tests(
 # AGENTS.md rule 1: Java builtins never call Scheme.
 harness_test(
     name = "rules",
-    args = ["rules", "$(rlocationpaths //src/builtins:srcs)"],
+    check = "rules",
+    args = ["$(rlocationpaths //src/builtins:srcs)"],
     data = ["//src/builtins:srcs"],
     size = "small",
     tags = ["lint"],
@@ -286,8 +300,8 @@ harness_test(
 # design.md D11: the test JDK is the GraalVM release of the Truffle libraries.
 harness_test(
     name = "versions",
+    check = "versions",
     args = [
-        "versions",
         "--runtime=$(rlocationpath //:launcher_runtime)",
         "--lock=$(rlocationpath //:maven_install.json)",
     ],
