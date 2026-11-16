@@ -23,6 +23,7 @@ import com.oracle.truffle.api.nodes.DirectCallNode;
 import com.oracle.truffle.api.nodes.IndirectCallNode;
 import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.nodes.RootNode;
+import com.oracle.truffle.api.profiles.InlinedBranchProfile;
 import com.oracle.truffle.api.source.SourceSection;
 
 import scheme.runtime.value.SClosure;
@@ -159,13 +160,15 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
      * from a primitive that was called (design.md D8).
      *
      * <p>Each site has its own {@link Trampoline}, an inline cache of the procedures its callees
-     * tail-call (plan.md M5-10). The site reports polymorphism through it: once it has seen a second
-     * procedure, Truffle may split the procedure it is in (map's loop, for instance) for each of its
-     * callers, so that each copy's site sees fewer procedures and can inline them. (The Bytecode DSL
-     * of Truffle 25.5 generates code that doesn't compile for {@code @ReportPolymorphism} on an
-     * operation, so the cache initializers report instead: a Truffle bug, reproduced by
-     * {@code scheme.test.upstream.UpstreamReportPolymorphismTest}, docs/upstream.md#reportpolymorphism-on-an-operation.
-     * When that test fails after a Truffle upgrade, put {@code @ReportPolymorphism} here instead.)
+     * tail-call (plan.md M5-10). The site reports polymorphism through it when it goes megamorphic:
+     * then Truffle may split the procedure it is in (map's loop, for instance) for each of its
+     * callers, so that each copy's site sees fewer procedures and can inline them. Up to the cache
+     * limit, the site inlines every procedure it has seen, and doesn't report (plan.md M7-01,
+     * {@link Trampoline}). (The Bytecode DSL of Truffle 25.5 generates code that doesn't compile for
+     * {@code @ReportPolymorphism} on an operation, so the cache initializer reports instead: a Truffle
+     * bug, reproduced by {@code scheme.test.upstream.UpstreamReportPolymorphismTest},
+     * docs/upstream.md#reportpolymorphism-on-an-operation. When that test fails after a Truffle
+     * upgrade, put {@code @ReportPolymorphism.Megamorphic} here instead.)
      */
     @Operation(storeBytecodeIndex = true)
     public static final class Call {
@@ -173,7 +176,7 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
         static Object doPrimitive(SClosure procedure, @Variadic(startOffset = 1) Object[] arguments,
                         @Bind Node node,
                         @Shared @Cached Trampoline trampoline,
-                        @Cached("trampoline.noteCallee(procedure.callTarget)") RootCallTarget cachedTarget,
+                        @Cached("procedure.callTarget") RootCallTarget cachedTarget,
                         @Cached("inPlace(cachedTarget)") PrimitiveSpec spec,
                         @Cached("createNode(spec)") PrimitiveNode primitive) {
             arguments[0] = procedure;
@@ -189,13 +192,13 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
         static Object doDirect(SClosure procedure, @Variadic(startOffset = 1) Object[] arguments,
                         @Bind Node node,
                         @Shared @Cached Trampoline trampoline,
-                        @Cached("trampoline.noteCallee(procedure.callTarget)") RootCallTarget cachedTarget,
-                        @Cached("create(cachedTarget)") DirectCallNode callNode) {
+                        @Cached("procedure.callTarget") RootCallTarget cachedTarget,
+                        @Cached("create(cachedTarget)") DirectCallNode callNode,
+                        @Shared @Cached InlinedBranchProfile spilled) {
             arguments[0] = procedure;
             SchemeContext context = SchemeContext.get(node);
             if (++context.callDepth > SPILL_DEPTH) {
-                context.callDepth--;
-                return Capture.spill(arguments, context.getDynamicEnv());
+                return spill(node, spilled, arguments, context);
             }
             try {
                 return tortured(trampoline.run(callNode.call(arguments)), cachedTarget, context);
@@ -210,12 +213,12 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
         static Object doIndirect(SClosure procedure, @Variadic(startOffset = 1) Object[] arguments,
                         @Bind Node node,
                         @Shared @Cached Trampoline trampoline,
-                        @Cached("trampoline.megamorphic()") IndirectCallNode callNode) {
+                        @Cached("trampoline.megamorphic()") IndirectCallNode callNode,
+                        @Shared @Cached InlinedBranchProfile spilled) {
             arguments[0] = procedure;
             SchemeContext context = SchemeContext.get(node);
             if (++context.callDepth > SPILL_DEPTH) {
-                context.callDepth--;
-                return Capture.spill(arguments, context.getDynamicEnv());
+                return spill(node, spilled, arguments, context);
             }
             try {
                 return tortured(trampoline.run(callNode.call(procedure.callTarget, arguments)), procedure.callTarget, context);
@@ -229,6 +232,19 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
         @Fallback
         static Object doNotAProcedure(Object procedure, @SuppressWarnings("unused") @Variadic(startOffset = 1) Object[] arguments) {
             throw notAProcedure(procedure);
+        }
+
+        /**
+         * The call is past {@link #SPILL_DEPTH}: instead of calling, returns a spill capture. Behind
+         * a branch profile (plan.md M7-01): most call sites never spill, and in compiled code the
+         * capture (with the argument array it materializes) was most of the code of every non-tail
+         * call site, so every compilation was about three times the size, and compilation fell
+         * behind.
+         */
+        private static Object spill(Node node, InlinedBranchProfile spilled, Object[] arguments, SchemeContext context) {
+            spilled.enter(node);
+            context.callDepth--;
+            return Capture.spill(arguments, context.getDynamicEnv());
         }
 
         static PrimitiveSpec inPlace(RootCallTarget target) {

@@ -33,10 +33,20 @@ full R7RS-small conformance comes first.
   site (and each prompt) has a trampoline node of its own, `Trampoline`, with
   a 4-entry `DirectCallNode` cache keyed on the tail-called procedure's call
   target, so a procedure reached by a tail call can be inlined into the site
-  and its `TailCall` scalar-replaced. A call site that has seen a second
-  procedure reports polymorphism, so Truffle splits the procedure it is in
-  per caller (25.5's Bytecode DSL can't compile `@ReportPolymorphism` on an
-  operation, so the cache initializers report).
+  and its `TailCall` scalar-replaced. The first tail call that comes back and
+  the ones after it have separate caches (M7-01), so a chain of tail calls
+  (`map` → its loop → `reverse`) is compiled once per site, not twice. A call
+  site that goes megamorphic (its own procedure, or the first tail call)
+  reports polymorphism, so Truffle splits the procedure it is in per caller;
+  up to the cache limit the site inlines what it has seen and doesn't report,
+  since each split is another compilation (25.5's Bytecode DSL can't compile
+  `@ReportPolymorphism` on an operation, so the cache initializer reports).
+- **Rare paths stay out of compiled code (M7-01).** The spill at the depth
+  limit (below) is behind a branch profile: a site that has never spilled
+  compiles without it. It was about two thirds of every non-tail call site's
+  machine code, and on CI's 4-CPU runners (two compiler threads) the
+  benchmarks' compilations didn't finish within the runs meant to measure
+  compiled code.
 - Self tail calls in named `let` and `do` compile to loops (back-edges, OSR).
 
 ### Continuations: a segmented stack
