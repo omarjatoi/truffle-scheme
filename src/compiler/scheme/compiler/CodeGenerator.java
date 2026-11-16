@@ -20,6 +20,7 @@ import com.oracle.truffle.api.source.SourceSection;
 import scheme.compiler.Ast.Expr;
 import scheme.compiler.Ast.Lambda;
 import scheme.compiler.Ast.Var;
+import scheme.runtime.GlobalCell;
 import scheme.runtime.SchemeRootNode;
 import scheme.runtime.SchemeRootNodeGen;
 import scheme.runtime.value.SConstant;
@@ -295,7 +296,7 @@ final class CodeGenerator {
                     tail.push(l.body);
                 }
             } else if (e instanceof Ast.Call c && !(c.procedure instanceof Ast.LocalRef r && r.var.self != null && r.var.self.contified) &&
-                            c.arguments.size() == n) {
+                            c.arguments.size() == n && !Intrinsic.isIntrinsic(c)) {
                 return true;
             }
         }
@@ -462,16 +463,22 @@ final class CodeGenerator {
                 b.endBlock();
             }), ctx);
         } else if (e instanceof Ast.If i) {
+            // A predicate's operation gives the branch its boolean as it is (plan.md M7-03).
+            boolean truthy = !Intrinsic.isPredicate(i.test);
+            Runnable beginTest = truthy ? b::beginTruthy : () -> {
+            };
+            Runnable endTest = truthy ? b::endTruthy : () -> {
+            };
             if (ctx == Ctx.VALUE) {
                 return List.of(() -> {
                     b.beginConditional();
-                    b.beginTruthy();
-                }, gen(i.test, Ctx.VALUE), b::endTruthy, gen(i.consequent, Ctx.VALUE), gen(i.alternative, Ctx.VALUE), b::endConditional);
+                    beginTest.run();
+                }, gen(i.test, Ctx.VALUE), endTest, gen(i.consequent, Ctx.VALUE), gen(i.alternative, Ctx.VALUE), b::endConditional);
             }
             return List.of(() -> {
                 b.beginIfThenElse();
-                b.beginTruthy();
-            }, gen(i.test, Ctx.VALUE), b::endTruthy, gen(i.consequent, Ctx.TAIL), gen(i.alternative, Ctx.TAIL), b::endIfThenElse);
+                beginTest.run();
+            }, gen(i.test, Ctx.VALUE), endTest, gen(i.consequent, Ctx.TAIL), gen(i.alternative, Ctx.TAIL), b::endIfThenElse);
         } else if (e instanceof Ast.Seq s) {
             List<Runnable> seq = new ArrayList<>();
             seq.add(b::beginBlock);
@@ -635,6 +642,17 @@ final class CodeGenerator {
         List<Runnable> arguments = new ArrayList<>();
         for (Expr a : c.arguments) {
             arguments.add(gen(a, Ctx.VALUE));
+        }
+        Intrinsic intrinsic = Intrinsic.of(c);
+        if (intrinsic != null) {
+            // An operation of its own (plan.md M7-03): no call, in tail position or not.
+            GlobalCell cell = ((Ast.GlobalRef) c.procedure).cell;
+            List<Runnable> seq = new ArrayList<>();
+            boolean tail = ctx == Ctx.TAIL && !state().lambda.program;
+            seq.add(() -> intrinsic.begin(b, cell, tail));
+            seq.addAll(arguments);
+            seq.add(() -> intrinsic.end(b));
+            return valued(seq, ctx);
         }
         if (ctx == Ctx.VALUE || state().lambda.program) {
             return valued(CallSiteEmitter.nonTailCall(b, gen(c.procedure, Ctx.VALUE), arguments), ctx);
