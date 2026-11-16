@@ -25,7 +25,9 @@ import scheme.runtime.GlobalCell;
  * <ul>
  * <li>the operator of a call, or</li>
  * <li>an argument of a call of a <em>known</em> procedure, with exactly as many arguments as its
- * parameters, whose parameter in that position is escape-only too.</li>
+ * parameters, whose parameter in that position is escape-only too, or</li>
+ * <li>the init of a {@code let} variable ({@link Ast.Let}, the call of a literal lambda) that is
+ * escape-only too.</li>
  * </ul>
  * A known procedure is a lambda whose code the analysis sees at that call: a literal lambda in
  * operator position, an unassigned {@code letrec*} variable (an internal definition) bound to a
@@ -56,6 +58,8 @@ final class EscapeAnalysis {
     private final Map<GlobalCell, Lambda> globalLambdas = new IdentityHashMap<>();
     /** Every definition and assignment of each global in the unit. */
     private final Map<GlobalCell, Integer> stores = new IdentityHashMap<>();
+    /** Each let variable whose init is a reference to a variable: the variable it is bound to. */
+    private final Map<Var, Var> letBindings = new IdentityHashMap<>();
     /** The call/cc calls with a one-parameter lambda receiver. */
     private final List<Ast.Call> sites = new ArrayList<>();
 
@@ -108,6 +112,15 @@ final class EscapeAnalysis {
                 for (Expr x : s.body) {
                     stack.push(x);
                 }
+            } else if (e instanceof Ast.Let l) {
+                for (int i = 0; i < l.vars.size(); i++) {
+                    if (l.inits.get(i) instanceof Ast.LocalRef r) {
+                        letBindings.put(l.vars.get(i), r.var);
+                    } else {
+                        stack.push(l.inits.get(i));
+                    }
+                }
+                stack.push(l.body);
             } else if (e instanceof Ast.Letrec l) {
                 for (int i = 0; i < l.vars.size(); i++) {
                     if (l.inits.get(i) instanceof Lambda fn) {
@@ -191,6 +204,17 @@ final class EscapeAnalysis {
                 } else {
                     add(passedTo, m.params.get(u.position()), v);
                 }
+            }
+        }
+        for (Map.Entry<Var, Var> entry : letBindings.entrySet()) {
+            Var param = entry.getKey();
+            Var v = entry.getValue();
+            if (param.assigned || param.captured) {
+                if (not.add(v)) {
+                    work.push(v);
+                }
+            } else {
+                add(passedTo, param, v);
             }
         }
         while (!work.isEmpty()) {

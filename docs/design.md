@@ -168,13 +168,29 @@ Each entry: the decision, why, and what was rejected.
 - The compiler computes each lambda's free variables and copies their values
   into `SClosure.captured`. The array is never written once the closure
   exists, so it is `@CompilationFinal(dimensions = 1)` (M5-10): a closure
-  that is a compilation constant has constant captured values. Anything that
-  patches a captured slot after creation (Fixing Letrec, say) must do it
-  before the closure can be called or reached by other code.
+  that is a compilation constant has constant captured values. The one
+  exception is Fixing Letrec (M5-05, below): `PatchCaptured` writes a slot of
+  a closure the same `letrec*` made moments before, and only between making
+  the closures of a run of lambda inits and running any other code, so no
+  call, no other closure and no compiled code can have read the slot yet.
 - **Any variable that is the target of `set!` lives in a heap `Box`.** The
   frame holds the box, never the value. `letrec*` and internal `define`
-  variables are boxed when a closure captures them. "Fixing Letrec" (avoiding
-  boxes for groups of mutually recursive lambdas) is an M5 optimization.
+  variables are boxed when a closure captures them, unless they are *fixed*
+  ("Fixing Letrec", Waddell, Sarkar and Dybvig 2005; M5-05,
+  `scheme.compiler.Closures`): never assigned, bound to a lambda, and not
+  mentioned by any init before the last non-lambda init that precedes their
+  own. Then the only closures that can capture a fixed variable before it is
+  initialized are the lambdas of the run of lambda inits it ends; the code
+  generator patches its value into them right after making its own closure.
+  In its own lambda's root, a fixed variable is the running closure (frame
+  argument 0), so it takes no captured slot, and a tail call of it is a
+  plain loop.
+- `((lambda (x ...) body) arg ...)` with as many arguments as parameters,
+  which `let`, `or` and `case` expand to, makes no closure (M5-05): its
+  variables are locals of the root that runs it, the body runs in that root
+  (in tail position if the call was), and a boxed variable gets its box once
+  every argument has returned, so re-entering an argument's continuation
+  binds a fresh one, as a call would.
 - Why: Scheme continuations capture control, not variable values. Every
   re-entry must see the same storage locations. Copying a frame on resume is
   correct only if the frame holds no mutable variables. Flat closures also

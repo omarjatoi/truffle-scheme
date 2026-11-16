@@ -141,7 +141,10 @@ public class ExpanderTest {
     // ------------------------------------------------------------------------------------------
     // Macros
 
-    /** (swap! a b): {@code ((lambda (tmp) (set! a b) (set! b tmp)) a)}, with tmp introduced. */
+    /**
+     * (swap! a b): {@code ((lambda (tmp) (set! a b) (set! b tmp)) a)}, with tmp introduced. The
+     * core AST shows it as {@code (let ((tmp a)) ...)} (M5-05).
+     */
     private void defineSwap() {
         defineMacro("swap!", form -> {
             Object a = arg(form, 1);
@@ -153,7 +156,7 @@ public class ExpanderTest {
     @Test
     public void introducedBindingsDontCaptureUseSiteReferences() {
         defineSwap();
-        assertEquals("(lambda (tmp.1 other.2) ((lambda (tmp.3) (begin (set! tmp.1 other.2) (set! other.2 tmp.3))) tmp.1))",
+        assertEquals("(lambda (tmp.1 other.2) (let ((tmp.3 tmp.1)) (begin (set! tmp.1 other.2) (set! other.2 tmp.3))))",
                         show("(lambda (tmp other) (swap! tmp other))"));
     }
 
@@ -164,7 +167,7 @@ public class ExpanderTest {
         assertEquals("(lambda (car.1) (car car.1))", show("(lambda (car) (first car))"));
         // Introduced keywords stay keywords where the use site rebinds them.
         defineSwap();
-        assertEquals("(lambda (lambda.1 set!.2) ((lambda (tmp.3) (begin (set! lambda.1 set!.2) (set! set!.2 tmp.3))) lambda.1))",
+        assertEquals("(lambda (lambda.1 set!.2) (let ((tmp.3 lambda.1)) (begin (set! lambda.1 set!.2) (set! set!.2 tmp.3))))",
                         show("(lambda (lambda set!) (swap! lambda set!))"));
     }
 
@@ -189,19 +192,19 @@ public class ExpanderTest {
     public void localMacros() {
         defineSwap();
         // define-syntax in a body; let-syntax and letrec-syntax; each alias of swap! is a macro there.
-        assertEquals("(lambda (a.1 b.2) ((lambda (tmp.3) (begin (set! a.1 b.2) (set! b.2 tmp.3))) a.1))",
+        assertEquals("(lambda (a.1 b.2) (let ((tmp.3 a.1)) (begin (set! a.1 b.2) (set! b.2 tmp.3))))",
                         show("(lambda (a b) (define-syntax sw swap!) (sw a b))"));
-        assertEquals("(lambda (a.1 b.2) ((lambda (tmp.3) (begin (set! a.1 b.2) (set! b.2 tmp.3))) a.1))",
+        assertEquals("(lambda (a.1 b.2) (let ((tmp.3 a.1)) (begin (set! a.1 b.2) (set! b.2 tmp.3))))",
                         show("(lambda (a b) (let-syntax ((sw swap!)) (sw a b)))"));
-        assertEquals("(lambda (a.1 b.2) ((lambda (tmp.3) (begin (set! a.1 b.2) (set! b.2 tmp.3))) a.1))",
+        assertEquals("(lambda (a.1 b.2) (let ((tmp.3 a.1)) (begin (set! a.1 b.2) (set! b.2 tmp.3))))",
                         show("(lambda (a b) (letrec-syntax ((sw swap!)) (sw a b)))"));
         // The keyword is bound only in the let-syntax body.
-        assertEquals("(begin (lambda (a.1 b.2) ((lambda (tmp.3) (begin (set! a.1 b.2) (set! b.2 tmp.3))) a.1)) (sw 1 2))",
+        assertEquals("(begin (lambda (a.1 b.2) (let ((tmp.3 a.1)) (begin (set! a.1 b.2) (set! b.2 tmp.3)))) (sw 1 2))",
                         show("(lambda (a b) (let-syntax ((sw swap!)) (sw a b))) (sw 1 2)"));
         // A local variable shadows a top-level macro.
         assertEquals("(lambda (swap!.1) (swap!.1 1 2))", show("(lambda (swap!) (swap! 1 2))"));
         // A top-level alias.
-        assertEquals("((lambda (tmp.1) (begin (set! x y) (set! y tmp.1))) x)", show("(define-syntax sw swap!) (sw x y)"));
+        assertEquals("(let ((tmp.1 x)) (begin (set! x y) (set! y tmp.1)))", show("(define-syntax sw swap!) (sw x y)"));
     }
 
     @Test
