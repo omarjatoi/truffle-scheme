@@ -36,7 +36,8 @@ PR once it's green.
    threshold`. The title becomes the squash commit on `main`
    (`<title> (#n)`, empty body), so it describes the change rather than
    repeating the task name.
-5. **Merge** once `Checks` and `Tests` are green (`gh pr checks <n> --watch`):
+5. **Merge** once `buildkite/truffle-scheme/checks` and
+   `buildkite/truffle-scheme/tests` are green (`gh pr checks <n> --watch`):
    `gh pr merge <n> --squash --delete-branch`. If a check fails, fix it on
    the branch. Never merge red.
 6. **Finish** with the PR link and one line of evidence for each "Done
@@ -69,7 +70,7 @@ change affects. The repository's other commands are `bazel run //:r7rs --
 
 ```
 bazel test //...                          # all checks and tests: run this before opening a PR
-bazel test --test_tag_filters=lint //...  # just the static checks (CI: Checks)
+bazel test --test_tag_filters=lint //...  # just the static checks (CI: checks)
 bazel build //...                         # build everything (javac, warnings are errors)
 bazel test //tests:unit_jit               # JUnit in tests/scheme/test, Graal JIT in the background (a test per class)
 bazel test //tests:unit_compile           # same, compile immediately; failures are errors
@@ -113,9 +114,10 @@ raise one by hand. If it changes the native-image configuration, run `bazel
 run //:r7rs -- readme --native`.
 
 CI runs on Buildkite (`.buildkite/pipeline.yml`), for every commit, and only
-what runs on every commit: the required `Checks` (the lint tests) and `Tests`
-(every other test and the readme check), and non-blocking `Conformance` steps
-(interpreter and `--compile`) whose annotations show per-section results.
+what runs on every commit: the required `checks` (the lint tests) and `tests`
+(every other test and the readme check), and non-blocking `conformance-*`
+steps (interpreter and `--compile`) whose annotations show per-section
+results. Each step reports the commit status `buildkite/truffle-scheme/<key>`.
 Benchmarks, the threshold check and the native image are local commands.
 
 ## Rules (each one is enforced by `bazel test //...`)
@@ -149,7 +151,7 @@ Benchmarks, the threshold check and the native image are local commands.
   `tests/spec/` case in `SPEC_PENDING` (`tests/BUILD.bazel`) once it has
   passed: an entry goes away when the task it names lands, and never comes
   back.
-- Merge a PR whose `Checks` or `Tests` check isn't green, or bypass branch
+- Merge a PR whose `checks` or `tests` status isn't green, or bypass branch
   protection.
 - Change the GraalVM or Truffle version (`bazel/graalvm.bzl`,
   `TRUFFLE_VERSION` in `MODULE.bazel` and nixpkgs in `flake.lock` move

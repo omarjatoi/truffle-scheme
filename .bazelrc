@@ -34,6 +34,8 @@ common:ci --color=yes
 common:ci --curses=no
 common:ci --show_progress_rate_limit=30
 common:ci --announce_rc
+# CI's agents have 4 GB: two test JVMs at a time (each conformance test runs two) get OOM-killed.
+test:ci --local_test_jobs=1
 # Remote cache (BuildBuddy or any REAPI cache), when it exists: `--config=remote` plus
 # `--remote_header=x-buildbuddy-api-key=...` in user.bazelrc or the CI secret.
 common:remote --remote_cache=grpcs://remote.buildbuddy.io

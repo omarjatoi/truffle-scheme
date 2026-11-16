@@ -537,7 +537,7 @@ Each entry: the decision, why, and what was rejected.
   adds the other R7RS implementations for the comparative benchmark report.
 - **CI runs only what runs on every commit**, on Buildkite
   (`.buildkite/pipeline.yml`, hosted `linux-small` agents, the Nix dev
-  shell): the required `Checks` and `Tests` and the conformance tables.
+  shell): the required `checks` and `tests` steps and the conformance tables.
   Benchmarks, the threshold check (`bench/thresholds.json`, measured on the
   maintainer's Mac) and the native image are local commands, by the
   maintainer's choice.
