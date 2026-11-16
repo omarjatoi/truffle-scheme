@@ -1,12 +1,10 @@
 package scheme.builtins;
 
-import java.io.IOException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
-import com.oracle.truffle.api.TruffleFile;
 import com.oracle.truffle.api.TruffleLanguage;
 import com.oracle.truffle.api.nodes.Node;
 
@@ -14,10 +12,8 @@ import scheme.runtime.Features;
 import scheme.runtime.PrimitiveNode;
 import scheme.runtime.PrimitiveSpec;
 import scheme.runtime.SchemeContext;
-import scheme.runtime.SchemeError;
 import scheme.runtime.value.SBigInteger;
 import scheme.runtime.value.SConstant;
-import scheme.runtime.value.SErrorObject;
 import scheme.runtime.value.SPair;
 import scheme.runtime.value.SString;
 
@@ -45,9 +41,7 @@ final class ProcessTimePrimitives {
                         new PrimitiveSpec("current-second", 0, 0, CurrentSecond::new),
                         new PrimitiveSpec("current-jiffy", 0, 0, CurrentJiffy::new),
                         new PrimitiveSpec("jiffies-per-second", 0, 0, JiffiesPerSecond::new),
-                        new PrimitiveSpec("features", 0, 0, FeatureList::new),
-                        new PrimitiveSpec("file-exists?", 1, 1, FileExists::new),
-                        new PrimitiveSpec("delete-file", 1, 1, DeleteFile::new));
+                        new PrimitiveSpec("features", 0, 0, FeatureList::new));
     }
 
     /**
@@ -178,55 +172,5 @@ final class ProcessTimePrimitives {
             }
             return list;
         }
-    }
-
-    /** {@code (file-exists? name)}, through TruffleFile (design.md D10). */
-    static final class FileExists extends PrimitiveNode {
-        @Override
-        public Object execute(Object[] args) {
-            return exists(SchemeContext.get(this).getEnv(), fileName("file-exists?", args[0]));
-        }
-
-        @TruffleBoundary
-        private static boolean exists(TruffleLanguage.Env env, String name) {
-            return file("file-exists?", env, name).exists();
-        }
-    }
-
-    /** {@code (delete-file name)}: a file error if it can't (R7RS §6.14). */
-    static final class DeleteFile extends PrimitiveNode {
-        @Override
-        public Object execute(Object[] args) {
-            delete(SchemeContext.get(this).getEnv(), fileName("delete-file", args[0]));
-            return SConstant.UNSPECIFIED;
-        }
-
-        @TruffleBoundary
-        private static void delete(TruffleLanguage.Env env, String name) {
-            try {
-                file("delete-file", env, name).delete();
-            } catch (IOException | SecurityException e) {
-                throw fileError("delete-file: cannot delete " + name, name);
-            }
-        }
-    }
-
-    private static String fileName(String who, Object x) {
-        if (x instanceof SString s) {
-            return s.toString();
-        }
-        throw ControlPrimitives.notA(who, "string", x);
-    }
-
-    private static TruffleFile file(String who, TruffleLanguage.Env env, String name) {
-        try {
-            return env.getPublicTruffleFile(name);
-        } catch (IllegalArgumentException | UnsupportedOperationException | SecurityException e) {
-            throw fileError(who + ": cannot access " + name, name);
-        }
-    }
-
-    private static SchemeError fileError(String message, String name) {
-        return new SchemeError(new SErrorObject(SString.of(message), new SPair(SString.of(name), SConstant.EMPTY_LIST), SErrorObject.Kind.FILE));
     }
 }
