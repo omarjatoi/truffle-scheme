@@ -34,7 +34,7 @@ py_binary(
     args = [
         "--runtime=$(rlocationpath //:launcher_runtime)",
         "--tools-runtime=$(rlocationpath //:scheme_runtime)",
-        "--chibi=$(rlocationpath @chibi//:chibi-scheme)",
+        "--chibi=$(rlocationpath //bazel:chibi-scheme)",
         "--formatter=$(rlocationpath //bazel/lint:eclipse_format)",
         "--prefs=$(rlocationpath //bazel/lint:org.eclipse.jdt.core.prefs)",
         "--results=$(rlocationpath //tests:conformance_results_chibi.md),$(rlocationpath //tests:conformance_results_larceny.md)",
@@ -46,7 +46,7 @@ py_binary(
         "//bazel/lint:org.eclipse.jdt.core.prefs",
         "//tests:conformance_results_chibi.md",
         "//tests:conformance_results_larceny.md",
-        "@chibi//:chibi-scheme",
+        "//bazel:chibi-scheme",
     ],
     main = "main.py",
     deps = [":harness"],

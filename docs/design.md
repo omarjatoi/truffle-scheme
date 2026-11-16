@@ -563,8 +563,11 @@ Each entry: the decision, why, and what was rejected.
   `scheme`, `scheme.launcher` and `scheme.test` modules, and everything runs
   with Truffle on the module path, as embedders run it.
 - **Nix** (`flake.nix`) provides the dev shell: `bazel` (bazelisk), Python,
-  `gh`, chibi-scheme (the differential tests take it from the shell) and a
-  GraalVM JDK for running and embedding outside Bazel. `nix develop .#bench`
+  `gh`, chibi-scheme and a GraalVM JDK for running and embedding outside
+  Bazel. Bazel doesn't need it: it pins its own JDK and Python, and builds
+  the differential tests' chibi-scheme from the pinned source of the same
+  release (`bazel/chibi.bzl`, with the host's C compiler and `make`), so
+  every action can run on another machine. `nix develop .#bench`
   adds the other R7RS implementations for the comparative benchmark report.
 - **CI runs only what runs on every commit**, on Buildkite
   (`.buildkite/pipeline.yml`, hosted `linux-small` agents, the Nix dev

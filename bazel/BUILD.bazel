@@ -1,4 +1,5 @@
 load("@rules_java//java:defs.bzl", "java_binary", "java_library", "java_plugin")
+load(":chibi.bzl", "chibi_scheme")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -77,4 +78,11 @@ java_binary(
     javacopts = ["-Xlint:all", "-Werror"],
     main_class = "ModuleJar",
     visibility = ["//visibility:private"],
+)
+
+# chibi-scheme for the differential tests (tests/diff), from source: bazel/chibi.bzl.
+chibi_scheme(
+    name = "chibi-scheme",
+    makefile = "@chibi_src//:Makefile",
+    srcs = ["@chibi_src//:srcs"],
 )

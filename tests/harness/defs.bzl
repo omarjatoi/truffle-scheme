@@ -65,7 +65,7 @@ def diff_tests(name, srcs, runtime, chibi):
                 name = name + "_" + torture + base,
                 args = ["diff", _runtime(runtime), "--chibi=$(rlocationpath %s)" % chibi, "$(rlocationpath %s)" % src] +
                        (["--torture"] if torture else []),
-                data = [runtime, src, chibi, "@chibi//:version"],
+                data = [runtime, src, chibi],
                 # chibi-scheme itself takes about 90 s on escape-callcc.scm (ctak with real continuations).
                 size = "large",
             )
