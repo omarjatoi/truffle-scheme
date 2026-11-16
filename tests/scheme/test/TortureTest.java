@@ -7,9 +7,9 @@ import org.graalvm.polyglot.Context;
 import org.junit.Test;
 
 /**
- * M2-06: torture mode ({@code -Dscheme.torture=true}, {@code mx r7rs-unittest --torture}) captures
+ * M2-06: torture mode ({@code -Dscheme.torture=true}, {@code //tests:unit_torture}) captures
  * and resumes at every non-tail call of a Scheme procedure. Every other test in this suite also runs
- * under torture in {@code mx tests torture}; this one checks that torture really happens.
+ * under torture in the torture tests; this one checks that torture really happens.
  */
 public class TortureTest {
 

@@ -1,0 +1,19 @@
+load("//bazel:java.bzl", "scheme_java_library")
+
+# The launcher project. Host-side tools that embed the language through the polyglot API:
+# SchemeMain (the `scheme` launcher) and ConformanceRunner, with the optimizing runtime.
+scheme_java_library(
+    name = "launcher",
+    srcs = glob(["**/*.java"]),
+    visibility = ["//visibility:public"],
+    runtime_deps = [
+        "//bazel:launcher_modules",
+        "//bazel:truffle_modules",
+    ],
+    deps = [
+        "@jvm//:org_graalvm_polyglot_polyglot",
+        "@jvm//:org_graalvm_sdk_launcher_common",
+        # Line editing and history in the REPL (M7-07).
+        "@jvm//:org_graalvm_shadowed_jline",
+    ],
+)

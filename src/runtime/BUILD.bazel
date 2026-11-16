@@ -1,0 +1,16 @@
+load("//bazel:java.bzl", "scheme_java_library")
+
+# The runtime project. The Bytecode DSL root, operations, continuations and the language class,
+# and the language's native-image configuration (META-INF/native-image).
+scheme_java_library(
+    name = "runtime",
+    srcs = glob(["**/*.java"]),
+    resource_strip_prefix = "src/runtime",
+    resources = glob(["META-INF/**"]),
+    truffle_dsl = True,
+    visibility = ["//visibility:public"],
+    deps = [
+        "@jvm//:org_graalvm_polyglot_polyglot",
+        "@jvm//:org_graalvm_truffle_truffle_api",
+    ],
+)

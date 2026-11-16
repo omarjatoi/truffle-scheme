@@ -1,0 +1,42 @@
+load("@rules_java//java:defs.bzl", "java_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+# The tools of the lint tests (defs.bzl), at the versions GraalVM's projects use for JDK 25:
+# Checkstyle 10.21.0, SpotBugs 4.9.8, ECJ 3.46.0, and the JDT formatter of Eclipse 4.36.
+
+exports_files([
+    "checkstyle.xml",
+    "org.eclipse.jdt.core.prefs",
+])
+
+java_binary(
+    name = "checkstyle",
+    jvm_flags = ["-Xmx1g"],
+    main_class = "com.puppycrawl.tools.checkstyle.Main",
+    runtime_deps = ["@lint//:com_puppycrawl_tools_checkstyle"],
+)
+
+java_binary(
+    name = "spotbugs",
+    main_class = "edu.umd.cs.findbugs.LaunchAppropriateUI",
+    runtime_deps = ["@lint//:com_github_spotbugs_spotbugs"],
+)
+
+java_binary(
+    name = "ecj",
+    main_class = "org.eclipse.jdt.internal.compiler.batch.Main",
+    runtime_deps = ["@lint//:org_eclipse_jdt_ecj"],
+)
+
+# `bazel run //:r7rs -- format` runs it in place.
+java_binary(
+    name = "eclipse_format",
+    srcs = ["EclipseFormat.java"],
+    javacopts = ["-Xlint:all", "-Werror"],
+    main_class = "EclipseFormat",
+    deps = [
+        "@eclipse_formatter//:org_eclipse_jdt_org_eclipse_jdt_core",
+        "@eclipse_formatter//:org_eclipse_platform_org_eclipse_text",
+    ],
+)

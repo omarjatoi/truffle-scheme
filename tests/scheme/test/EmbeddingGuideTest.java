@@ -26,8 +26,8 @@ import org.junit.rules.TemporaryFolder;
 
 /**
  * M6-07: the Java samples of docs/embedding.md. Each region between {@code // readme-snippet: name}
- * and {@code // readme-snippet-end} is a Java block of that guide, and {@code mx r7rs-readme} (the
- * {@code readme} step of {@code mx tests}) fails if the two differ, so the guide's samples are
+ * and {@code // readme-snippet-end} is a Java block of that guide, and the readme check
+ * ({@code bazel run //:r7rs -- readme}, in CI's Tests job) fails if the two differ, so the guide's samples are
  * code that compiles and passes. EmbeddingTest covers the same API in depth.
  */
 public class EmbeddingGuideTest {

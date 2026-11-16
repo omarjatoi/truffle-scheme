@@ -1,0 +1,14 @@
+load("//bazel:java.bzl", "scheme_java_library")
+
+# The prelude project. The standard libraries (.sld) and prelude Scheme code, as resources of the
+# package scheme.prelude (its package-info.java makes it a package of the scheme module).
+scheme_java_library(
+    name = "prelude",
+    srcs = glob(["**/*.java"]),
+    resource_strip_prefix = "src/prelude",
+    resources = glob(
+        ["scheme/**"],
+        exclude = ["**/*.java"],
+    ),
+    visibility = ["//visibility:public"],
+)

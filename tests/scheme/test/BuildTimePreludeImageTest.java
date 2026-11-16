@@ -38,7 +38,7 @@ public class BuildTimePreludeImageTest {
 
     private static byte[] bundled() {
         byte[] image = PreludeImageCheck.bundled();
-        assertNotNull("the SCHEME jar has a prelude image (mx build makes it)", image);
+        assertNotNull("the SCHEME jar has a prelude image (the build makes it)", image);
         return image;
     }
 

@@ -26,7 +26,7 @@ import scheme.runtime.value.SymbolTable;
  *
  * <p>The analysis tests read the core AST ({@link Expander#show}), with each boxed variable's name
  * ending in {@code !}; the code tests read a procedure's bytecode. The semantics tests run under
- * {@code mx tests torture} too, with a capture and resume at every non-tail call.
+ * {@code //tests:unit_torture} too, with a capture and resume at every non-tail call.
  */
 public class FixingLetrecTest {
 

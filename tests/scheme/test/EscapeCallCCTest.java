@@ -20,7 +20,7 @@ import scheme.runtime.value.SymbolTable;
  *
  * <p>The analysis tests read the core AST ({@link Expander#show}): a rewritten call shows
  * {@code %call/ec}. The semantics tests run the same programs whichever way they compile, so they
- * also hold for the full capture; under {@code mx tests torture} they run with a capture and resume
+ * also hold for the full capture; under {@code //tests:unit_torture} they run with a capture and resume
  * at every non-tail call, across live escape frames.
  */
 public class EscapeCallCCTest {

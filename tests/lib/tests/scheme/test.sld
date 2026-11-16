@@ -15,7 +15,7 @@
 ;;   @@r7rs-test ERROR <expression> :: <condition>   (raised; expected a value)
 ;;   @@r7rs-test END <group>            from report-test-results
 ;;
-;; `mx r7rs-test --suite larceny` and `mx r7rs-status` count these lines. The
+;; The conformance tests (tests/harness) count these lines. The
 ;; same shim runs under chibi-scheme to get each library's total (and can
 ;; then skip a test chibi can't run; see start-test below).
 ;;
@@ -152,7 +152,7 @@
    (define-record-type alts (make-alts values) alts?
      (values alts-values))
 
-   ;; For `mx r7rs-vendor-larceny` only (shim only), which counts the tests
+   ;; For `bazel run //:r7rs -- vendor-larceny` only (shim only), which counts the tests
    ;; under chibi-scheme: with R7RS_TEST_TRACE set, every test reports
    ;; "@@r7rs-test START <n>" before it runs, n counting from 1 in the order
    ;; the tests start; R7RS_TEST_SKIP lists such numbers, separated by spaces,

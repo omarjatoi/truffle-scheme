@@ -20,7 +20,7 @@ import org.graalvm.polyglot.Source;
 
 /**
  * Runs conformance sections (tests/r7rs/*.scm, tests/r7rs-larceny/tests/scheme/run/*.sps) in one
- * JVM, each in a fresh context, for {@code mx r7rs-test} and {@code mx r7rs-status}:
+ * JVM, each in a fresh context, for the conformance tests and commands (tests/harness):
  *
  * <pre>
  * ConformanceRunner [-I dir]... [-C dir] ([--arg arg]... [--env name=value]... file)...
@@ -33,7 +33,7 @@ import org.graalvm.polyglot.Source;
  *
  * <p>For each file it prints the section's own output (the {@code @@r7rs-test} lines from the test
  * shims in tests/lib) followed by one summary line, in the order of the files:
- * {@code @@section <file> <ok | exit <status> | error: ... | timeout ...>}. The mx side counts the
+ * {@code @@section <file> <ok | exit <status> | error: ... | timeout ...>}. The harness counts the
  * result lines.
  *
  * <p>This is the embedder, not language code, so it reads files with host I/O. The language itself

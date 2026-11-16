@@ -14,7 +14,7 @@ import org.junit.Test;
 import scheme.launcher.SchemeMain;
 
 /**
- * M1-02: the launcher that `mx r7rs-diff` compares against chibi-scheme. Exit statuses follow
+ * M1-02: the launcher that the differential tests compares against chibi-scheme. Exit statuses follow
  * chibi's: 0 on success, 70 for an uncaught error (design.md D8).
  */
 public class SchemeMainTest {

@@ -20,7 +20,7 @@ import org.junit.Test;
 /**
  * M3-10: errors and tools through Truffle (design.md D13). Errors report their type and location
  * through interop, and a Truffle instrument ({@link EventRecorder}) sees Scheme statements and
- * calls with their source locations. Under {@code mx tests torture} these run with a
+ * calls with their source locations. Under {@code //tests:unit_torture} these run with a
  * capture and resume at every non-tail call.
  */
 public class ToolsTest {

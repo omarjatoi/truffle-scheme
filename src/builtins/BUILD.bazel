@@ -1,0 +1,24 @@
+load("//bazel:java.bzl", "scheme_java_library")
+
+# The builtins project. Leaf primitives only (AGENTS.md rule 1), registered as a
+# scheme.runtime.BuiltinLibrary service (META-INF/services).
+scheme_java_library(
+    name = "builtins",
+    srcs = glob(["**/*.java"]),
+    resource_strip_prefix = "src/builtins",
+    resources = glob(["META-INF/**"]),
+    truffle_dsl = True,
+    visibility = ["//visibility:public"],
+    deps = [
+        "//src/reader",
+        "//src/runtime",
+        "@jvm//:org_graalvm_truffle_truffle_api",
+    ],
+)
+
+# For the rule 1 check (//tests:rules).
+filegroup(
+    name = "srcs",
+    srcs = glob(["**/*.java"]),
+    visibility = ["//tests:__pkg__"],
+)

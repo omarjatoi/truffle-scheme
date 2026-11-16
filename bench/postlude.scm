@@ -1,4 +1,4 @@
-;;; Our postlude for the vendored benchmark sets (bench/README.md). `mx benchmark` puts it where
+;;; Our postlude for the vendored benchmark sets (bench/README.md). `bazel run //:r7rs -- benchmark` puts it where
 ;;; ecraven's bench script puts an implementation's postlude: after the program and the suite's
 ;;; src/common.scm, before the call that runs the benchmark. Before it, the driver defines
 ;;; %r7rs-bench-implementation and %r7rs-bench-iterations. A count other than the program's own

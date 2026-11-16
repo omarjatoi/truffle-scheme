@@ -18,22 +18,6 @@
         "type": "github"
       }
     },
-    "mx": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1794478704,
-        "narHash": "sha256-ZWOxHQqz6iqmFHfJ2z2k9V4QwNLOeQiyw/H7XMs/1EA=",
-        "owner": "graalvm",
-        "repo": "mx",
-        "rev": "a8ebd2dac0e98448029ea62a535660ab79d10bc3",
-        "type": "github"
-      },
-      "original": {
-        "owner": "graalvm",
-        "repo": "mx",
-        "type": "github"
-      }
-    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1794537146,
@@ -51,7 +35,6 @@
     "root": {
       "inputs": {
         "flake-utils": "flake-utils",
-        "mx": "mx",
         "nixpkgs": "nixpkgs"
       }
     },

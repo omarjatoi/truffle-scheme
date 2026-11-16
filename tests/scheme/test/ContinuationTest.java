@@ -13,7 +13,7 @@ import org.junit.Test;
 
 /**
  * M2-02: call/cc capture (design.md "Continuations") and re-entry from copied frames. Unit tests run
- * both with the JIT in background mode and compiling immediately (mx tests unittest, unittest-compile).
+ * both with the JIT in background mode and compiling immediately (//tests:unit_jit, //tests:unit_compile).
  */
 public class ContinuationTest {
 

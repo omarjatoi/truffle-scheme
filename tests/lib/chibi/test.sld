@@ -11,7 +11,7 @@
 ;;   @@r7rs-test ERROR <label> :: <condition>
 ;;   @@r7rs-test END <group>
 ;;
-;; `mx r7rs-test` and `mx r7rs-status` count these lines. The same shim runs
+;; The conformance tests (tests/harness) count these lines. The same shim runs
 ;; under chibi-scheme (`chibi-scheme -I tests/lib ...`) to get each section's
 ;; total number of tests.
 ;;

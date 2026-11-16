@@ -1,6 +1,6 @@
 (import (scheme base) (scheme write))
 
-;; M2-05: 1,000,000-deep non-tail recursion (the M1-06 control). `mx tests space` runs this under
+;; M2-05: 1,000,000-deep non-tail recursion (the M1-06 control). `//tests:space` runs this under
 ;; -Xss256k: stack-depth spill keeps the Java stack constant. Not a tests/diff/ program: chibi-scheme
 ;; runs out of stack space on it.
 (define (count i)

@@ -12,11 +12,13 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# Every job runs inside the Nix dev shell, which provides everything: GraalVM CE 25.5
-# (JAVA_HOME), mx, Python, chibi-scheme. Each step runs one step of `mx checks` or
-# `mx tests`, so a failure names exactly what broke.
+# Every job runs Bazel inside the Nix dev shell (AGENTS.md "Commands"). `--config=ci` keeps
+# Bazel's disk cache (build outputs and test results) and repository cache (downloads) under
+# ~/.cache, which actions/cache saves after each run: a PR restores its own last run's, or else
+# main's, so it reruns only what it changed.
 jobs:
-  # Required check on main: build and static checks.
+  # Required check on main: the static checks (tests tagged lint), which build every project with
+  # javac's warnings as errors.
   checks:
     name: Checks
     runs-on: ubuntu-26.04
@@ -24,142 +26,91 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: DeterminateSystems/determinate-nix-action@v3
-      # Maven jars (Truffle, JUnit, checkstyle, SpotBugs, ...) that mx downloads, keyed by the pinned versions.
       - uses: actions/cache@v6
         with:
-          path: ~/.mx/cache
-          key: mx-cache-${{ runner.os }}-${{ hashFiles('mx.r7rs/suite.py', 'flake.lock') }}
-          restore-keys: mx-cache-${{ runner.os }}-
-      - name: Dev shell
-        run: nix develop --command sh -c 'java -version && mx --version'
-      - name: ECJ build (warnings are errors)
-        run: nix develop --command mx checks ecj
-      - name: javac build (warnings are errors)
-        run: nix develop --command mx checks build
-      - name: suite.py is canonical
-        run: nix develop --command mx checks canonical overlap sources
-      - name: Checkstyle
-        run: nix develop --command mx checks checkstyle
-      - name: Format (Eclipse formatter)
-        run: nix develop --command mx checks format
-      - name: SpotBugs
-        run: nix develop --command mx checks spotbugs
-      - name: Rule checks (AGENTS.md)
-        run: nix develop --command mx checks rules
+          path: |
+            ~/.cache/bazel-disk-cache
+            ~/.cache/bazel-repository-cache
+          key: bazel-${{ runner.os }}-checks-${{ github.sha }}
+          restore-keys: |
+            bazel-${{ runner.os }}-checks-
+            bazel-${{ runner.os }}-
+      - name: Static checks (format, Checkstyle, ECJ, SpotBugs, rule 1, versions)
+        run: nix develop --command bazel test --config=ci --build_tests_only --test_tag_filters=lint //...
 
-  # The steps of `mx tests`, spread over parallel jobs so the slow ones (unit tests in
-  # compile-immediately mode, spec, torture) don't queue behind each other. Each job builds
-  # for itself and runs only its own steps; the others show as skipped. Together they run
-  # every step of `mx tests`. The `Tests` job below is the required check and passes only
-  # if every one of these jobs passed.
-  test-jobs:
-    name: Tests (${{ matrix.name }})
+  # Every other test, then the doc commands (docs/usage.md, docs/embedding.md), which run Bazel.
+  bazel-test:
+    name: Tests (bazel test)
     runs-on: ubuntu-26.04
     timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: unit, status, diff
-            steps: [unittest, conformance, diff]
-          # The two slowest steps keep all of a runner's cores busy (mx runs their JVMs in
-          # parallel), so each is split over two runners: every other test class or case.
-          - name: unit, compile immediately 1/2
-            steps: [unittest-compile]
-            shard: 1/2
-          - name: unit, compile immediately 2/2
-            steps: [unittest-compile]
-            shard: 2/2
-          - name: spec 1/2
-            steps: [spec]
-            shard: 1/2
-          - name: spec 2/2
-            steps: [spec]
-            shard: 2/2
-          - name: torture, space
-            steps: [torture, space]
-          # The tools distribution (M6-03): DAP and the Chrome inspector drive a Scheme program
-          # (breakpoint, stack, locals, step), and the CPU sampler and memory tracer profile one.
-          - name: tools
-            steps: [tools]
-          # Performance thresholds (M5-08): a benchmark subset, each program in a JVM of its own,
-          # one after another, against bench/thresholds.json, whose baselines were measured on
-          # this runner type (bench/README.md "Thresholds").
-          - name: benchmarks
-            steps: [bench]
-          # docs/usage.md and docs/embedding.md (M6-07): every command block runs and prints what the
-          # block after it shows, and every code sample is the file or test region it names.
-          - name: readme
-            steps: [readme]
     steps:
       - uses: actions/checkout@v7
       - uses: DeterminateSystems/determinate-nix-action@v3
       - uses: actions/cache@v6
         with:
-          path: ~/.mx/cache
-          key: mx-cache-${{ runner.os }}-${{ hashFiles('mx.r7rs/suite.py', 'flake.lock') }}
-          restore-keys: mx-cache-${{ runner.os }}-
-      - name: Build
-        run: nix develop --command mx build
-      - name: Unit tests
-        if: contains(matrix.steps, 'unittest')
-        run: nix develop --command mx tests unittest
-      - name: Unit tests (compile immediately) ${{ matrix.shard }}
-        if: contains(matrix.steps, 'unittest-compile')
-        run: nix develop --command sh -c 'mx r7rs-unittest --compile --jobs "$(nproc)" --shard ${{ matrix.shard }}'
-      - name: Conformance status block is up to date
-        if: contains(matrix.steps, 'conformance')
-        run: nix develop --command mx tests conformance
-      - name: Differential tests (tests/diff vs chibi-scheme)
-        if: contains(matrix.steps, 'diff')
-        run: nix develop --command mx tests diff
-      - name: Constant stack (tail loop, deep recursion under -Xss256k)
-        if: contains(matrix.steps, 'space')
-        run: nix develop --command mx tests space
-      - name: Spec tests ${{ matrix.shard }}
-        if: contains(matrix.steps, 'spec')
-        run: nix develop --command mx r7rs-spec --shard ${{ matrix.shard }}
-      - name: Torture
-        if: contains(matrix.steps, 'torture')
-        run: nix develop --command mx tests torture
-      - name: Tools smoke tests (DAP, Chrome inspector, CPU sampler, memory tracer)
-        if: contains(matrix.steps, 'tools')
+          path: |
+            ~/.cache/bazel-disk-cache
+            ~/.cache/bazel-repository-cache
+          key: bazel-${{ runner.os }}-tests-${{ github.sha }}
+          restore-keys: |
+            bazel-${{ runner.os }}-tests-
+            bazel-${{ runner.os }}-
+      - name: Tests (unit in three modes, conformance and torture, diff, spec, space, tools)
+        run: nix develop --command bazel test --config=ci --test_tag_filters=-lint //...
+      - name: Doc commands and samples (docs/usage.md, docs/embedding.md)
+        if: ${{ !cancelled() }}
         timeout-minutes: 20
-        run: nix develop --command mx tests tools
+        run: nix develop --command bazel run --config=ci //:r7rs -- readme
+
+  # Performance thresholds (M5-08): a benchmark subset, each program in a JVM of its own, one after
+  # another, on a runner of its own, against bench/thresholds.json, whose baselines were measured on
+  # this runner type (bench/README.md "Thresholds").
+  benchmarks:
+    name: Tests (benchmarks)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: DeterminateSystems/determinate-nix-action@v3
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/bazel-disk-cache
+            ~/.cache/bazel-repository-cache
+          key: bazel-${{ runner.os }}-benchmarks-${{ github.sha }}
+          restore-keys: |
+            bazel-${{ runner.os }}-benchmarks-
+            bazel-${{ runner.os }}-
+      - name: Build
+        run: nix develop --command bazel build --config=ci //:r7rs
       - name: Benchmark thresholds (bench/thresholds.json)
-        if: contains(matrix.steps, 'bench')
-        run: nix develop --command mx r7rs-bench-check --json bench-check.json --markdown "$GITHUB_STEP_SUMMARY"
-      # The measurements, which `mx r7rs-bench-check --update --from` turns into new thresholds.
+        run: nix develop --command bazel run --config=ci //:r7rs -- bench-check --json "$PWD/bench-check.json" --markdown "$GITHUB_STEP_SUMMARY"
+      # The measurements, which `bench-check --update --from` turns into new thresholds.
       - uses: actions/upload-artifact@v7
-        if: ${{ !cancelled() && contains(matrix.steps, 'bench') }}
+        if: ${{ !cancelled() }}
         with:
           name: bench-check-${{ github.run_attempt }}
           path: bench-check.json
           if-no-files-found: ignore
-      - name: Doc commands and samples (docs/usage.md, docs/embedding.md)
-        if: contains(matrix.steps, 'readme')
-        timeout-minutes: 20
-        run: nix develop --command mx tests readme
 
-  # Required check on main: all tests. It passes only if every test job above succeeded;
-  # a failed, cancelled or skipped test job fails it.
+  # Required check on main: it passes only if both test jobs above passed.
   tests:
     name: Tests
-    needs: test-jobs
+    needs: [bazel-test, benchmarks]
     if: always()
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
       - name: Every test job passed
         env:
-          RESULT: ${{ needs.test-jobs.result }}
+          RESULT: ${{ needs.bazel-test.result }} ${{ needs.benchmarks.result }}
         run: |
           echo "Test jobs: $RESULT"
-          test "$RESULT" = success
+          test "$RESULT" = "success success"
 
-  # Progress tracking, not a merge gate: the main ruleset requires only Checks and
-  # Tests, and continue-on-error keeps a failing run from marking the workflow red.
-  # Each run's per-section tables (chibi's suite, then Larceny's) are in the workflow run summary.
+  # Progress tracking, not a merge gate: the main ruleset requires only Checks and Tests, and
+  # continue-on-error keeps a failing run from marking the workflow red. Each run's per-section
+  # tables (chibi's suite, then Larceny's) are in the workflow run summary.
   conformance:
     name: Conformance (${{ matrix.mode }})
     runs-on: ubuntu-26.04
@@ -178,13 +129,12 @@ jobs:
       - uses: DeterminateSystems/determinate-nix-action@v3
       - uses: actions/cache@v6
         with:
-          path: ~/.mx/cache
-          key: mx-cache-${{ runner.os }}-${{ hashFiles('mx.r7rs/suite.py', 'flake.lock') }}
-          restore-keys: mx-cache-${{ runner.os }}-
-      - name: mx build
-        run: nix develop --command mx build
-      - name: mx r7rs-test --suite chibi ${{ matrix.flags }}
-        run: nix develop --command mx r7rs-test --suite chibi ${{ matrix.flags }} --markdown "$GITHUB_STEP_SUMMARY"
-      - name: mx r7rs-test --suite larceny ${{ matrix.flags }}
-        if: ${{ !cancelled() }}
-        run: nix develop --command mx r7rs-test --suite larceny ${{ matrix.flags }} --markdown "$GITHUB_STEP_SUMMARY"
+          path: |
+            ~/.cache/bazel-disk-cache
+            ~/.cache/bazel-repository-cache
+          key: bazel-${{ runner.os }}-conformance-${{ github.sha }}
+          restore-keys: |
+            bazel-${{ runner.os }}-conformance-
+            bazel-${{ runner.os }}-
+      - name: Both conformance suites ${{ matrix.flags }}
+        run: nix develop --command bazel run --config=ci //:r7rs -- test ${{ matrix.flags }} --markdown "$GITHUB_STEP_SUMMARY"

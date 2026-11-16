@@ -1,0 +1,11 @@
+load("@rules_java//toolchains:default_java_toolchain.bzl", "default_java_toolchain")
+
+# Java 25 compilation (`--java_language_version=25`, .bazelrc) with javac from the pinned GraalVM
+# (bazel/graalvm.bzl) instead of rules_java's default Temurin: Bazel's JavaBuilder runs on
+# `java_runtime` and compiles with that JDK's javac, so the build and the tests share one JDK.
+default_java_toolchain(
+    name = "graalvm_java25",
+    java_runtime = "@graalvm//:jdk",
+    source_version = "25",
+    target_version = "25",
+)

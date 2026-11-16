@@ -42,7 +42,7 @@ import scheme.runtime.value.SVector;
  * <li>{@code display} follows R7RS: strings, characters and symbols are not escaped, also when nested.</li>
  * <li>Where R7RS leaves the format open, output matches chibi-scheme 0.12 (flonums, character names,
  * string escapes, when symbols need bars, {@code (quote x)} without abbreviation), so that
- * {@code mx r7rs-diff} can compare stdout.</li>
+ * the differential tests can compare stdout.</li>
  * </ul>
  *
  * Both passes use explicit stacks: no Java recursion proportional to nesting depth (AGENTS.md rule 4).

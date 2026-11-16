@@ -12,11 +12,11 @@ All three are in Truffle 25.5.5.0.3 (Maven Central), on GraalVM CE 25.5.5.0.3
 
 Each reproducer is a JUnit test in `tests/scheme/test/upstream/` (package
 `scheme.test.upstream`) that asserts the buggy behavior, so it **passes while
-the bug is there**. It runs with every other unit test in `mx tests`, and
+the bug is there**. It runs with every other unit test in `bazel test //...`, and
 alone with:
 
 ```
-mx unittest --regex scheme.test.upstream
+bazel test //tests:unit_jit_UpstreamAsyncStacksTest //tests:unit_jit_UpstreamNestedRootSourceTest //tests:unit_jit_UpstreamReportPolymorphismTest
 ```
 
 When a Truffle upgrade fixes a bug, its test fails. Then remove the
@@ -255,8 +255,8 @@ bytecode index `$bci` to get the operation's state, but neither is a field or
 a parameter there.
 
 The reproducer can't be part of the build, so the test runs `javac` on it, with
-the DSL processor (mx passes its path as `-Dr7rs.truffle.dslProcessor`, in
-`mx_r7rs.py`'s unit-test config) and Truffle's jars from the test JVM's module
+the DSL processor (the test runner passes its path as `-Dr7rs.truffle.dslProcessor`,
+in `tests/harness/main.py`) and Truffle's jars from the test JVM's module
 path: once as it is, and once without `@ReportPolymorphism`, which compiles.
 
 - **Expected:** it compiles, like the same source without the annotation.

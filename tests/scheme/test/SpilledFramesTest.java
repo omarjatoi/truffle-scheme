@@ -29,7 +29,7 @@ import com.oracle.truffle.api.debug.SuspendedEvent;
  * root prompt's pending segments rather than on the Java stack, and so are the frames of a resumed
  * continuation. An uncaught error unwinds through them, so the guest stack trace has every frame;
  * a suspended debugger sees them as the prompt's asynchronous stack, right after the frames on the
- * Java stack. Under {@code mx tests torture} every frame has been captured and resumed, and the
+ * Java stack. Under {@code //tests:unit_torture} every frame has been captured and resumed, and the
  * traces must be the same.
  */
 public class SpilledFramesTest {

@@ -10,7 +10,7 @@ import org.junit.Test;
 
 /**
  * M4-05: booleans (R7RS §6.3), control features (§6.10) and exceptions (§6.11). Results are
- * compared as written, against the written expected datum. Under {@code mx tests torture} these run
+ * compared as written, against the written expected datum. Under {@code //tests:unit_torture} these run
  * with a capture and resume at every non-tail call.
  */
 public class ControlTest {
