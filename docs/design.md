@@ -545,8 +545,8 @@ Each entry: the decision, why, and what was rejected.
 
 - **Bazel builds and tests everything** (`MODULE.bazel`, Bazel 8 with
   bzlmod, `.bazelversion`). Each build step and test is cached on its
-  inputs, locally and in CI (a remote cache such as BuildBuddy is
-  `--config=remote`), so a change reruns only what depends on it.
+  inputs, locally and in CI (BuildBuddy's remote cache,
+  `--config=buildbuddy`), so a change reruns only what depends on it.
   `bazel test //...` is the whole pre-PR check; the repository's other
   commands are `bazel run //:r7rs -- <command>` (`tests/harness/main.py`).
 - **Released GraalVM, pinned by Bazel.** The JDK that compiles, runs the

@@ -4,37 +4,44 @@
 # does. Main requires the build's status, `buildkite/truffle-scheme`: `checks` and `tests` fail
 # it, and the conformance steps (soft_fail) post their tables as annotations and never do. Each
 # step also posts its own status, `buildkite/truffle-scheme/<key>`.
+#
+# Builds and tests are cached in BuildBuddy (.bazelrc --config=buildbuddy), with the API key from
+# the cluster secret BUILDBUDDY_API_KEY; the `buildbuddy` annotation links each step's invocation.
 
-# Bazel's disk and repository caches (.bazelrc --config=ci), kept between builds.
+secrets:
+  - BUILDBUDDY_API_KEY
+
+# Bazel's repository cache (the downloads: GraalVM, Maven jars, Python), kept between builds.
 cache:
   name: bazel
   paths:
-    - /root/.cache/bazel-disk-cache
     - /root/.cache/bazel-repository-cache
 
 steps:
   - label: ":bazel: Checks"
     key: checks
     command:
-      - nix develop --command bazel test --config=ci --build_tests_only --test_tag_filters=lint //...
+      - 'printf -- "- checks: https://app.buildbuddy.io/invocation/%s\n" "$$BUILDKITE_JOB_ID" | buildkite-agent annotate --context buildbuddy --append'
+      - nix develop --command bazel test --config=ci --config=buildbuddy --remote_header=x-buildbuddy-api-key=$$BUILDBUDDY_API_KEY --invocation_id=$$BUILDKITE_JOB_ID --build_tests_only --test_tag_filters=lint //...
 
   - label: ":bazel: Tests"
     key: tests
     timeout_in_minutes: 75
     command:
-      - nix develop --command bazel test --config=ci --test_tag_filters=-lint //...
-      - nix develop --command bazel run --config=ci //:r7rs -- readme
+      - 'printf -- "- tests: https://app.buildbuddy.io/invocation/%s\n" "$$BUILDKITE_JOB_ID" | buildkite-agent annotate --context buildbuddy --append'
+      - nix develop --command bazel test --config=ci --config=buildbuddy --remote_header=x-buildbuddy-api-key=$$BUILDBUDDY_API_KEY --invocation_id=$$BUILDKITE_JOB_ID --test_tag_filters=-lint //...
+      - nix develop --command bazel run --config=ci --config=buildbuddy --remote_header=x-buildbuddy-api-key=$$BUILDBUDDY_API_KEY //:r7rs -- readme
 
   - label: ":memo: Conformance (interpreter)"
     key: conformance-interpreter
     soft_fail: true
     command:
-      - nix develop --command bazel run --config=ci //:r7rs -- test --markdown "$$PWD/conformance.md"
+      - nix develop --command bazel run --config=ci --config=buildbuddy --remote_header=x-buildbuddy-api-key=$$BUILDBUDDY_API_KEY //:r7rs -- test --markdown "$$PWD/conformance.md"
       - buildkite-agent annotate --context conformance-interpreter < conformance.md
 
   - label: ":memo: Conformance (compile)"
     key: conformance-compile
     soft_fail: true
     command:
-      - nix develop --command bazel run --config=ci //:r7rs -- test --compile --markdown "$$PWD/conformance.md"
+      - nix develop --command bazel run --config=ci --config=buildbuddy --remote_header=x-buildbuddy-api-key=$$BUILDBUDDY_API_KEY //:r7rs -- test --compile --markdown "$$PWD/conformance.md"
       - buildkite-agent annotate --context conformance-compile < conformance.md
