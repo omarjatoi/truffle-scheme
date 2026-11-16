@@ -73,9 +73,10 @@ mx tests unittest diff                    # just those steps
 mx build                                  # build everything
 mx unittest                               # JUnit tests in tests/scheme/test (Graal JIT on, background)
 mx r7rs-unittest --compile                # same, compile immediately; failures are errors
-mx r7rs-test                              # chibi suite, interpreter only (the fast loop)
+mx r7rs-test                              # both conformance suites, interpreter only (the fast loop)
+mx r7rs-test --suite larceny              # just one suite: chibi (tests/r7rs) or larceny (tests/r7rs-larceny)
 mx r7rs-test -v 6.10                      # one section, listing failing tests
-mx r7rs-test 6.10                         # one conformance section
+mx r7rs-test 6.10                         # one conformance section (chibi's 6.10, or Larceny's base, ...)
 mx r7rs-test --torture                    # capture + resume at every non-tail call
 mx r7rs-test --compile                    # Graal JIT; compile immediately; failures are errors
 mx r7rs-spec                              # tests/spec (tail-call space, continuations, depth)
@@ -116,7 +117,7 @@ summary shows per-section results. Steps whose task hasn't landed yet report
 
 ## Never
 
-- Edit anything under `tests/r7rs/`, change or delete an existing case in
+- Edit anything under `tests/r7rs/` or `tests/r7rs-larceny/`, change or delete an existing case in
   `tests/spec/`, or edit the status block in `docs/plan.md` by hand. `mx r7rs-status` regenerates the block, and the
   `mx tests` fails if it's stale, so commit the regenerated block with your change. If a test looks wrong, explain why in the
   PR and stop.
@@ -220,7 +221,8 @@ src/builtins/              leaf primitives only (see rule 1)
 src/prelude/               standard libraries (.sld) and prelude Scheme code
 src/launcher/              host-side embedding: the conformance runner
 tests/r7rs/                chibi suite, vendored, read-only (see its README)
-tests/lib/                 test-only libraries, e.g. the (chibi test) shim
+tests/r7rs-larceny/        Larceny's R7RS suite, vendored, read-only (see its README)
+tests/lib/                 test-only libraries: the (chibi test) and (tests scheme test) shims
 tests/diff/                programs that must match chibi under mx r7rs-diff; add freely
 tests/space/               programs mx r7rs-space runs under small JVM limits
 tests/spec/                tail-call / continuation / depth cases; existing cases read-only

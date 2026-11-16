@@ -128,7 +128,7 @@ jobs:
 
   # Progress tracking, not a merge gate: the main ruleset requires only Checks and
   # Tests, and continue-on-error keeps a failing run from marking the workflow red.
-  # Each run's per-section table is in the workflow run summary.
+  # Each run's per-section tables (chibi's suite, then Larceny's) are in the workflow run summary.
   conformance:
     name: Conformance (${{ matrix.mode }})
     runs-on: ubuntu-26.04
@@ -152,5 +152,8 @@ jobs:
           restore-keys: mx-cache-${{ runner.os }}-
       - name: mx build
         run: nix develop --command mx build
-      - name: mx r7rs-test ${{ matrix.flags }}
-        run: nix develop --command mx r7rs-test ${{ matrix.flags }} --markdown "$GITHUB_STEP_SUMMARY"
+      - name: mx r7rs-test --suite chibi ${{ matrix.flags }}
+        run: nix develop --command mx r7rs-test --suite chibi ${{ matrix.flags }} --markdown "$GITHUB_STEP_SUMMARY"
+      - name: mx r7rs-test --suite larceny ${{ matrix.flags }}
+        if: ${{ !cancelled() }}
+        run: nix develop --command mx r7rs-test --suite larceny ${{ matrix.flags }} --markdown "$GITHUB_STEP_SUMMARY"
