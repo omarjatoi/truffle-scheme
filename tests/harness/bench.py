@@ -182,10 +182,15 @@ def r7rs_vendor_benchmarks(args):
     log(f'wrote {len(sums)} files and {len(rows)} programs to {os.path.relpath(bench_set.dir, repo_root())}')
 
 
+# The heap our benchmark JVMs run with (bench/README.md "Heap", plan.md M8-02): a fixed maximum,
+# the same on every machine, rather than the JVM's default of a quarter of the machine's memory,
+# with which G1 grows the heap to tens of GB for programs that keep a few hundred MB alive.
+BENCH_HEAP_VM_ARGS = ['-Xmx2g']
+
 _BENCH_MODES = {
     # mode: (VM arguments, default iterations, default warmup iterations)
-    'jit': ([], 3, 1),
-    'interpreter': (INTERPRETER_VM_ARGS, 1, 0),
+    'jit': (BENCH_HEAP_VM_ARGS, 3, 1),
+    'interpreter': (BENCH_HEAP_VM_ARGS + INTERPRETER_VM_ARGS, 1, 0),
 }
 
 _ELAPSED_LINE = re.compile(r'^Elapsed time: (\S+) seconds \(.*\) for (.*)$', re.MULTILINE)
@@ -399,20 +404,72 @@ _IMPLEMENTATIONS = [
 
 
 class _Measured:
-    def __init__(self, rc, output, timed_out, rss_bytes):
+    def __init__(self, rc, output, timed_out, rss_bytes, heap=None):
         self.rc = rc
         self.output = output
         self.timed_out = timed_out
         self.rss_bytes = rss_bytes
+        self.heap = heap  # _heap_from_gc_log's, for our JVMs
 
 
-def _run_measured(argv, cwd, stdin_path, env, timeout):
+def _gc_log_vm_args(path):
+    """The JVM options that log each collection to path, a line per pause, for _heap_from_gc_log."""
+    return [f'-Xlog:gc:file={path}']
+
+
+# A pause's line in the log (-Xlog:gc): "GC(3) Pause Young (Normal) (G1 Evacuation Pause) 967M->7M(2064M) 1.577ms":
+# the heap's occupancy before and after it, its committed size, and how long it took.
+_GC_PAUSE_LINE = re.compile(r'\bPause .*? (\d+)([KMG])->(\d+)([KMG])\((\d+)([KMG])\) (\d+\.\d+)ms$', re.MULTILINE)
+_UNIT_MB = {'K': 1 / 1024, 'M': 1, 'G': 1024}
+
+
+def _heap_from_gc_log(path):
+    """What a JVM's GC log says about its heap (bench/README.md "Heap"), or None without a log:
+    {heap_mb, committed_mb, gcs, gc_ms}. heap_mb is the most the heap held right after a
+    collection: what the program kept alive then, plus the garbage the collection didn't look at (a
+    young collection leaves the old generation's), so at least the live heap then, and often well
+    above it; committed_mb the most heap the JVM had taken from the OS; gcs and gc_ms the pauses
+    and their total time."""
+    try:
+        with open(path, encoding='utf-8', errors='replace') as f:
+            text = f.read()
+    except OSError:
+        return None
+    pauses = [(int(m.group(3)) * _UNIT_MB[m.group(4)], int(m.group(5)) * _UNIT_MB[m.group(6)], float(m.group(7)))
+              for m in _GC_PAUSE_LINE.finditer(text)]
+    if not pauses:
+        return {'heap_mb': None, 'committed_mb': None, 'gcs': 0, 'gc_ms': 0}
+    return {'heap_mb': round(max(p[0] for p in pauses), 1), 'committed_mb': round(max(p[1] for p in pauses), 1),
+            'gcs': len(pauses), 'gc_ms': round(sum(p[2] for p in pauses))}
+
+
+_HISTOGRAM_TOTAL = re.compile(r'^Total\s+\d+\s+(\d+)\s*$', re.MULTILINE)
+
+
+def _live_heap_mb(jcmd, pid):
+    """The bytes of live objects in a JVM's heap now, in MB, or None: `jcmd GC.class_histogram`
+    collects the whole heap first, so its total is exactly what is reachable."""
+    try:
+        done = subprocess.run([jcmd, str(pid), 'GC.class_histogram'], capture_output=True, text=True, timeout=60, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    m = _HISTOGRAM_TOTAL.search(done.stdout)
+    return int(m.group(1)) / 2**20 if m else None
+
+
+def _run_measured(argv, cwd, stdin_path, env, timeout, gc_log=None, live_every=None):
     """Runs argv to completion or until timeout seconds have passed, and measures its peak RSS
-    (the largest of the process and the descendants it waited for, from wait4)."""
+    (the largest of the process and the descendants it waited for, from wait4); with gc_log, reads
+    the GC log that a JVM of argv writes there (_gc_log_vm_args); with live_every, measures the live
+    heap of that JVM (argv[0] is its java) every live_every seconds (_live_heap_mb), each time a full
+    collection, so the times it prints are not to be used."""
+    jcmd = join(os.path.dirname(argv[0]), 'jcmd') if live_every else None
+    live = []
     with tempfile.TemporaryFile() as out, open(stdin_path or os.devnull, 'rb') as stdin:
         process = subprocess.Popen(argv, cwd=cwd, stdin=stdin, stdout=out, stderr=subprocess.STDOUT, env=env,
                                    start_new_session=True)
         deadline = time.monotonic() + timeout
+        next_sample = time.monotonic() + (live_every or 0)
         timed_out = False
         while True:
             pid, status, rusage = os.wait4(process.pid, os.WNOHANG)
@@ -423,17 +480,26 @@ def _run_measured(argv, cwd, stdin_path, env, timeout):
                 os.killpg(process.pid, signal.SIGKILL)
                 _, status, rusage = os.wait4(process.pid, 0)
                 break
+            if jcmd and time.monotonic() >= next_sample:
+                sample = _live_heap_mb(jcmd, process.pid)
+                if sample is not None:
+                    live.append(sample)
+                next_sample = time.monotonic() + live_every
             time.sleep(0.05)
         process.returncode = os.waitstatus_to_exitcode(status)
         out.seek(0)
         output = out.read().decode('utf-8', errors='replace')
     # ru_maxrss is in bytes on macOS, in kilobytes on Linux.
     rss = rusage.ru_maxrss * (1 if sys.platform == 'darwin' else 1024)
-    return _Measured(process.returncode, output, timed_out, rss)
+    heap = _heap_from_gc_log(gc_log) if gc_log else None
+    if live_every:
+        heap = dict(heap or {}, live_mb=round(max(live), 1) if live else None, live_samples=len(live))
+    return _Measured(process.returncode, output, timed_out, rss, heap)
 
 
 def _outcome(measured, iterations, stage=''):
-    """{status, times, rss_mb, detail}: status is ok, or what went wrong."""
+    """{status, times, rss_mb, detail}, and for our JVMs the heap (_heap_from_gc_log): status is
+    ok, or what went wrong."""
     times = [float(m.group(1)) for m in _ELAPSED_LINE.finditer(measured.output)]
     error = re.search(r'^(ERROR|INTERNAL ERROR):.*$', measured.output, re.MULTILINE)
     if measured.timed_out:
@@ -449,6 +515,8 @@ def _outcome(measured, iterations, stage=''):
     else:
         status = 'ok'
     result = {'status': status, 'times': times, 'rss_mb': round(measured.rss_bytes / 2**20, 1)}
+    if measured.heap:
+        result.update(measured.heap)
     if status != 'ok':
         result['detail'] = '\n'.join(measured.output.rstrip('\n').splitlines()[-8:])
     m = re.search(r'^\+!CSVLINE!\+([^,\n]*),', measured.output, re.MULTILINE)
@@ -485,10 +553,17 @@ def _run_one(impl, words, lude, bench_set, program, count, options, root):
             iterations = options.jit_iterations if impl.key == 'jit' else 1
             with open(src, 'wb') as f:
                 f.write(bench_set.program(program, _our_postlude(f'truffle-scheme-{impl.key}', iterations)))
-            vm_args = _BENCH_MODES[impl.key][0]
-            argv = RUNTIME[0].launcher([src], vm_args)
+            gc_log = join(workdir, 'gc.log')
+            argv = RUNTIME[0].launcher([src], _BENCH_MODES[impl.key][0] + _gc_log_vm_args(gc_log))
             timeout = options.timeout * iterations if impl.key == 'jit' else options.interpreter_timeout
-            return _outcome(_run_measured(argv, workdir, stdin_path, None, timeout), iterations)
+            result = _outcome(_run_measured(argv, workdir, stdin_path, None, timeout, gc_log), iterations)
+            if impl.key == 'jit' and options.live_every and result['status'] == 'ok':
+                # The live heap, in a JVM of its own: its full collections would change the times.
+                argv = RUNTIME[0].launcher([src], _BENCH_MODES[impl.key][0])
+                measured = _run_measured(argv, workdir, stdin_path, None, timeout, live_every=options.live_every)
+                if _outcome(measured, iterations)['status'] == 'ok':
+                    result.update(measured.heap)
+            return result
         with open(src, 'wb') as f:
             f.write(b''.join([lude['prelude'], bench_set._read('src', program + '.scm'), bench_set._read('src', 'common.scm'),
                               lude['postlude'], bench_set._read('src', 'common-postlude.scm')]))
@@ -546,6 +621,9 @@ def r7rs_bench_report(args):
                         help="kill a run after this long (default 300, as ecraven's CPU_LIMIT; our JIT gets it once per iteration)")
     parser.add_argument('--interpreter-timeout', type=int, metavar='SECONDS',
                         help="the same for our interpreter (default: --timeout); a program whose count is 1 can't be scaled down")
+    parser.add_argument('--live-every', type=float, default=0.5, metavar='SECONDS',
+                        help="our JIT's live heap: run each program again, collecting the whole heap and measuring "
+                             "what is live this often (default 0.5; 0: don't)")
     parser.add_argument('--note', default='', help='conditions to state in the report, e.g. how loaded the machine was')
     parser.add_argument('--output', default=join(repo_root(), 'docs', 'benchmarks.md'), metavar='FILE.md')
     parser.add_argument('--json', default=join(repo_root(), 'docs', 'benchmarks.json'), metavar='FILE.json')
@@ -583,6 +661,8 @@ def r7rs_bench_report(args):
         'jit_iterations': options.jit_iterations,
         'timeout': options.timeout,
         'interpreter_timeout': options.interpreter_timeout,
+        'heap_vm_args': BENCH_HEAP_VM_ARGS,
+        'live_every': options.live_every,
         'implementations': {},
         'programs': {},
     }
@@ -593,7 +673,8 @@ def r7rs_bench_report(args):
             report['implementations'][impl.key] = info
             if impl.name is None:
                 info['version'] = f'truffle-scheme {report["commit"]}, GraalVM {graalvm_version(RUNTIME[0].release)}'
-                info['command'] = ('java ' + ' '.join(_BENCH_MODES[impl.key][0] or ['(Graal JIT, background compilation)'])
+                info['command'] = ('java ' + ' '.join(_BENCH_MODES[impl.key][0] + _gc_log_vm_args('{gc.log}'))
+                                   + (' (Graal JIT, background compilation)' if impl.key == 'jit' else '')
                                    + ' -m scheme.launcher/scheme.launcher.SchemeMain {src} < {input}')
                 info['notes'].append('`bench/postlude.scm` as the postlude')
                 continue
@@ -696,6 +777,28 @@ def _write_report_markdown(report, path):
         t = time_of(program, key, field)
         return t / fastest[program] if t is not None and fastest[program] else None
 
+    # Our JVMs' heap (M8-02), next to their RSS: the live heap, and the heap after GC; a report from
+    # before has neither.
+    heap_keys = {key for entry in programs.values() for key, result in entry['results'].items() if 'gcs' in result}
+    live_keys = {key for entry in programs.values() for key, result in entry['results'].items() if 'live_samples' in result}
+
+    def memory_cell(result, kind):
+        result = result or {}
+        if kind == 'rss':
+            return f'{result["rss_mb"]:.0f}' if 'rss_mb' in result else ''
+        if kind == 'live':
+            if 'live_samples' not in result:
+                return ''
+            return f'{result["live_mb"]:.0f}' if result['live_mb'] is not None else 'too short'
+        if 'gcs' not in result:
+            return ''
+        return f'{result["heap_mb"]:.0f}' if result['heap_mb'] is not None else 'no GC'
+
+    def median_of(key, field):
+        values = sorted(programs[p]['results'][key][field] for p in programs
+                        if programs[p]['results'].get(key, {}).get(field) is not None)
+        return f'{values[len(values) // 2]:.0f}' if values else ''
+
     lines = []
     out = lines.append
     out('# Benchmarks')
@@ -729,20 +832,28 @@ def _write_report_markdown(report, path):
     interpreter_timeout = report.get('interpreter_timeout', report['timeout'])
     out(f'- A run is killed after {report["timeout"]} s (ecraven\'s `CPU_LIMIT`), our JIT\'s after that '
         'once per iteration' + (f', our interpreter\'s after {interpreter_timeout} s' if interpreter_timeout != report['timeout'] else '')
-        + '. Peak memory is the process\'s maximum resident set size. Our JVMs run with the default heap '
-        'limits (no `-Xmx`), so theirs is as much as the JVM\'s default ergonomics let the heap grow.')
+        + '. Peak memory is the process\'s maximum resident set size. ' + (
+            f'Our JVMs run with `{" ".join(report["heap_vm_args"])}`, a fixed maximum heap (bench/README.md "Heap"); '
+            'the memory tables also give how much of their heap the program used (Peak memory).'
+            if 'heap_vm_args' in report else
+            'Our JVMs run with the default heap limits (no `-Xmx`), so theirs is as much as the JVM\'s default '
+            'ergonomics let the heap grow.'))
     out('')
     out('## Summary')
     out('')
+    heap_summary = [(live_keys, 'live_mb', 'Median live heap (MB)'), (heap_keys, 'heap_mb', 'Median heap after GC (MB)')]
+    heap_summary = [h for h in heap_summary if h[0]]
     out('Geometric mean of the time relative to the fastest, over the programs the implementation passed '
-        '(failures are not counted, so compare it alongside the failures), and the median peak memory.')
+        '(failures are not counted, so compare it alongside the failures), and the median peak memory'
+        + (' (and for ours, of the heap the programs used: Peak memory)' if heap_summary else '') + '.')
     out('')
-    out('| Implementation | Version | Passed | Fastest on | Geometric mean ×fastest | Median peak memory (MB) |')
-    out('|---|---|--:|--:|--:|--:|')
+    out('| Implementation | Version | Passed | Fastest on | Geometric mean ×fastest | Median peak memory (MB) |'
+        + ''.join(f' {title} |' for _, _, title in heap_summary))
+    out('|---|---|--:|--:|--:|--:|' + '--:|' * len(heap_summary))
     for key, field, title in columns:
         info = impls[key]
         if 'unavailable' in info:
-            out(f'| {title} | not run: {info["unavailable"]} | | | | |')
+            out(f'| {title} | not run: {info["unavailable"]} | | | | |' + ' |' * len(heap_summary))
             continue
         ratios = [ratio(p, key, field) for p in programs]
         ratios = [r for r in ratios if r is not None]
@@ -753,7 +864,10 @@ def _write_report_markdown(report, path):
         rss = sorted(programs[p]['results'][key]['rss_mb'] for p in programs
                      if key in programs[p]['results'] and 'rss_mb' in programs[p]['results'][key])
         median = f'{rss[len(rss) // 2]:.0f}' if rss and field == 'seconds' else ''
-        out(f'| {title} | {info.get("version", "?")} | {passed}/{ran} | {wins} | {geomean} | {median} |')
+        heaps = [median_of(key, heap_field) if key in keys_with and field == 'seconds' else ''
+                 for keys_with, heap_field, _ in heap_summary]
+        out(f'| {title} | {info.get("version", "?")} | {passed}/{ran} | {wins} | {geomean} | {median} |'
+            + ''.join(f' {heap} |' for heap in heaps))
     out('')
     out('## Time')
     out('')
@@ -779,13 +893,30 @@ def _write_report_markdown(report, path):
     out('## Peak memory')
     out('')
     out('Maximum resident set size in MB, failed runs included (our JIT\'s over all its iterations).')
+    if live_keys or heap_keys:
+        out('')
+        out('For ours, how much of that is heap the program used, in MB (bench/README.md "Heap"):')
+        out('')
+        if live_keys:
+            every = report.get('live_every')
+            out(f'- live: the most the program kept alive, measured by collecting the whole heap every {every:g} s '
+                'in another run of the program, whose times aren\'t used ("too short": it ended before the first);')
+        if heap_keys:
+            out('- after GC: the most the heap held right after a collection in the timed run, from the JVM\'s GC log: '
+                'what was live, and the garbage the collection left in the old generation ("no GC": no collection).')
     out('')
-    mem_columns = [(key, title) for key, field, title in columns if field == 'seconds']
-    out('| Program | ' + ' | '.join(title for _, title in mem_columns) + ' |')
+    mem_columns = []
+    for key, field, title in columns:
+        if field == 'seconds':
+            mem_columns.append((key, 'rss', title))
+            if key in live_keys:
+                mem_columns.append((key, 'live', title + ' live'))
+            if key in heap_keys:
+                mem_columns.append((key, 'heap', title + ' after GC'))
+    out('| Program | ' + ' | '.join(title for _, _, title in mem_columns) + ' |')
     out('|---|' + '--:|' * len(mem_columns))
     for program, entry in programs.items():
-        cells = [f'{entry["results"][key]["rss_mb"]:.0f}' if 'rss_mb' in entry['results'].get(key, {}) else ''
-                 for key, _ in mem_columns]
+        cells = [memory_cell(entry['results'].get(key), kind) for key, kind, _ in mem_columns]
         out(f'| {program} | ' + ' | '.join(cells) + ' |')
     out('')
     out('## Failures')
@@ -1194,7 +1325,9 @@ def benchmark(args):
     unless bench/README.md lists it as failing; a listed program that passes fails too."""
     parser = argparse.ArgumentParser(prog='bazel run //:r7rs -- benchmark', parents=[_bench_options_parser()])
     parser.add_argument('benchmark', help='SET:PROGRAM or SET:*, SET being ecraven or larceny')
-    parser.add_argument('--json', metavar='FILE', help='also write the times (ms per iteration) here')
+    parser.add_argument('--json', metavar='FILE', help='also write the times (ms per iteration) and the memory here')
+    parser.add_argument('--live-every', type=float, metavar='SECONDS',
+                        help='also measure the live heap, collecting the whole heap this often (which changes the times)')
     options, jvm_args = parser.parse_known_args(args)
     name, _, which = options.benchmark.partition(':')
     sets = {s.name: s for s in _BENCH_SETS}
@@ -1218,7 +1351,7 @@ def benchmark(args):
         if iterations < 1 or not 0 <= warmup < iterations:
             fail('--iterations must be at least 1 and --warmup less than --iterations')
         for program in programs:
-            problem, times = _run_benchmark(bench_set, program, mode, vm_args + jvm_args, iterations, options)
+            problem, times, memory = _run_benchmark(bench_set, program, mode, vm_args + jvm_args, iterations, options)
             reason = bench_set.failures().get(program)
             if problem and reason:
                 log(f'{name}:{program} failed, as bench/README.md lists: {reason}')
@@ -1229,9 +1362,12 @@ def benchmark(args):
                 failed.append(f'{name}:{program} passes but bench/README.md lists it as failing ({reason}): remove it from the list')
             else:
                 steady = times[warmup:]
+                heap, live = memory.get('heap_mb'), memory.get('live_mb')
                 log(f'{name}:{program} ({mode}): ' + ' '.join(f'{t:.0f}' for t in times)
-                    + f' ms; after {warmup} warmup, mean {sum(steady) / len(steady):.0f} ms')
-                results.append({'benchmark': program, 'set': name, 'mode': mode, 'warmup': warmup, 'times_ms': times})
+                    + f' ms; after {warmup} warmup, mean {sum(steady) / len(steady):.0f} ms; peak RSS {memory["rss_mb"]:.0f} MB, '
+                    + (f'heap after GC {heap:.0f} MB' if heap is not None else 'no GC') + f' ({memory.get("gcs", 0)} GCs)'
+                    + (f', live heap {live:.0f} MB ({memory["live_samples"]} samples)' if live is not None else ''))
+                results.append(dict({'benchmark': program, 'set': name, 'mode': mode, 'warmup': warmup, 'times_ms': times}, **memory))
     if options.json:
         with open(options.json, 'w', encoding='utf-8') as f:
             json.dump({'commit': _git_commit(), 'results': results}, f, indent=1)
@@ -1255,17 +1391,19 @@ def _run_benchmark(bench_set, program, mode, jvm_args, iterations, options):
         with open(file, 'wb') as f:
             f.write(bench_set.program(program, postlude))
         log(f'{bench_set.name}:{program} ({mode}, {iterations} iterations' + (f', count {options.count}' if options.count else '') + ')')
-        try:
-            p = subprocess.run(RUNTIME[0].launcher([file], jvm_args), cwd=workdir, input=stdin, capture_output=True, text=True,
-                               errors='replace', timeout=options.timeout or None)
-        except subprocess.TimeoutExpired:
-            return f'timeout after {options.timeout} s', []
+        stdin_path = join(workdir, 'stdin')
+        with open(stdin_path, 'w', encoding='utf-8') as f:
+            f.write(stdin)
+        gc_log = join(workdir, 'gc.log')
+        p = _run_measured(RUNTIME[0].launcher([file], jvm_args + _gc_log_vm_args(gc_log)), workdir, stdin_path, None,
+                          options.timeout or math.inf, gc_log, options.live_every)
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
-    output = p.stdout + p.stderr
-    if re.search(r'^(ERROR|INTERNAL ERROR):', output, re.MULTILINE) or p.returncode != 0:
-        return f'exit {p.returncode}:\n{tail(output)}', []
-    times = [float(m.group(1)) * 1000 for m in _ELAPSED_LINE.finditer(output)]
+    if p.timed_out:
+        return f'timeout after {options.timeout} s', [], {}
+    if re.search(r'^(ERROR|INTERNAL ERROR):', p.output, re.MULTILINE) or p.rc != 0:
+        return f'exit {p.rc}:\n{tail(p.output)}', [], {}
+    times = [float(m.group(1)) * 1000 for m in _ELAPSED_LINE.finditer(p.output)]
     if len(times) != iterations:
-        return f'{len(times)} "Elapsed time" lines for {iterations} iterations', []
-    return None, times
+        return f'{len(times)} "Elapsed time" lines for {iterations} iterations', [], {}
+    return None, times, dict({'rss_mb': round(p.rss_bytes / 2**20, 1)}, **(p.heap or {}))

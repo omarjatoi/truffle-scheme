@@ -34,6 +34,9 @@ Options (anything else is a JVM argument):
 | `--count=N` | the program's | the count in the program's `.input` file: runs of the benchmark per iteration, except for `array1`, `equal` and `parsing`, which run the harness once and loop on the count themselves |
 | `--timeout=SECONDS` | none | kill the JVM after this long |
 
+Our JVMs run with `-Xmx2g` (Heap, below); a JVM argument such as `-Xmx8g`
+comes after it, and wins.
+
 `--count=1 --iterations=1` checks every program quickly: the check is the
 same, only the timing loop is shorter. With the programs' own counts, one JIT
 iteration of ecraven's set takes about half an hour of JVM time (November
@@ -68,13 +71,92 @@ The postlude wraps it so the one JVM calls it `--iterations` times. So:
 - the iterations after `--warmup` measure the code once the JIT has compiled
   it.
 
-It prints every iteration's time (ms) and the mean after the warmup; with
-`--json FILE`, it also writes them, per program and mode (`times_ms`,
-`warmup`). The comparative report below measures peak memory.
+It prints every iteration's time (ms) and the mean after the warmup, and the
+JVM's peak RSS and heap after GC (Heap, below); with `--json FILE`, it also
+writes them, per program and mode (`times_ms`, `warmup`, `rss_mb`, `heap_mb`,
+`committed_mb`, `gcs`, `gc_ms`). `--live-every=SECONDS` also measures the
+live heap (`live_mb`), with a full collection that often, so the times of
+such a run aren't comparable.
 
 A benchmark fails when the JVM exits nonzero, prints `ERROR:` (a failed
 check, or an uncaught Scheme error), or prints fewer `Elapsed time` lines than
 iterations. The command then names it and exits 1, after running the rest.
+
+## Heap
+
+Our benchmark JVMs (`benchmark`, `bench-report` and `bench-check`, all but its
+`startup`, which runs the launcher as a user does) run with `-Xmx2g`
+(`BENCH_HEAP_VM_ARGS` in `tests/harness/bench.py`), with the JVM's default
+collector, G1 (plan.md M8-02).
+
+Why a fixed maximum: without one, the JVM's is a quarter of the machine's
+memory (32 GB on the 128 GB machine of the M7 report), and G1 grows the heap
+for as long as collections take more than its target share of the time, so an
+allocation-heavy program's peak RSS follows the machine and the collector's
+ergonomics, not the program. The M7 report's largest (JIT, at its counts, 3
+iterations; RSS in MB, M8-02, on a 16-core Apple M3 Max with 128 GB of memory):
+
+| Program | Live heap | Default heap | `-Xmx4g` | `-Xmx2g` | `-Xmx1g` | `-Xmx512m` |
+|---|--:|--:|--:|--:|--:|--:|
+| `nboyer` | 300 | 13,576 | 3,295 | 2,551 | 1,604 | 1,028 |
+| `sboyer` | 112 | 9,303 | 2,197 | 1,974 | 1,414 | 1,002 |
+| `paraffins` | 445 | 6,070 | 3,204 | 2,437 | 1,598 | 1,102 |
+| `graphs` | 32 | 3,991 | 1,700 | 1,801 | 1,159 | 872 |
+| `ack` | 16 | 3,738 | 1,661 | 1,721 | 1,072 | 762 |
+| `fib` | 7 | 1,573 | 1,580 | 1,577 | 977 | 674 |
+
+The times were the same from the default down to `-Xmx1g`, within the
+run-to-run noise of single runs (about ±15% here), and in four interleaved
+pairs of `nboyer` runs, `-Xmx2g` was a little faster (7.5-8.1 s first, 7.0-7.2
+s second, against 8.7-9.2 and 7.9-8.4); at `-Xmx512m`, close to its live heap,
+`paraffins` took 40-60% longer. What the programs keep alive is
+what they compute: `nboyer`'s and `sboyer`'s terms (12.8 and 4.6 million
+pairs of 24 bytes at their peak) and `paraffins`' radicals (5.2 million pairs
+and as many vectors). Between iterations it falls back to the 7 MB of the
+runtime and the standard libraries, so nothing is retained from one to the
+next; nor is anything after a deep recursion (`ack`), whose pending frames,
+spilled to the heap, are freed as it returns.
+
+The maximum is 2 GB, not 1, because two programs keep about a gigabyte alive:
+ecraven's `earley`, 1.1 GB (47 million pairs: its 2.7 million parses), the
+most of its set (`bench-report`'s live heap; then `paraffins`, 0.45 GB, and
+`mperm`, 0.37 GB; the median is the runtime's 7 MB), and Larceny's `nboyer`,
+whose input is larger (size 6), 0.9 GB. `earley` takes as long at `-Xmx2g` as
+with the default heap (4.2 s first, 3.0 s steady, two runs each), with an RSS
+of 2.6 GB against 9.9 GB. A JVM argument after the command's own
+(`benchmark ecraven:nboyer -Xmx8g`) overrides it.
+
+The rest of the RSS is the JVM's: about 0.2-0.6 GB of the GC's data
+structures (about 5% of the heap), compiled code, class metadata and the Graal
+compiler's own heap (libgraal), and the heap's young generation, which G1
+sizes up to 60% of the heap and touches in full between collections, however
+little survives: so `fib`, with 7 MB live, has an RSS of 1.6 GB at `-Xmx2g`.
+
+The collector stays G1, the JVM's default and the launcher's, so that the
+report times what a user runs. Others were faster on some programs and slower
+on others (`-Xmx2g`, steady state): the serial collector ran `graphs` in 2.6 s
+against G1's 4.2 and `paraffins` in 1.5 s against 1.9, but `nboyer` in 8.6 s
+against 7.0, with 10 s of single-threaded pauses copying its young survivors;
+the parallel collector ran `ack` in 24 s against 28.
+
+`bench-check`'s thresholds (Thresholds, below) were measured with the default
+heap, before M8-02; every benchmark is within them at `-Xmx2g`.
+
+How each number is measured:
+
+- **Peak RSS**: the process's maximum resident set size (`wait4`), as for
+  every implementation.
+- **Heap after GC**: the most the heap held right after a collection, from
+  the JVM's GC log (`-Xlog:gc:file=...`, one line per pause, `before->after(committed)`),
+  in the timed run itself, at no cost. It is at least the live heap, and often
+  well above it: a young collection leaves the old generation alone, and G1
+  looks for the old generation's garbage only once the heap is 45% full, so
+  `nboyer`'s heap after GC reaches 1.1-1.3 GB at `-Xmx2g`, for 300 MB live.
+- **Live heap**: `jcmd <pid> GC.class_histogram`, which collects the whole heap
+  before it counts, so its total is exactly what is reachable; the largest of
+  those taken every `--live-every` seconds. Each is a full collection, so this
+  is a run of its own, whose times aren't used, and a peak between two samples
+  can be missed.
 
 ## Comparative report
 
@@ -111,6 +193,11 @@ command downloads them, pinned, into `bench/.cache/` (gitignored):
 - for Gauche, SLIB, which its postlude imports;
 - for Racket, the `r7rs` package, which its prelude's `#lang r7rs` needs.
 
+Our JVMs' memory is measured three ways (Heap, above): the peak RSS, as for
+every implementation; the heap after GC of the timed run; and the live heap,
+from a second run of each program with the JIT, untimed, whose whole heap is
+collected every `--live-every` seconds (0.5; 0 skips that run).
+
 Options: `--benchmarks` and `--implementations` choose rows and columns;
 `--scale F` runs every program `F` times its count on every implementation
 (the Count column says so); our interpreter runs `--interpreter-scale` (0.1)
@@ -126,7 +213,9 @@ How long it takes: the committed report (`--scale 0.1 --interpreter-timeout
 60`, every program) took 81 minutes on a shared 16-core machine, most of it
 chibi's and our interpreter's timeouts and the programs whose count is 1;
 twelve programs at the same scale take about 25 minutes. With the programs'
-own counts, expect several hours. It runs locally, never in CI (design.md D11).
+own counts, expect several hours. The live-heap run doubles our JIT's share of
+that (with one iteration, both of our JIT's runs of every program took 8
+minutes at `--scale 0.1`). It runs locally, never in CI (design.md D11).
 
 ## Thresholds
 

@@ -243,7 +243,7 @@ Each entry: the decision, why, and what was rejected.
 | boolean | `boolean` |
 | char | `SChar` (`int` code point), with a cache for 0–255 |
 | string | `SString`: Latin-1 `byte[]` until a character above 255 is stored, then UTF-32 `int[]`. Indexing and `string-set!` are O(1). Literals carry an immutable flag. |
-| symbol | `SSymbol`, interned per context, name is a `TruffleString` |
+| symbol | `SSymbol`, interned per context (held weakly, so a symbol nothing refers to is collected; M8-02), name is a `TruffleString` |
 | pair | `SPair`, mutable `car`/`cdr` fields |
 | vector / bytevector | `SVector` (`long[]` while every element is a fixnum, `double[]` while every element is a flonum, otherwise `Object[]`, generalizing for good on the first store that doesn't fit; M5-06) / `SBytevector` (`byte[]`), each with an immutable flag for literals |
 | empty list, unspecified, eof, default object | singletons |
@@ -705,7 +705,9 @@ Each entry: the decision, why, and what was rejected.
   estimate of the object's size (`Allocations.sizeOf`). Until a listener is
   active in some context, a report is one check of a language-wide
   assumption that the first active listener invalidates, so compiled code
-  pays nothing. Boxes aren't reported: an allocation listener takes only
+  pays nothing. The reporter is the engine's, so each context removes the
+  listener it added when it is disposed (M8-02): else a shared engine kept
+  every closed context's language instance and its code. Boxes aren't reported: an allocation listener takes only
   interop values. An object is reported once it exists, so `onEnter` and
   `onReturnValue` follow each other. Frames on the heap reach error traces, the debugger and the
   sampler too: see "Spilled frames in tools" above.

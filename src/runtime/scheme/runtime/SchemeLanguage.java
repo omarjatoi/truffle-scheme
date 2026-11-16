@@ -63,17 +63,23 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
     @Override
     protected SchemeContext createContext(Env env) {
         SchemeContext context = new SchemeContext(env);
-        listenForAllocationListeners(context.allocationReporter);
+        listenForAllocationListeners(context);
         return context;
     }
 
-    private void listenForAllocationListeners(AllocationReporter reporter) {
-        reporter.addActiveListener(active -> {
+    /**
+     * Adds the context's listener to its allocation reporter, which is the engine's and shared by
+     * its contexts: {@link #disposeContext} removes it again (plan.md M8-02).
+     */
+    private void listenForAllocationListeners(SchemeContext context) {
+        Assumption noListeners = noAllocationListeners;
+        context.allocationListener = active -> {
             if (active) {
-                noAllocationListeners.invalidate();
+                noListeners.invalidate();
             }
-        });
-        if (reporter.isActive()) {
+        };
+        context.allocationReporter.addActiveListener(context.allocationListener);
+        if (context.allocationReporter.isActive()) {
             noAllocationListeners.invalidate();
         }
     }
@@ -93,10 +99,21 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
         AllocationReporter before = context.allocationReporter;
         context.patch(newEnv);
         if (context.allocationReporter != before) {
-            listenForAllocationListeners(context.allocationReporter);
+            before.removeActiveListener(context.allocationListener);
+            listenForAllocationListeners(context);
         }
         compiler().patchContext(context);
         return true;
+    }
+
+    /**
+     * The allocation reporter is the engine's, shared by its contexts: a closed context's listener
+     * is removed from it, or an embedder's shared engine would keep every closed context's language
+     * instance, and with it the instance's code (plan.md M8-02).
+     */
+    @Override
+    protected void disposeContext(SchemeContext context) {
+        context.allocationReporter.removeActiveListener(context.allocationListener);
     }
 
     @Override

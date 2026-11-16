@@ -824,7 +824,7 @@ load rule.
     cheaper where the profile points.
   - **Done when** those three improve, `tests/spec/deep-*` and the space tests
     under `-Xss256k` still pass, and torture and both suites pass.
-- [ ] **M8-02 · Memory** *(early)*
+- [x] **M8-02 · Memory** *(early)*
   - Separate the JVM's heap sizing from what the programs keep alive: measure
     live heap after GC and peak RSS with and without an `-Xmx` near the live
     size, for `nboyer`, `sboyer`, `paraffins`, `graphs` and `ack`. Fix real
