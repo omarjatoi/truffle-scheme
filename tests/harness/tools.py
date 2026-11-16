@@ -597,6 +597,9 @@ def _terminal_session(workdir, command, label):
     term = _Terminal(command, workdir, env)
     try:
         term.expect(r'> $', 'the first prompt')
+        # JLine reaches the terminal through the FFM API: without native access for it (the
+        # JVM's and native-image's --enable-native-access), the JDK warns before the prompt.
+        _check('WARNING' not in term.text(), f'terminal ({label}): a warning before the first prompt\n{term.text()[-1500:]!r}')
         term.send('(define x 4)\r')
         term.expect(r'> $', 'the prompt after a definition')
         term.send('(* x x)\r')

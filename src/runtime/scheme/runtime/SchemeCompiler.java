@@ -23,6 +23,13 @@ public interface SchemeCompiler {
     void initializeContext(SchemeLanguage language, SchemeContext context);
 
     /**
+     * Rebinds what the compiler's state took from the context's Env when it was initialized (the
+     * library path, design.md D7) to the Env it now has: a context pre-initialized in a native
+     * image, taken over by a run ({@code SchemeLanguage.patchContext}, design.md D17).
+     */
+    void patchContext(SchemeContext context);
+
+    /**
      * Compiles program text into one root (design.md D6), without its prompt: a program (first form
      * {@code import}) in a top level of its own, other text in the interaction environment (D15). An
      * interactive source (REPL input, D17) always runs in the interaction environment, where a

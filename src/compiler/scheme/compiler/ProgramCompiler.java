@@ -72,6 +72,11 @@ public final class ProgramCompiler implements SchemeCompiler {
         }
     }
 
+    @Override
+    public void patchContext(SchemeContext context) {
+        ((CompilerState) context.compilerState).libraries.patch(context.getEnv(), context.getEnv().getOptions().get(SchemeLanguage.LIBRARY_PATH));
+    }
+
     private static Libraries newLibraries(SchemeLanguage language, SchemeContext context, CompilerState state) {
         return new Libraries(context.symbols, state.top, context.globals, body -> {
             if (state.recordedBodies != null) {
