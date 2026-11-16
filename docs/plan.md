@@ -708,7 +708,7 @@ handle badly, performance that the numbers show is unstable, and the D10
 deferral that was never scheduled. Each task comes from a PR's follow-ups
 (#87–#103) or M5's "Later candidates".
 
-- [ ] **M7-01 · Stable performance after warmup** *(early)*
+- [x] **M7-01 · Stable performance after warmup** *(early)*
   - `mazefun`, `peval`, `parsing` and `deriv` settle into one of two speeds
     about 1.7× apart on the same commit and CPU (M5-08), and `nqueens` slows
     from 36 s to 131 s after its first iteration (M5-01). Find the cause of
@@ -719,6 +719,21 @@ deferral that was never scheduled. Each task comes from a PR's follow-ups
     across 10 fresh JVMs, `nqueens`' later iterations are no slower than its
     first, and their `bench/thresholds.json` entries are re-measured
     (narrower) with the `bench-thresholds` workflow.
+  - **Met** on the M7-03 code, measured locally because CI no longer runs
+    benchmarks (#113): on the maintainer's M3 Max with
+    `-XX:ActiveProcessorCount=4`, which gives Truffle the two compiler
+    threads of GitHub's 4-CPU runners (#110's cause). With `bench-check`'s
+    workloads and metric (25 iterations, median of the last 10), 10 fresh
+    JVMs each, 1-minute load 3.8 to 5.5, the max/min across JVMs is mazefun
+    1.02, peval 1.09, parsing 1.02, deriv 1.05 and browse 1.03 (before #110,
+    up to 1.46 to 1.97 on the runners). `nqueens` at its own count, 5
+    iterations in each of 3 JVMs: every later iteration takes 0.97 times the
+    first or less.
+    The thresholds were re-measured on that code with `bench-check --update`
+    (#121, the workflow's local replacement), and no source has changed
+    since: mazefun's, peval's, parsing's and deriv's are at the floors (1.4
+    times the baseline, adjusted 1.25), from adjusted thresholds of 1.41 to
+    2.34 before #110.
 - [x] **M7-02 · Smaller call sites** *(needs M7-01)*
   - Shorten the instruction sequence `CallSiteEmitter` emits at every
     non-tail call (about 10 instructions, M5-10), so `map`/`for-each`'s inner
@@ -778,3 +793,15 @@ deferral that was never scheduled. Each task comes from a PR's follow-ups
 **Exit:** every task above is done; `bench/thresholds.json` and
 `docs/benchmarks.md` are re-measured on the final M7 code; both suites pass in
 every mode, including through the native launcher.
+
+**Exit met** (2026-11-16, at `33ab4a03b110`, the M7-03 merge, locally since
+CI no longer runs benchmarks or the native image): every task is ticked;
+`bench/thresholds.json` was measured by M7-03 on that code (no source has
+changed since); `docs/benchmarks.md` was regenerated on it (geometric mean
+×fastest, JIT first run 8.18 → 5.58, steady state 4.61 → 2.34, interpreter
+73.35 → 49.59 with 52 of 57 within its 60 s limit instead of 46); the native
+launcher (`bazel-bin/scheme-native`, built on the M3 Max) passes chibi
+1225/1225 and Larceny 2162/2166 (the four listed exceptions) both
+interpreted and with `--compile`, as the JVM does in every mode, and
+`//tests:conformance_native` and `//tests:readme_native` pass. No later
+milestone is written yet: the next one needs drafting.

@@ -315,27 +315,28 @@ the executable), which are run only when named.
 Chez, Racket, Chicken, Guile, Gauche and chibi on
 [ecraven's R7RS benchmarks](https://ecraven.github.io/r7rs-benchmarks/), 57
 programs, run as ecraven's script runs them. The committed report was
-measured on 2026-11-16, at commit `2716de4b3ad3`, on an Apple M3 Max shared
-with other jobs (its own note: "differences under 2x are within the noise"),
-at a tenth of each program's count. Its summary, the geometric mean of each
-implementation's time relative to the fastest, over the programs it passed:
+measured on 2026-11-16, at commit `33ab4a03b110` (the final M7 code), on an
+Apple M3 Max shared with other jobs (its own note: "differences under 2x are
+within the noise"), at a tenth of each program's count. Its summary, the
+geometric mean of each implementation's time relative to the fastest, over
+the programs it passed:
 
 | Implementation | Passed | Geometric mean (× fastest) | Median peak memory |
 |---|--:|--:|--:|
-| Chez | 57/57 | 1.11 | 50 MB |
-| Racket | 57/57 | 1.98 | 150 MB |
-| Guile | 56/57 | 3.06 | 120 MB |
-| Chicken | 56/57 | 3.75 | 24 MB |
-| Ours, JIT, steady state | 57/57 | 4.61 | |
-| Ours, JIT, first run | 57/57 | 8.18 | 1679 MB |
-| Gauche | 57/57 | 11.07 | 44 MB |
-| Chibi | 52/57 | 58.76 | 9 MB |
-| Ours, interpreter | 46/57 | 73.35 | 1363 MB |
+| Chez | 57/57 | 1.10 | 50 MB |
+| Racket | 57/57 | 1.92 | 150 MB |
+| Ours, JIT, steady state | 57/57 | 2.34 | |
+| Guile | 56/57 | 3.02 | 120 MB |
+| Chicken | 56/57 | 3.82 | 24 MB |
+| Ours, JIT, first run | 57/57 | 5.58 | 1628 MB |
+| Gauche | 57/57 | 10.66 | 44 MB |
+| Ours, interpreter | 52/57 | 49.59 | 1138 MB |
+| Chibi | 52/57 | 58.58 | 9 MB |
 
 "First run" is the number comparable with the others': one run in a fresh
 JVM, startup excluded, as ecraven's tables report. "Steady state" is the best
 later iteration in the same JVM, once the JIT has compiled the program. The
-interpreter's 11 misses are runs stopped at the report's 60 s limit for it.
+interpreter's 5 misses are runs stopped at the report's 60 s limit for it.
 [bench/README.md](../bench/README.md) explains how to run the benchmarks and
 what is measured, and its "Thresholds" section how `bench-check` checks a
 subset of them against `bench/thresholds.json`.
