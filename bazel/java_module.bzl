@@ -117,19 +117,43 @@ def _rlocation(ctx, f):
     path = f.short_path
     return path[3:] if path.startswith("../") else ctx.workspace_name + "/" + path
 
-def _scheme_runtime_impl(ctx):
+def _jdk_tree_impl(ctx):
     jdk = ctx.attr._jdk[java_common.JavaRuntimeInfo]
-    files = jdk.files.to_list()
-    java = [f for f in files if f.path == jdk.java_executable_exec_path]
-    release = [f for f in files if f.basename == "release" and f.dirname == jdk.java_home]
+    out = ctx.actions.declare_directory(ctx.label.name)
+    files = [f for f in jdk.files.to_list() if f.path.startswith(jdk.java_home + "/") and
+             not f.path.startswith(jdk.java_home + "/lib/svm/")]
+    args = ctx.actions.args()
+    args.add(jdk.java_home)
+    args.add(out.path)
+    args.add_all(files)
+    ctx.actions.run_shell(
+        command = 'home="$1" out="$2"; shift 2; for f in "$@"; do rel="${f#"$home"/}"; ' +
+                  'mkdir -p "$out/$(dirname "$rel")" && cp -pL "$f" "$out/$rel"; done',
+        arguments = [args],
+        inputs = files,
+        outputs = [out],
+        mnemonic = "JdkTree",
+        progress_message = "Copying the JDK into one directory",
+    )
+    return [DefaultInfo(files = depset([out]))]
+
+jdk_tree = rule(
+    implementation = _jdk_tree_impl,
+    doc = "`<name>/`: the target's JDK as one directory (tree artifact), without native-image's toolchain. " +
+          "Tests take it as one input instead of ~2000 files, which remote execution stages much faster.",
+    attrs = {"_jdk": _JDK},
+)
+
+def _scheme_runtime_impl(ctx):
+    jdk = ctx.file._jdk_tree
     module_path = _module_path([ctx.attr.module] + ctx.attr.extra).to_list()
     manifest = ctx.actions.declare_file(ctx.label.name + ".json")
     ctx.actions.write(manifest, json.encode_indent({
-        "java": _rlocation(ctx, java[0]),
-        "release": _rlocation(ctx, release[0]),
+        "java": _rlocation(ctx, jdk) + "/bin/java",
+        "release": _rlocation(ctx, jdk) + "/release",
         "module_path": [_rlocation(ctx, f) for f in module_path],
     }))
-    return [DefaultInfo(files = depset([manifest]), runfiles = ctx.runfiles(files = [manifest] + module_path, transitive_files = jdk.files))]
+    return [DefaultInfo(files = depset([manifest]), runfiles = ctx.runfiles(files = [manifest, jdk] + module_path))]
 
 scheme_runtime = rule(
     implementation = _scheme_runtime_impl,
@@ -137,7 +161,7 @@ scheme_runtime = rule(
     attrs = {
         "extra": attr.label_list(doc = "More modules nothing requires, e.g. the tools.", providers = [JavaInfo]),
         "module": attr.label(mandatory = True, providers = [JavaModuleInfo]),
-        "_jdk": _JDK,
+        "_jdk_tree": attr.label(default = "//bazel:jdk", allow_single_file = True),
     },
 )
 

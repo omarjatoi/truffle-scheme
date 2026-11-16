@@ -1,5 +1,6 @@
 load("@rules_java//java:defs.bzl", "java_binary", "java_library", "java_plugin")
 load(":chibi.bzl", "chibi_scheme")
+load(":java_module.bzl", "jdk_tree")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -94,3 +95,6 @@ config_setting(
         "@platforms//os:linux",
     ],
 )
+
+# The JDK the tests and `bazel-bin/scheme` run (scheme_runtime), as one directory.
+jdk_tree(name = "jdk")
