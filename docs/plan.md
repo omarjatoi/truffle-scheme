@@ -637,6 +637,65 @@ Make it usable on the platform it's built on (design.md D10, D13, D17).
 - *(optional)* A native-image launcher, if GraalVM CE's native-image is in
   the dev shell; otherwise a recorded decision to leave it for later.
 
+Tasks. The *(early)* ones don't touch the compiler or the call path, so
+they can run beside M5's performance work; the others wait for the M5 tasks
+that edit the same files.
+
+- [ ] **M6-01 · The `scheme` launcher** *(early)*
+  - D17: `SchemeMain` on `AbstractLanguageLauncher` (add `launcher-common` at
+    the Truffle version to `suite.py`, which this task may change). A file
+    runs as a program (D15) with the remaining arguments as `command-line`;
+    `-I dir` adds to the library path; no file starts a REPL that reads until
+    a datum is complete (D13's incomplete-source signal) and prints each
+    input's values; `--help`, `--version` and the standard `--engine.*`,
+    `--log.*` options. An `mx scheme` command runs it.
+  - **Done when** tests run a program with arguments, an `-I` library, and a
+    scripted REPL session (multi-line input, an error, then more input), and
+    `exit` statuses reach the process.
+- [ ] **M6-02 · Interop for embedders** *(early)*
+  - D10: `@ExportLibrary(InteropLibrary.class)` on the value classes (strings
+    and characters as strings, bignums as big integers, vectors and
+    bytevectors as arrays, lists as iterators, records as objects, `'()` and
+    unspecified as null, procedures as executables run under a prompt of
+    their own, D6), `getScope` for `context.getBindings("scheme")`,
+    `getLanguageView` and `getMetaObject`. Start from the exploration in #76;
+    Scheme-side host access (`(truffle interop)`) stays out (D10).
+  - **Done when** Java tests pass Scheme values both ways, call Scheme
+    procedures (including ones that capture and re-enter continuations, and
+    raise), and read globals through the bindings.
+- [ ] **M6-03 · Tools distribution and smoke tests** *(needs M6-01)*
+  - D17: an optional distribution with the Chrome inspector, DAP and the CPU
+    sampler (and memory tracer), usable as `--inspect`, `--dap`,
+    `--cpusampler` from the launcher. CI smoke tests drive DAP and the
+    inspector protocol against a Scheme program (breakpoint, step, locals) and
+    check the sampler's output, starting from #76's dependency-free clients.
+  - **Done when** the smoke tests run in CI on every PR.
+- [ ] **M6-04 · Spilled frames in stack traces and tools** *(needs M5-10)*
+  - Frames resumed from heap segments (the depth spill, M2-05, and resumed
+    continuations) appear in guest stack traces, in the debugger's stack and
+    in the sampler's call tree, instead of being charged to `<prompt>`.
+  - **Done when** a test sees every frame of a recursion deeper than the
+    spill threshold in a guest stack trace and in a suspended debugger's
+    stack, in order, and torture still passes.
+- [ ] **M6-05 · Debugger scopes and names** *(needs M5-05)*
+  - A custom scope (`tagTreeNodeLibrary`) that shows Scheme variables as
+    Scheme sees them: captured variables, unboxed `Box` contents, no compiler
+    temporaries; frame evaluation in the debugger; names for anonymous
+    lambdas (from their binding or their source location).
+  - **Done when** a debugger test sees captured and `set!` variables with
+    their values, evaluates an expression in a suspended frame, and no frame
+    is unnamed.
+- [ ] **M6-06 · Native image** *(optional, needs M6-01)*
+  - A native-image `scheme` launcher if GraalVM CE's `native-image` is in the
+    dev shell, with its startup time measured; otherwise record the decision
+    to leave it for later in design.md.
+  - **Done when** the launcher builds natively and runs both conformance
+    suites, or the decision is recorded.
+- [ ] **M6-07 · README and embedding guide** *(needs M6-01 to M6-05)*
+  - A README with building, running (launcher, REPL, tools), the conformance
+    status and benchmark report links, and an embedding guide from Java.
+  - **Done when** every command in the README is run by a CI test or step.
+
 **Exit:** the launcher and tools work end to end with smoke tests in CI,
 embedders can call Scheme procedures with Scheme values crossing the
 boundary, and the README documents all of it.
