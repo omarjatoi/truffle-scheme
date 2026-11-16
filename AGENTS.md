@@ -124,14 +124,15 @@ raise one by hand. If it changes the native-image configuration, run `bazel
 test //tests:readme_native //tests:conformance_native`.
 
 CI runs on Buildkite (`.buildkite/pipeline.yml`), for every commit, and only
-what runs on every commit: `checks` (the lint tests) and `tests` (every other
-test, the conformance tests and the docs' commands among them); its
-`conformance` annotation is their table. The required
-check is the build, `buildkite/truffle-scheme`; which steps can fail it is
-set in `.buildkite/pipeline.yml`. Its steps use `nix develop .#ci` (just
-`bazel`). Its actions and tests run on BuildBuddy's
-executors, like everyone's; the `buildbuddy` annotation links each step's
-results.
+what runs on every commit, one `bazel` command per step: `checks` (the lint
+tests) and `tests` (every other test, the conformance tests and the docs'
+commands among them). The required check is the build,
+`buildkite/truffle-scheme`; which steps can fail it is set in
+`.buildkite/pipeline.yml`. Its hook loads `nix develop .#ci` (just `bazel`)
+and writes the agent's `~/.bazelrc` (`--config=ci`, the BuildBuddy key).
+Actions and tests run on BuildBuddy's executors, like everyone's; the
+`buildbuddy` annotation links the commit's invocations, where each test's
+result is.
 Benchmarks, the threshold check and the native image are local commands.
 
 ## Rules (each one is enforced by `bazel test //...`)

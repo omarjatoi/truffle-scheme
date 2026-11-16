@@ -6,8 +6,8 @@
 # --config=remote, the default); the `buildbuddy` annotation links this commit's invocations.
 #
 # Main requires the build's status, `buildkite/truffle-scheme`, which `checks` and `tests` fail;
-# each also posts its own, `buildkite/truffle-scheme/<key>`. The conformance tests are among
-# `tests` (a test per suite section and mode); their table is the `conformance` annotation.
+# each also posts its own, `buildkite/truffle-scheme/<key>`. One bazel command per step: the
+# parallelism is Bazel's, on the executors.
 
 secrets:
   - BUILDBUDDY_API_KEY
@@ -28,8 +28,4 @@ steps:
   - label: ":bazel: Tests"
     key: tests
     timeout_in_minutes: 75
-    command:
-      - bazel test --test_tag_filters=-lint //... || status=$$?
-      - bazel run //:r7rs -- conformance-report --markdown "$$PWD/conformance.md"
-      - buildkite-agent annotate --context conformance < conformance.md
-      - exit $${status:-0}
+    command: bazel test --test_tag_filters=-lint //...
