@@ -2,7 +2,7 @@
 per mode for each class (bazel/jvm_test.bzl junit_test)."""
 
 load("@rules_java//java:defs.bzl", "java_library")
-load("//bazel:java.bzl", "SCHEME_JAVACOPTS")
+load("//bazel:java.bzl", "BYTECODE_ROOT_JAVACOPTS", "SCHEME_JAVACOPTS")
 load("//bazel:java_module.bzl", "java_module_jar")
 load("//bazel:jvm_test.bzl", "junit_test")
 
@@ -45,7 +45,8 @@ def unit_tests(name, tests, support, kinds, resources = {}, extra_srcs = {}):
         java_library(
             name = "%s_lib_%s" % (name, cls),
             srcs = srcs,
-            javacopts = SCHEME_JAVACOPTS,
+            # The upstream tests' UpstreamRoot is a Bytecode DSL root.
+            javacopts = BYTECODE_ROOT_JAVACOPTS if kind == "upstream" else SCHEME_JAVACOPTS,
             resource_strip_prefix = native.package_name() if cls in resources else None,
             resources = resources.get(cls, []),
             deps = deps + [
