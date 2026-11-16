@@ -328,7 +328,6 @@ def r7rs_vendor_chibi(args):
 # tests/spec cases that need something a later task brings: reported as SKIPPED, naming the task.
 # Remove an entry when its task lands (tests/spec/README.md).
 _SPEC_PENDING = {
-    'cont-exit': 'M4 (exit)',
 }
 
 _SPEC_HEADER = re.compile(r'^;;\s*(limits|exit):\s*(.*?)\s*$')

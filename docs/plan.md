@@ -31,8 +31,8 @@ edit it by hand.
 | 6.11 Exceptions | 14 | 30 |
 | 6.12 Environments and evaluation | 0 | 4 |
 | 6.13 Input and output | 7 | 376 |
-| 6.14 System interface | 0 | 13 |
-| **Total** | **493** | **1225** |
+| 6.14 System interface | 10 | 13 |
+| **Total** | **503** | **1225** |
 <!-- status:end -->
 
 ---
@@ -417,7 +417,7 @@ parallel. Section counts are from the status block when M4 was drafted.
     `scheme-report-environment`, `null-environment`.
   - **Done when** section 6.12 (0/4) passes in full, normally and under
     `--torture`.
-- [ ] **M4-08 · Process context and time** *(early)*
+- [x] **M4-08 · Process context and time** *(early)*
   - R7RS §6.14: `exit` runs the outstanding after-thunks through `rewind`
     and exits the context (D9; `EXIT` through interop, D13),
     `emergency-exit` skips them, `command-line`, `get-environment-variable(s)`
