@@ -138,8 +138,8 @@ attaches the page and JSON to the run as the `benchmark-report` artifact.
 is slower than its threshold in `thresholds.json`. CI runs it on demand, not on every PR (the
 maintainer's choice, design.md D11): in a Buildkite build started with `BENCH=check` in its
 environment (`bk build create -b <branch> -e BENCH=check`), or for a commit whose message says
-`[bench check]`, on a hosted `linux-medium` agent. It is not a `bazel test`: its JVMs run one
-after another, with the machine to themselves.
+`[bench check]`, on a hosted `linux-small` agent (2 vCPUs). It is not a `bazel test`: its JVMs
+run one after another, with the machine to themselves.
 
 ```
 bazel run //:r7rs -- bench-check                   # every benchmark of the subset: a table, and exit 1 past a threshold
@@ -221,7 +221,7 @@ bk build create -b <branch> -e BENCH=measure        # or a commit message with [
 bk artifacts download -b <build> bench/thresholds.json
 ```
 
-Such a build's eight `Measure` steps run `bench-check --measure` on fresh `linux-medium` agents,
+Such a build's eight `Measure` steps run `bench-check --measure` on fresh `linux-small` agents,
 and its `Thresholds` step runs `bench-check --update --from` on the eight files and attaches the
 new `bench/thresholds.json`. `--update --from` takes any measurement files, so the `measure-*.json`
 artifacts of several builds can be combined, and so can a `BENCH=check` build's
