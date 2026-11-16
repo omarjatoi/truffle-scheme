@@ -14,7 +14,7 @@ As commands, `bazel run //:r7rs -- <command> ...` (AGENTS.md "Commands"):
   benchmark, bench-report, bench-check, vendor-benchmarks   bench.py
   vendor-chibi, vendor-larceny                              vendor.py
 
-As Bazel tests (tests/harness/defs.bzl, bazel/lint/defs.bzl): unit, program, conformance,
+As Bazel tests (tests/harness/defs.bzl, bazel/lint/defs.bzl): program, conformance,
 conformance-status, conformance-native, readme, tools, rules, versions, lint.
 
 The options before the command name the runfiles of the runtime and tools it uses; the targets that
@@ -53,24 +53,6 @@ def resolve(path):
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
-
-UNIT_MODES = {
-    'jit': [],  # the Graal JIT in its normal background mode
-    'compile': harness.COMPILE_VM_ARGS,  # compile immediately; compilation failures are errors
-    'torture': harness.TORTURE_VM_ARGS,  # capture + resume at every non-tail call
-}
-
-
-def unit(o):
-    """One JUnit class in its own JVM, with the scheme modules, Truffle and JUnit on the module path.
-    JUnit 4 runs as the automatic module `junit`, which scheme.test exports and opens its packages to.
-    UpstreamReportPolymorphismTest runs javac with the Truffle DSL processor (docs/upstream.md)."""
-    runtime = Runtime.from_manifest(o.runtime)
-    command = runtime.command(['-ea', '-esa', f'-Dr7rs.truffle.dslProcessor={rlocation(o.processor)}'] + UNIT_MODES[o.mode],
-                              'junit/org.junit.runner.JUnitCore') + [o.test_class]
-    log(f'{o.test_class} ({o.mode})')
-    sys.exit(subprocess.run(command).returncode)
-
 
 def _diff_text(expected, actual, from_name, to_name):
     lines = list(difflib.unified_diff(expected.splitlines(keepends=True), actual.splitlines(keepends=True),
@@ -496,10 +478,6 @@ def main():
 
     sub.add_parser = sub_parser
 
-    p = sub.add_parser('unit')
-    p.add_argument('--mode', choices=UNIT_MODES, required=True)
-    p.add_argument('--processor', required=True)
-    p.add_argument('test_class')
     p = sub.add_parser('diff')
     p.add_argument('file')
     for part in ('out', 'err', 'status'):
@@ -567,7 +545,7 @@ def main():
     if o.chibi:
         vendor.CHIBI[:] = [rlocation(o.chibi)]
     commands = {
-        'unit': unit, 'diff': diff, 'program': program, 'conformance': conformance_test,
+        'diff': diff, 'program': program, 'conformance': conformance_test,
         'conformance-status': conformance_status, 'conformance-report': conformance_report, 'tools': tools_test, 'rules': rules,
         'versions': versions, 'lint': lint, 'test': test, 'status': status, 'format': format_sources,
         'readme': readme_test, 'conformance-native': conformance_native,

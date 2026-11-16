@@ -35,7 +35,7 @@ def _module_path(targets):
     ])
 
 def _java_module_jar_impl(ctx):
-    out = ctx.actions.declare_file(ctx.attr.module_name + ".jar")
+    out = ctx.actions.declare_file((ctx.attr.jar_name or ctx.attr.module_name) + ".jar")
     module_path = _module_path(ctx.attr.deps)
     class_jars = [o.class_jar for lib in ctx.attr.libs for o in lib[JavaInfo].java_outputs]
     args = ctx.actions.args()
@@ -73,6 +73,7 @@ java_module_jar = rule(
         "exports": attr.string_list(doc = "`exports` clauses, e.g. `scheme.test to junit`."),
         "libs": attr.label_list(doc = "The java_library targets it is made of.", providers = [JavaInfo]),
         "module_name": attr.string(mandatory = True),
+        "jar_name": attr.string(doc = "The jar's file name without `.jar`; the module name by default."),
         "opens": attr.string_list(),
         "requires": attr.string_list(),
         "resources": attr.label_keyed_string_dict(allow_files = True, doc = "More files: {file: path in the jar}."),
@@ -112,6 +113,14 @@ prelude_image = rule(
     doc = "`<name>.image`: what a context of `libs` (on the class path) writes with -Dscheme.preludeImage.write.",
     attrs = {"libs": attr.label_list(providers = [JavaInfo]), "_jdk": EXEC_JDK},
 )
+
+def module_path(targets):
+    """The module path of java_module_jar (or Java) targets: their jars and every jar they need."""
+    return _module_path(targets)
+
+def rlocation(ctx, f):
+    """A file's runfiles path."""
+    return _rlocation(ctx, f)
 
 def _rlocation(ctx, f):
     path = f.short_path
