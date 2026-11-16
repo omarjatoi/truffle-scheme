@@ -10,28 +10,8 @@
 (define (caddr x) (car (cdr (cdr x))))
 (define (cdddr x) (cdr (cdr (cdr x))))
 
-(define (length l)
-  (define (loop rest n)
-    (if (null? rest)
-        n
-        (if (pair? rest)
-            (loop (cdr rest) (+ n 1))
-            (%error "length: not a proper list" l))))
-  (loop l 0))
-
-(define (reverse l)
-  (define (loop rest acc)
-    (if (null? rest)
-        acc
-        (if (pair? rest)
-            (loop (cdr rest) (cons (car rest) acc))
-            (%error "reverse: not a proper list" l))))
-  (loop l '()))
-
-(define (memq x l) (if (pair? l) (if (eq? x (car l)) l (memq x (cdr l))) #f))
-(define (memv x l) (if (pair? l) (if (eqv? x (car l)) l (memv x (cdr l))) #f))
-(define (assq x l) (if (pair? l) (if (eq? x (car (car l))) (car l) (assq x (cdr l))) #f))
-(define (assv x l) (if (pair? l) (if (eqv? x (car (car l))) (car l) (assv x (cdr l))) #f))
+;; length, reverse, memq, memv, assq and assv are primitives (ListVectorPrimitives.java), which
+;; raise on a circular list instead of walking it forever (design.md D9).
 
 ;; map and for-each call their procedure in a non-tail position, so they live here (D5). map
 ;; builds a fresh list each time, so re-entering a continuation never changes an earlier result.
@@ -39,37 +19,69 @@
 (define (%cdrs ls) (if (pair? ls) (cons (cdr (car ls)) (%cdrs (cdr ls))) '()))
 (define (%all-pairs? ls) (if (pair? ls) (if (pair? (car ls)) (%all-pairs? (cdr ls)) #f) #t))
 
+;; map and for-each stop at the shortest list, so their lists may be circular, but "it is an error
+;; if all of them are" (R7RS §6.10): we raise instead of looping forever (design.md D9).
+(define (%some-finite message l ls)
+  (if (%circular-list? l)
+      (let loop ((rest ls))
+        (if (pair? rest)
+            (if (%circular-list? (car rest)) (loop (cdr rest)))
+            (apply error message l ls)))))
+
 (define (map f l . ls)
   (if (null? ls)
-      (let loop ((l l) (acc '()))
-        (if (pair? l) (loop (cdr l) (cons (f (car l)) acc)) (reverse acc)))
-      (let loop ((ls (cons l ls)) (acc '()))
-        (if (%all-pairs? ls) (loop (%cdrs ls) (cons (apply f (%cars ls)) acc)) (reverse acc)))))
+      (begin
+        (%some-finite "map: every list is circular" l '())
+        (let loop ((l l) (acc '()))
+          (if (pair? l) (loop (cdr l) (cons (f (car l)) acc)) (reverse acc))))
+      (begin
+        (%some-finite "map: every list is circular" l ls)
+        (let loop ((ls (cons l ls)) (acc '()))
+          (if (%all-pairs? ls) (loop (%cdrs ls) (cons (apply f (%cars ls)) acc)) (reverse acc))))))
 
 (define (for-each f l . ls)
   (if (null? ls)
-      (let loop ((l l))
-        (if (pair? l) (begin (f (car l)) (loop (cdr l)))))
-      (let loop ((ls (cons l ls)))
-        (if (%all-pairs? ls) (begin (apply f (%cars ls)) (loop (%cdrs ls)))))))
+      (begin
+        (%some-finite "for-each: every list is circular" l '())
+        (let loop ((l l))
+          (if (pair? l) (begin (f (car l)) (loop (cdr l))))))
+      (begin
+        (%some-finite "for-each: every list is circular" l ls)
+        (let loop ((ls (cons l ls)))
+          (if (%all-pairs? ls) (begin (apply f (%cars ls)) (loop (%cdrs ls))))))))
 
 ;; member and assoc take an optional equivalence predicate, which they call in a non-tail position,
 ;; so they live here (D5). The predicate gets the key first and the element second (R7RS §6.4).
+;; Without one, they are the primitives %member and %assoc (equal?). With one, the walk checks for a
+;; cycle as it goes, as the primitives do (design.md D9), with Brent's method: it keeps a pair, moved
+;; up to the walk after 1, 2, 4, ... steps, which the walk meets again only on a cycle.
 (define (member x l . compare)
   (if (pair? compare)
       (let ((same? (car compare)))
-        (let loop ((l l))
-          (if (pair? l) (if (same? x (car l)) l (loop (cdr l))) #f)))
-      (let loop ((l l))
-        (if (pair? l) (if (equal? x (car l)) l (loop (cdr l))) #f))))
+        (let loop ((rest l) (mark l) (n 0) (limit 1))
+          (if (pair? rest)
+              (if (same? x (car rest))
+                  rest
+                  (let ((next (cdr rest)))
+                    (cond ((eq? next mark) (error "member: not a proper list" l))
+                          ((= n limit) (loop next next 0 (+ limit limit)))
+                          (else (loop next mark (+ n 1) limit)))))
+              #f)))
+      (%member x l)))
 
 (define (assoc x l . compare)
   (if (pair? compare)
       (let ((same? (car compare)))
-        (let loop ((l l))
-          (if (pair? l) (if (same? x (car (car l))) (car l) (loop (cdr l))) #f)))
-      (let loop ((l l))
-        (if (pair? l) (if (equal? x (car (car l))) (car l) (loop (cdr l))) #f))))
+        (let loop ((rest l) (mark l) (n 0) (limit 1))
+          (if (pair? rest)
+              (if (same? x (car (car rest)))
+                  (car rest)
+                  (let ((next (cdr rest)))
+                    (cond ((eq? next mark) (error "assoc: not a proper list" l))
+                          ((= n limit) (loop next next 0 (+ limit limit)))
+                          (else (loop next mark (+ n 1) limit)))))
+              #f)))
+      (%assoc x l)))
 
 ;; vector-map and vector-for-each call their procedure in a non-tail position (D5). They stop at
 ;; the shortest vector. vector-map collects its results in a fresh list and only then builds the

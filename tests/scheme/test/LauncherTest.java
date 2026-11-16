@@ -119,6 +119,54 @@ public class LauncherTest {
         assertTrue(dashI.err(), dashI.err().contains("-I"));
     }
 
+    /**
+     * M7-06: {@code --end-status} sets the status of a program that ends without calling
+     * {@code exit}, so a caller can tell it from {@code (exit 0)} (the native conformance runner
+     * does, design.md D17).
+     */
+    @Test
+    public void endStatusTellsAProgramThatEndsFromExit() throws IOException {
+        Path ends = file("ends.scm", "(display \"done\")\n");
+        Path exits = file("exits0.scm", "(import (scheme base) (scheme write) (scheme process-context)) (display \"done\") (exit 0)\n");
+        Path exitsTrue = file("exits.scm", "(import (scheme base) (scheme process-context)) (exit)\n");
+        Path fails = file("fails.scm", "(car 1)\n");
+        assertEquals(0, run("", ends.toString()).status());
+        assertEquals(0, run("", exits.toString()).status());
+        Result ended = run("", "--end-status=99", ends.toString());
+        assertEquals(ended.err(), 99, ended.status());
+        assertEquals("done", ended.out());
+        assertEquals(0, run("", "--end-status=99", exits.toString()).status());
+        assertEquals(0, run("", "--end-status=99", exitsTrue.toString()).status());
+        assertEquals(SchemeMain.EXIT_UNCAUGHT_ERROR, run("", "--end-status=99", fails.toString()).status());
+        // The REPL's input ending is the same.
+        assertEquals(99, run("(+ 1 2)\n", "--end-status=99").status());
+        assertEquals(0, run("(exit 0)\n", "--end-status=99").status());
+        for (String bad : new String[]{"--end-status=", "--end-status=x", "--end-status=-1", "--end-status=256"}) {
+            Result r = run("", bad, ends.toString());
+            assertEquals(bad, SchemeMain.EXIT_USAGE, r.status());
+            assertTrue(r.err(), r.err().contains("--end-status"));
+        }
+    }
+
+    /**
+     * M7-06: an error that leaves a program runs the after-thunks it skips, innermost first, before
+     * the launcher reports it (design.md D8).
+     */
+    @Test
+    public void anUncaughtErrorRunsTheAfterThunksItSkips() throws IOException {
+        Path program = file("unwinds.scm", """
+                        (import (scheme base) (scheme write))
+                        (dynamic-wind
+                          (lambda () (display "in "))
+                          (lambda () (dynamic-wind (lambda () #f) (lambda () (car 1)) (lambda () (display "inner "))))
+                          (lambda () (display "outer")))
+                        """);
+        Result r = run("", program.toString());
+        assertEquals(SchemeMain.EXIT_UNCAUGHT_ERROR, r.status());
+        assertEquals("in inner outer", r.out());
+        assertTrue(r.err(), r.err().startsWith("ERROR: ") && r.err().contains("car"));
+    }
+
     // --- the REPL ----------------------------------------------------------------------------
 
     @Test
@@ -196,6 +244,23 @@ public class LauncherTest {
         assertEquals("before", r.out());
     }
 
+    /** M7-06: an error that leaves a REPL input runs the after-thunks it skips; the session goes on. */
+    @Test
+    public void replErrorRunsTheAfterThunksItSkips() {
+        Result r = run("""
+                        (define p (make-parameter 'top))
+                        (parameterize ((p 'inside))
+                          (dynamic-wind
+                            (lambda () #f)
+                            (lambda () (dynamic-wind (lambda () #f) (lambda () (vector-ref (vector) 0)) (lambda () (display "inner ") (display (p)))))
+                            (lambda () (display " outer") (newline))))
+                        (p)
+                        """);
+        assertEquals(r.err(), 0, r.status());
+        assertEquals("inner inside outer\ntop\n", r.out());
+        assertTrue(r.err(), r.err().startsWith("ERROR: ") && r.err().contains("vector-ref"));
+    }
+
     @Test
     public void replEndOfInputInsideADatumIsAnError() {
         Result r = run("""
@@ -261,6 +326,9 @@ public class LauncherTest {
         Result finished = launch("", finishes.toString());
         assertEquals(finished.err(), 0, finished.status());
         assertEquals("done", finished.out());
+        Result marked = launch("", "--end-status=99", finishes.toString());
+        assertEquals(marked.err(), 99, marked.status());
+        assertEquals(0, launch("", "--end-status=99", exits.toString(), "0").status());
     }
 
     @Test

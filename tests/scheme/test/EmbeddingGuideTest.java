@@ -190,14 +190,19 @@ public class EmbeddingGuideTest {
             } catch (PolyglotException e) {
                 assertTrue(e.isGuestException());
                 assertEquals("bad input: 42", e.getMessage());
+                // The guest object is the error object that error raised.
+                Value error = e.getGuestObject();
+                assertEquals("bad input:", error.getMember("message").asString());
+                assertEquals(42, error.getMember("irritants").getIterator().getIteratorNextElement().asInt());
             }
-            Value check = context.eval("scheme", "(lambda (x) (if (negative? x) (raise 'negative) x))");
+            Value check = context.eval("scheme", "(lambda (x) (if (negative? x) (raise (list 'negative x)) x))");
             try {
                 check.execute(-1);
                 fail("raise returned");
             } catch (PolyglotException e) {
                 assertTrue(e.isGuestException());
-                assertEquals("uncaught exception: negative", e.getMessage());
+                assertEquals("uncaught exception: (negative -1)", e.getMessage());
+                assertEquals("(negative -1)", e.getGuestObject().toString());
             }
             // The context goes on working.
             assertEquals(5, check.execute(5).asInt());

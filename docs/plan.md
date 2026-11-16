@@ -749,7 +749,7 @@ deferral that was never scheduled. Each task comes from a PR's follow-ups
   - **Done when** the cold first context and the native launcher's startup
     are measurably faster, and a stale image is detected and rebuilt rather
     than used.
-- [ ] **M7-06 · Errors R7RS leaves to us** *(early)*
+- [x] **M7-06 · Errors R7RS leaves to us** *(early)*
   - `length` and the other list procedures on circular lists raise an error
     instead of looping; when an error leaves an embedder's call or a REPL
     input, the `dynamic-wind` after-thunks it skips run (M6-02); `SchemeError`

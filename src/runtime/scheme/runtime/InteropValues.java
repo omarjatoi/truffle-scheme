@@ -42,6 +42,10 @@ public final class InteropValues {
 
     @TruffleBoundary
     private static Object toSchemeSlow(Object value) throws UnsupportedTypeException {
+        if (value instanceof SchemeError e) {
+            // An error a call raised, which an embedder caught and passes back: what it raised.
+            return e.raised;
+        }
         if (value instanceof Character c && Character.isSurrogate(c)) {
             throw UnsupportedTypeException.create(new Object[]{value}, "a lone surrogate is not a Scheme character");
         }

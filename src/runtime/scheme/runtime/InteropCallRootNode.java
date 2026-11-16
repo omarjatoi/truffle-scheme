@@ -22,7 +22,8 @@ import com.oracle.truffle.api.nodes.RootNode;
  * from Scheme), it runs the rest of the call that captured it, and the later call returns what that
  * rest returns, as a continuation captured in one REPL input does in another;</li>
  * <li>an error the call doesn't handle leaves it as a {@link SchemeError} (a guest exception to the
- * embedder), and {@code exit} as an exit (D13);</li>
+ * embedder, whose guest object is the raised object) once the after-thunks it skips have run
+ * ({@link PromptDriver#leave}, D8), and {@code exit} as an exit (D13);</li>
  * <li>however the call ends, the dynamic environment is the caller's again afterwards.</li>
  * </ul>
  *
@@ -52,6 +53,8 @@ final class InteropCallRootNode extends RootNode {
                 return driver.run(frame, Capture.ROOT_TAG, e.value, e.continuation.segments, context);
             }
             return driver.run(frame, Capture.ROOT_TAG, first, null, context);
+        } catch (SchemeError e) {
+            return driver.leave(frame, e, caller, context);
         } finally {
             context.setDynamicEnv(caller);
         }

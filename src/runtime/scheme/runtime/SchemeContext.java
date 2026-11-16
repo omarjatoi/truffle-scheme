@@ -37,6 +37,11 @@ public final class SchemeContext {
     public Object escape;
     /** The prelude's {@code raise} (exceptions.scm), installed by {@code %set-raise!} (design.md D8). */
     public Object raise;
+    /**
+     * The prelude's {@code %unwind-root} (control.scm), installed by {@code %set-unwind-root!}: what
+     * a root prompt runs the after-thunks through when an error leaves it (design.md D8).
+     */
+    public Object unwindRoot;
     private DynEnv dynamicEnv = DynEnv.INITIAL;
     /** Nested non-tail calls since the root prompt (stack-depth spill, design.md "Continuations"). */
     public int callDepth;
