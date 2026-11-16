@@ -488,8 +488,29 @@ one at a time.
   - **Done when** it runs in CI's conformance jobs and its status is
     generated; passing it in full is part of M4's exit.
 
-**Exit:** 100% of the chibi suite and of the second suite (M4-11), both
-normally and with `--torture`.
+- [ ] **M4-12 · Larceny's suite in full** *(needs M4-11)*
+  - Make `(scheme base)` load and pass, then the rest: `include` also
+    searches the library path (`-I`), since Larceny's libraries include files
+    relative to the library root (R7RS §4.1.7 leaves the search to the
+    implementation); multi-operand `unquote`/`unquote-splicing` with R6RS's
+    meaning (R7RS calls it unpredictable, so this is a compatible extension);
+    signed zeros (`(- 0.0)` is `-0.0`), `log` of a negative or `-0.0`
+    argument as a complex number; `\r` as a line ending in comments (R7RS
+    §7.1.1); and whatever `(scheme base)`'s 1079 tests turn up once it loads.
+  - Where a test expects behaviour R7RS calls "an error", we keep signalling
+    the error (D8) and list the test as an exception in
+    `tests/r7rs-larceny/README.md` with the R7RS text, instead of matching it.
+    The first two: `(vector-copy! a 2 a 0)` past the end of a 5-element
+    vector, which Larceny truncates silently (R7RS §6.8: "it is an error").
+  - Fixes go in the owning area's files (AGENTS.md "Areas"), or the expander
+    and reader for the syntax items.
+  - **Done when** the Larceny table shows every test passing except the
+    listed exceptions, normally and under `--torture`, and the chibi suite
+    stays at 100%.
+
+**Exit:** 100% of the chibi suite, and of the second suite (M4-11) apart from
+the exceptions M4-12 lists (behaviour R7RS calls "an error"), both normally
+and with `--torture`.
 
 ## M5 · Performance
 
