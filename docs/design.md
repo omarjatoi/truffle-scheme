@@ -164,7 +164,7 @@ Each entry: the decision, why, and what was rejected.
 | empty list, unspecified, eof, default object | singletons |
 | procedure | `SClosure { RootCallTarget, Object[] captured }` |
 | multiple values | a single value is returned as itself; zero or 2+ values are a `MultipleValues` (`Object[]`) |
-| record | `SRecord { SRecordType, Object[] fields }` |
+| record | `SRecord { SRecordType }`, a static object of Truffle's Static Object Model whose fields are its record fields (M7-04) |
 
 - `eq?` compares `long` and `SChar` by value and everything else by identity,
   so boxing never leaks into results.
@@ -187,12 +187,30 @@ Each entry: the decision, why, and what was rejected.
     fast paths, with overflow checks on the `long` path. `SBigInteger`,
     `SRational` and `SComplex` go through one generic path marked
     `@TruffleBoundary`, so compiled code stays small for the common cases.
+- **Records (M7-04)** are static objects (Truffle's Static Object Model):
+  their fields are fields of the object itself, so a record is one
+  allocation and a field access is a field load. A language has one
+  `StaticShape` per number of fields, every field an `Object`, shared by all
+  the record types with that many fields (`RecordShapes`); the record's type
+  is a field of `SRecord`. On HotSpot a shape is a class the model generates;
+  in a native image it is an array-based layout, built at run time without
+  reflection configuration. Each evaluation of a `define-record-type` makes
+  a new `SRecordType`, and a constructor, predicate, accessors and modifiers
+  that are primitives made for that type (`%record-constructor`,
+  `%record-accessor`, ...), named by their bindings: their nodes hold the
+  type and the fields' properties as constants, so call sites run them in
+  place (M5-09), and an accessor compiles to a type check and a field load.
+  Interop and the debugger see the fields as read-only members (D10).
 - *Rejected:* `MutableTruffleString` for strings (no compaction, conversion
   costs on every operation); Java `String` (UTF-16, immutable); inexact-only
   complex numbers (the chibi suite assumes the full tower); complex numbers
   with mixed-exactness parts (adds cases to every operation for almost no
-  real use); Truffle's Static Object Model for records (revisit in M5 if
-  profiles show it matters).
+  real use); records as an `Object[]` of fields with accessors that are
+  closures over a generic `%record-ref` (two allocations per record, and a
+  Truffle call, index unboxing and an array bounds check per access: what
+  M7-04 replaced); a shape per record type (a generated class per evaluation
+  of a definition, so a definition in a loop or in `eval` makes classes
+  without bound; the type check it would save is one field load).
 
 ### D2. Closures: flat closures with assignment conversion
 
@@ -327,6 +345,26 @@ Each entry: the decision, why, and what was rejected.
 - An uncaught `raise` at top level prints a message and exits with a nonzero
   status. Differential tests compare stdout and the exit status, never the
   wording of error messages.
+- **An uncaught error runs the after-thunks it skips (M7-06).** When an
+  error no handler catches leaves a root prompt (a program, a REPL input, a
+  library body, an embedder's call, D10), the prompt first runs the
+  after-thunks of every `dynamic-wind` it leaves, innermost first, each in
+  its own dynamic environment, through the prelude's `%unwind-root` (the one
+  `%rewind`, as `exit` does; D5: the prompt is not a builtin, and the
+  thunks are Scheme). Then the error goes on to the launcher or the
+  embedder. R7RS §6.10: *"before is called whenever execution enters the
+  dynamic extent of the call to thunk and after is called whenever it exits
+  that dynamic extent"*; R7RS doesn't say what an uncaught error does
+  (§6.11 only says how handlers are found), and the context goes on after
+  it (the next REPL input, the embedder's next call), so control has left
+  those extents, as it does when `exit` runs them (§6.14). Before M7-06 they
+  didn't run; chibi-scheme doesn't run them for a program either, so no
+  differential test covers it.
+  - An after-thunk that raises an uncaught error replaces the error: the new
+    one leaves the after-thunks outside it in turn, so they still run. One
+    that transfers control (calls a continuation of the prompt, exits) ends
+    the unwinding there, as an escape from an after-thunk during a jump
+    does: the prompt goes on from where it went, and returns its value.
 
 ### D9. Spec traps decided up front
 
@@ -336,6 +374,27 @@ Each entry: the decision, why, and what was rejected.
   structure, and `write-simple` uses no labels. `display` must also terminate
   on cycles.
 - `list?` returns `#f` for circular lists (tortoise and hare).
+- **Circular lists are not lists, and list procedures raise on them (M7-06).**
+  R7RS §6.4: *"By definition, all lists have finite length and are
+  terminated by the empty list"*, so passing a circular list where a list is
+  expected is an error (§1.3.2: *"it is an error for a procedure to be
+  passed an argument of a type that the procedure is not explicitly
+  specified to handle ... Implementations may signal an error"*). We signal
+  `"<who>: not a proper list"` with the list as the irritant (which `write`
+  prints with datum labels), instead of looping forever, from `length`,
+  `reverse`, `list-copy`, `append` (all but the last argument),
+  `list->vector`, `list->string`, `apply`, and `memq`, `memv`, `member`,
+  `assq`, `assv` and `assoc` when the list doesn't hold the object (one that
+  does is found as in any list). They check with Floyd's tortoise and hare
+  in the walk itself (a pointer at half speed, which meets the walk only on
+  a cycle), and `member`'s and `assoc`'s Scheme loop with a predicate with
+  Brent's (a pair moved up after 1, 2, 4, ... steps), so a proper list costs
+  one extra pointer move every other pair. `map` and `for-each` keep R7RS
+  §6.10's rule: *"The lists can be circular, but it is an error if all of
+  them are circular"*: they stop at the shortest list, and raise up front
+  only when every list is circular. `list-tail`, `list-ref` and `list-set!`
+  walk a bounded number of pairs and need no check; `equal?`, `write` and
+  `display` already terminate (above).
 - `exit` runs all outstanding after-thunks through `rewind`, then exits the
   context through Truffle. `emergency-exit` skips the after-thunks.
 - `delay`, `delay-force` and `make-promise` use the space-safe reference
@@ -393,10 +452,26 @@ Each entry: the decision, why, and what was rejected.
   - Errors and exit: an error a call doesn't handle surfaces as a
     `PolyglotException` guest error whose message is the error object's
     message and irritants (or `uncaught exception: <obj>` for a raised
-    non-condition); `exit` surfaces as an exit with its status, after the
-    after-thunks (D9). Either way, the dynamic environment (parameters,
-    handlers, winders) is the caller's again afterwards; the after-thunks of
-    an *error* are not run (as with an uncaught error in a program, D8).
+    non-condition), after the after-thunks it skips (D8, M7-06); `exit`
+    surfaces as an exit with its status, after the after-thunks (D9). Either
+    way, the dynamic environment (parameters, handlers, winders) is the
+    caller's again afterwards.
+  - **The guest object is the raised object (M7-06).** R7RS §6.11: `raise`
+    *"raises an exception by invoking the current exception handler on
+    obj"*, any object, and `error` raises *"a newly allocated
+    implementation-defined object which encapsulates the information
+    provided by message, as well as any objs, known as the irritants"*. So
+    `PolyglotException.getGuestObject()` is that object: the exception
+    (`SchemeError`) answers the exception messages itself and delegates
+    every other interop message to it (`delegateTo`, as GraalJS's thrown
+    values do), so it is an exception and also, say, the number 42 or the
+    symbol `boom`. An error object (from `error`, a primitive, or a syntax
+    error) has its `message` and `irritants` as read-only members, what
+    `error-object-message` and `error-object-irritants` return, and its meta
+    object is `error-object`. Passed back into Scheme, it is the raised
+    object itself (`eq?` to it), so a Scheme procedure can examine it. Its
+    guest stack trace is the exception's (`PolyglotException`'s frames),
+    not an interop array (`hasExceptionStackTrace` is false).
   - **Values from outside** (arguments, array elements, bindings) become the
     one Scheme representation of each: interop's integers are exact
     integers, floats and doubles flonums, a `char` a character, a string a
@@ -423,7 +498,7 @@ Each entry: the decision, why, and what was rejected.
   launcher (D17) is built without any reflection configuration.
 - **Deferred to M5:** escape-only `call/cc` (done, M5-04), Fixing Letrec,
   vector storage strategies (done, M5-06), and the Static Object Model for
-  records.
+  records (done, M7-04, D1).
 
 ### D11. Build and tooling
 
@@ -508,8 +583,10 @@ Each entry: the decision, why, and what was rejected.
   compiles the code (`parse(InlineParsingRequest)`) as a body whose
   parameters are the frame's variables, in the interaction environment, and
   passes a boxed variable as its Box. A procedure's frames are named by its
-  binding (`define`, `let`, `letrec*`, `set!`, through a let body, as a
-  record accessor is), else by its location, `<lambda@file.scm:3:5>`;
+  binding (`define`, `let`, `letrec*`, `set!`, through a let body), else by
+  its location, `<lambda@file.scm:3:5>`; a record type's procedures are
+  primitives named by their bindings (D1), which have no frame when run in
+  place;
   `write` still shows only binding names. A `TailCall` (what a procedure
   ending in a tail call returns, so a debugger's return value after stepping
   out of it) shows as the call it stands for, `#<tail call (g 2)>`.
@@ -694,9 +771,20 @@ Each entry: the decision, why, and what was rejected.
     the native launcher, as `ConformanceRunner` runs it, and passes what the
     JVM does: chibi's suite 1225/1225 and Larceny's 2162/2166, interpreted
     and with `--compile`. `mx r7rs-status --check --native` fails if the
-    native launcher passes anything other than the status block. The
-    launcher's exit status can't tell `(exit 0)` from a program that ends,
-    which only Larceny's two exit-0 sections see.
+    native launcher passes anything other than the status block.
+  - **`--end-status=<n>` (M7-06).** A program that ends exits with 0 by
+    default, like one that calls `(exit 0)`, so a process's status alone
+    can't tell them apart, and Larceny's two exit-0 sections pass their exit
+    test only if the program calls `exit`. `ConformanceRunner` sees the
+    difference (`Context.eval` returns, or throws an exit); the launcher
+    takes `--end-status=<n>`, the status when the program (or the REPL's
+    input) ends without `exit`, and the native runner passes
+    `--end-status=99`, so its results mean what the JVM runner's do. R7RS
+    §6.14 says only what `exit` communicates (*"If no argument is supplied,
+    or if obj is #t, the exit procedure should communicate to the operating
+    system that the program exited normally"*), not what a program that
+    ends does, so the default (0, as chibi-scheme) and the option are ours
+    to choose.
   - CI builds the native launcher on Linux in a workflow of its own
     (`.github/workflows/native.yml`: weekly, by hand, and on PRs that change
     it or the configuration), times its startup and runs that check. It is

@@ -28,8 +28,14 @@ import scheme.runtime.value.SString;
  * ended inside a datum, so a REPL can ask for more). Through interop every SchemeError reports its
  * exception type and source location: a syntax error its form's, a runtime error the innermost
  * Scheme frame's.
+ *
+ * <p>To embedders, the exception <em>is</em> the object it raises (design.md D10, M7-06): every
+ * other interop message goes to {@link #raised}, so {@code PolyglotException.getGuestObject()} is
+ * that object (an error object, with its message and irritants as members, or whatever
+ * {@code raise} was given) as well as an exception, and passing it back to Scheme passes that
+ * object ({@link InteropValues#toScheme}).
  */
-@ExportLibrary(InteropLibrary.class)
+@ExportLibrary(value = InteropLibrary.class, delegateTo = "raised")
 public final class SchemeError extends AbstractTruffleException {
 
     private static final long serialVersionUID = 1L;
@@ -37,6 +43,11 @@ public final class SchemeError extends AbstractTruffleException {
     private final transient SErrorObject errorObject;
     /** For an uncaught raise: the raised object; otherwise null. */
     private final transient Object uncaught;
+    /**
+     * What embedders see this exception as: the raised object of an uncaught raise, otherwise the
+     * error object (one made from the message for a syntax error that has none).
+     */
+    final transient Object raised;
     private final boolean syntax;
     private final boolean incompleteSource;
     private final transient SourceSection syntaxLocation;
@@ -45,6 +56,7 @@ public final class SchemeError extends AbstractTruffleException {
         super(messageOf(errorObject));
         this.errorObject = errorObject;
         this.uncaught = null;
+        this.raised = errorObject;
         this.syntax = false;
         this.incompleteSource = false;
         this.syntaxLocation = null;
@@ -54,6 +66,7 @@ public final class SchemeError extends AbstractTruffleException {
         super(message);
         this.errorObject = raised instanceof SErrorObject e ? e : null;
         this.uncaught = raised;
+        this.raised = raised;
         this.syntax = false;
         this.incompleteSource = false;
         this.syntaxLocation = null;
@@ -63,6 +76,7 @@ public final class SchemeError extends AbstractTruffleException {
         super(message);
         this.errorObject = errorObject;
         this.uncaught = message;
+        this.raised = errorObject != null ? errorObject : new SErrorObject(SString.of(message), SConstant.EMPTY_LIST, SErrorObject.Kind.OTHER);
         this.syntax = true;
         this.incompleteSource = incompleteSource;
         this.syntaxLocation = location;
@@ -90,9 +104,62 @@ public final class SchemeError extends AbstractTruffleException {
         return syntax;
     }
 
+    // The exception messages: with every other message delegated to the raised object, this class
+    // answers them itself (AbstractTruffleException's defaults would go to the raised object too).
+
+    @ExportMessage
+    boolean isException() {
+        return true;
+    }
+
+    @ExportMessage
+    RuntimeException throwException() {
+        throw this;
+    }
+
     @ExportMessage
     ExceptionType getExceptionType() {
         return syntax ? ExceptionType.PARSE_ERROR : ExceptionType.RUNTIME_ERROR;
+    }
+
+    @ExportMessage
+    int getExceptionExitStatus() throws UnsupportedMessageException {
+        throw UnsupportedMessageException.create();
+    }
+
+    @ExportMessage
+    boolean hasExceptionMessage() {
+        return true;
+    }
+
+    @ExportMessage
+    @TruffleBoundary
+    Object getExceptionMessage() {
+        return String.valueOf(getMessage());
+    }
+
+    @ExportMessage
+    boolean hasExceptionCause() {
+        return false;
+    }
+
+    @ExportMessage
+    Object getExceptionCause() throws UnsupportedMessageException {
+        throw UnsupportedMessageException.create();
+    }
+
+    /**
+     * Embedders get the guest stack trace from the exception itself ({@code TruffleStackTrace}, what
+     * {@code PolyglotException} shows), not as an interop object.
+     */
+    @ExportMessage
+    boolean hasExceptionStackTrace() {
+        return false;
+    }
+
+    @ExportMessage
+    Object getExceptionStackTrace() throws UnsupportedMessageException {
+        throw UnsupportedMessageException.create();
     }
 
     @ExportMessage

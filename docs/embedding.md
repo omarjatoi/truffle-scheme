@@ -251,11 +251,14 @@ assertFalse(bindings.hasMember("no-such-variable"));
 ## Errors
 
 An error that a call or an `eval` doesn't handle surfaces as a
-`PolyglotException` whose `isGuestException()` is true. Its message is the
-error object's message and irritants, or `uncaught exception: <obj>` for a
-raised object that isn't an error object. Afterwards the dynamic environment
-(parameters, handlers, `dynamic-wind`) is the caller's again, and the context
-goes on working.
+`PolyglotException` whose `isGuestException()` is true, once the
+`dynamic-wind` after-thunks it leaves have run (D8). Its message is the error
+object's message and irritants, or `uncaught exception: <obj>` for a raised
+object that isn't an error object, and its guest object (`getGuestObject()`)
+is the raised object (D10): an error object has its `message` and
+`irritants` as members. Afterwards the dynamic environment (parameters,
+handlers, `dynamic-wind`) is the caller's again, and the context goes on
+working.
 
 <!-- readme: file tests/scheme/test/EmbeddingGuideTest.java#errors -->
 ```java
@@ -265,14 +268,19 @@ try {
 } catch (PolyglotException e) {
     assertTrue(e.isGuestException());
     assertEquals("bad input: 42", e.getMessage());
+    // The guest object is the error object that error raised.
+    Value error = e.getGuestObject();
+    assertEquals("bad input:", error.getMember("message").asString());
+    assertEquals(42, error.getMember("irritants").getIterator().getIteratorNextElement().asInt());
 }
-Value check = context.eval("scheme", "(lambda (x) (if (negative? x) (raise 'negative) x))");
+Value check = context.eval("scheme", "(lambda (x) (if (negative? x) (raise (list 'negative x)) x))");
 try {
     check.execute(-1);
     fail("raise returned");
 } catch (PolyglotException e) {
     assertTrue(e.isGuestException());
-    assertEquals("uncaught exception: negative", e.getMessage());
+    assertEquals("uncaught exception: (negative -1)", e.getMessage());
+    assertEquals("(negative -1)", e.getGuestObject().toString());
 }
 // The context goes on working.
 assertEquals(5, check.execute(5).asInt());

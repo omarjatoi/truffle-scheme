@@ -20,6 +20,7 @@ import com.oracle.truffle.api.nodes.ExecutableNode;
 import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.source.Source;
 
+import scheme.runtime.value.RecordShapes;
 import scheme.runtime.value.SClosure;
 
 // DebuggerTags.AlwaysHalt: every debugger session (DAP, the Chrome inspector) installs an AlwaysHalt
@@ -49,6 +50,8 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
     private SchemeCompiler compiler;
     /** What runs a procedure called through interop (design.md D10): see {@link #interopCallTarget}. */
     @CompilationFinal private RootCallTarget interopCall;
+    /** The Static Object Model shapes of records (design.md D1). */
+    private final RecordShapes recordShapes = new RecordShapes(this);
 
     @Override
     protected SchemeContext createContext(Env env) {
@@ -79,6 +82,11 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
 
     public static SchemeLanguage get(Node node) {
         return REFERENCE.get(node);
+    }
+
+    /** The shapes of this language's records (design.md D1, plan.md M7-04). */
+    public RecordShapes recordShapes() {
+        return recordShapes;
     }
 
     /** The front end, for {@code eval} and {@code environment} (design.md D6). */

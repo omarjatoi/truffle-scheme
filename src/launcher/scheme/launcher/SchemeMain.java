@@ -28,7 +28,7 @@ import org.graalvm.polyglot.io.IOAccess;
  * The {@code scheme} launcher (design.md D17), on GraalVM's launcher framework:
  *
  * <pre>
- * scheme [option...] [-I dir]... [file.scm [arg...]]
+ * scheme [option...] [-I dir]... [--end-status=n] [file.scm [arg...]]
  * </pre>
  *
  * <p>With a file, it runs the file as a program (design.md D15), and {@code command-line} returns
@@ -43,7 +43,9 @@ import org.graalvm.polyglot.io.IOAccess;
  * D8), so the exit statuses follow chibi-scheme's:
  *
  * <ul>
- * <li>0 when the program or the REPL's input ends.</li>
+ * <li>0 when the program or the REPL's input ends, or the status {@code --end-status} gives: so a
+ * caller can tell a program that ends from one that calls {@code (exit 0)} (M7-06; the native
+ * conformance runner does, as Larceny's exit tests need).</li>
  * <li>The program's status when it calls {@code exit} or {@code emergency-exit}, in a program or in
  * the REPL.</li>
  * <li>{@value #EXIT_UNCAUGHT_ERROR} (EX_SOFTWARE) for an uncaught error in a program. The message
@@ -63,6 +65,7 @@ public final class SchemeMain extends AbstractLanguageLauncher {
     public static final int EXIT_NO_INPUT = 66;
 
     private static final String LIBRARY_PATH_OPTION = "scheme.LibraryPath";
+    private static final String END_STATUS_OPTION = "--end-status=";
     /** The prompts, written only when stdin and stdout are a terminal. */
     private static final String PROMPT = "> ";
     private static final String CONTINUATION_PROMPT = "  ";
@@ -71,6 +74,8 @@ public final class SchemeMain extends AbstractLanguageLauncher {
     /** The program file, or null for the REPL. */
     private String file;
     private String[] programArguments = new String[0];
+    /** The status when the program or the REPL's input ends without {@code exit}. */
+    private int endStatus;
     /** {@code --version} or {@code --show-version}. */
     private VersionAction versionAction = VersionAction.None;
 
@@ -103,6 +108,9 @@ public final class SchemeMain extends AbstractLanguageLauncher {
             } else if (arg.startsWith("-I")) {
                 libraryPath.add(arg.substring(2));
                 i++;
+            } else if (arg.startsWith(END_STATUS_OPTION)) {
+                endStatus = status(arg.substring(END_STATUS_OPTION.length()));
+                i++;
             } else if (arg.equals("--version")) {
                 versionAction = VersionAction.PrintAndExit;
                 i++;
@@ -126,6 +134,19 @@ public final class SchemeMain extends AbstractLanguageLauncher {
         return unrecognized;
     }
 
+    /** An {@code --end-status} value: an exit status, 0 to 255. */
+    private int status(String value) {
+        try {
+            int status = Integer.parseInt(value);
+            if (status >= 0 && status <= 255) {
+                return status;
+            }
+        } catch (NumberFormatException e) {
+            // Reported below.
+        }
+        throw abort(END_STATUS_OPTION + " needs an exit status from 0 to 255: " + END_STATUS_OPTION + value, EXIT_USAGE);
+    }
+
     /** {@code --scheme.LibraryPath=...} comes before the {@code -I} directories. */
     @Override
     protected void validateArguments(Map<String, String> polyglotOptions) {
@@ -145,9 +166,9 @@ public final class SchemeMain extends AbstractLanguageLauncher {
         }
         int status;
         if (file == null) {
-            status = repl(builder, System.in, System.out, System.err, isTTY());
+            status = repl(builder, System.in, System.out, System.err, isTTY(), endStatus);
         } else {
-            status = runProgram(builder, file, programArguments, System.err);
+            status = runProgram(builder, file, programArguments, System.err, endStatus);
         }
         System.out.flush();
         if (status != 0) {
@@ -164,6 +185,7 @@ public final class SchemeMain extends AbstractLanguageLauncher {
         println("");
         println("Scheme options:");
         launcherOption("-I <dir>", "Add a directory to the library path (repeatable).");
+        launcherOption("--end-status=<n>", "Exit with status n when the program or the REPL's input ends without exit (default 0).");
         launcherOption("--version", "Print the version and exit.");
         launcherOption("--show-version", "Print the version and continue.");
         launcherOption("--", "End the options: the next argument is the file.");
@@ -172,6 +194,7 @@ public final class SchemeMain extends AbstractLanguageLauncher {
     @Override
     protected void collectArguments(Set<String> options) {
         options.add("-I");
+        options.add(END_STATUS_OPTION);
         options.add("--version");
         options.add("--show-version");
         options.add("--");
@@ -190,8 +213,9 @@ public final class SchemeMain extends AbstractLanguageLauncher {
     }
 
     /**
-     * The launcher without the framework's options, in this process: {@code [-I dir]... [file.scm
-     * [arg...]]}, with no file reading REPL input from {@code in}. Returns the exit status.
+     * The launcher without the framework's options, in this process: {@code [-I dir]...
+     * [--end-status=n] [file.scm [arg...]]}, with no file reading REPL input from {@code in}.
+     * Returns the exit status.
      */
     public static int run(String[] args, InputStream in, OutputStream out, OutputStream err) {
         PrintStream errors = new PrintStream(err, true, StandardCharsets.UTF_8);
@@ -208,9 +232,9 @@ public final class SchemeMain extends AbstractLanguageLauncher {
         }
         Context.Builder builder = newContext(launcher.libraryPath).in(in).out(out).err(err);
         if (launcher.file == null) {
-            return repl(builder, in, out, err, false);
+            return repl(builder, in, out, err, false, launcher.endStatus);
         }
-        return runProgram(builder, launcher.file, launcher.programArguments, errors);
+        return runProgram(builder, launcher.file, launcher.programArguments, errors, launcher.endStatus);
     }
 
     /** {@link #run(String[], InputStream, OutputStream, OutputStream)} with empty stdin. */
@@ -218,8 +242,11 @@ public final class SchemeMain extends AbstractLanguageLauncher {
         return run(args, InputStream.nullInputStream(), out, err);
     }
 
-    /** Runs {@code file} as a program, with {@code arguments} after it in {@code command-line}. */
-    static int runProgram(Context.Builder builder, String file, String[] arguments, PrintStream errors) {
+    /**
+     * Runs {@code file} as a program, with {@code arguments} after it in {@code command-line}.
+     * Returns {@code endStatus} if it ends without exit.
+     */
+    static int runProgram(Context.Builder builder, String file, String[] arguments, PrintStream errors, int endStatus) {
         Source source;
         try {
             source = Source.newBuilder(LANGUAGE, new File(file)).build();
@@ -232,7 +259,7 @@ public final class SchemeMain extends AbstractLanguageLauncher {
         System.arraycopy(arguments, 0, commandLine, 1, arguments.length);
         try (Context context = builder.arguments(LANGUAGE, commandLine).build()) {
             context.eval(source);
-            return 0;
+            return endStatus;
         } catch (PolyglotException e) {
             if (e.isExit()) {
                 return e.getExitStatus();
@@ -245,9 +272,10 @@ public final class SchemeMain extends AbstractLanguageLauncher {
     /**
      * The REPL: reads lines from {@code in} until they hold a complete input, evaluates it in the
      * interaction environment as an interactive source (which writes its values, design.md D17),
-     * and goes on until end of input or {@code exit}. Returns the exit status.
+     * and goes on until end of input or {@code exit}. Returns the exit status: {@code endStatus} at
+     * end of input.
      */
-    static int repl(Context.Builder builder, InputStream in, OutputStream out, OutputStream err, boolean prompt) {
+    static int repl(Context.Builder builder, InputStream in, OutputStream out, OutputStream err, boolean prompt, int endStatus) {
         BufferedReader lines = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8));
         PrintStream output = new PrintStream(out, true, StandardCharsets.UTF_8);
         PrintStream errors = new PrintStream(err, true, StandardCharsets.UTF_8);
@@ -272,7 +300,7 @@ public final class SchemeMain extends AbstractLanguageLauncher {
                     if (prompt) {
                         output.println();
                     }
-                    return 0;
+                    return endStatus;
                 }
                 lineNumber++;
                 if (input.isEmpty()) {

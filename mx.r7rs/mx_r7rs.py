@@ -533,13 +533,16 @@ def _launcher_options(vm_args):
 
 
 _NATIVE_SECTION_TIMEOUT = 120  # seconds, as ConformanceRunner's watchdog
+# The launcher's status for a program that ends without exit (--end-status, M7-06), so a section
+# that must call (exit 0) can't pass by just ending. No section expects it.
+_NATIVE_END_STATUS = 99
 
 
 def _run_conformance_native(sections, compile, launcher):
     """_run_conformance through the native launcher (M6-06): each section is a `scheme` process, run
     as ConformanceRunner runs it (library path, working directory, arguments, environment), with
-    stdout and stderr together. The launcher can't tell `(exit 0)` from a program that ends, so a
-    section that expects exit status 0 passes its exit test when the process exits with 0."""
+    stdout and stderr together. As in ConformanceRunner, a section that ends is `ok` and one that
+    calls exit is `exit <status>`: the launcher exits with _NATIVE_END_STATUS when the program ends."""
     def run(section):
         options = _launcher_options(r7rs_vm_args(compile=compile or section.jit))
         workdir = tempfile.mkdtemp(prefix=f'r7rs-{section.suite.name}-native-')
@@ -553,12 +556,12 @@ def _run_conformance_native(sections, compile, launcher):
             env = dict(os.environ)
             env.update(binding.split('=', 1) for binding in section.env)
             try:
-                process = subprocess.run([launcher] + options + library_path + [section.file] + section.args,
+                process = subprocess.run([launcher] + options + library_path + [f'--end-status={_NATIVE_END_STATUS}', section.file] + section.args,
                                          cwd=workdir, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                          stderr=subprocess.STDOUT, timeout=_NATIVE_SECTION_TIMEOUT, check=False)
                 output = process.stdout.decode('utf-8', errors='replace')
                 rc = process.returncode
-                message = 'ok' if rc == 0 and section.exit_status is None else f'exit {rc}'
+                message = 'ok' if rc == _NATIVE_END_STATUS else f'exit {rc}'
             except subprocess.TimeoutExpired as e:
                 output = (e.stdout or b'').decode('utf-8', errors='replace')
                 message = f'timeout after {_NATIVE_SECTION_TIMEOUT}s'
