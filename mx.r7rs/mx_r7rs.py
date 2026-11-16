@@ -6,7 +6,9 @@ matching entry in `_PENDING_GATE_TASKS`.
 """
 
 import argparse
+import concurrent.futures
 import difflib
+import functools
 import hashlib
 import os
 import re
@@ -112,12 +114,35 @@ _unittest_config = _R7RSUnittestConfig()
 mx_unittest.register_unittest_config(_unittest_config)
 
 
+def _default_jobs():
+    return os.cpu_count() or 1
+
+
+def _shard(text, command, items):
+    """The items that `--shard I/N` selects: every Nth one, starting with the Ith. CI runs
+    shard 1/N, ..., N/N on N machines to split a step whose work saturates one machine."""
+    if text is None:
+        return items
+    m = re.fullmatch(r'(\d+)/(\d+)', text)
+    if not m or not 1 <= int(m.group(1)) <= int(m.group(2)):
+        mx.abort(f'mx {command}: --shard takes I/N with 1 <= I <= N, not {text}')
+    return items[int(m.group(1)) - 1::int(m.group(2))]
+
+
 def r7rs_unittest(args):
-    """run the JUnit tests in a given mode: [--compile] [--torture] [unittest args...]"""
+    """run the JUnit tests in a given mode: [--compile] [--torture] [-j N] [--shard I/N] [unittest args...]"""
     parser = argparse.ArgumentParser(prog='mx r7rs-unittest')
     parser.add_argument('--compile', action='store_true', help='compile immediately; compilation failures are errors')
     parser.add_argument('--torture', action='store_true', help='capture + resume at every non-tail call (from M2)')
+    parser.add_argument('-j', '--jobs', type=int, default=1, metavar='N',
+                        help='split the test classes over N JVMs that run at once (default 1)')
+    parser.add_argument('--shard', metavar='I/N', help='run only every Nth test class, starting with the Ith')
     parsed, rest = parser.parse_known_args(args)
+    if parsed.jobs > 1 or parsed.shard:
+        if rest:
+            mx.abort(f'mx r7rs-unittest: --jobs and --shard select the test classes themselves; they take no unittest arguments: {rest}')
+        _unittest_in_parallel(parsed.compile, parsed.torture, parsed.jobs, parsed.shard)
+        return
     mode = list(COMPILE_VM_ARGS) if parsed.compile else []
     if parsed.torture:
         mode += TORTURE_VM_ARGS
@@ -126,6 +151,56 @@ def r7rs_unittest(args):
         mx_unittest.unittest(rest)
     finally:
         _unittest_config.mode_vm_args = []
+
+
+_JUNIT_OK = re.compile(r'^OK \((\d+) tests?\)', re.MULTILINE)
+
+
+def _unittest_in_parallel(compile, torture, jobs, shard):
+    """Splits the test classes (those `shard` selects) into `jobs` groups and runs each with a
+    nested `mx r7rs-unittest` (a JVM of its own), all at once.
+
+    In CompileImmediately mode one JVM keeps about one core busy, so this is what makes the
+    step use the machine. Groups rather than a JVM per class, because every JVM pays for
+    startup and compiler warmup again. Results are logged in group order; a failing group's
+    full output is logged."""
+    # Find the classes (as `mx unittest` does) and build the JUnit harness once here, so the
+    # nested runs only read mx's test-class cache and find the harness up to date.
+    mx.build(['--no-daemon', '--dependencies', 'JUNIT_TOOL'])
+    classes = sorted(mx_unittest.find_test_candidates(['@Theory', '@Test', '@Parameters'], None, mx.get_jdk()))
+    classes = _shard(shard, 'r7rs-unittest', classes)
+    if not classes:
+        mx.abort('mx r7rs-unittest: no test classes found')
+    groups = [classes[i::jobs] for i in range(min(jobs, len(classes)))]
+    mode = ['--compile'] if compile else []
+    if torture:
+        mode += ['--torture']
+
+    def run(group):
+        out = mx.OutputCapture()
+        start = time.time()
+        regex = '^(' + '|'.join(re.escape(c) for c in group) + ')$'
+        rc = mx.run_mx(['r7rs-unittest'] + mode + ['--regex', regex], suite=_suite, nonZeroIsFatal=False, out=out, err=out)
+        return rc, out.data, time.time() - start
+
+    selection = f', shard {shard}' if shard else ''
+    mx.log(f'r7rs-unittest: {len(classes)} test classes{selection} in {len(groups)} parallel JVMs ({" ".join(mode) or "default mode"})')
+    failed, tests = [], 0
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(groups)) as pool:
+        futures = [pool.submit(run, group) for group in groups]
+        for i, (group, future) in enumerate(zip(groups, futures), 1):
+            rc, output, seconds = future.result()
+            ok = _JUNIT_OK.search(output)
+            names = ' '.join(c.rsplit('.', 1)[-1] for c in group)
+            if rc == 0 and ok:
+                tests += int(ok.group(1))
+                mx.log(f'  ok      JVM {i}/{len(groups)} ({ok.group(1)} tests, {seconds:.1f}s): {names}')
+            else:
+                failed.append(str(i))
+                mx.log(f'  FAILED  JVM {i}/{len(groups)} (exit {rc}, {seconds:.1f}s): {names}\n' + output.rstrip('\n'))
+    if failed:
+        mx.abort(f'r7rs-unittest: JVM(s) {" ".join(failed)} of {len(groups)} failed; their output is above')
+    mx.log(f'r7rs-unittest: all {len(classes)} test classes passed ({tests} tests)')
 
 
 # ---------------------------------------------------------------------------
@@ -357,9 +432,12 @@ def _spec_case(name):
 
 
 def r7rs_spec(args):
-    """run tests/spec (tail-call space, continuations, depth), interpreted and with the JIT: [case...]"""
+    """run tests/spec (tail-call space, continuations, depth), interpreted and with the JIT: [-j N] [case...]"""
     parser = argparse.ArgumentParser(prog='mx r7rs-spec')
     parser.add_argument('cases', nargs='*', help='case names, e.g. tail-mutual (default: all)')
+    parser.add_argument('-j', '--jobs', type=int, default=_default_jobs(), metavar='N',
+                        help='JVMs to run at a time (default: the number of CPUs)')
+    parser.add_argument('--shard', metavar='I/N', help='run only every Nth case, starting with the Ith')
     parsed = parser.parse_args(args)
     names = sorted(f[:-len('.scm')] for f in os.listdir(_spec_dir()) if f.endswith('.scm'))
     unknown = [c for c in parsed.cases if c not in names]
@@ -368,42 +446,65 @@ def r7rs_spec(args):
     stale = [c for c in _SPEC_PENDING if c not in names]
     if stale:
         mx.abort(f'mx r7rs-spec: _SPEC_PENDING names cases that do not exist: {stale}')
+
+    def run(name, vm_args, limits):
+        start = time.time()
+        rc, out, err = _run_ours(join(_spec_dir(), name + '.scm'), vm_args, limits)
+        return rc, out, err, time.time() - start
+
+    # Every case runs twice (interpreter, JIT), each in a JVM of its own under the case's limits.
+    # The runs are independent, so they go in parallel; results are logged in case order.
+    selected = parsed.cases or names
+    selected = _shard(parsed.shard, 'r7rs-spec', selected)
+    cases = {name: _spec_case(name) for name in selected if name not in _SPEC_PENDING}
+    modes = (('interpreter', r7rs_vm_args()), ('JIT', []))
+    _launcher_jvm_args()
     failed, passed, skipped = [], 0, 0
-    for name in parsed.cases or names:
-        if name in _SPEC_PENDING:
-            mx.log(f'SKIPPED {name} (not implemented until {_SPEC_PENDING[name]})')
-            skipped += 1
-            continue
-        limits, status, expected = _spec_case(name)
-        problems = []
-        for label, vm_args in (('interpreter', r7rs_vm_args()), ('JIT', [])):
-            start = time.time()
-            rc, out, err = _run_ours(join(_spec_dir(), name + '.scm'), vm_args, limits)
-            seconds = time.time() - start
-            if rc != status or out != expected:
-                detail = f'exit {rc} (expected {status})' if rc != status else 'stdout differs'
-                if out != expected:
-                    diff = list(difflib.unified_diff(expected.splitlines(keepends=True), out.splitlines(keepends=True),
-                                                     fromfile='expected', tofile='actual', n=1))
-                    detail += '\n' + ''.join(l if len(l) < 200 else l[:200] + '...\n' for l in diff[:20]).rstrip('\n')
-                problems.append(f'{label} ({seconds:.1f}s): {detail}\n  stderr:\n{_tail(err)}')
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, parsed.jobs)) as pool:
+        # All interpreter runs first: they are the slow ones, and starting them early keeps
+        # the pool from ending on a long straggler.
+        futures = {(name, label): pool.submit(run, name, vm_args, cases[name][0])
+                   for label, vm_args in modes for name in cases}
+        for name in selected:
+            if name in _SPEC_PENDING:
+                mx.log(f'SKIPPED {name} (not implemented until {_SPEC_PENDING[name]})')
+                skipped += 1
+                continue
+            limits, status, expected = cases[name]
+            problems = []
+            for label, _ in modes:
+                future = futures[(name, label)]
+                rc, out, err, seconds = future.result()
+                if rc != status or out != expected:
+                    detail = f'exit {rc} (expected {status})' if rc != status else 'stdout differs'
+                    if out != expected:
+                        diff = list(difflib.unified_diff(expected.splitlines(keepends=True), out.splitlines(keepends=True),
+                                                         fromfile='expected', tofile='actual', n=1))
+                        detail += '\n' + ''.join(l if len(l) < 200 else l[:200] + '...\n' for l in diff[:20]).rstrip('\n')
+                    problems.append(f'{label} ({seconds:.1f}s): {detail}\n  stderr:\n{_tail(err)}')
+                else:
+                    mx.log(f'  {name}: {label} ok ({seconds:.1f}s)')
+            if problems:
+                failed.append(name)
+                mx.log(f'FAIL    {name} {" ".join(limits)}\n  ' + '\n  '.join(problems))
             else:
-                mx.log(f'  {name}: {label} ok ({seconds:.1f}s)')
-        if problems:
-            failed.append(name)
-            mx.log(f'FAIL    {name} {" ".join(limits)}\n  ' + '\n  '.join(problems))
-        else:
-            passed += 1
-            mx.log(f'PASS    {name} {" ".join(limits)}')
+                passed += 1
+                mx.log(f'PASS    {name} {" ".join(limits)}')
     mx.log(f'r7rs-spec: {passed} passed, {len(failed)} failed, {skipped} skipped')
     if failed:
         mx.abort('r7rs-spec: failed: ' + ' '.join(failed))
 
 
+@functools.cache
+def _launcher_jvm_args():
+    """The launcher's module path and friends. Resolved once, before any parallel runs start."""
+    return tuple(mx.get_runtime_jvm_args(['SCHEME_LAUNCHER']))
+
+
 def _run_ours(file, vm_args, jvm_args=()):
     """Runs one program with scheme.launcher.SchemeMain. Returns (exit status, stdout, stderr)."""
     out, err = mx.OutputCapture(), mx.OutputCapture()
-    rc = mx.run_java(list(jvm_args) + mx.get_runtime_jvm_args(['SCHEME_LAUNCHER']) + _TRUFFLE_VM_ARGS + vm_args
+    rc = mx.run_java(list(jvm_args) + list(_launcher_jvm_args()) + _TRUFFLE_VM_ARGS + vm_args
                      + ['-m', 'scheme.launcher/scheme.launcher.SchemeMain', file],
                      out=out, err=err, nonZeroIsFatal=False)
     return rc, out.data, err.data
@@ -625,7 +726,8 @@ _PENDING_TESTS = {
 
 _TESTS = {
     'unittest': ('JUnit, Graal JIT in background mode', lambda: r7rs_unittest([])),
-    'unittest-compile': ('JUnit, compile immediately', lambda: r7rs_unittest(['--compile'])),
+    'unittest-compile': ('JUnit, compile immediately, test classes split over parallel JVMs',
+                         lambda: r7rs_unittest(['--compile', '--jobs', str(_default_jobs())])),
     'conformance': ('status block in docs/plan.md is up to date', lambda: r7rs_status(['--check'])),
     'diff': ('tests/diff/ matches chibi-scheme', lambda: r7rs_diff_all([])),
     'space': ('tail loop and deep recursion under small JVM limits (M1-06, M2-05)', lambda: r7rs_space([])),
@@ -677,7 +779,7 @@ mx.update_commands(_suite, {
     'checks': [checks, '[' + ' | '.join(_CHECKS) + ']...'],
     'tests': [tests, '[' + ' | '.join(_TESTS) + ']...'],
     'r7rs-test': [r7rs_test, '[section] [--torture] [--compile]'],
-    'r7rs-spec': [r7rs_spec, '[case...]'],
+    'r7rs-spec': [r7rs_spec, '[-j N] [--shard I/N] [case...]'],
     'r7rs-diff': [r7rs_diff, 'file.scm [--compile] [--torture]'],
     'r7rs-diff-all': [r7rs_diff_all, '[--compile] [--torture]'],
     'r7rs-space': [r7rs_space, ''],
@@ -685,5 +787,5 @@ mx.update_commands(_suite, {
     'r7rs-status': [r7rs_status, ''],
     'r7rs-check': [r7rs_check, ''],
     'r7rs-vendor-chibi': [r7rs_vendor_chibi, 'path/to/r7rs-tests.scm --version <chibi version>'],
-    'r7rs-unittest': [r7rs_unittest, '[--compile] [--torture] [unittest args...]'],
+    'r7rs-unittest': [r7rs_unittest, '[--compile] [--torture] [-j N] [--shard I/N] [unittest args...]'],
 })
