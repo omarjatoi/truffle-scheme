@@ -1,4 +1,4 @@
-"""Runs the commands of README.md and docs/embedding.md, and checks their samples (plan.md M6-07).
+"""Runs the commands of docs/usage.md and docs/embedding.md, and checks their samples (plan.md M6-07).
 
 `mx r7rs-readme` (and `mx tests readme`) reads the documents' fenced blocks. Every block has a
 marker, an HTML comment on the line before its opening fence (blank lines in between are allowed),
@@ -31,7 +31,7 @@ from os.path import join
 
 import mx
 
-DOCUMENTS = ['README.md', join('docs', 'embedding.md')]
+DOCUMENTS = [join('docs', 'usage.md'), join('docs', 'embedding.md')]
 NATIVE_WORKFLOW = join('.github', 'workflows', 'native.yml')
 NATIVE_COMMAND = 'mx r7rs-readme --native'
 
