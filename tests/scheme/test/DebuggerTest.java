@@ -229,7 +229,8 @@ public class DebuggerTest {
         for (DebugStackFrame frame : event.getStackFrames()) {
             names.add(frame.getName());
         }
-        // By index: Truffle 25.5's iterator of an empty list of asynchronous stacks fails.
+        // By index: Truffle 25.5's iterator of an empty list of asynchronous stacks throws
+        // (UpstreamAsyncStacksTest, docs/upstream.md#empty-asynchronous-stacks).
         List<List<DebugStackTraceElement>> asynchronous = event.getAsynchronousStacks();
         for (int i = 0; i < asynchronous.size(); i++) {
             for (DebugStackTraceElement element : asynchronous.get(i)) {

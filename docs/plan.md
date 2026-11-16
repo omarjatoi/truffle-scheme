@@ -764,7 +764,7 @@ deferral that was never scheduled. Each task comes from a PR's follow-ups
     input as the REPL; `--memtracer` sees allocations (`AllocationReporter`);
     `DebugStackFrame.eval` sees an isolated program's own definitions.
   - **Done when** each has a test, and the README's examples still pass.
-- [ ] **M7-08 · Upstream reports** *(early)*
+- [x] **M7-08 · Upstream reports** *(early)*
   - Minimal reproducers, in `docs/upstream.md`, for the Truffle 25.5 issues
     we worked around: nested roots' source sections attributed to the wrong
     `Source` (M5-05), `SuspendedEvent.getAsynchronousStacks()` throwing on an

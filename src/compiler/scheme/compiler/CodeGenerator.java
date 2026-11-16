@@ -166,6 +166,10 @@ final class CodeGenerator {
      * ({@code beginSourceSectionPrefix} keeps searching after it finds one). A section in another
      * file (from a macro template, say) would point into the wrong Source, possibly past its end,
      * so it is left out, and the code it covers reports the enclosing section.
+     *
+     * <p>A Truffle 25.5 bug, reproduced by {@code scheme.test.upstream.UpstreamNestedRootSourceTest}
+     * (docs/upstream.md#nested-root-source-sections). When that test fails after a Truffle upgrade,
+     * the bug is fixed and this method can go.
      */
     private SourceSection usable(SourceSection section) {
         if (section == null || !section.isAvailable()) {

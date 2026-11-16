@@ -123,7 +123,9 @@ class _R7RSUnittestConfig(mx_unittest.MxUnittestConfig):
 
     def apply(self, config):
         vm_args, main_class, main_class_args = config
-        return (vm_args + _TRUFFLE_VM_ARGS + self.mode_vm_args, main_class, main_class_args)
+        # UpstreamReportPolymorphismTest runs javac with the Truffle DSL processor (docs/upstream.md).
+        processor = mx.library('TRUFFLE_DSL_PROCESSOR').get_path(resolve=True)
+        return (vm_args + _TRUFFLE_VM_ARGS + self.mode_vm_args + [f'-Dr7rs.truffle.dslProcessor={processor}'], main_class, main_class_args)
 
 
 _unittest_config = _R7RSUnittestConfig()

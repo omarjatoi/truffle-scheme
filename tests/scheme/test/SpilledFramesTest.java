@@ -211,8 +211,9 @@ public class SpilledFramesTest {
             Debugger debugger = Debugger.find(context.getEngine());
             try (DebuggerSession session = debugger.startSession(event -> {
                 // Before the first spill and after the last resume, the program's frame is on the Java
-                // stack and nothing is pending: no asynchronous stack (and Truffle 25.5's
-                // getAsynchronousStacks() throws if there is none, so don't ask).
+                // stack and nothing is pending: no asynchronous stack (and iterating Truffle 25.5's
+                // empty getAsynchronousStacks() throws, so don't ask: UpstreamAsyncStacksTest,
+                // docs/upstream.md#empty-asynchronous-stacks).
                 boolean pending = true;
                 for (DebugStackFrame frame : event.getStackFrames()) {
                     pending &= !frame.getName().equals("<program>");
