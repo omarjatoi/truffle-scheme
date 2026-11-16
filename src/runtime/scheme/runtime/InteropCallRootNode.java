@@ -43,6 +43,7 @@ final class InteropCallRootNode extends RootNode {
         Object[] arguments = frame.getArguments();
         SchemeContext context = SchemeContext.get(this);
         DynEnv caller = context.getDynamicEnv();
+        StackBudget.enterRoot(context);
         try {
             Object first;
             try {

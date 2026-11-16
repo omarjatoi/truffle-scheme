@@ -134,6 +134,7 @@ final class PromptDriver extends Node {
                                 capture.addOuter(pending, new Capture.PromptMarker(tag, promptEnv));
                                 return capture;
                             }
+                            context.spills++;
                             pending = capture.segmentsBefore(pending);
                             Object[] arguments = (Object[]) capture.value;
                             frame.setObject(PENDING_SLOT, pending);
@@ -152,6 +153,16 @@ final class PromptDriver extends Node {
                             continue;
                         }
                         default: {
+                            if (!Capture.sameTag(tag, capture.tag) && !capture.hasPrompt(capture.tag) && !SegmentList.hasPrompt(pending, capture.tag)) {
+                                // Not this prompt, nor one flattened into the capture or this
+                                // driver's pending segments: pass it on (segmentsBefore hands the
+                                // capture's list over, so it is only called once the capture stays).
+                                if (tag == Capture.ROOT_TAG) {
+                                    throw noPrompt(capture.tag);
+                                }
+                                capture.addOuter(pending, new Capture.PromptMarker(tag, promptEnv));
+                                return capture;
+                            }
                             SegmentList all = capture.segmentsBefore(pending);
                             SegmentList.Split split = SegmentList.splitAt(all, capture.tag);
                             if (split != null) {
@@ -159,16 +170,11 @@ final class PromptDriver extends Node {
                                 pending = split.after();
                                 frame.setObject(PENDING_SLOT, pending);
                                 value = receive(context, capture.receiver, new Continuation(split.before(), capture.dynEnv, true), capture.dynEnv, split.marker().dynEnv());
-                            } else if (Capture.sameTag(tag, capture.tag)) {
+                            } else {
                                 // This prompt: abort to it.
                                 pending = null;
                                 frame.setObject(PENDING_SLOT, pending);
                                 value = receive(context, capture.receiver, new Continuation(all, capture.dynEnv, true), capture.dynEnv, promptEnv);
-                            } else if (tag == Capture.ROOT_TAG) {
-                                throw noPrompt(capture.tag);
-                            } else {
-                                capture.addOuter(pending, new Capture.PromptMarker(tag, promptEnv));
-                                return capture;
                             }
                             continue;
                         }

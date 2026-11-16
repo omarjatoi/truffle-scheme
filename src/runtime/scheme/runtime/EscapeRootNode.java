@@ -68,8 +68,9 @@ public final class EscapeRootNode extends RootNode {
         }
         SchemeContext context = SchemeContext.get(this);
         Target target = new Target();
-        // This prompt's Java frames count as a level of nesting for the stack-depth spill.
-        context.callDepth++;
+        // This prompt's Java frames count toward the stack use (StackBudget).
+        int use = context.stackUse;
+        context.stackUse = use + StackBudget.promptCost(context);
         try {
             Object first;
             try {
@@ -82,7 +83,7 @@ public final class EscapeRootNode extends RootNode {
             }
             return driver.run(frame, target, first, null, context);
         } finally {
-            context.callDepth--;
+            context.stackUse = use;
         }
     }
 

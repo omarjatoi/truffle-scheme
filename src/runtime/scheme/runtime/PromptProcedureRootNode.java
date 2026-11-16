@@ -29,8 +29,15 @@ public final class PromptProcedureRootNode extends RootNode {
             throw SchemeRootNode.arityError(2, 2, arguments.length - 1);
         }
         SchemeContext context = SchemeContext.get(this);
-        Object first = driver.callThunk(arguments[2]);
-        return driver.run(frame, arguments[1], first, null, context);
+        // This prompt's Java frames, and its call of thunk, count toward the stack use (StackBudget).
+        int use = context.stackUse;
+        context.stackUse = use + StackBudget.promptCost(context);
+        try {
+            Object first = driver.callThunk(arguments[2]);
+            return driver.run(frame, arguments[1], first, null, context);
+        } finally {
+            context.stackUse = use;
+        }
     }
 
     /** The frames pending in this prompt, on the heap (plan.md M6-04): tools show them after it. */

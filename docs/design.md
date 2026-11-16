@@ -157,6 +157,35 @@ full R7RS-small conformance comes first.
 - **Stack-depth spill.** A depth counter forces a capture past a threshold,
   then execution resumes on a fresh stack. Deep non-tail recursion never
   overflows the Java stack.
+  - *The threshold is the Java stack the thread has (M8-01).* The counter
+    estimates bytes (`StackBudget`): each non-tail call adds its caller's
+    frame, 2.5 KB from the interpreter, and from compiled code 128 bytes plus
+    32 per slot of the caller's frame (measured: 0.5 to 2.2 KB, and 165 to
+    870 bytes). Until a thread needs more, the limit is 50 interpreted calls,
+    what fits in a 256 KB stack; the first time a call passes it, the
+    thread's remaining stack is measured, and the limit becomes it less an
+    eighth or 256 KB, whichever is more. Java can't tell how much stack is
+    left, so a probe recurses until it overflows, here and on two threads
+    with stacks of known sizes, which give the bytes per probe frame; the
+    probes repeat until two rounds agree, since a JIT compiles the probe as
+    it runs. Each root prompt takes its thread's limit. On a 2 MB stack
+    (macOS's default) about 3,300 compiled calls fit before a spill, instead
+    of 50; with a larger `-Xss`, more (the probe looks at no more than 64 MB).
+    The option `scheme.SpillDepth` fixes the old count of nested calls
+    instead, for tests of spilled frames.
+  - *Spilling is still per frame.* A frame that doesn't fit is materialized
+    when it suspends and copied when it resumes, about 1 KB allocated and
+    240 ns per frame (`ack`, M8-01); recursion much deeper than the stack
+    pays that for nearly every frame. A capture links its segments into the
+    list the driver takes as the frames suspend (no array to grow and copy).
+    Making the driver's loop a Truffle `LoopNode`, so that the program's root
+    prompt (which runs once, so is never compiled) is compiled on the stack,
+    gained about 3% on `ack` for compilations of 130 to 240 KB that kept
+    being invalidated: not done.
+  - *Rejected:* catching `StackOverflowError` and spilling then: the error can
+    come from anywhere (a specialization half done, class loading), and the
+    frames it unwound are gone; and a fixed larger count, which a 256 KB
+    stack can't hold in the interpreter.
 - **Escape-only fast path (M5-04).** When `EscapeAnalysis` proves that a
   `call/cc`'s `k` is never `set!`, never referenced by a nested lambda, and is
   only called or passed to a known procedure (a literal lambda, an internal

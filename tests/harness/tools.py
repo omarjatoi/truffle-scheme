@@ -483,7 +483,10 @@ def _cpusampler(workdir, commands):
     # tools"). Every sample in spin must have every frame of down (n = 500 down to 1), and no sample
     # may have a frame twice: at most 501 frames of down, the 501st being down(0) before it
     # tail-calls spin. That sample is as long as one in spin, so "the deepest sample" is either.
-    tree = json.loads(_profile(workdir, command, lambda out: ['--cpusampler', '--cpusampler.Output=json', '--cpusampler.Period=1ms', '--cpusampler.OutputFile=' + out],
+    # --scheme.SpillDepth=50: spill past 50 nested calls, however much Java stack there is (plan.md
+    # M8-01), so that most of down's frames are on the heap.
+    tree = json.loads(_profile(workdir, command, lambda out: ['--experimental-options', '--scheme.SpillDepth=50', '--cpusampler', '--cpusampler.Output=json',
+                                                              '--cpusampler.Period=1ms', '--cpusampler.OutputFile=' + out],
                                [r'"samples"'], program=_SPILL_PROGRAM))
     in_spin = 0
     for thread in tree['contexts'][0]['profile']:

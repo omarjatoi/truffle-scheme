@@ -261,9 +261,10 @@ public class EscapeCallCCTest {
 
     @Test
     public void deepEscapeAcrossSpills() {
-        // Past the spill depth the escape frame is on the heap: the escape finds it there.
-        check("(escaped 3000)", """
-                        (define (down i k) (if (= i 3000) (k (list 'escaped i)) (+ 1 (down (+ i 1) k))))
+        // Past the spill depth the escape frame is on the heap: the escape finds it there. (Deeper
+        // than any Java stack the tests run with, so it spills: plan.md M8-01.)
+        check("(escaped 100000)", """
+                        (define (down i k) (if (= i 100000) (k (list 'escaped i)) (+ 1 (down (+ i 1) k))))
                         (write (call/cc (lambda (k) (down 0 k))))""");
     }
 

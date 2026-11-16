@@ -168,14 +168,6 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
     }
 
     /**
-     * The number of nested non-tail calls after which a call spills instead (design.md
-     * "Continuations"): it captures up to the root prompt, which makes the call on a fresh Java stack.
-     * The interpreter fits 64 nested calls in a 256k Java stack, but not 80 (M2-05), so 50 leaves a
-     * margin. Override with {@code -Dscheme.spillDepth}.
-     */
-    static final int SPILL_DEPTH = Integer.getInteger("scheme.spillDepth", 50);
-
-    /**
      * Torture mode (M2-06, AGENTS.md rules 2 and 3): after every non-tail call of a Scheme procedure
      * returns, capture up to the root prompt and resume from copies. A constant, so it costs nothing
      * when off. Primitive calls are not tortured: they can't capture anything.
@@ -204,9 +196,11 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
     }
 
     /**
-     * A non-tail call: calls the procedure, then runs the trampoline. Past {@link #SPILL_DEPTH}
-     * nested calls it returns a spill capture instead of calling. It stores the bytecode index:
-     * guest frames below it need this call's location (design.md D13).
+     * A non-tail call: calls the procedure, then runs the trampoline. When the nested calls would use
+     * more Java stack than the thread has to spare ({@link StackBudget}), it returns a spill capture
+     * instead of calling: that captures up to the root prompt, which makes the call on a fresh Java
+     * stack (design.md "Continuations"). It stores the bytecode index: guest frames below it need
+     * this call's location (design.md D13).
      *
      * <p>The arguments start at index 1 of the variadic array, and index 0 is set to the
      * procedure: the array is the callee's frame arguments as it is, without a copy.
@@ -253,18 +247,22 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
                         @Shared @Cached Trampoline trampoline,
                         @Cached("procedure.callTarget") RootCallTarget cachedTarget,
                         @Cached("create(cachedTarget)") DirectCallNode callNode,
+                        @Bind SchemeRootNode caller,
                         @Shared @Cached InlinedBranchProfile spilled) {
             arguments[0] = procedure;
             SchemeContext context = SchemeContext.get(node);
-            if (++context.callDepth > SPILL_DEPTH) {
-                return spill(node, spilled, arguments, context);
+            int use = context.stackUse;
+            int nested = use + StackBudget.callCost(context, caller.getFrameDescriptor().getNumberOfSlots());
+            if (nested > context.stackLimit && spills(node, spilled, nested, context)) {
+                return Capture.spill(arguments, context.getDynamicEnv());
             }
+            context.stackUse = nested;
             try {
                 return tortured(trampoline.run(callNode.call(arguments)), cachedTarget, context);
             } catch (SchemeError e) {
                 return raiseHere(e, context, trampoline);
             } finally {
-                context.callDepth--;
+                context.stackUse = use;
             }
         }
 
@@ -273,18 +271,22 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
                         @Bind Node node,
                         @Shared @Cached Trampoline trampoline,
                         @Cached("trampoline.megamorphic()") IndirectCallNode callNode,
+                        @Bind SchemeRootNode caller,
                         @Shared @Cached InlinedBranchProfile spilled) {
             arguments[0] = procedure;
             SchemeContext context = SchemeContext.get(node);
-            if (++context.callDepth > SPILL_DEPTH) {
-                return spill(node, spilled, arguments, context);
+            int use = context.stackUse;
+            int nested = use + StackBudget.callCost(context, caller.getFrameDescriptor().getNumberOfSlots());
+            if (nested > context.stackLimit && spills(node, spilled, nested, context)) {
+                return Capture.spill(arguments, context.getDynamicEnv());
             }
+            context.stackUse = nested;
             try {
                 return tortured(trampoline.run(callNode.call(procedure.callTarget, arguments)), procedure.callTarget, context);
             } catch (SchemeError e) {
                 return raiseHere(e, context, trampoline);
             } finally {
-                context.callDepth--;
+                context.stackUse = use;
             }
         }
 
@@ -294,16 +296,16 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
         }
 
         /**
-         * The call is past {@link #SPILL_DEPTH}: instead of calling, returns a spill capture. Behind
-         * a branch profile (plan.md M7-01): most call sites never spill, and in compiled code the
-         * capture (with the argument array it materializes) was most of the code of every non-tail
-         * call site, so every compilation was about three times the size, and compilation fell
-         * behind.
+         * The call would take the stack use past the limit: whether it spills (returns a spill
+         * capture instead of calling). Not if this is the first time on the thread, and the
+         * thread's stack, once measured, has room ({@link StackBudget#extend}). Behind a branch
+         * profile (plan.md M7-01): most call sites never spill, and in compiled code the capture
+         * (with the argument array it materializes) was most of the code of every non-tail call
+         * site, so every compilation was about three times the size, and compilation fell behind.
          */
-        private static Object spill(Node node, InlinedBranchProfile spilled, Object[] arguments, SchemeContext context) {
+        private static boolean spills(Node node, InlinedBranchProfile spilled, int nested, SchemeContext context) {
             spilled.enter(node);
-            context.callDepth--;
-            return Capture.spill(arguments, context.getDynamicEnv());
+            return !StackBudget.extend(context, nested);
         }
 
         static PrimitiveSpec inPlace(RootCallTarget target) {

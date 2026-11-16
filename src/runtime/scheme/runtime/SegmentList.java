@@ -10,7 +10,11 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 public final class SegmentList {
 
     public final Object head;
-    public final SegmentList tail;
+    /**
+     * Never changes once the list is shared. A {@link Capture} builds its list front to back, so it
+     * sets each cell's tail once, before it hands the list over ({@link Capture#segmentsBefore}).
+     */
+    public SegmentList tail;
 
     public SegmentList(Object head, SegmentList tail) {
         this.head = head;
@@ -43,6 +47,17 @@ public final class SegmentList {
             }
         }
         return null;
+    }
+
+    /** Whether the list has a prompt marker whose tag is {@code tag} ({@link Capture#sameTag}). */
+    @TruffleBoundary
+    static boolean hasPrompt(SegmentList list, Object tag) {
+        for (SegmentList l = list; l != null; l = l.tail) {
+            if (l.head instanceof Capture.PromptMarker marker && Capture.sameTag(marker.tag(), tag)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** The result of splitting a list at the nearest prompt marker with a tag. */

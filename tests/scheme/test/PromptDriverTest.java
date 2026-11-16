@@ -19,7 +19,8 @@ public class PromptDriverTest {
 
     private static String run(String program) {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-        try (Context context = Context.newBuilder(SCHEME).out(out).build()) {
+        // Spills past 50 nested calls, however much Java stack there is (plan.md M8-01).
+        try (Context context = Context.newBuilder(SCHEME).allowExperimentalOptions(true).option("scheme.SpillDepth", "50").out(out).build()) {
             context.eval(SCHEME, program);
         }
         return out.toString(StandardCharsets.UTF_8);
