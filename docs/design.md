@@ -461,7 +461,11 @@ Each entry: the decision, why, and what was rejected.
 - With a file, it runs it as a program (D15) with the remaining arguments as
   `command-line`; `-I dir` adds to the library path; with no file, it starts
   a REPL in the interaction environment that reads until a datum is complete
-  (D13's incomplete-source signal) and prints each input's values.
+  (D13's incomplete-source signal) and prints each input's values. REPL
+  input is an interactive source: it runs in the interaction environment
+  even when it starts with `import` (which then adds to that environment),
+  and the language writes its values itself, as `write` does, one per line
+  (`isVisible` is false, so Truffle doesn't print them again).
 - The Chrome inspector, DAP and profiler tools ship as a separate optional
   distribution, and CI runs a smoke test of each against a Scheme program
   (D13's tags and source sections are what they consume).

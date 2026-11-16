@@ -81,12 +81,12 @@ public final class ProgramCompiler implements SchemeCompiler {
 
     /**
      * A program (R7RS §5.1: text whose first form is {@code import}) runs in a top level of its own,
-     * which has only its imports and its definitions; any other text runs in the interaction
-     * environment (design.md D15).
+     * which has only its imports and its definitions; any other text, and REPL input (an interactive
+     * source, design.md D17) whatever its first form, runs in the interaction environment (D15).
      */
     @Override
     public CallTarget compileProgram(SchemeLanguage language, SchemeContext context, Source source) {
-        return compile(language, context, source, true);
+        return compile(language, context, source, !source.isInteractive());
     }
 
     private static CallTarget compile(SchemeLanguage language, SchemeContext context, Source source, boolean mayBeProgram) {
