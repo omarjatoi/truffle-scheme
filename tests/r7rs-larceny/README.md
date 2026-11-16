@@ -39,7 +39,7 @@ fails exactly as under upstream's library, and also reports each test as an
 `@@r7rs-test` line, like the `(chibi test)` shim, so the same runner counts
 both suites.
 
-`sections.tsv` lists the sections `mx r7rs-test --suite larceny` runs: one per
+`sections.tsv` lists the sections `bazel run //:r7rs -- test --suite larceny` runs: one per
 library, plus the runs of `process-context` with options that upstream's
 `testall-chibi` script makes (`--test-getenv` with an environment variable,
 and `exit` and `emergency-exit` with and without a status; a run that must
@@ -51,7 +51,7 @@ passes.
 
 Tests load files relative to the working directory
 (`(load "tests/scheme/load-test1.scm")`) and write scratch files there, so
-`mx` runs every section in a fresh temporary directory whose `tests` links
+The conformance runner runs every section in a fresh temporary directory whose `tests` links
 here, with `-I tests/lib -I tests/r7rs-larceny`.
 
 ## Totals
@@ -70,7 +70,7 @@ chibi (`R7RS_TEST_SKIP`: counted, not run) and runs the section again. The
 A few tests expect a particular result where R7RS says "it is an error". We
 keep signalling those errors (design.md D8), so these tests fail by design,
 and the status block counts them in its `Exceptions` column (plan.md M4-12).
-`mx r7rs-test -v` marks them `(listed exception)`. Each row is the library
+`bazel run //:r7rs -- test -v` marks them `(listed exception)`. Each row is the library
 (its section in `sections.tsv`), the test as the shim reports it, and the
 R7RS text that makes it an error. Add a row only with that text; a test that
 fails for any other reason is a bug.
@@ -86,7 +86,7 @@ fails for any other reason is a bug.
 
 ```
 git clone https://github.com/larcenists/larceny /tmp/larceny
-mx r7rs-vendor-larceny /tmp/larceny --commit "$(git -C /tmp/larceny rev-parse HEAD)"
+bazel run //:r7rs -- vendor-larceny /tmp/larceny --commit "$(git -C /tmp/larceny rev-parse HEAD)"
 ```
 
 It replaces `tests/`, `README.upstream`, `README2.upstream` and
