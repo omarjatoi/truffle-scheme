@@ -853,7 +853,7 @@ load rule.
     profiles show, one PR per cause.
   - **Done when** each fixed program improves and the steady-state geometric
     mean improves in a regenerated report.
-- [ ] **M8-06 · Interrupting the REPL** *(early)*
+- [x] **M8-06 · Interrupting the REPL** *(early)*
   - Ctrl-C during a computation interrupts it (Truffle safepoints,
     `Context.interrupt` from the launcher) and returns to the prompt instead of
     ending the process; multi-line inputs are one history entry.

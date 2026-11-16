@@ -12,7 +12,9 @@ import org.graalvm.shadowed.org.jline.reader.LineReaderBuilder;
 import org.graalvm.shadowed.org.jline.reader.UserInterruptException;
 import org.graalvm.shadowed.org.jline.reader.impl.DefaultParser;
 import org.graalvm.shadowed.org.jline.terminal.Terminal;
+import org.graalvm.shadowed.org.jline.terminal.Terminal.Signal;
 import org.graalvm.shadowed.org.jline.terminal.TerminalBuilder;
+import org.graalvm.shadowed.org.jline.utils.Signals;
 
 /**
  * The REPL's standard input on a terminal (plan.md M7-07): lines read with JLine (the shadowed
@@ -24,7 +26,11 @@ import org.graalvm.shadowed.org.jline.terminal.TerminalBuilder;
  *
  * <p>A line is read only when a reader needs one, so nothing is read ahead. Before it reads its
  * own lines, the REPL sets the prompt ({@code > }, or the continuation prompt inside an
- * unfinished datum); the lines Scheme code reads have no prompt, and stay out of the history.
+ * unfinished datum); the lines Scheme code reads have no prompt. Only the REPL's inputs go in the
+ * history, each as one entry however many lines it has ({@link #addHistory}, plan.md M8-06).
+ *
+ * <p>Ctrl-C while a line is read ends it ({@link #takeInterrupted}); Ctrl-C at any other time, or
+ * while Scheme code reads a line, runs the action {@link #onInterrupt} gives (plan.md M8-06).
  */
 final class TerminalInput extends InputStream {
 
@@ -41,21 +47,39 @@ final class TerminalInput extends InputStream {
     private String prompt = "";
     /** Whether Ctrl-C ended a line since {@link #takeInterrupted}. */
     private boolean interrupted;
+    /** What Ctrl-C does during an evaluation, or null. Set and read on the REPL's thread. */
+    private Interrupter interrupter;
+    private final SchemeReads schemeReads = new SchemeReads();
 
     private TerminalInput(Terminal terminal, LineReader reader) {
         this.terminal = terminal;
         this.reader = reader;
     }
 
-    /** The system terminal's input, or null if JLine can't open the terminal. */
-    static TerminalInput open() {
+    /**
+     * The system terminal's input, or null if JLine can't open the terminal. The REPL's prompt inside
+     * an unfinished datum is {@code continuationPrompt}.
+     */
+    static TerminalInput open(String continuationPrompt) {
         Terminal terminal;
         try {
-            terminal = TerminalBuilder.builder().system(true).graphemeCluster(false).build();
+            // No native signals: JLine would swap the process's handler each time it reads a line
+            // (to its own and back), and between the two, SIGINT would get the JVM's default
+            // handler and end the process. The handlers below stay, and pass the signals to the
+            // terminal's handler of the moment (plan.md M8-06).
+            terminal = TerminalBuilder.builder().system(true).graphemeCluster(false).nativeSignals(false).build();
         } catch (IOException | RuntimeException e) {
             return null;
         }
+        // The signals JLine handles while it reads a line: Ctrl-C, a resize, and fg after Ctrl-Z.
+        for (Signal signal : new Signal[]{Signal.INT, Signal.WINCH, Signal.CONT}) {
+            Signals.register(signal.name(), () -> terminal.raise(signal));
+        }
         LineReaderBuilder builder = LineReaderBuilder.builder().terminal(terminal).appName("scheme");
+        // The REPL adds its inputs to the history itself, each as one entry (addHistory); a
+        // recalled entry of several lines shows its later lines with the continuation prompt.
+        builder.variable(LineReader.DISABLE_HISTORY, true);
+        builder.variable(LineReader.SECONDARY_PROMPT_PATTERN, continuationPrompt);
         // Text as typed: no shell quoting or escapes (a lone ' or \ doesn't continue the line),
         // and ! doesn't expand history (set! and friends).
         builder.parser(new DefaultParser().quoteChars(new char[0]).escapeChars(new char[0]));
@@ -82,6 +106,35 @@ final class TerminalInput extends InputStream {
         this.prompt = text;
     }
 
+    /**
+     * Ctrl-C during an evaluation goes to {@code target} (plan.md M8-06). JLine handles SIGINT
+     * itself while it reads a line, and gives this handler back after: so Ctrl-C comes here, on a
+     * thread of its own, while no line is read (the REPL evaluates an input), and as a
+     * {@link UserInterruptException} in {@link #fill} while one is. A Ctrl-C that comes here just as
+     * Scheme code starts to read a line, before JLine has its handler, interrupts the read too.
+     */
+    void onInterrupt(Interrupter target) {
+        interrupter = target;
+        terminal.handle(Signal.INT, (@SuppressWarnings("unused") Signal signal) -> {
+            target.request();
+            schemeReads.interrupt();
+        });
+    }
+
+    /** Adds one of the REPL's inputs to the history: one entry, without its last newline. */
+    void addHistory(String input) {
+        String entry = input.endsWith("\n") ? input.substring(0, input.length() - 1) : input;
+        if (!entry.isBlank()) {
+            // The history refuses entries while the variable is set, so lines JLine reads stay out.
+            reader.setVariable(LineReader.DISABLE_HISTORY, false);
+            try {
+                reader.getHistory().add(entry);
+            } finally {
+                reader.setVariable(LineReader.DISABLE_HISTORY, true);
+            }
+        }
+    }
+
     /** Whether Ctrl-C ended a line since the last call: the REPL then drops its unfinished input. */
     boolean takeInterrupted() {
         boolean result = interrupted;
@@ -95,17 +148,29 @@ final class TerminalInput extends InputStream {
             return true;
         }
         String text;
-        // Only the REPL's lines go in the history, not what Scheme code reads.
-        reader.setVariable(LineReader.DISABLE_HISTORY, prompt.isEmpty());
+        boolean forScheme = prompt.isEmpty();
+        Interrupter target = interrupter;
+        if (forScheme && target != null && !schemeReads.start(target)) {
+            // Ctrl-C came before this read: don't wait for a line, let the evaluation stop.
+            line = "\n".getBytes(StandardCharsets.UTF_8);
+            position = 0;
+            return true;
+        }
         try {
             text = reader.readLine(prompt);
         } catch (UserInterruptException e) {
-            // JLine's SIGINT handler interrupted this thread: clear it, or the next read stops too.
-            Thread.interrupted();
-            interrupted = true;
+            if (forScheme && target != null) {
+                // Scheme code reads: Ctrl-C interrupts the evaluation, which stops when it next
+                // polls a safepoint, once this empty line is read.
+                target.requestFromEvaluation();
+            } else {
+                interrupted = true;
+            }
             text = "";
         } catch (EndOfFileException e) {
             return false;
+        } finally {
+            schemeReads.end();
         }
         line = (text + "\n").getBytes(StandardCharsets.UTF_8);
         position = 0;
@@ -144,6 +209,37 @@ final class TerminalInput extends InputStream {
             reader.getHistory().save();
         } finally {
             terminal.close();
+        }
+    }
+
+    /** The read of a line for Scheme code, while one is under way: Ctrl-C interrupts its thread. */
+    private static final class SchemeReads {
+
+        private Thread reader;
+
+        /** Starts a read on this thread, unless Ctrl-C has already asked to interrupt the evaluation. */
+        synchronized boolean start(Interrupter target) {
+            if (target.pending()) {
+                return false;
+            }
+            reader = Thread.currentThread();
+            return true;
+        }
+
+        /**
+         * Ends a read (any read of a line: the REPL's too), and clears the interrupt Ctrl-C may have
+         * left on the thread (JLine's handler or ours), or the next read would stop too.
+         */
+        synchronized void end() {
+            reader = null;
+            Thread.interrupted();
+        }
+
+        /** Ctrl-C: JLine's reads end with a UserInterruptException when their thread is interrupted. */
+        synchronized void interrupt() {
+            if (reader != null) {
+                reader.interrupt();
+            }
         }
     }
 }

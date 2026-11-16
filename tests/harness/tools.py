@@ -13,8 +13,10 @@ tests/tools/:
   samples of a recursion deeper than the spill depth have every frame (M6-04).
 - `memtracer`: the memory tracer's histogram counts the allocations of the program's procedures
   (the language reports them, M7-07).
-- `terminal`: the REPL on a pseudo-terminal (M7-07): line editing, the history and its file, the
-  continuation prompt, Ctrl-C, and `read-line` reading what is typed next. It runs the launcher
+- `terminal`: the REPL on a pseudo-terminal (M7-07): line editing, the history and its file (an
+  input over several lines is one entry, M8-06), the continuation prompt, Ctrl-C dropping the
+  input typed so far and interrupting a running input (M8-06), and `read-line` reading what is
+  typed next. It runs the launcher
   without the tools, and runs `SCHEME_NATIVE_LAUNCHER` the same way if that variable names an
   executable (the native launcher, `bazel-bin/scheme-native`).
 
@@ -612,6 +614,11 @@ def _terminal_session(workdir, command, label):
         term.expect(r'\n  $', 'the continuation prompt')
         term.send('20)\r')
         term.expect(r'\n30\n> $', 'a datum over two lines')
+        # An input over several lines is one history entry (M8-06): the up arrow recalls all of it.
+        term.send('\x1bOA')
+        term.expect(r'\(\+ 10\r?\n  20\)', 'the previous input, both of its lines, recalled')
+        term.send('\r')
+        term.expect(r'\n30\n> $', 'a recalled input of two lines')
         # Every form's values, and read-line reading the next line typed.
         term.send('1 (values 2 3)\r')
         term.expect(r'\n1\n2\n3\n> $', 'the values of every form of a line')
@@ -625,6 +632,34 @@ def _terminal_session(workdir, command, label):
         term.expect(r'> $', 'a fresh prompt after Ctrl-C')
         term.send('(+ 2 2)\r')
         term.expect(r'\n4\n> $', 'the input after Ctrl-C')
+        # Ctrl-C during an evaluation interrupts it, and the session goes on (M8-06): a loop of tail calls,
+        term.send('(define (spin) (spin))\r')
+        term.expect(r'> $', 'the prompt after defining a loop')
+        term.send('(begin (display "spinning") (newline) (spin))\r')
+        term.expect(r'\nspinning\n', 'the loop running')
+        term.send('\x03')
+        term.expect(r'\nInterrupted\n> $', 'the prompt after interrupting the loop')
+        term.send('(* x x)\r')
+        term.expect(r'\n16\n> $', 'the session after the interrupt')
+        # and recursions deeper than the spill depth, in a parameterize and a dynamic-wind: the
+        # parameter is back as it was, and the after-thunk doesn't run (design.md D17).
+        term.send('(define p (make-parameter 1))\r')
+        term.expect(r'> $', 'the prompt after defining a parameter')
+        term.send('(define (deep n) (if (= n 0) 0 (+ 1 (deep (- n 1)))))\r')
+        term.expect(r'> $', 'the prompt after defining a recursion')
+        term.send('(parameterize ((p 2)) (dynamic-wind (lambda () #f) (lambda () (display "deep") (newline) '
+                  '(let loop () (deep 100000) (loop))) (lambda () (display "after-thunk") (newline))))\r')
+        term.expect(r'\ndeep\n', 'the recursions running')
+        term.send('\x03')
+        term.expect(r'\nInterrupted\n> $', 'the prompt after interrupting the recursions')
+        term.send('(list (p) (deep 1000))\r')
+        term.expect(r'\n\(1 1000\)\n> $', 'the parameter and a recursion after the interrupt')
+        _check('after-thunk\n' not in term.text(), f'terminal ({label}): an interrupt ran an after-thunk')
+        # Ctrl-C while Scheme code reads a line interrupts the evaluation too.
+        term.send('(begin (display "reading") (newline) (read-line))\r')
+        term.expect(r'\nreading\n', 'Scheme code reading a line')
+        term.send('\x03')
+        term.expect(r'\nInterrupted\n> $', 'the prompt after interrupting read-line')
         # Ctrl-D ends the session.
         term.send('\x04')
         status = term.wait()
@@ -635,7 +670,10 @@ def _terminal_session(workdir, command, label):
         saved = f.read()
     _check('(* x x)' in saved and '(+ 1 2)' in saved and 'typed text' not in saved,
            f'terminal ({label}): the history file should have the REPL\'s lines and not what read-line read:\n{saved}')
-    log(f'  terminal ({label}): editing, history, continuation prompt, Ctrl-C, read-line, Ctrl-D')
+    # JLine's history file has an entry per line, with the newlines inside one escaped.
+    _check(re.search(r'\(\+ 10\\n20\)$', saved, re.MULTILINE) and not re.search(r'^(\d+:)?20\)$', saved, re.MULTILINE),
+           f'terminal ({label}): the history file should have the input over two lines as one entry:\n{saved}')
+    log(f'  terminal ({label}): editing, history, continuation prompt, Ctrl-C, interrupts, read-line, Ctrl-D')
 
 
 def _terminal(workdir, commands):
@@ -688,7 +726,7 @@ SMOKE_TESTS = {
     'inspect': ('Chrome inspector: breakpoint, call frames, scope variables, step over, resume', _with_free_port(_inspect)),
     'cpusampler': ('CPU sampler: histogram and call tree name the procedures', _cpusampler),
     'memtracer': ('memory tracer counts the program\'s allocations', _memtracer),
-    'terminal': ('the REPL on a terminal: line editing, history, read-line', _terminal),
+    'terminal': ('the REPL on a terminal: line editing, history, interrupts, read-line', _terminal),
 }
 
 

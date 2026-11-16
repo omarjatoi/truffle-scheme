@@ -89,6 +89,7 @@ unit_tests(
         "ReaderTest": "core",
         "SuiteReadSyntaxTest": "core",
         "UpstreamAsyncStacksTest": "upstream",
+        "UpstreamInterruptTest": "upstream",
         "UpstreamNestedRootSourceTest": "upstream",
         "UpstreamReportPolymorphismTest": "upstream",
         "ValuesTest": "core",

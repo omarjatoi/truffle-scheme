@@ -37,7 +37,8 @@ import org.graalvm.polyglot.io.IOAccess;
  * each of its forms. An error prints a message and the REPL goes on; end of input ends it. It reads
  * its lines from Scheme's console input port, so Scheme code it runs reads the same input. On a
  * terminal, the lines come from JLine, with line editing and a history ({@link TerminalInput},
- * plan.md M7-07). The framework adds
+ * plan.md M7-07), and Ctrl-C interrupts an evaluation and goes back to the prompt
+ * ({@link Interrupter}, plan.md M8-06). The framework adds
  * {@code --help}, {@code --version}, {@code --engine.*}, {@code --log.*} and the other standard
  * options, and the tools' options when they are on the module path.
  *
@@ -168,7 +169,7 @@ public final class SchemeMain extends AbstractLanguageLauncher {
         }
         int status;
         if (file == null) {
-            TerminalInput terminal = isTTY() ? TerminalInput.open() : null;
+            TerminalInput terminal = isTTY() ? TerminalInput.open(CONTINUATION_PROMPT) : null;
             if (terminal != null) {
                 builder.in(terminal);
             }
@@ -204,6 +205,7 @@ public final class SchemeMain extends AbstractLanguageLauncher {
         println("With no file, starts a REPL that reads from stdin and writes each value.");
         println("On a terminal, its lines can be edited, and its history is kept in ~/.scheme_history");
         println("(or the file $" + TerminalInput.HISTORY_VARIABLE + " names; empty for none).");
+        println("There, Ctrl-C interrupts a running input and goes back to the prompt.");
         println("");
         println("Scheme options:");
         launcherOption("-I <dir>", "Add a directory to the library path (repeatable).");
@@ -307,6 +309,11 @@ public final class SchemeMain extends AbstractLanguageLauncher {
         PrintStream output = new PrintStream(out, true, StandardCharsets.UTF_8);
         PrintStream errors = new PrintStream(err, true, StandardCharsets.UTF_8);
         try (Context context = builder.arguments(LANGUAGE, new String[0]).build()) {
+            Interrupter interrupter = null;
+            if (terminal != null) {
+                interrupter = Interrupter.of(context, () -> giveUp(terminal, errors));
+                terminal.onInterrupt(interrupter);
+            }
             // The primitives themselves: a later definition of read-line in the session doesn't
             // change how the REPL reads.
             Value readLine = context.eval(internal("%read-line"));
@@ -324,6 +331,12 @@ public final class SchemeMain extends AbstractLanguageLauncher {
                     Value read = readLine.execute(stdin);
                     line = read.isString() ? read.asString() : null;
                 } catch (PolyglotException e) {
+                    if (e.isInterrupted()) {
+                        // Not expected (an evaluation's interrupt has finished before the REPL
+                        // reads), but if one comes, it drops the unfinished input, like Ctrl-C.
+                        input.setLength(0);
+                        continue;
+                    }
                     errors.println("ERROR: cannot read the input: " + e.getMessage());
                     return EXIT_NO_INPUT;
                 } finally {
@@ -339,7 +352,7 @@ public final class SchemeMain extends AbstractLanguageLauncher {
                 if (line == null) {
                     if (!input.toString().isBlank()) {
                         // End of input inside a datum: report what the reader says about it.
-                        Integer status = evaluate(context, input, first, true, errors);
+                        Integer status = evaluate(context, input, first, true, errors, terminal, interrupter);
                         if (status != null) {
                             return status;
                         }
@@ -358,7 +371,7 @@ public final class SchemeMain extends AbstractLanguageLauncher {
                     input.setLength(0);
                     continue;
                 }
-                Integer status = evaluate(context, input, first, false, errors);
+                Integer status = evaluate(context, input, first, false, errors, terminal, interrupter);
                 if (status != null) {
                     return status;
                 }
@@ -380,29 +393,66 @@ public final class SchemeMain extends AbstractLanguageLauncher {
 
     /**
      * Evaluates one REPL input, and clears it unless it is incomplete and more may come
-     * ({@code atEnd} is false). Returns the exit status if the input exited, otherwise null.
+     * ({@code atEnd} is false); on a terminal, a complete input goes in the history, as one entry.
+     * Returns the exit status if the input exited, otherwise null. An interrupt (Ctrl-C on a
+     * terminal, {@code interrupter}) prints a message, and the REPL goes on.
      */
-    private static Integer evaluate(Context context, StringBuilder input, int firstLine, boolean atEnd, PrintStream errors) {
+    private static Integer evaluate(Context context, StringBuilder input, int firstLine, boolean atEnd, PrintStream errors,
+                    TerminalInput terminal, Interrupter interrupter) {
         String name = "<repl:" + firstLine + ">";
         Source source = Source.newBuilder(LANGUAGE, input.toString(), name).interactive(true).cached(false).buildLiteral();
+        if (interrupter != null) {
+            interrupter.begin();
+        }
         try {
             context.eval(source);
         } catch (PolyglotException e) {
             if (e.isIncompleteSource() && !atEnd) {
                 return null;
             }
-            input.setLength(0);
+            done(input, terminal);
             if (e.isExit()) {
                 return e.getExitStatus();
+            }
+            if (e.isInterrupted()) {
+                // On a new line: after the terminal's ^C, or the output the evaluation left.
+                errors.println();
+                errors.println("Interrupted");
+                return null;
             }
             report(e, errors);
             if (e.isCancelled()) {
                 return EXIT_UNCAUGHT_ERROR;
             }
             return null;
+        } finally {
+            if (interrupter != null) {
+                interrupter.end();
+            }
+        }
+        done(input, terminal);
+        return null;
+    }
+
+    /** A complete input: into the history, then cleared. */
+    private static void done(StringBuilder input, TerminalInput terminal) {
+        if (terminal != null) {
+            terminal.addHistory(input.toString());
         }
         input.setLength(0);
-        return null;
+    }
+
+    /**
+     * A second Ctrl-C finds the first one's interrupt still waiting (plan.md M8-06): ends the
+     * process, as SIGINT does by default, after saving the history and giving the terminal back.
+     * It halts: the evaluation still runs, and a shutdown hook could wait for it.
+     */
+    private static void giveUp(TerminalInput terminal, PrintStream errors) {
+        errors.println();
+        errors.println("Interrupt failed: exiting");
+        closeQuietly(terminal);
+        System.out.flush();
+        Runtime.getRuntime().halt(Interrupter.EXIT_INTERRUPTED);
     }
 
     private static void report(PolyglotException e, PrintStream errors) {

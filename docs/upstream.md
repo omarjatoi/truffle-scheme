@@ -5,7 +5,7 @@ reproducer that doesn't use Scheme. Filing them at
 <https://github.com/oracle/graal/issues> is a human's call: nothing here has
 been filed. Each section has the issue text, ready to paste.
 
-All four are in Truffle 25.5.5.0.3 (Maven Central), on GraalVM CE 25.5.5.0.3
+All five are in Truffle 25.5.5.0.3 (Maven Central), on GraalVM CE 25.5.5.0.3
 (JDK 25.0.5.0.3, `nix develop`).
 
 ## The reproducers are inverted tests
@@ -16,7 +16,7 @@ the bug is there**. It runs with every other unit test in `bazel test //...`, an
 alone with:
 
 ```
-bazel test //tests:unit_jit_UpstreamAsyncStacksTest //tests:unit_jit_UpstreamNestedRootSourceTest //tests:unit_jit_UpstreamReportPolymorphismTest
+bazel test //tests:unit_jit_UpstreamAsyncStacksTest //tests:unit_jit_UpstreamNestedRootSourceTest //tests:unit_jit_UpstreamReportPolymorphismTest //tests:unit_jit_UpstreamInterruptTest
 ```
 
 When a Truffle upgrade fixes a bug, its test fails. Then remove the
@@ -34,6 +34,7 @@ instrumentation and one trivial operation (the DSL warns if a root has none).
 | [Empty asynchronous stacks](#empty-asynchronous-stacks) | `UpstreamAsyncStacksTest` | `DebuggerTest.frameNames`, `SpilledFramesTest.everyFrameOnceAtEveryLevelDownAndBackUp` and `describe` (`tests/scheme/test/`) |
 | [ReportPolymorphism on an operation](#reportpolymorphism-on-an-operation) | `UpstreamReportPolymorphismTest` | `SchemeRootNode.Call`'s cache initializer `Trampoline.megamorphic` (`src/runtime/scheme/runtime/`) |
 | [ThreadDeath in generated roots](#threaddeath-in-generated-roots) | none (a compiler warning, not behavior) | `BYTECODE_ROOT_JAVACOPTS` (`bazel/java.bzl`) |
+| [Interrupting a Bytecode DSL root as it returns](#interrupting-a-bytecode-dsl-root-as-it-returns) | `UpstreamInterruptTest` | `InterruptTest`'s static initializer (`tests/scheme/test/`) |
 
 ## Nested root source sections
 
@@ -452,4 +453,98 @@ The generated class is annotated `@SuppressWarnings({"javadoc", "serial", "unuse
 `enableTagInstrumentation = true`, the generated `resolveThrowable`. `FixWarningsVisitor` adds
 `"deprecation"` when it sees a deprecated element; adding `"removal"` too when the element is
 deprecated for removal would fix it.
+````
+
+## Interrupting a Bytecode DSL root as it returns
+
+**Found in** M8-06. **Test:** `UpstreamInterruptTest`.
+
+`Context.interrupt` throws Truffle's interrupt exception at the next safepoint
+the interrupted thread polls, with the poll's node as its location. Truffle
+also polls when a root returns (`OptimizedCallTarget.executeRootNode` calls
+`TruffleSafepoint.poll(rootNode)` after `rootNode.execute`), so an interrupt
+that lands there is located at the root itself. With a Bytecode DSL root and
+assertions on, filling in the `PolyglotException`'s stack trace then calls
+the generated root's `findBytecodeIndex` with the root as the node, which
+asserts it isn't one.
+
+- **Expected:** `Context.eval` throws a `PolyglotException` whose
+  `isInterrupted()` is true.
+- **Actual,** with `-ea`: `AssertionError: A BytecodeRootNode should not be
+  used as a call location.`, from the generated `findBytecodeIndex`, out of
+  `PolyglotImpl.guestToHostException`. Without assertions the interrupt is
+  right (the generated method reads the bytecode index from the frame).
+- **Our workaround:** in tests only. The launcher runs without assertions.
+  `InterruptTest` turns assertions off in `scheme.runtime.SchemeRootNodeGen`
+  before the class is loaded (each test class runs in its own JVM). Any
+  embedder that interrupts with assertions on can hit it: in a Scheme loop of
+  calls, most interrupts land at a return.
+
+### Issue text
+
+````markdown
+**Title:** Bytecode DSL: `Context.interrupt` landing at a root's return poll fails `findBytecodeIndex`'s assertion
+
+**Version:** Truffle 25.5.5.0.3 (GraalVM CE 25.5.5.0.3, JDK 25.0.5.0.3)
+
+`OptimizedCallTarget.executeRootNode` polls a safepoint after the root returns, with the root
+node as the location. When `Context.interrupt` lands at that poll in a `@GenerateBytecode`
+root, the interrupt exception's location is the root, and filling in the `PolyglotException`'s
+stack trace calls the generated `findBytecodeIndex(node, frame)` with it. With assertions
+enabled that fails:
+
+```
+java.lang.AssertionError: A BytecodeRootNode should not be used as a call location.
+    at ...RootGen.findBytecodeIndex(...)
+    at com.oracle.truffle.api.nodes.NodeAccessor$AccessNodes.findBytecodeIndex(NodeAccessor.java:208)
+    at com.oracle.truffle.api.TruffleStackTrace.fillIn(TruffleStackTrace.java:282)
+    at com.oracle.truffle.polyglot.PolyglotExceptionImpl.<init>(PolyglotExceptionImpl.java:130)
+    at com.oracle.truffle.polyglot.PolyglotImpl.guestToHostException(PolyglotImpl.java:1224)
+    at com.oracle.truffle.polyglot.PolyglotContextImpl.eval(PolyglotContextImpl.java:1920)
+    at org.graalvm.polyglot.Context.eval(Context.java:423)
+```
+
+Expected: a `PolyglotException` whose `isInterrupted()` is true, as without assertions.
+
+Reproducer, with a language whose program is a Bytecode DSL root of one `StatementTag` around
+`Return(LoadConstant 42)` (ours is `upstream-repro`), run with `-ea`: suspend the program at its
+statement with the debugger, interrupt from another thread, and resume; the root returns and the
+interrupt lands at the poll after it.
+
+```java
+AtomicReference<Throwable> thrown = new AtomicReference<>();
+CountDownLatch suspended = new CountDownLatch(1);
+CountDownLatch resume = new CountDownLatch(1);
+try (Context context = Context.create("upstream-repro")) {
+    try (DebuggerSession session = Debugger.find(context.getEngine()).startSession(event -> {
+        suspended.countDown();
+        try { resume.await(); } catch (InterruptedException e) { }
+    })) {
+        session.suspendNextExecution();
+        Thread evaluation = new Thread(() -> {
+            try {
+                context.eval("upstream-repro", "x");
+            } catch (Throwable t) {
+                thrown.set(t);
+            }
+        });
+        evaluation.start();
+        suspended.await();
+        Thread interrupt = new Thread(() -> {
+            try { context.interrupt(Duration.ZERO); } catch (TimeoutException e) { }
+        });
+        interrupt.start();
+        while (interrupt.getState() != Thread.State.WAITING) {
+            Thread.sleep(1);
+        }
+        resume.countDown();
+        evaluation.join();
+        interrupt.join();
+    }
+}
+// thrown: AssertionError: A BytecodeRootNode should not be used as a call location.
+```
+
+The assertion in the generated `findBytecodeIndex` could accept the root itself (the frame
+holds the bytecode index), or the poll could pass a location the root's bytecode node owns.
 ````
