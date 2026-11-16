@@ -45,6 +45,7 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
     @Override
     protected void initializeContext(SchemeContext context) {
         context.globals.cell(context.symbols.intern("%call-with-prompt")).define(new SClosure(new PromptProcedureRootNode(this).getCallTarget(), NO_CAPTURES));
+        context.globals.cell(context.symbols.intern("%call/ec")).define(new SClosure(new EscapeRootNode(this).getCallTarget(), NO_CAPTURES));
         for (BuiltinLibrary library : ServiceLoader.load(BuiltinLibrary.class, SchemeLanguage.class.getClassLoader())) {
             for (PrimitiveSpec spec : library.primitives()) {
                 SClosure procedure = new SClosure(new PrimitiveRootNode(this, spec).getCallTarget(), NO_CAPTURES);

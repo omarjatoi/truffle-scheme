@@ -107,7 +107,8 @@ final class Ast {
     }
 
     static final class Call extends Expr {
-        final Expr procedure;
+        /** Not final: the escape analysis turns call/cc into %call/ec (M5-04, {@link EscapeAnalysis}). */
+        Expr procedure;
         final List<Expr> arguments;
 
         Call(Expr procedure, List<Expr> arguments) {

@@ -33,6 +33,8 @@ public final class SchemeContext {
     public Object compilerState;
     /** The prelude's {@code %receive} (control.scm), installed by {@code %set-receive!}. */
     public Object receive;
+    /** The prelude's {@code %escape} (control.scm), installed by {@code %set-escape!} (M5-04). */
+    public Object escape;
     /** The prelude's {@code raise} (exceptions.scm), installed by {@code %set-raise!} (design.md D8). */
     public Object raise;
     private DynEnv dynamicEnv = DynEnv.INITIAL;

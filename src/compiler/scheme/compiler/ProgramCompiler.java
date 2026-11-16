@@ -100,7 +100,7 @@ public final class ProgramCompiler implements SchemeCompiler {
             state.top.registerNamespace(scope, namespace);
             program = new Expander(context.symbols, namespace, state.top, scope, state.libraries, dir).expandIsolatedProgram(forms);
         } else {
-            program = new Expander(context.symbols, state.interaction, state.top, state.interactionScope, state.libraries, dir).expandProgram(forms);
+            program = new Expander(context.symbols, state.interaction, state.top, state.interactionScope, state.libraries, dir).expandProgram(forms, false);
         }
         if (source.hasCharacters() && source.getLength() > 0) {
             program.source = source.createSection(0, source.getLength());
