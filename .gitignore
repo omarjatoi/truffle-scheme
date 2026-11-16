@@ -34,3 +34,5 @@ bench-results.json
 ps_r7rs-*.txt
 # downloads of `mx r7rs-bench-report`: other implementations' preludes and libraries (bench/README.md)
 bench/.cache/
+# the native launcher, where README.md's `mx r7rs-native-image --output native/scheme` puts it
+/native/

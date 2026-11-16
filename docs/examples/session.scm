@@ -1,0 +1,6 @@
+(define (square x)
+  (* x x))
+(square 12)
+(car '())
+(values 1 "two" #\3)
+(char-upcase #\a)

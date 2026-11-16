@@ -1,0 +1,327 @@
+# Embedding Scheme in Java
+
+The language is a Truffle language with the id `scheme`, so a Java program
+runs it through the GraalVM Polyglot API (`org.graalvm.polyglot`), like any
+other GraalVM language. Design.md D10 specifies how values cross between Java
+and Scheme; this guide shows it from the Java side.
+
+Every Java sample below is a region of
+[`tests/scheme/test/EmbeddingGuideTest.java`](../tests/scheme/test/EmbeddingGuideTest.java),
+which the unit tests run, and CI's `readme` test step fails if a sample here
+and its region differ. [`EmbeddingTest.java`](../tests/scheme/test/EmbeddingTest.java)
+covers the same API in more depth.
+
+## The jars
+
+Nothing is published to Maven: build the language (`mx build`, as in the
+README's quick start) and put its jar (`scheme.jar`, the `SCHEME`
+distribution) and Truffle's jars on the module path.
+`mx classpath SCHEME TRUFFLE_RUNTIME` prints that path. Truffle's jars are
+Maven Central's, at exactly the dev shell's GraalVM version, 25.5.5.0.3
+(design.md D11): `org.graalvm.polyglot:polyglot`, `org.graalvm.truffle`'s
+`truffle-api`, `truffle-runtime` and `truffle-compiler`, and the
+`org.graalvm.sdk` jars they use (`mx.r7rs/suite.py` lists each with its
+digest). `truffle-runtime` is Truffle's optimizing runtime: without it the
+engine only interprets, and says so on stderr. The JIT is the Graal compiler
+of the GraalVM JDK the program runs on.
+
+<!-- readme: file docs/examples/Hello.java -->
+```java
+import org.graalvm.polyglot.Context;
+import org.graalvm.polyglot.Value;
+
+public class Hello {
+    public static void main(String[] args) {
+        try (Context context = Context.create("scheme")) {
+            context.eval("scheme", "(define (greet name) (string-append \"Hello, \" name \"!\"))");
+            Value greet = context.getBindings("scheme").getMember("greet");
+            System.out.println(greet.execute("Java").asString());
+
+            Value squares = context.eval("scheme", "(map (lambda (x) (* x x)) '(1 2 3))");
+            System.out.println(squares);
+        }
+    }
+}
+```
+
+<!-- readme: run -->
+```sh
+MP=$(mx classpath SCHEME TRUFFLE_RUNTIME)
+java -p "$MP" --add-modules ALL-MODULE-PATH --enable-native-access=org.graalvm.truffle --sun-misc-unsafe-memory-access=allow docs/examples/Hello.java
+```
+
+<!-- readme: output -->
+```text
+Hello, Java!
+(1 4 9)
+```
+
+`--add-modules ALL-MODULE-PATH` resolves the language's module (`scheme`),
+which nothing `requires`: the polyglot API finds it as a service. The two other
+flags are the ones `mx` passes to the JVMs it runs Scheme in: Truffle uses
+restricted native access and `sun.misc.Unsafe` on JDK 25.
+
+## Contexts and evaluation
+
+`Context.create("scheme")` makes a context; close it when you're done. Text
+that doesn't start with `import` runs in the interaction environment, which
+imports every standard library and persists across `eval`s, as at the REPL
+(design.md D15). `eval` returns the value of the text's last expression.
+
+<!-- readme: file tests/scheme/test/EmbeddingGuideTest.java#eval -->
+```java
+try (Context context = Context.create("scheme")) {
+    Value three = context.eval("scheme", "(+ 1 2)");
+    assertEquals(3, three.asInt());
+
+    // Each eval runs in the interaction environment, which persists, as at the REPL.
+    context.eval("scheme", "(define (square x) (* x x))");
+    Value square = context.eval("scheme", "square");
+    assertEquals(144, square.execute(12).asInt());
+    assertEquals(6.25, square.execute(2.5).asDouble(), 0);
+}
+```
+
+A context is single-threaded (D10): use it from one thread at a time.
+Scheme's ports write to the context's output and error streams, which are the
+process's unless the builder sets them:
+
+<!-- readme: file tests/scheme/test/EmbeddingGuideTest.java#output -->
+```java
+ByteArrayOutputStream out = new ByteArrayOutputStream();
+try (Context context = Context.newBuilder("scheme").out(out).build()) {
+    context.eval("scheme", "(display \"hello\") (newline)");
+}
+assertEquals("hello\n", out.toString(StandardCharsets.UTF_8));
+```
+
+## Programs, libraries and exit
+
+A source whose text starts with `import` is an R7RS program: it gets its own
+top level with exactly the bindings it imports (D15), as when the launcher runs
+a file. Libraries are found on the `scheme.LibraryPath` option (directories
+separated by the path separator), which the launcher's `-I` adds to; reading
+them, like any file access from Scheme, needs `allowIO`. (The launcher also
+inherits the process's environment variables, for `get-environment-variable`,
+with `allowEnvironmentAccess(EnvironmentAccess.INHERIT)`.) `exit` surfaces as a
+`PolyglotException` whose `isExit()` is true, after the program's
+`dynamic-wind` after-thunks have run (D9):
+
+<!-- readme: file tests/scheme/test/EmbeddingGuideTest.java#program -->
+```java
+ByteArrayOutputStream out = new ByteArrayOutputStream();
+Source program = Source.newBuilder("scheme", file.toFile()).build();
+Context.Builder builder = Context.newBuilder("scheme").out(out);
+builder.allowIO(IOAccess.ALL); // to read the libraries
+builder.option("scheme.LibraryPath", libraries.toString()); // what -I adds to
+try (Context context = builder.build()) {
+    context.eval(program);
+    fail("the program calls exit");
+} catch (PolyglotException e) {
+    assertTrue(e.isExit());
+    assertEquals(3, e.getExitStatus());
+}
+assertEquals("Hello from a library, Ada!\n", out.toString(StandardCharsets.UTF_8));
+```
+
+## Scheme values in Java
+
+Scheme values answer Truffle's interop protocol as what they are. Each has the
+language `scheme`, its `write` syntax as `toString()`, and a meta object
+(`getMetaObject()`) named after its type's predicate without the `?`
+(`number`, `string`, `pair`, `procedure`, ...); a record's meta object is its
+record type.
+
+| Scheme | In Java (`Value`) |
+|---|---|
+| fixnum, flonum | `long`, `double` |
+| bignum | `fitsInBigInteger()`, never `fitsInLong()`; `fitsInDouble()` only when exact |
+| exact rational | a number that fits no integer type; `fitsInDouble()` only when exact (`1/2` yes, `1/3` no) |
+| non-real complex number | not an interop number (interop's numbers are real); `toString()` is `1+2i` |
+| string | `asString()` (a copy) |
+| character | a one-character string |
+| symbol | not a string; `toString()` is its name |
+| boolean | `asBoolean()` |
+| vector, bytevector | an array; bytevector elements are integers 0 to 255; literal ones are read-only |
+| list | an iterable (`getIterator()`), walked lazily up to the first non-pair |
+| `'()` | null, and an empty iterable |
+| unspecified value | null |
+| zero or several values | a read-only array |
+| record | an object whose fields are read-only members |
+| procedure, continuation | an executable (below) |
+
+<!-- readme: file tests/scheme/test/EmbeddingGuideTest.java#scheme-values -->
+```java
+assertEquals(42L, context.eval("scheme", "42").asLong());
+assertEquals(BigInteger.TWO.pow(100), context.eval("scheme", "(expt 2 100)").asBigInteger());
+assertEquals(0.5, context.eval("scheme", "1/2").asDouble(), 0);
+assertEquals("λ", context.eval("scheme", "#\\λ").asString());
+assertTrue(context.eval("scheme", "(< 1 2)").asBoolean());
+
+Value vector = context.eval("scheme", "(vector 1 2 3)");
+assertEquals(3, vector.getArraySize());
+vector.setArrayElement(0, 10);
+
+List<Integer> items = new ArrayList<>();
+Value iterator = context.eval("scheme", "(list 1 2 3)").getIterator();
+while (iterator.hasIteratorNextElement()) {
+    items.add(iterator.getIteratorNextElement().asInt());
+}
+assertEquals(List.of(1, 2, 3), items);
+
+Value point = context.eval("scheme", """
+                (define-record-type point (make-point x y) point? (x point-x) (y point-y))
+                (make-point 3 4)
+                """);
+assertEquals(4, point.getMember("y").asInt());
+assertEquals("point", point.getMetaObject().getMetaSimpleName());
+
+// toString is the value's write syntax.
+assertEquals("(1 \"two\" #\\3 four)", context.eval("scheme", "(list 1 \"two\" #\\3 'four)").toString());
+```
+
+## Java values in Scheme
+
+Arguments, array elements and bindings that come from Java become Scheme
+values: integers (including a `BigInteger`) are exact integers, `float` and
+`double` flonums, a `char` a character, a `String` a fresh mutable string, a
+`boolean` a boolean. A Scheme value passed back in is the same object.
+
+Anything else, Java's `null` included, stays a *foreign value*. Scheme can
+store it, return it (Java gets the same object back) and compare it with
+`eq?`, `eqv?` and `equal?` (identity); `write` shows it as `#<foreign ...>`.
+Every type predicate is false for it, so a primitive given one raises a
+Scheme error, and calling one is a "not a procedure" error. Scheme code can't
+call into Java or other languages in this version (D10).
+
+<!-- readme: file tests/scheme/test/EmbeddingGuideTest.java#java-values -->
+```java
+Value kind = context.eval("scheme", """
+                (lambda (x)
+                  (cond ((exact-integer? x) 'exact-integer)
+                        ((real? x) 'flonum)
+                        ((char? x) 'char)
+                        ((string? x) 'string)
+                        ((boolean? x) 'boolean)
+                        (else 'foreign)))
+                """);
+assertEquals("exact-integer", kind.execute(42).toString());
+assertEquals("exact-integer", kind.execute(BigInteger.TEN.pow(30)).toString());
+assertEquals("flonum", kind.execute(2.5f).toString());
+assertEquals("char", kind.execute('c').toString());
+assertEquals("string", kind.execute("text").toString());
+assertEquals("boolean", kind.execute(true).toString());
+assertEquals("foreign", kind.execute(new StringBuilder()).toString());
+assertEquals("foreign", kind.execute((Object) null).toString());
+
+// A foreign value comes back as the same Java object.
+StringBuilder host = new StringBuilder();
+Value identity = context.eval("scheme", "(lambda (x) (car (list x)))");
+assertSame(host, identity.execute(host).asHostObject());
+```
+
+## Calling procedures and global bindings
+
+A procedure is an executable: `execute(args...)` calls it, with any number of
+arguments for a variadic procedure or a `case-lambda`. A wrong number of
+arguments is a Scheme error, not an interop `ArityException`. Each call runs
+under a prompt of its own (D6), as a program does, so tail calls run in
+constant space and deep recursion spills to the heap inside it.
+
+`context.getBindings("scheme")` is the interaction environment. Its bound
+variables, imported or defined, are its members; syntactic keywords are not.
+`putMember` is `(define name value)` there: it defines, redefines, or shadows
+an import, as the REPL would. Programs keep their own top level and don't
+appear in it.
+
+<!-- readme: file tests/scheme/test/EmbeddingGuideTest.java#bindings -->
+```java
+Value bindings = context.getBindings("scheme");
+bindings.putMember("limit", 10);
+assertEquals(11, context.eval("scheme", "(+ limit 1)").asInt());
+
+context.eval("scheme", "(define (twice f x) (f (f x)))");
+Value twice = bindings.getMember("twice");
+Value cdr = bindings.getMember("cdr");
+assertEquals("(3)", twice.execute(cdr, context.eval("scheme", "'(1 2 3)")).toString());
+assertTrue(bindings.getMember("string-append").canExecute());
+assertFalse(bindings.hasMember("no-such-variable"));
+```
+
+## Errors
+
+An error that a call or an `eval` doesn't handle surfaces as a
+`PolyglotException` whose `isGuestException()` is true. Its message is the
+error object's message and irritants, or `uncaught exception: <obj>` for a
+raised object that isn't an error object. Afterwards the dynamic environment
+(parameters, handlers, `dynamic-wind`) is the caller's again, and the context
+goes on working.
+
+<!-- readme: file tests/scheme/test/EmbeddingGuideTest.java#errors -->
+```java
+try {
+    context.eval("scheme", "(error \"bad input:\" 42)");
+    fail("error returned");
+} catch (PolyglotException e) {
+    assertTrue(e.isGuestException());
+    assertEquals("bad input: 42", e.getMessage());
+}
+Value check = context.eval("scheme", "(lambda (x) (if (negative? x) (raise 'negative) x))");
+try {
+    check.execute(-1);
+    fail("raise returned");
+} catch (PolyglotException e) {
+    assertTrue(e.isGuestException());
+    assertEquals("uncaught exception: negative", e.getMessage());
+}
+// The context goes on working.
+assertEquals(5, check.execute(5).asInt());
+```
+
+## Continuations across calls
+
+Continuations are re-entrant and multi-shot, from Java too. A continuation
+captured during one call is delimited by that call's prompt: invoked during a
+later call (from Java or from Scheme), it runs the rest of the call that
+captured it, and the later call returns what that rest returns, as REPL inputs
+do. Continuations are immutable once captured, so re-entering one any number of
+times leaves both calls intact.
+
+<!-- readme: file tests/scheme/test/EmbeddingGuideTest.java#continuations -->
+```java
+context.eval("scheme", "(define saved #f)");
+Value f = context.eval("scheme", "(lambda () (+ 1 (call/cc (lambda (k) (set! saved k) 1))))");
+assertEquals(2, f.execute().asInt());
+
+// The continuation is the rest of that first call: re-enter it, as often as you like.
+Value k = context.getBindings("scheme").getMember("saved");
+assertEquals(11, k.execute(10).asInt());
+assertEquals(21, k.execute(20).asInt());
+```
+
+That is enough for a generator driven from Java, one call at a time, each
+call resuming the loop that the call before it left:
+
+<!-- readme: file tests/scheme/test/EmbeddingGuideTest.java#generator -->
+```java
+Value next = context.eval("scheme", """
+                (define (make-generator items)
+                  (define return #f)
+                  (define resume #f)
+                  (lambda ()
+                    (call/cc
+                      (lambda (r)
+                        (set! return r)
+                        (if resume
+                            (resume #f)
+                            (begin
+                              (for-each (lambda (x)
+                                          (call/cc (lambda (k) (set! resume k) (return x))))
+                                        items)
+                              (return 'done)))))))
+                (make-generator '(a b))
+                """);
+assertEquals("a", next.execute().toString());
+assertEquals("b", next.execute().toString());
+assertEquals("done", next.execute().toString());
+```

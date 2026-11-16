@@ -68,7 +68,7 @@ and names that task.
 ```
 mx checks                                 # build (ECJ + javac, warnings are errors) and static checks
 mx checks format spotbugs                 # just those steps (see `mx checks nope` for the list)
-mx tests                                  # all tests (unit, conformance status, differential, spec, torture, tools, bench)
+mx tests                                  # all tests (unit, conformance status, differential, spec, torture, tools, bench, readme)
 mx tests unittest diff                    # just those steps
 mx build                                  # build everything
 mx unittest                               # JUnit tests in tests/scheme/test (Graal JIT on, background)
@@ -91,6 +91,7 @@ mx r7rs-diff-all                          # every program in tests/diff/ (part o
 mx r7rs-space                             # tail loop and deep recursion under -Xss256k (part of mx tests)
 mx r7rs-status                            # regenerate the status block in docs/plan.md
 mx r7rs-check                             # rule 1: Java builtins never call Scheme
+mx r7rs-readme                            # run README.md's and docs/embedding.md's commands, check their samples (part of mx tests)
 mx eclipseformat                          # format Java code (GraalVM's Eclipse formatter settings)
 mx spotbugs                               # Java static analysis (SpotBugs)
 mx benchmark r7rs-ecraven:fib             # one benchmark program, JIT (bench/README.md: options, failures)
@@ -253,4 +254,5 @@ tests/space/               programs mx r7rs-space runs under small JVM limits
 tests/tools/               programs mx r7rs-tools debugs and profiles (its checks name their lines)
 tests/spec/                tail-call / continuation / depth cases; existing cases read-only
 tests/scheme/test/         JUnit unit tests; add freely
+docs/examples/             programs and sources that README.md and docs/embedding.md run (mx r7rs-readme)
 ```
