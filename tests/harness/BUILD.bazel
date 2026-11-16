@@ -3,28 +3,46 @@ load("@rules_python//python:defs.bzl", "py_binary", "py_library")
 package(default_visibility = ["//visibility:public"])
 
 exports_files([
-    "main.py",
+    "check_readme.py",
+    "check_rules.py",
+    "check_status.py",
+    "check_tools.py",
+    "check_versions.py",
     "scheme.py",
 ])
 
+# What the tests share (tests/harness/defs.bzl harness_test): each check_*.py depends only on the
+# libraries it imports, so editing one reruns only its tests.
 py_library(
     name = "harness",
-    srcs = [
-        "bench.py",
-        "harness.py",
-        "readme.py",
-        "tools.py",
-        "vendor.py",
-    ],
+    srcs = ["harness.py"],
     imports = ["."],
 )
 
-# The conformance suites' build action (defs.bzl: conformance_results).
-py_binary(
-    name = "action",
-    srcs = ["main.py"],
-    main = "main.py",
+py_library(
+    name = "readme",
+    srcs = ["readme.py"],
     deps = [":harness"],
+)
+
+py_library(
+    name = "tools",
+    srcs = ["tools.py"],
+    deps = [":harness"],
+)
+
+# `bazel run //:r7rs`'s commands: benchmarks, vendoring, reports.
+py_library(
+    name = "commands",
+    srcs = [
+        "bench.py",
+        "check_tools.py",
+        "vendor.py",
+    ],
+    deps = [
+        ":harness",
+        ":tools",
+    ],
 )
 
 # `bazel run //:r7rs -- <command>` (main.py).
@@ -46,5 +64,5 @@ py_binary(
         "//bazel:chibi-scheme",
     ],
     main = "main.py",
-    deps = [":harness"],
+    deps = [":commands"],
 )

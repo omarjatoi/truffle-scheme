@@ -49,26 +49,35 @@ junit_test = rule(
 def _java_driver_test_impl(ctx):
     jdk = ctx.file._jdk
     driver = ctx.attr._driver[JavaInfo].transitive_runtime_jars.to_list()
-    jars = module_path([ctx.attr.module]).to_list()
+    jars = module_path([ctx.attr.module]).to_list() if ctx.attr.module else []
+    tool = ctx.attr.tool[JavaInfo].transitive_runtime_jars.to_list() if ctx.attr.tool else []
     script = ctx.actions.declare_file(ctx.label.name + ".sh")
     path = lambda f: '"$TEST_SRCDIR/%s"' % rlocation(ctx, f)
     ctx.actions.write(script, "\n".join([
         "#!/bin/sh",
         "# A test driver (tests/driver) in the pinned JDK (bazel/jvm_test.bzl java_driver_test).",
         'exec %s/bin/java -Djava.io.tmpdir="$TEST_TMPDIR" -cp %s \\' % (path(jdk), ":".join([path(f) for f in driver])),
-        "  scheme.driver.%s --module-path=%s \"$@\"" % (ctx.attr.main, ":".join([rlocation(ctx, f) for f in jars])),
+        "  scheme.driver.%s --module-path=%s --tool-classpath=%s \"$@\"" % (
+            ctx.attr.main,
+            ":".join([rlocation(ctx, f) for f in jars]),
+            ":".join([rlocation(ctx, f) for f in tool]),
+        ),
         "",
     ]), is_executable = True)
-    runfiles = ctx.runfiles(files = [jdk] + driver + jars + ctx.files.data)
+    runfiles = ctx.runfiles(files = [jdk] + driver + jars + tool + ctx.files.data).merge_all(
+        [d[DefaultInfo].default_runfiles for d in ctx.attr.data],
+    )
     return [DefaultInfo(executable = script, runfiles = runfiles)]
 
 java_driver_test = rule(
     implementation = _java_driver_test_impl,
-    doc = "`scheme.driver.<main>` with `module`'s module path (the language it runs) and `args`.",
+    doc = "`scheme.driver.<main>` with `module`'s module path (the language it runs), `tool`'s class " +
+          "path (a tool it runs, such as a lint check's) and `args`.",
     attrs = {
         "data": attr.label_list(allow_files = True),
         "main": attr.string(mandatory = True),
-        "module": attr.label(mandatory = True),
+        "module": attr.label(),
+        "tool": attr.label(providers = [JavaInfo]),
         "_driver": attr.label(default = "//tests:driver"),
         "_jdk": attr.label(default = "//bazel:jdk", allow_single_file = True),
     },

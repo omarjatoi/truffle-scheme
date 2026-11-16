@@ -49,11 +49,18 @@ final class Launch {
                 rest.add(arg);
             }
         }
+        this.modulePath = classPath("module-path");
+    }
+
+    /** A `:`-separated list of runfiles paths, as absolute paths. */
+    String classPath(String name) {
         List<String> jars = new ArrayList<>();
-        for (String jar : option("module-path").split(":")) {
-            jars.add(runfile(jar).toString());
+        for (String jar : options.getOrDefault(name, "").split(":")) {
+            if (!jar.isEmpty()) {
+                jars.add(runfile(jar).toString());
+            }
         }
-        this.modulePath = String.join(":", jars);
+        return String.join(":", jars);
     }
 
     String option(String name) {
@@ -88,6 +95,18 @@ final class Launch {
 
     /** A child JVM's exit status, stdout and stderr. */
     record Result(int status, String out, String err) {
+    }
+
+    /** Runs a tool's main class in a child JVM of this JDK on a class path; its output is this test's. */
+    static int runTool(List<String> jvmArgs, String classPath, String main, List<String> args) throws IOException, InterruptedException {
+        List<String> command = new ArrayList<>();
+        command.add(Path.of(System.getProperty("java.home"), "bin", "java").toString());
+        command.add("-Djava.io.tmpdir=" + System.getenv("TEST_TMPDIR"));
+        command.addAll(jvmArgs);
+        command.addAll(List.of("-cp", classPath, main));
+        command.addAll(args);
+        log(String.join(" ", command));
+        return new ProcessBuilder(command).inheritIO().start().waitFor();
     }
 
     /** Runs `main` (module/class) in a child JVM of this JDK with the module path. */

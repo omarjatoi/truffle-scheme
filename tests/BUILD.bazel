@@ -215,8 +215,9 @@ conformance_tests(
 # few GB to build. `conformance_native`: both suites through it pass what the status block says.
 harness_test(
     name = "conformance_native",
+    check = "status",
     args = [
-        "conformance-native",
+        "native",
         "$(rlocationpath //:scheme-native)",
     ],
     data = [
@@ -252,7 +253,9 @@ _README_DATA = [
 # Every block but the native ones: commands run as written, outputs and files as shown.
 harness_test(
     name = "readme",
-    args = ["readme"] + _README_ARGS,
+    check = "readme",
+    args = _README_ARGS,
+    deps = ["readme"],
     data = _README_DATA,
     size = "large",
     tags = [
@@ -264,7 +267,9 @@ harness_test(
 # The native-image blocks, against //:scheme-native.
 harness_test(
     name = "readme_native",
-    args = ["readme"] + _README_ARGS + ["--native=$(rlocationpath //:scheme-native)"],
+    check = "readme",
+    args = _README_ARGS + ["--native=$(rlocationpath //:scheme-native)"],
+    deps = ["readme"],
     data = _README_DATA + ["//:scheme-native"],
     tags = ["manual"],
 )
@@ -285,7 +290,8 @@ tools_tests(
 # AGENTS.md rule 1: Java builtins never call Scheme.
 harness_test(
     name = "rules",
-    args = ["rules", "$(rlocationpaths //src/builtins:srcs)"],
+    check = "rules",
+    args = ["$(rlocationpaths //src/builtins:srcs)"],
     data = ["//src/builtins:srcs"],
     size = "small",
     tags = ["lint"],
@@ -294,8 +300,8 @@ harness_test(
 # design.md D11: the test JDK is the GraalVM release of the Truffle libraries.
 harness_test(
     name = "versions",
+    check = "versions",
     args = [
-        "versions",
         "--runtime=$(rlocationpath //:launcher_runtime)",
         "--lock=$(rlocationpath //:maven_install.json)",
     ],

@@ -1,4 +1,4 @@
-load("@rules_java//java:defs.bzl", "java_binary")
+load("@rules_java//java:defs.bzl", "java_binary", "java_library")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -32,9 +32,30 @@ java_binary(
 # `bazel run //:r7rs -- format` runs it in place.
 java_binary(
     name = "eclipse_format",
+    main_class = "EclipseFormat",
+    runtime_deps = [":eclipse_format_lib"],
+)
+
+# The tools as libraries: the lint tests (defs.bzl) run their main classes in the pinned JDK.
+java_library(
+    name = "checkstyle_lib",
+    runtime_deps = ["@lint//:com_puppycrawl_tools_checkstyle"],
+)
+
+java_library(
+    name = "spotbugs_lib",
+    runtime_deps = ["@lint//:com_github_spotbugs_spotbugs"],
+)
+
+java_library(
+    name = "ecj_lib",
+    runtime_deps = ["@lint//:org_eclipse_jdt_ecj"],
+)
+
+java_library(
+    name = "eclipse_format_lib",
     srcs = ["EclipseFormat.java"],
     javacopts = ["-Xlint:all", "-Werror"],
-    main_class = "EclipseFormat",
     deps = [
         "@eclipse_formatter//:org_eclipse_jdt_org_eclipse_jdt_core",
         "@eclipse_formatter//:org_eclipse_platform_org_eclipse_text",

@@ -1,4 +1,5 @@
-"""Test targets driven by tests/harness/main.py. tests/BUILD.bazel and bazel/lint use these.
+"""Test targets: Java drivers (tests/driver) for programs and conformance sections, and the few
+checks still in Python (tests/harness/check_*.py). tests/BUILD.bazel uses these.
 
 A target per JUnit class, program and spec case: each reruns only when its inputs change, and Bazel
 spreads the JVMs over the machine's cores.
@@ -7,19 +8,19 @@ spreads the JVMs over the machine's cores.
 load("@rules_python//python:defs.bzl", "py_test")
 load("//bazel:jvm_test.bzl", "java_driver_test")
 
-_MAIN = "//tests/harness:main.py"
-
-def harness_test(name, args, data, size = "medium", tags = []):
-    """A py_test running main.py with these arguments (its command first)."""
+def harness_test(name, check, args, data, deps = [], size = "medium", tags = []):
+    """A py_test running tests/harness/check_<check>.py with these arguments; `deps`: the harness
+    libraries it imports besides harness.py."""
+    script = "//tests/harness:check_%s.py" % check
     py_test(
         name = name,
         size = size,
-        srcs = [_MAIN],
-        main = _MAIN,
+        srcs = [script],
+        main = script,
         args = args,
         data = data,
         tags = tags,
-        deps = ["//tests/harness"],
+        deps = ["//tests/harness"] + ["//tests/harness:" + d for d in deps],
     )
 
 def _runtime(runtime):
@@ -107,7 +108,9 @@ def tools_tests(name, runtime, tools_runtime, programs):
     for test in tests:
         harness_test(
             name = "%s_%s" % (name, test),
-            args = ["tools", _runtime(runtime), "--tools-runtime=$(rlocationpath %s)" % tools_runtime,
+            check = "tools",
+            deps = ["tools"],
+            args = [_runtime(runtime), "--tools-runtime=$(rlocationpath %s)" % tools_runtime,
                     "--programs=$(rlocationpath %s)" % programs[0], test],
             data = [runtime, tools_runtime] + programs,
             # The DAP and Chrome DevTools clients talk to the launcher over 127.0.0.1.
@@ -147,7 +150,8 @@ def conformance_tests(name, module, suites, plan):
                 tests.append(test)
     harness_test(
         name = name + "_status",
-        args = ["conformance-status", "$(rlocationpath %s)" % plan],
+        check = "status",
+        args = ["plan", "$(rlocationpath %s)" % plan],
         data = [plan] + [files for files, _, _ in suites.values()],
         size = "small",
     )
