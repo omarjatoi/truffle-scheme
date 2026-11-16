@@ -1,0 +1,40 @@
+# CI, uploaded by the pipeline's settings (`buildkite-agent pipeline upload`), for every commit.
+# Every step runs on Buildkite's hosted linux-small agents (2 vCPUs, the default queue):
+# hooks/pre-command installs Nix, and the commands run in its dev shell, as AGENTS.md "Commands"
+# does. Main requires the build's status, `buildkite/truffle-scheme`: `checks` and `tests` fail
+# it, and the conformance steps (soft_fail) post their tables as annotations and never do. Each
+# step also posts its own status, `buildkite/truffle-scheme/<key>`.
+
+# Bazel's disk and repository caches (.bazelrc --config=ci), kept between builds.
+cache:
+  name: bazel
+  paths:
+    - /root/.cache/bazel-disk-cache
+    - /root/.cache/bazel-repository-cache
+
+steps:
+  - label: ":bazel: Checks"
+    key: checks
+    command:
+      - nix develop --command bazel test --config=ci --build_tests_only --test_tag_filters=lint //...
+
+  - label: ":bazel: Tests"
+    key: tests
+    timeout_in_minutes: 75
+    command:
+      - nix develop --command bazel test --config=ci --test_tag_filters=-lint //...
+      - nix develop --command bazel run --config=ci //:r7rs -- readme
+
+  - label: ":memo: Conformance (interpreter)"
+    key: conformance-interpreter
+    soft_fail: true
+    command:
+      - nix develop --command bazel run --config=ci //:r7rs -- test --markdown "$$PWD/conformance.md"
+      - buildkite-agent annotate --context conformance-interpreter < conformance.md
+
+  - label: ":memo: Conformance (compile)"
+    key: conformance-compile
+    soft_fail: true
+    command:
+      - nix develop --command bazel run --config=ci //:r7rs -- test --compile --markdown "$$PWD/conformance.md"
+      - buildkite-agent annotate --context conformance-compile < conformance.md

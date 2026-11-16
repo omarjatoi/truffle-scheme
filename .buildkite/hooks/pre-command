@@ -1,0 +1,8 @@
+#!/bin/bash
+# Before every step: Determinate Nix, so the step's commands can run `nix develop`. The agents are
+# fresh containers, as root, without systemd.
+set -eo pipefail
+if [ ! -e /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh ]; then
+  curl -sSfL https://install.determinate.systems/nix | sh -s -- install linux --init none --no-confirm
+fi
+. /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh

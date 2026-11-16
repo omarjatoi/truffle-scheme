@@ -26,7 +26,7 @@ test --sandbox_default_allow_network=false
 # --- Caching ---
 # Downloads (GraalVM, Maven jars, Python) land in Bazel's repository cache, which every
 # checkout and worktree on a machine shares by default.
-# CI: a disk cache that the workflow saves and restores (`--config=ci`).
+# CI (`--config=ci`): a disk cache, which the agents' cache volume keeps (.buildkite/pipeline.yml).
 common:ci --disk_cache=~/.cache/bazel-disk-cache
 common:ci --experimental_disk_cache_gc_max_size=3G
 common:ci --repository_cache=~/.cache/bazel-repository-cache
@@ -34,6 +34,8 @@ common:ci --color=yes
 common:ci --curses=no
 common:ci --show_progress_rate_limit=30
 common:ci --announce_rc
+# CI's agents have 4 GB: two test JVMs at a time (each conformance test runs two) get OOM-killed.
+test:ci --local_test_jobs=1
 # Remote cache (BuildBuddy or any REAPI cache), when it exists: `--config=remote` plus
 # `--remote_header=x-buildbuddy-api-key=...` in user.bazelrc or the CI secret.
 common:remote --remote_cache=grpcs://remote.buildbuddy.io

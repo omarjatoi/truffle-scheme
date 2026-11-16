@@ -302,9 +302,9 @@ the `java` command `bazel-bin/scheme` runs):
 
 The build takes 50 to 90 s and about 3 GB of memory on that machine, and the
 executable is 47 MB. It has no tools (they need the JVM launcher), and it runs
-on the platform that built it. CI builds it on Linux in a workflow of its own
-(`.github/workflows/native.yml`), which runs the commands above and both
-conformance suites through it.
+on the platform that built it. CI doesn't build it: a change to its
+configuration is checked locally, by the `readme` command's `--native` option,
+which runs this section's commands.
 
 ## Performance
 
@@ -334,10 +334,8 @@ JVM, startup excluded, as ecraven's tables report. "Steady state" is the best
 later iteration in the same JVM, once the JIT has compiled the program. The
 interpreter's 11 misses are runs stopped at the report's 60 s limit for it.
 [bench/README.md](../bench/README.md) explains how to run the benchmarks and
-what is measured. CI also checks a subset of them against thresholds
-measured on its own runners (`bench/thresholds.json`) on every pull request,
-as the `Tests (benchmarks)` job; bench/README.md's "Thresholds" section
-describes it.
+what is measured, and its "Thresholds" section how `bench-check` checks a
+subset of them against `bench/thresholds.json`.
 
 ## Embedding in Java
 

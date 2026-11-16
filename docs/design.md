@@ -44,7 +44,7 @@ full R7RS-small conformance comes first.
 - **Rare paths stay out of compiled code (M7-01).** The spill at the depth
   limit (below) is behind a branch profile: a site that has never spilled
   compiles without it. It was about two thirds of every non-tail call site's
-  machine code, and on CI's 4-CPU runners (two compiler threads) the
+  machine code, and on GitHub's 4-CPU runners (two compiler threads) the
   benchmarks' compilations didn't finish within the runs meant to measure
   compiled code.
 - Self tail calls in named `let` and `do` compile to loops (back-edges, OSR).
@@ -535,6 +535,14 @@ Each entry: the decision, why, and what was rejected.
   `gh`, chibi-scheme (the differential tests take it from the shell) and a
   GraalVM JDK for running and embedding outside Bazel. `nix develop .#bench`
   adds the other R7RS implementations for the comparative benchmark report.
+- **CI runs only what runs on every commit**, on Buildkite
+  (`.buildkite/pipeline.yml`, hosted `linux-small` agents, the Nix dev
+  shell): the lint tests, the other tests and the conformance tables. The
+  required check is the build (`buildkite/truffle-scheme`); the pipeline
+  says which steps can fail it (not the conformance tables).
+  Benchmarks, the threshold check (`bench/thresholds.json`, measured on the
+  maintainer's Mac) and the native image are local commands, by the
+  maintainer's choice.
 - **Measured** when Bazel replaced mx (same commit; Apple M3 Max, 16 cores,
   shared with other builds at load 15–25; GitHub's `ubuntu-26.04` runners):
 
@@ -854,11 +862,9 @@ Each entry: the decision, why, and what was rejected.
     system that the program exited normally"*), not what a program that
     ends does, so the default (0, as chibi-scheme) and the option are ours
     to choose.
-  - CI builds the native launcher on Linux in a workflow of its own
-    (`.github/workflows/native.yml`: weekly, by hand, and on PRs that change
-    it or the configuration), times its startup and runs that check. It is
-    not part of the required `Checks` and `Tests`: the build takes minutes
-    and gigabytes.
+  - CI doesn't build it (D11): the build takes minutes and gigabytes. A PR
+    that changes the native-image configuration runs `bazel run //:r7rs --
+    readme --native` and that check locally.
   - On x86-64 Linux the image targets the baseline CPU
     (`-march=compatibility`): with the default target (AVX2) the image
     uses the JDK's `libsimdsort`, whose libm dependency nixpkgs'
