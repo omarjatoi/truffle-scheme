@@ -64,6 +64,7 @@ final class ControlPrimitives {
                         new PrimitiveSpec("%error", 1, -1, ErrorPrimitive::new),
                         new PrimitiveSpec("%set-receive!", 1, 1, SetReceive::new),
                         new PrimitiveSpec("%set-escape!", 1, 1, SetEscape::new),
+                        new PrimitiveSpec("%set-unwind-root!", 1, 1, SetUnwindRoot::new),
                         new PrimitiveSpec("%current-dynamic-env", 0, 0, () -> new DynamicEnv(DynamicEnv.CURRENT)),
                         new PrimitiveSpec("%set-dynamic-env!", 1, 1, () -> new DynamicEnv(DynamicEnv.SET)),
                         new PrimitiveSpec("%make-dynamic-env", 3, 3, () -> new DynamicEnv(DynamicEnv.MAKE)),
@@ -91,8 +92,10 @@ final class ControlPrimitives {
     static final class Eq extends PrimitiveNode {
         @Override
         public Object invoke(Object[] args) {
-            Object a = args[1];
-            Object b = args[2];
+            return eq(args[1], args[2]);
+        }
+
+        static boolean eq(Object a, Object b) {
             if (a == b) {
                 return true;
             }
@@ -324,6 +327,18 @@ final class ControlPrimitives {
         @Override
         public Object invoke(Object[] args) {
             SchemeContext.get(this).escape = args[1];
+            return SConstant.UNSPECIFIED;
+        }
+    }
+
+    /**
+     * Installs the prelude's %unwind-root (control.scm), through which a root prompt runs the
+     * after-thunks an error skips when it leaves the prompt (design.md D8, M7-06).
+     */
+    static final class SetUnwindRoot extends PrimitiveNode {
+        @Override
+        public Object invoke(Object[] args) {
+            SchemeContext.get(this).unwindRoot = args[1];
             return SConstant.UNSPECIFIED;
         }
     }

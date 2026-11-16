@@ -270,6 +270,41 @@ final class PromptDriver extends Node {
         return callWithProcedure(receiveProcedure(context), new Object[]{null, receiver, k, from, to});
     }
 
+    /** What the prelude's {@code %unwind-root} returns once it has run every after-thunk ({@link #leave}). */
+    private static final Object UNWOUND = new Object();
+
+    /**
+     * {@code error} leaves a root prompt (a program, a REPL input, a library body, an embedder's
+     * call): control leaves the dynamic extent of every {@code dynamic-wind} it skipped, so their
+     * after-thunks run, innermost first, each in its own dynamic environment, as an escape runs them
+     * (design.md D8). They are Scheme code, so they run through the prelude's {@code %unwind-root}
+     * (control.scm), under this prompt (D5); then the error goes on. {@code outer} is the dynamic
+     * environment the prompt started in. An after-thunk may transfer control instead (call a
+     * continuation of this prompt, or exit): the prompt then goes on from there and returns what it
+     * returns. An error that leaves an after-thunk replaces {@code error}, and goes on through the
+     * after-thunks outside it.
+     */
+    Object leave(VirtualFrame frame, SchemeError error, DynEnv outer, SchemeContext context) {
+        SchemeError leaving = error;
+        while (true) {
+            Object unwind = context.unwindRoot;
+            if (context.getDynamicEnv().winders == outer.winders || !(unwind instanceof SClosure)) {
+                throw leaving;
+            }
+            Object result;
+            try {
+                result = run(frame, Capture.ROOT_TAG, new TailCall(unwind, new Object[]{unwind, outer, UNWOUND}), null, context);
+            } catch (SchemeError e) {
+                leaving = e;
+                continue;
+            }
+            if (result != UNWOUND) {
+                return result;
+            }
+            throw leaving;
+        }
+    }
+
     private static Object receiveProcedure(SchemeContext context) {
         Object receive = context.receive;
         if (receive == null) {

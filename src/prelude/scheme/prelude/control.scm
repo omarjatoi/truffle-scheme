@@ -82,6 +82,16 @@
 
 (%set-escape! %escape)
 
+;; An error that no handler catches leaves a root prompt (a program, a REPL input, an embedder's
+;; call, design.md D8): control leaves the dynamic extent of every dynamic-wind it skipped, so the
+;; prompt runs their after-thunks here, innermost first, each in its own dynamic environment, then
+;; lets the error go on when this returns its token.
+(define (%unwind-root to token)
+  (%rewind (%current-dynamic-env) to)
+  token)
+
+(%set-unwind-root! %unwind-root)
+
 ;; call-with-values calls the producer in a non-tail position, so it lives here (D5); apply makes
 ;; the call to the consumer a tail call.
 (define (call-with-values producer consumer)

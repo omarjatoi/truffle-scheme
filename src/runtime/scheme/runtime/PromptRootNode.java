@@ -37,8 +37,9 @@ public final class PromptRootNode extends RootNode {
     @Override
     public Object execute(VirtualFrame frame) {
         SchemeContext context = SchemeContext.get(this);
-        // An error that leaves the program leaves the dynamic environment as it found it, so the
-        // next program or interop call (design.md D10) doesn't run with its parameters or handlers.
+        // An error that leaves the program runs the after-thunks it skips (design.md D8), and
+        // leaves the dynamic environment as it found it, so the next program or interop call
+        // (D10) doesn't run with its parameters or handlers.
         DynEnv outer = context.getDynamicEnv();
         try {
             Object first;
@@ -49,6 +50,8 @@ public final class PromptRootNode extends RootNode {
                 return driver.run(frame, Capture.ROOT_TAG, e.value, e.continuation.segments, context);
             }
             return driver.run(frame, Capture.ROOT_TAG, first, null, context);
+        } catch (SchemeError e) {
+            return driver.leave(frame, e, outer, context);
         } finally {
             context.setDynamicEnv(outer);
         }

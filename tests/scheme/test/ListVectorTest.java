@@ -1,11 +1,14 @@
 package scheme.test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertThrows;
+import static org.junit.Assert.assertTrue;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 
 import org.graalvm.polyglot.Context;
+import org.graalvm.polyglot.PolyglotException;
 import org.junit.Test;
 
 /** M4-03: the list and vector procedures of R7RS §6.4 and §6.8, and (scheme cxr). */
@@ -103,5 +106,78 @@ public class ListVectorTest {
         assertEquals("(#(1 2) #(1 3))",
                         write("(let ((k #f) (results '())) (let ((v (vector-map (lambda (x) (if (= x 2) (call/cc (lambda (c) (set! k c) 2)) x)) #(1 2)))) " +
                                         "(set! results (cons v results)) (if (= (length results) 1) (k 3)) (reverse results)))"));
+    }
+
+    /** A circular list (1 2 3 1 2 3 ...) bound to c, and a circular alist bound to a, around expr. */
+    private static String circular(String expr) {
+        return "(let ((c (list 1 2 3)) (a (list (cons 1 'one) (cons 2 'two)))) (set-cdr! (cddr c) c) (set-cdr! (cdr a) a) " + expr + ")";
+    }
+
+    /** What expr raises, as (message irritants-are-the-circular-list?), or its value. */
+    private static String raisesOnCircular(String expr) {
+        return write(circular("(guard (e ((error-object? e) (list (error-object-message e) (eq? (car (error-object-irritants e)) c)))) " + expr + ")"));
+    }
+
+    /**
+     * M7-06: R7RS §6.4 says these procedures take a list, which a circular list is not, so passing
+     * one "is an error" (§1.3.2); we raise instead of looping forever (design.md D9), naming the
+     * procedure and with the list as the irritant.
+     */
+    @Test
+    public void circularListsRaise() {
+        String[] procedures = {"length", "reverse", "list-copy", "list->vector", "list->string"};
+        for (String procedure : procedures) {
+            assertEquals(procedure, "(\"" + procedure + ": not a proper list\" #t)", raisesOnCircular("(" + procedure + " c)"));
+        }
+        assertEquals("(\"append: not a proper list\" #t)", raisesOnCircular("(append '(0) c '(4))"));
+        assertEquals("(\"apply: not a proper list\" #t)", raisesOnCircular("(apply + 0 c)"));
+        // Without the element, memq and friends would walk a circular list forever.
+        for (String procedure : new String[]{"memq", "memv", "member"}) {
+            assertEquals(procedure, "(\"" + procedure + ": not a proper list\" #t)", raisesOnCircular("(" + procedure + " 4 c)"));
+        }
+        assertEquals("(\"member: not a proper list\" #t)", raisesOnCircular("(member 4 c =)"));
+        for (String procedure : new String[]{"assq", "assv", "assoc"}) {
+            assertEquals(procedure, "#t", write(circular("(guard (e ((error-object? e) (eq? (car (error-object-irritants e)) a))) (" + procedure + " 3 a))")));
+        }
+        assertEquals("#t", write(circular("(guard (e ((error-object? e) (eq? (car (error-object-irritants e)) a))) (assoc 3 a =))")));
+        // With it, they return the first sublist (or pair) that has it, as for any list.
+        assertEquals("(2 3 1 2 3)", write(circular("(let loop ((l (memv 2 c)) (n 5) (acc '())) (if (= n 0) (reverse acc) (loop (cdr l) (- n 1) (cons (car l) acc))))")));
+        assertEquals("((2 . two) (2 . two) (1 . one) (2 . two) #t #t)", write(circular("(list (assq 2 a) (assoc 2.0 a =) (assv 1 a) (assoc 2 a) (eq? (member 1 c) c) (eq? (memq 3 c) (cddr c)))")));
+        // map and for-each stop at the shortest list, which may be the only finite one (§6.10)...
+        assertEquals("((1 a) (2 b) (3 c) (1 d))", write(circular("(map list c '(a b c d))")));
+        assertEquals("(1 3 2 1)", write(circular("(let ((acc '())) (for-each (lambda (x y) (set! acc (cons x acc))) c '(a b c d)) acc)")));
+        // ... but it is an error if every list is circular.
+        assertEquals("(\"map: every list is circular\" #t)", raisesOnCircular("(map (lambda (x) x) c)"));
+        assertEquals("(\"for-each: every list is circular\" #t)", raisesOnCircular("(for-each (lambda (x y) x) c c)"));
+        assertEquals("(\"map: every list is circular\" #t)", raisesOnCircular("(map + c (cdr c))"));
+        // Bounded walks and list? need nothing new.
+        assertEquals("(2 (3 1 2 3 1 2 3 1) #f)", write(circular(
+                        "(list (list-ref c 100) (let loop ((l (list-tail c 101)) (n 8) (acc '())) (if (= n 0) (reverse acc) (loop (cdr l) (- n 1) (cons (car l) acc)))) (list? c))")));
+        // A cycle that starts further in, and a long one.
+        assertEquals("(\"length: not a proper list\" #t)", raisesOnCircular("(let ((l (list 0 1 2 3 4 5 6 7 8 9))) (set-cdr! (list-tail l 9) (list-tail l 4)) (set! c l) (length l))"));
+        assertEquals("(\"reverse: not a proper list\" #t)", raisesOnCircular("(let ((l (make-list 100000 0))) (set-cdr! (list-tail l 99999) l) (set! c l) (reverse l))"));
+        // An improper list is still an error, and proper ones work as before.
+        assertEquals("error", raises("(length '(1 2 . 3))"));
+        assertEquals("error", raises("(reverse '(1 . 2))"));
+        assertEquals("(3 (3 2 1) 0 ())", write("(list (length '(a b c)) (reverse '(1 2 3)) (length '()) (reverse '()))"));
+        assertEquals("((a b) #f (b c) #f (2 . b) #f)", write("(list (memq 'a '(a b)) (memq 'z '(a b)) (memv 'b '(a b c)) (memv 1 '(a . b)) (assv 2 '((1 . a) (2 . b))) (assq 'x '()))"));
+    }
+
+    /**
+     * The error object names the circular list as its irritant: printing it (an uncaught error's
+     * message, display, write) terminates, with datum labels where write needs them (design.md D9).
+     */
+    @Test
+    public void circularIrritantsPrint() {
+        assertEquals("#0=(1 2 3 . #0#)", write(circular("(guard (e (#t (car (error-object-irritants e)))) (length c))")));
+        try (Context context = Context.create("scheme")) {
+            PolyglotException e = assertThrows(PolyglotException.class, () -> context.eval("scheme", circular("(length c)")));
+            assertTrue(e.getMessage(), e.getMessage().contains("length: not a proper list #0=(1 2 3 . #0#)"));
+        }
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try (Context context = Context.newBuilder("scheme").out(out).build()) {
+            context.eval("scheme", circular("(display c)"));
+        }
+        assertTrue(out.toString(StandardCharsets.UTF_8), out.toString(StandardCharsets.UTF_8).startsWith("#0=(1 2 3 . #0#)"));
     }
 }

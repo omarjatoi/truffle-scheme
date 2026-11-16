@@ -48,6 +48,15 @@ final class ListVectorPrimitives {
                         new PrimitiveSpec("list-ref", 2, 2, () -> new ListIndex(ListIndex.REF)),
                         new PrimitiveSpec("list-set!", 3, 3, () -> new ListIndex(ListIndex.SET)),
                         new PrimitiveSpec("list-copy", 1, 1, ListCopy::new),
+                        new PrimitiveSpec("length", 1, 1, Length::new),
+                        new PrimitiveSpec("reverse", 1, 1, Reverse::new),
+                        new PrimitiveSpec("memq", 2, 2, () -> new Member("memq", Member.EQ, false)),
+                        new PrimitiveSpec("memv", 2, 2, () -> new Member("memv", Member.EQV, false)),
+                        new PrimitiveSpec("%member", 2, 2, () -> new Member("member", Member.EQUAL, false)),
+                        new PrimitiveSpec("assq", 2, 2, () -> new Member("assq", Member.EQ, true)),
+                        new PrimitiveSpec("assv", 2, 2, () -> new Member("assv", Member.EQV, true)),
+                        new PrimitiveSpec("%assoc", 2, 2, () -> new Member("assoc", Member.EQUAL, true)),
+                        new PrimitiveSpec("%circular-list?", 1, 1, IsCircular::new),
                         new PrimitiveSpec("vector->list", 1, 3, VectorToList::new),
                         new PrimitiveSpec("vector->string", 1, 3, VectorToString::new),
                         new PrimitiveSpec("string->vector", 1, 3, StringToVector::new),
@@ -341,6 +350,161 @@ final class ListVectorPrimitives {
     }
 
     /**
+     * {@code (length list)}. A circular list is not a list (R7RS §6.4), so it is an error: we raise
+     * instead of counting forever (design.md D9). The cycle check is Floyd's, in the same loop: a
+     * slow pointer, one pair per two steps, meets the walk only on a cycle.
+     */
+    static final class Length extends PrimitiveNode {
+        @Override
+        public Object invoke(Object[] args) {
+            return length(args[1]);
+        }
+
+        @TruffleBoundary
+        private static long length(Object list) {
+            Object slow = list;
+            Object rest = list;
+            long n = 0;
+            while (rest instanceof SPair p) {
+                rest = p.cdr;
+                if ((++n & 1) == 0) {
+                    slow = ((SPair) slow).cdr;
+                    if (slow == rest) {
+                        throw Lists.notAProperList("length", list);
+                    }
+                }
+            }
+            if (rest != SConstant.EMPTY_LIST) {
+                throw Lists.notAProperList("length", list);
+            }
+            return n;
+        }
+    }
+
+    /** {@code (reverse list)}: a fresh list; an improper or circular list is an error, as for length. */
+    static final class Reverse extends PrimitiveNode {
+        @Override
+        public Object invoke(Object[] args) {
+            return reverse(args[1]);
+        }
+
+        @TruffleBoundary
+        private static Object reverse(Object list) {
+            Object slow = list;
+            Object rest = list;
+            Object result = SConstant.EMPTY_LIST;
+            long n = 0;
+            while (rest instanceof SPair p) {
+                result = new SPair(p.car, result);
+                rest = p.cdr;
+                if ((++n & 1) == 0) {
+                    slow = ((SPair) slow).cdr;
+                    if (slow == rest) {
+                        throw Lists.notAProperList("reverse", list);
+                    }
+                }
+            }
+            if (rest != SConstant.EMPTY_LIST) {
+                throw Lists.notAProperList("reverse", list);
+            }
+            return result;
+        }
+    }
+
+    /**
+     * {@code (memq obj list)}, {@code memv}, and {@code member} without a predicate ({@code %member},
+     * lists-vectors.scm); with {@code alist}, {@code assq}, {@code assv} and {@code assoc}'s
+     * {@code %assoc}. The first sublist (or pair) whose element (or key) is the same as obj, or #f.
+     * As before, an improper list ends the search. A circular list without obj is an error (R7RS
+     * §6.4: the argument is a list), raised instead of searching forever: Floyd's cycle check, as in
+     * {@link Length}.
+     */
+    static final class Member extends PrimitiveNode {
+        static final int EQ = 0;
+        static final int EQV = 1;
+        static final int EQUAL = 2;
+
+        private final String who;
+        private final int compare;
+        private final boolean alist;
+
+        Member(String who, int compare, boolean alist) {
+            this.who = who;
+            this.compare = compare;
+            this.alist = alist;
+        }
+
+        @Override
+        public Object invoke(Object[] args) {
+            return find(who, compare, alist, args[1], args[2]);
+        }
+
+        @TruffleBoundary
+        private static Object find(String who, int compare, boolean alist, Object x, Object list) {
+            Object slow = list;
+            Object rest = list;
+            long n = 0;
+            while (rest instanceof SPair p) {
+                if (alist) {
+                    if (!(p.car instanceof SPair entry)) {
+                        throw Lists.notAPair(who, p.car);
+                    }
+                    if (same(compare, x, entry.car)) {
+                        return entry;
+                    }
+                } else if (same(compare, x, p.car)) {
+                    return p;
+                }
+                rest = p.cdr;
+                if ((++n & 1) == 0) {
+                    slow = ((SPair) slow).cdr;
+                    if (slow == rest) {
+                        throw Lists.notAProperList(who, list);
+                    }
+                }
+            }
+            return false;
+        }
+
+        private static boolean same(int compare, Object a, Object b) {
+            switch (compare) {
+                case EQ:
+                    return ControlPrimitives.Eq.eq(a, b);
+                case EQV:
+                    return ControlPrimitives.Eqv.eqv(a, b);
+                default:
+                    return ControlPrimitives.Equal.equal(a, b);
+            }
+        }
+    }
+
+    /**
+     * {@code (%circular-list? obj)}: whether obj is a circular list, one whose cdrs never end
+     * (Floyd's cycle check). map and for-each (lists-vectors.scm) use it: R7RS §6.10 lets their lists
+     * be circular as long as one is not.
+     */
+    static final class IsCircular extends PrimitiveNode {
+        @Override
+        public Object invoke(Object[] args) {
+            return isCircular(args[1]);
+        }
+
+        @TruffleBoundary
+        private static boolean isCircular(Object x) {
+            Object slow = x;
+            Object fast = x;
+            while (fast instanceof SPair p1 && p1.cdr instanceof SPair p2) {
+                fast = p2.cdr;
+                slow = ((SPair) slow).cdr;
+                if (fast == slow) {
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
+
+    /**
      * {@code (list-copy obj)}: fresh pairs for the spine of a list, proper or not, sharing the final
      * cdr; any other object is returned as is.
      */
@@ -365,7 +529,7 @@ final class ListVectorPrimitives {
                 if ((++n & 1) == 0) {
                     slow = ((SPair) slow).cdr;
                     if (slow == rest) {
-                        throw new SchemeError("list-copy: circular list");
+                        throw Lists.notAProperList("list-copy", list);
                     }
                 }
             }
