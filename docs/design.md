@@ -339,6 +339,10 @@ Each entry: the decision, why, and what was rejected.
 - Nix (`flake.nix`) provides the whole dev shell: GraalVM, `mx` (copied out
   of the store into a writable cache dir, because mx writes into its own
   checkout), Python, `gh` and chibi-scheme. There's nothing to fetch by hand.
+  `nix develop .#bench` adds the other R7RS implementations (Chez, Racket,
+  Chicken, Guile, Gauche) for M5-02's comparative report
+  (`mx r7rs-bench-report`); they're kept out of the default shell so CI jobs
+  don't download them.
 - *Rejected:* importing the `truffle` suite from a pinned graal master commit
   with a matching labsjdk (the original D11). It gets Bytecode DSL changes
   before release, but needs a ~1.5 GB graal checkout plus a labsjdk whose
