@@ -44,7 +44,7 @@ full R7RS-small conformance comes first.
 - **Rare paths stay out of compiled code (M7-01).** The spill at the depth
   limit (below) is behind a branch profile: a site that has never spilled
   compiles without it. It was about two thirds of every non-tail call site's
-  machine code, and on CI's 4-CPU runners (two compiler threads) the
+  machine code, and on GitHub's 4-CPU runners (two compiler threads) the
   benchmarks' compilations didn't finish within the runs meant to measure
   compiled code.
 - Self tail calls in named `let` and `do` compile to loops (back-edges, OSR).
@@ -535,13 +535,15 @@ Each entry: the decision, why, and what was rejected.
   `gh`, chibi-scheme (the differential tests take it from the shell) and a
   GraalVM JDK for running and embedding outside Bazel. `nix develop .#bench`
   adds the other R7RS implementations for the comparative benchmark report.
-- **CI runs on Buildkite** (`.buildkite/pipeline.yml`, `.buildkite/README.md`):
-  its steps post the required `Checks` and `Tests` commit statuses and run
-  in the Nix dev shell on fresh agents. The benchmark threshold check runs
-  on demand there (`BENCH=check`), not on every PR, by the maintainer's
-  choice, against thresholds measured on the same agents (`BENCH=measure`).
-  GitHub Actions keeps the native launcher build and the weekly comparative
-  benchmark report, which need nothing Buildkite adds.
+- **CI runs on Buildkite** (`.buildkite/pipeline.yml`), on its hosted
+  `linux-small` agents (2 vCPUs), in the Nix dev shell; there are no GitHub
+  Actions. Its steps post the required `Checks` and `Tests` commit
+  statuses. The rest runs on demand, for a build started with a variable
+  (by hand or by a schedule in the pipeline's settings), by the
+  maintainer's choice: the benchmark threshold check (`BENCH=check`) and
+  its re-measure on the same agents (`BENCH=measure`), and the native
+  launcher (`NATIVE=1`, D17). The comparative benchmark report is run
+  locally (bench/README.md).
 - **Measured** when Bazel replaced mx (same commit; Apple M3 Max, 16 cores,
   shared with other builds at load 15–25; GitHub's `ubuntu-26.04` runners):
 
@@ -861,11 +863,9 @@ Each entry: the decision, why, and what was rejected.
     system that the program exited normally"*), not what a program that
     ends does, so the default (0, as chibi-scheme) and the option are ours
     to choose.
-  - CI builds the native launcher on Linux in a workflow of its own
-    (`.github/workflows/native.yml`: weekly, by hand, and on PRs that change
-    it or the configuration), times its startup and runs that check. It is
-    not part of the required `Checks` and `Tests`: the build takes minutes
-    and gigabytes.
+  - CI builds the native launcher on Linux on demand (a Buildkite build
+    with `NATIVE=1`) and runs that check. It is not part of the required
+    `Checks` and `Tests`: the build takes minutes and gigabytes.
   - On x86-64 Linux the image targets the baseline CPU
     (`-march=compatibility`): with the default target (AVX2) the image
     uses the JDK's `libsimdsort`, whose libm dependency nixpkgs'

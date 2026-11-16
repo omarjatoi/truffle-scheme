@@ -9,8 +9,8 @@ that says how CI checks it; a block without one fails the step:
 - `<!-- readme: run server -->`: the block starts a server (`--inspect`, `--dap`). It runs until
   its output (stdout and stderr) matches the block's `output` block, then it is killed.
 - `<!-- readme: run native -->`: the block needs GraalVM's native-image, which takes minutes and
-  gigabytes, so `bazel run //:r7rs -- readme --native` runs it instead, in the native launcher's workflow
-  (.github/workflows/native.yml), and this step checks that the workflow does.
+  gigabytes, so `bazel run //:r7rs -- readme --native` runs it instead, in CI's Native launcher step
+  (.buildkite/pipeline.yml), and this step checks that the pipeline does.
 - `<!-- readme: output -->` after a run block: what the block prints on stdout (on stdout and
   stderr for a server). `...` matches any text, newlines included; trailing spaces don't count.
 - `<!-- readme: file PATH -->` or `<!-- readme: file PATH#NAME -->`: the block is the file's text,
@@ -32,7 +32,7 @@ from os.path import join
 from harness import fail, log  # noqa: F401
 
 DOCUMENTS = [join('docs', 'usage.md'), join('docs', 'embedding.md')]
-NATIVE_WORKFLOW = join('.github', 'workflows', 'native.yml')
+NATIVE_PIPELINE = join('.buildkite', 'pipeline.yml')
 NATIVE_COMMAND = '//:r7rs -- readme --native'
 
 # Seconds a block may take: a run block of Bazel commands, the native-image build, a server's banner.
@@ -232,9 +232,9 @@ def run(root, native=False):
     """Checks the documents (all but native blocks, or only the native blocks). Returns the problems."""
     blocks, problems = _blocks(root)
     if not native:
-        with open(join(root, NATIVE_WORKFLOW), encoding='utf-8') as f:
+        with open(join(root, NATIVE_PIPELINE), encoding='utf-8') as f:
             if NATIVE_COMMAND not in f.read():
-                problems.append(f'{NATIVE_WORKFLOW} does not run `{NATIVE_COMMAND}`, so the native blocks would not run')
+                problems.append(f'{NATIVE_PIPELINE} does not run `{NATIVE_COMMAND}`, so the native blocks would not run')
     for block in blocks:
         words = block.words()
         if not words or words[0] not in ('run', 'file'):

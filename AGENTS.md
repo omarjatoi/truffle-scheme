@@ -114,7 +114,10 @@ runs only on demand, in a Buildkite build started with `BENCH=check`; a PR
 that changes performance on purpose runs it, commits new thresholds from a
 `BENCH=measure` build, and says why (bench/README.md "Thresholds"). Never
 raise a threshold by hand. The thresholds are for the Buildkite agents:
-elsewhere `bench-check` only warns about them.
+elsewhere `bench-check` only warns about them. `NATIVE=1` builds and checks
+the native launcher; a PR that changes the native-image configuration runs
+it. A schedule in the pipeline's settings can set these (e.g. `NATIVE=1
+BENCH=check` weekly). There are no GitHub Actions.
 
 ## Rules (each one is enforced by `bazel test //...`)
 

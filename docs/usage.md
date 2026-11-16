@@ -302,8 +302,8 @@ the `java` command `bazel-bin/scheme` runs):
 
 The build takes 50 to 90 s and about 3 GB of memory on that machine, and the
 executable is 47 MB. It has no tools (they need the JVM launcher), and it runs
-on the platform that built it. CI builds it on Linux in a workflow of its own
-(`.github/workflows/native.yml`), which runs the commands above and both
+on the platform that built it. CI builds it on Linux on demand, in a Buildkite
+build started with `NATIVE=1`, which runs the commands above and both
 conformance suites through it.
 
 ## Performance

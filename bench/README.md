@@ -128,9 +128,8 @@ chibi's and our interpreter's timeouts and the programs whose count is 1; CI's
 twelve programs at the same scale take about 25 minutes. With the programs'
 own counts, expect several hours.
 
-CI runs it on a subset at a tenth of the counts, weekly and by hand
-(`.github/workflows/benchmarks.yml`, `gh workflow run benchmarks.yml`), and
-attaches the page and JSON to the run as the `benchmark-report` artifact.
+CI doesn't run it: the committed report comes from a dedicated machine, and a
+shared CI agent is too noisy for one.
 
 ## Thresholds
 

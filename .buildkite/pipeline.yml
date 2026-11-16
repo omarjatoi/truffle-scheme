@@ -3,9 +3,12 @@
 # Nix, and the commands run in its dev shell, as AGENTS.md "Commands" does.
 #
 # Required on main: the commit statuses `Checks` and `Tests`. The conformance tables are
-# annotations and never fail a build. The benchmark check and the re-measure of its thresholds run
-# only on demand: a build started with BENCH=check or BENCH=measure in its environment, or a push
-# whose commit message says "[bench check]" or "[bench measure]" (bench/README.md "Thresholds").
+# annotations and never fail a build. The rest runs only on demand, for a build started with a
+# variable in its environment (by hand, or by a schedule in the pipeline's settings) or for a
+# commit whose message has the tag in it:
+#   BENCH=check    [bench check]    the benchmark check (bench/README.md "Thresholds")
+#   BENCH=measure  [bench measure]  new bench/thresholds.json, as an artifact
+#   NATIVE=1       [native]         the native launcher, checked, as an artifact (design.md D17)
 
 # Bazel's disk and repository caches (.bazelrc --config=ci), kept between builds.
 cache:
@@ -66,3 +69,15 @@ steps:
       - buildkite-agent artifact download "measure-*.json" runs/
       - nix develop --command bazel run --config=ci //:r7rs -- bench-check --update --from "$$PWD"/runs/*.json --note "$$(ls runs | wc -l) runs of Buildkite's Measure step (build $$BUILDKITE_BUILD_NUMBER), each on a fresh hosted linux-small agent (2 vCPUs)"
     artifact_paths: bench/thresholds.json
+
+  - label: ":package: Native launcher"
+    if: build.env("NATIVE") == "1" || build.message =~ /\[native\]/
+    timeout_in_minutes: 90
+    command:
+      - nix develop --command bazel run --config=ci //:r7rs -- readme --native
+      - native/scheme --version
+      - SCHEME_NATIVE_LAUNCHER="$$PWD/native/scheme" nix develop --command bazel run --config=ci //:r7rs -- tools terminal
+      - nix develop --command bazel run --config=ci //:r7rs -- test --native native/scheme --markdown "$$PWD/native.md"
+      - buildkite-agent annotate --context native < native.md
+      - nix develop --command bazel run --config=ci //:r7rs -- status --check --native native/scheme
+    artifact_paths: native/scheme
