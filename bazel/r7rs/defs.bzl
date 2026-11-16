@@ -196,8 +196,8 @@ def conformance_tests(name, module, runtime, suites, plan):
             ],
             data = [runtime, files],
             size = "large",
-            # Up to six JVMs: a section each, three at a time normally and three under torture.
-            tags = ["cpu:6"],
+            # Up to four JVMs: a section each, two at a time normally and two under torture.
+            tags = ["cpu:4"],
         )
     blocks = [":%s_results_%s.md" % (name, suite) for suite in suites]
     _driver(

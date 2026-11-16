@@ -41,8 +41,8 @@ def main():
     sections = suite.sections()
     # Normally and under torture at once, a JVM per section: as long as the slowest section takes.
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-        normal_run = pool.submit(r7rs.run_conformance, runtime, sections, jobs=3)
-        tortured_run = pool.submit(r7rs.run_conformance, runtime, sections, torture=True, jobs=3)
+        normal_run = pool.submit(r7rs.run_conformance, runtime, sections, jobs=2)
+        tortured_run = pool.submit(r7rs.run_conformance, runtime, sections, torture=True, jobs=2)
         normal, tortured = normal_run.result(), tortured_run.result()
     r7rs.log('normally:\n' + r7rs.summary(normal, sections) + '\nunder torture:\n' + r7rs.summary(tortured, sections))
     worse = []

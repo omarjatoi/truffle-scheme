@@ -283,6 +283,16 @@ def run_conformance(runtime, sections, compile=False, torture=False, jobs=1):
     with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
         for group_results in pool.map(lambda g: _run_group(runtime, g, compile, torture), groups):
             results.update(group_results)
+    if jobs > 1:
+        # The runner gives each section 120 s (ConformanceRunner's scheme.conformance.timeout).
+        # Next to other JVMs on a small machine, the slowest sections ((scheme lazy)'s 1M-iteration
+        # loops, a minute interpreted and more under torture) can run out of it: run a section that
+        # timed out once more, alone, as mx would have run it.
+        timed_out = [s for s in sections if results[(s.suite.name, s.id)]['message'].startswith('timeout')]
+        if timed_out:
+            log('timed out next to other JVMs, running again alone: ' + ' '.join(s.id for s in timed_out))
+            for s in timed_out:
+                results.update(_run_group(runtime, [s], compile, torture))
     return results
 
 
