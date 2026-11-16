@@ -581,31 +581,38 @@ M5-01 benchmarks and M5-02's report.
     Dybvig), replacing M3-08's coinductive walk; still iterative (rule 4).
   - **Done when** `tests/spec/deep-equal` and the `equal?` tests pass and the
     benchmarks that use `equal?` don't regress.
-- [ ] **M5-08 · Thresholds in CI** *(needs M5-02 to M5-07)*
+- [ ] **M5-08 · Thresholds in CI** *(needs M5-02 to M5-07, M5-09, M5-10)*
   - Set per-benchmark thresholds from the measured baselines, and a CI job
     that runs the benchmarks and fails on a regression past them.
   - **Done when** the job runs on every PR and enforces the thresholds.
 
-**Proposed follow-ups**, from `docs/performance-research.md` (ranked there,
-with evidence, risks and a hill-climbing method). They are not tasks yet. Once
-M5-01's baseline is in, a planning PR turns the ones the numbers confirm into
-M5 tasks:
+From `docs/performance-research.md`'s ranking, confirmed by M5-01's
+baseline (the fixnum-overflow fix already landed in #74):
 
-- Fixnum `+`/`-`/`*` keep their `long` fast path after an overflow. Today
-  one overflow anywhere sends all fixnum arithmetic down the generic path,
-  2.7× slower on `fib`.
-- Leaf primitives in tail position run in place instead of through the
-  caller's trampoline (1.6× on `fib`).
-- Primitives run as per-call-site nodes inside `Call` instead of separate
-  call targets: no Truffle call, per-site type profiles.
-- The trampoline gets an inline cache, so tail-called procedures can be
-  inlined.
-- `Call` reports polymorphism, so Truffle splits the higher-order prelude
-  procedures (`map`, `for-each`, …).
-- Fewer argument copies (`@Variadic(startOffset = 1)`), constant-folded
-  closure contents (`@CompilationFinal` on `SClosure.captured`), and
-  `isTrivial` leaf primitives.
-- Then boxing elimination and the uncached interpreter (with M5-03).
+- [ ] **M5-09 · Primitives in place** *(needs M5-01)*
+  - Leaf primitives run without a Truffle call: in tail position, a call to a
+    primitive runs in place instead of returning a `TailCall` to the caller's
+    trampoline (rule 1 makes this safe: primitives never call Scheme); at
+    non-tail call sites, `Call` caches the primitive's node per site, so each
+    site has its own type profile. Fewer argument copies
+    (`@Variadic(startOffset = 1)`, no `Arrays.copyOfRange` in
+    `PrimitiveRootNode`), and `isTrivial` on leaf primitive roots.
+  - **Done when** `fib`, `tak` and the arithmetic-heavy benchmarks improve
+    (A/B against M5-01's numbers), torture and both conformance suites still
+    pass, and `TraceInlining` shows primitives no longer compiled as separate
+    call targets on `fib`.
+- [ ] **M5-10 · Inline caches for tail calls, and splitting** *(needs M5-09)*
+  - An inline cache in the trampoline so tail-called procedures can be
+    inlined; `Call` reports polymorphism so Truffle splits the higher-order
+    prelude procedures (`map`, `for-each`, …); `@CompilationFinal` contents for
+    constant closures' captured values.
+  - **Done when** the higher-order and tail-call-heavy benchmarks improve, the
+    tail-call spec cases still run in constant space, and torture and both
+    suites still pass.
+- Later candidates (no task until the numbers ask for them): boxing
+  elimination, the uncached interpreter (with M5-03), engine tuning; and the
+  `nqueens` slowdown after warmup (36 s on the first iteration, 131 s on the
+  second, M5-01).
 
 **Exit:** both benchmark sets run under `mx benchmark` with every R7RS-small
 program passing its own check (Larceny's Red Edition programs are listed and
