@@ -123,7 +123,7 @@ turns per program, in a rotating order, so a machine whose load changes during
 the run affects them evenly.
 
 How long it takes: the committed report (`--scale 0.1 --interpreter-timeout
-60`, every program) took 105 minutes on a loaded 16-core machine, most of it
+60`, every program) took 81 minutes on a shared 16-core machine, most of it
 chibi's and our interpreter's timeouts and the programs whose count is 1;
 twelve programs at the same scale take about 25 minutes. With the programs'
 own counts, expect several hours. It runs locally, never in CI (design.md D11).
