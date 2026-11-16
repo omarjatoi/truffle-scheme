@@ -1,16 +1,10 @@
-"""JUnit tests in the pinned JDK, without Python: `junit_test` runs one class with its module on
-the module path; `unit_tests` makes a library, a module and a test per mode for each class."""
+"""JUnit tests in the pinned JDK, without Python: `unit_tests` makes a library, a module and a test
+per mode for each class (bazel/jvm_test.bzl junit_test)."""
 
 load("@rules_java//java:defs.bzl", "java_library")
 load("//bazel:java.bzl", "SCHEME_JAVACOPTS")
-load("//bazel:java_module.bzl", "java_module_jar", "module_path", "rlocation")
-
-# The JVM options of tests/harness/harness.py: Truffle's (TRUFFLE_VM_ARGS), and each unit test
-# mode's: jit (the Graal JIT in the background), compile (COMPILE_VM_ARGS) and torture.
-_TRUFFLE_VM_ARGS = [
-    "--enable-native-access=org.graalvm.truffle,org.graalvm.shadowed.jline",
-    "--sun-misc-unsafe-memory-access=allow",
-]
+load("//bazel:java_module.bzl", "java_module_jar")
+load("//bazel:jvm_test.bzl", "junit_test")
 
 # mode: (JVM options, size, tags). The JIT's background compiler threads take a second core.
 _UNIT_MODES = {
@@ -23,39 +17,6 @@ _UNIT_MODES = {
     ], "large", []),
     "torture": (["-Dscheme.torture=true"], "medium", ["cpu:2"]),
 }
-
-_PROCESSOR = "@jvm//:org_graalvm_truffle_truffle_dsl_processor"
-
-def _junit_test_impl(ctx):
-    jdk = ctx.file._jdk
-    jars = module_path([ctx.attr.module]).to_list()
-    processor = ctx.file._processor
-    script = ctx.actions.declare_file(ctx.label.name + ".sh")
-    path = lambda f: '"$TEST_SRCDIR/%s"' % rlocation(ctx, f)
-    ctx.actions.write(script, "\n".join([
-        "#!/bin/sh",
-        "# JUnit, on the module path, in the pinned JDK (tests/harness/defs.bzl junit_test).",
-        "exec %s/bin/java \\" % path(jdk),
-        '  -Djava.io.tmpdir="$TEST_TMPDIR" -ea -esa -Dr7rs.truffle.dslProcessor=%s \\' % path(processor),
-        "  %s \\" % " ".join(ctx.attr.jvm_flags + _TRUFFLE_VM_ARGS),
-        "  -p %s --add-modules ALL-MODULE-PATH \\" % ":".join([path(f) for f in jars]),
-        "  -m junit/org.junit.runner.JUnitCore %s" % ctx.attr.test_class,
-        "",
-    ]), is_executable = True)
-    return [DefaultInfo(executable = script, runfiles = ctx.runfiles(files = [jdk, processor] + jars))]
-
-junit_test = rule(
-    implementation = _junit_test_impl,
-    doc = "One JUnit class in its own JVM, with `module` (and every module it needs) on the module path.",
-    attrs = {
-        "jvm_flags": attr.string_list(),
-        "module": attr.label(mandatory = True),
-        "test_class": attr.string(mandatory = True),
-        "_jdk": attr.label(default = "//bazel:jdk", allow_single_file = True),
-        "_processor": attr.label(default = _PROCESSOR, allow_single_file = True),
-    },
-    test = True,
-)
 
 def unit_tests(name, tests, support, kinds, resources = {}, extra_srcs = {}):
     """For each test class (a file of `tests`), its library, its module (scheme.test, or

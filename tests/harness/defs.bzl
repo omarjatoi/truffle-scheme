@@ -5,6 +5,7 @@ spreads the JVMs over the machine's cores.
 """
 
 load("@rules_python//python:defs.bzl", "py_test")
+load("//bazel:jvm_test.bzl", "java_driver_test")
 
 _MAIN = "//tests/harness:main.py"
 
@@ -47,50 +48,55 @@ chibi_output = rule(
     outputs = {"err": "%{name}.err", "out": "%{name}.out", "status": "%{name}.status"},
 )
 
-def diff_tests(name, srcs, runtime, chibi):
+def diff_tests(name, srcs, module, chibi):
     """`<name>_<program>` and `<name>_torture_<program>`: the same stdout and exit status as chibi-scheme,
     whose output for each program is a build action (`<name>_chibi_<program>`), so it reruns only when
-    the program or chibi-scheme changes."""
+    the program or chibi-scheme changes. The tests run tests/driver's Diff, in the pinned JDK."""
     tests = []
     for src in srcs:
         base = src.rsplit("/", 1)[-1].removesuffix(".scm")
         expected = "%s_chibi_%s" % (name, base)
         chibi_output(name = expected, src = src, chibi = chibi)
         for torture in ("", "torture_"):
-            harness_test(
+            java_driver_test(
                 name = name + "_" + torture + base,
-                args = ["diff", _runtime(runtime), "$(rlocationpath %s)" % src] +
+                args = ["--file=$(rlocationpath %s)" % src] +
                        ["--chibi-%s=$(rlocationpath :%s.%s)" % (part, expected, part) for part in ("out", "err", "status")] +
-                       (["--torture"] if torture else []),
-                data = [runtime, src] + [":%s.%s" % (expected, part) for part in ("out", "err", "status")],
+                       (["--torture=true"] if torture else []),
+                data = [src] + [":%s.%s" % (expected, part) for part in ("out", "err", "status")],
+                main = "Diff",
+                module = module,
                 size = "large",
             )
             tests.append(name + "_" + torture + base)
     native.test_suite(name = name, tests = tests)
 
-def spec_tests(name, srcs, runtime):
+def spec_tests(name, srcs, module):
     """`<name>_<case>`: tests/spec cases, interpreted and with the JIT, under their JVM limits."""
     tests = []
     for src in srcs:
         test = "%s_%s" % (name, src.rsplit("/", 1)[-1].removesuffix(".scm"))
-        harness_test(
+        java_driver_test(
             name = test,
-            args = ["program", "spec", _runtime(runtime), "$(rlocationpath %s)" % src],
-            data = [runtime, src, src.removesuffix(".scm") + ".out"],
+            args = ["--kind=spec", "--file=$(rlocationpath %s)" % src],
+            data = [src, src.removesuffix(".scm") + ".out"],
+            main = "Program",
+            module = module,
             size = "large",
             tags = ["cpu:2"],
         )
         tests.append(test)
     native.test_suite(name = name, tests = tests)
 
-def space_test(name, src, expect, limits, runtime):
+def space_test(name, src, expect, limits, module):
     """A program that must print `expect` under the JVM `limits`, interpreted and with the JIT."""
-    harness_test(
+    java_driver_test(
         name = name,
         # Quoted: Bazel splits `args` like a shell.
-        args = ["program", "space", _runtime(runtime), "$(rlocationpath %s)" % src, "--expect=" + expect,
-                "--limits='%s'" % limits],
-        data = [runtime, src],
+        args = ["--kind=space", "--file=$(rlocationpath %s)" % src, "--expect=" + expect, "'--limits=%s'" % limits],
+        data = [src],
+        main = "Program",
+        module = module,
         size = "large",
         tags = ["cpu:2"],
     )
@@ -116,21 +122,25 @@ _CONFORMANCE_MODES = {
     "torture": ("torture_", "large", ["cpu:2"]),
 }
 
-def conformance_tests(name, runtime, suites, plan):
-    """For each suite (`{suite: (files, [section id, ...])}`), each section and each mode, a test:
-    `<name>_<suite>_<section>` (interpreted), `<name>_compile_<suite>_<section>` and
-    `<name>_torture_<suite>_<section>`. Each passes when every test of the section passes but the
-    suite's listed exceptions, which must fail. `<name>_status`: docs/plan.md's status block is what
-    they check (editing plan.md reruns only it)."""
+def conformance_tests(name, module, suites, plan):
+    """For each suite (`{suite: (files, directory, [section id, ...])}`), each section and each mode,
+    a test: `<name>_<suite>_<section>` (interpreted), `<name>_compile_<suite>_<section>` and
+    `<name>_torture_<suite>_<section>`, tests/driver's Conformance in the pinned JDK. Each passes when
+    every test of the section passes but the suite's listed exceptions, which must fail.
+    `<name>_status`: docs/plan.md's status block is what they check (editing plan.md reruns only it)."""
     tests = []
-    for suite, (files, sections) in suites.items():
+    package = native.package_name()
+    for suite, (files, directory, sections) in suites.items():
         for section in sections:
             for mode, (prefix, size, tags) in _CONFORMANCE_MODES.items():
                 test = "%s_%s%s_%s" % (name, prefix, suite, section)
-                harness_test(
+                java_driver_test(
                     name = test,
-                    args = ["conformance", _runtime(runtime), "--suite=" + suite, "--section=" + section, "--mode=" + mode],
-                    data = [runtime, files],
+                    args = ["--suite=" + suite, "--suite-dir=_main/%s/%s" % (package, directory), "--lib=_main/%s/lib" % package,
+                            "--section=" + section, "--mode=" + mode],
+                    data = [files],
+                    main = "Conformance",
+                    module = module,
                     size = size,
                     tags = tags,
                 )
@@ -138,7 +148,7 @@ def conformance_tests(name, runtime, suites, plan):
     harness_test(
         name = name + "_status",
         args = ["conformance-status", "$(rlocationpath %s)" % plan],
-        data = [plan] + [files for files, _ in suites.values()],
+        data = [plan] + [files for files, _, _ in suites.values()],
         size = "small",
     )
     native.test_suite(name = name, tests = [name + "_status"] + tests)

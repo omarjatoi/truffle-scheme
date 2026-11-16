@@ -14,8 +14,8 @@ As commands, `bazel run //:r7rs -- <command> ...` (AGENTS.md "Commands"):
   benchmark, bench-report, bench-check, vendor-benchmarks   bench.py
   vendor-chibi, vendor-larceny                              vendor.py
 
-As Bazel tests (tests/harness/defs.bzl, bazel/lint/defs.bzl): program, conformance,
-conformance-status, conformance-native, readme, tools, rules, versions, lint.
+As Bazel tests (tests/harness/defs.bzl, bazel/lint/defs.bzl; tests/driver runs the diff, spec,
+space and conformance tests): conformance-status, conformance-native, readme, tools, rules, versions, lint.
 
 The options before the command name the runfiles of the runtime and tools it uses; the targets that
 run this pass them.
@@ -30,7 +30,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import time
 import zipfile
 from os.path import exists, join
 
@@ -89,48 +88,6 @@ def diff(o):
     fail('\n'.join(message))
 
 
-_SPEC_HEADER = re.compile(r'^;;\s*(limits|exit):\s*(.*?)\s*$')
-
-
-def _expect(runtime, file, limits, status, expected):
-    """Runs the program interpreted and with the JIT under the JVM limits; both runs must match."""
-    problems = []
-    for label, mode in (('interpreter', harness.vm_args()), ('JIT', [])):
-        start = time.time()
-        rc, out, err = harness.run_ours(runtime, file, mode, limits)
-        seconds = time.time() - start
-        if rc != status or out != expected:
-            detail = f'exit {rc} (expected {status})' if rc != status else 'stdout differs'
-            if out != expected:
-                detail += '\n' + _diff_text(expected, out, 'expected', 'actual')
-            problems.append(f'{label} ({seconds:.1f}s): {detail}\n  stderr:\n{tail(err)}')
-        else:
-            log(f'{os.path.basename(file)}: {label} ok ({seconds:.1f}s, {" ".join(limits)})')
-    check(not problems, f'FAIL {file} {" ".join(limits)}\n  ' + '\n  '.join(problems))
-
-
-def program(o):
-    """spec: a tests/spec case, with its `;; limits:` and `;; exit:` headers and its .out file
-    (tests/spec/README.md). space: one line of stdout expected under the given JVM limits."""
-    runtime = Runtime.from_manifest(o.runtime)
-    file = rlocation(o.file)
-    if o.kind == 'space':
-        _expect(runtime, file, o.limits.split(), 0, o.expect + '\n')
-        return
-    limits, status = [], 0
-    with open(file, encoding='utf-8') as f:
-        for line in f:
-            if not line.startswith(';;'):
-                break
-            m = _SPEC_HEADER.match(line)
-            if m and m.group(1) == 'limits':
-                limits = m.group(2).split()
-            elif m:
-                status = int(m.group(2))
-    with open(file[:-len('.scm')] + '.out', encoding='utf-8', newline='') as f:
-        _expect(runtime, file, limits, status, f.read())
-
-
 def _expected_results(suite):
     """What each section of a suite gives when its tests pass: its total, but for the tests the
     suite lists as exceptions (tests/r7rs-larceny/README.md), which fail."""
@@ -145,46 +102,8 @@ def expected_status_block():
     return harness.status_block([harness.suite_block(suite, _expected_results(suite)) for suite in harness.suites()])
 
 
-_MODES = {'interpreter': {}, 'compile': {'compile': True}, 'torture': {'torture': True}}
-
-
-def conformance_test(o):
-    """Test: one section of a suite, interpreted, compiled or under torture, passes every test but
-    the ones the suite lists as exceptions, and those fail. Writes its counts to result.json among
-    the test's outputs (conformance-report reads them)."""
-    runtime = Runtime.from_manifest(o.runtime)
-    suite = harness.suites(o.suite)[0]
-    sections = [s for s in suite.sections() if s.id == o.section]
-    check(sections, f'{o.suite} has no section {o.section}')
-    section = sections[0]
-    r = harness.run_conformance(runtime, [section], **_MODES[o.mode])[(suite.name, section.id)]
-    listed = suite.exceptions().get(section.id, [])
-    unexpected = list(harness.failing_tests(r['output']))
-    now_passing = []
-    for test in listed:
-        if test in unexpected:
-            unexpected.remove(test)
-        else:
-            now_passing.append(test)
-    expected = section.total - len(listed)
-    result = {'suite': suite.name, 'section': section.id, 'title': section.title, 'mode': o.mode, 'pass': r['pass'],
-              'total': section.total, 'expected': expected, 'complete': r['complete'], 'message': r['message']}
-    outputs = os.environ.get('TEST_UNDECLARED_OUTPUTS_DIR')
-    if outputs:
-        with open(join(outputs, 'result.json'), 'w', encoding='utf-8') as f:
-            json.dump(result, f, indent=1, sort_keys=True)
-    log(f'{suite.name} {section.id} ({o.mode}): {r["pass"]}/{section.total}, {expected} expected')
-    problems = []
-    if not r['complete']:
-        problems.append(f'aborted: {r["message"]}')
-    if unexpected:
-        problems.append('these tests fail, and the suite doesn\'t list them as exceptions:\n    ' + '\n    '.join(unexpected))
-    if now_passing:
-        problems.append(f'these tests pass now, but {suite.rel_dir}/README.md lists them as exceptions (expected '
-                        'failures): remove their rows from its Exceptions table\n    ' + '\n    '.join(now_passing))
-    if r['pass'] != expected and not problems:
-        problems.append(f'{r["pass"]} tests pass, {expected} expected')
-    check(not problems, f'{suite.name} {section.id} ({o.mode}): ' + '\n'.join(problems) + '\n\n' + tail(r['output'], 40))
+# The conformance tests' modes (tests/harness/defs.bzl conformance_tests).
+_MODES = ('interpreter', 'compile', 'torture')
 
 
 def conformance_status(o):
@@ -484,15 +403,6 @@ def main():
         p.add_argument('--chibi-' + part, help=f"chibi-scheme's {part}, from its build action (tests)")
     p.add_argument('--compile', action='store_true')
     p.add_argument('--torture', action='store_true')
-    p = sub.add_parser('program')
-    p.add_argument('kind', choices=['spec', 'space'])
-    p.add_argument('file')
-    p.add_argument('--expect')
-    p.add_argument('--limits')
-    p = sub.add_parser('conformance')
-    p.add_argument('--suite', choices=['chibi', 'larceny'], required=True)
-    p.add_argument('--section', required=True)
-    p.add_argument('--mode', choices=list(_MODES), required=True)
     p = sub.add_parser('conformance-status')
     p.add_argument('plan')
     p = sub.add_parser('conformance-native')
@@ -545,7 +455,7 @@ def main():
     if o.chibi:
         vendor.CHIBI[:] = [rlocation(o.chibi)]
     commands = {
-        'diff': diff, 'program': program, 'conformance': conformance_test,
+        'diff': diff,
         'conformance-status': conformance_status, 'conformance-report': conformance_report, 'tools': tools_test, 'rules': rules,
         'versions': versions, 'lint': lint, 'test': test, 'status': status, 'format': format_sources,
         'readme': readme_test, 'conformance-native': conformance_native,

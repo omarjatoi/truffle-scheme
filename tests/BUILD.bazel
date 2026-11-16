@@ -106,12 +106,20 @@ unit_tests(
     ]),
 )
 
+# The test drivers (diff, spec and space programs, conformance sections), in Java: they run in
+# the pinned JDK and start the language in a child JVM (bazel/jvm_test.bzl java_driver_test).
+scheme_java_library(
+    name = "driver",
+    srcs = glob(["driver/scheme/driver/*.java"]),
+    spotbugs = False,
+)
+
 # tests/diff: `diff_<program>` and `diff_torture_<program>`, against chibi-scheme.
 diff_tests(
     name = "diff",
     srcs = glob(["diff/*.scm"]),
     chibi = "//bazel:chibi-scheme",
-    runtime = "//:launcher_runtime",
+    module = "//:launcher_module",
 )
 
 # tests/spec cases that need something a later task brings: {case: task}. Remove an entry when its
@@ -121,8 +129,8 @@ SPEC_PENDING = {}
 # tests/spec: `spec_<case>`, each with the JVM limits in its header.
 spec_tests(
     name = "spec",
+    module = "//:launcher_module",
     srcs = [f for f in glob(["spec/*.scm"]) if f.removeprefix("spec/").removesuffix(".scm") not in SPEC_PENDING],
-    runtime = "//:launcher_runtime",
 )
 
 # M1-06: a 10M-iteration tail loop under a stack and heap too small for anything that grows.
@@ -131,7 +139,7 @@ space_test(
     src = "diff/loop-10m.scm",
     expect = "10000000",
     limits = "-Xss256k -Xmx64m",
-    runtime = "//:launcher_runtime",
+    module = "//:launcher_module",
 )
 
 # M2-05: 1M-deep non-tail recursion under a 256k Java stack (chibi runs out of stack on it).
@@ -140,7 +148,7 @@ space_test(
     src = "space/deep-recursion-1m.scm",
     expect = "1000000",
     limits = "-Xss256k -Xmx512m",
-    runtime = "//:launcher_runtime",
+    module = "//:launcher_module",
 )
 
 test_suite(
@@ -195,11 +203,11 @@ LARCENY_SECTIONS = [
 # what they check.
 conformance_tests(
     name = "conformance",
+    module = "//:launcher_module",
     plan = "//:docs/plan.md",
-    runtime = "//:launcher_runtime",
     suites = {
-        "chibi": (":chibi_suite", CHIBI_SECTIONS),
-        "larceny": (":larceny_suite", LARCENY_SECTIONS),
+        "chibi": (":chibi_suite", "r7rs", CHIBI_SECTIONS),
+        "larceny": (":larceny_suite", "r7rs-larceny", LARCENY_SECTIONS),
     },
 )
 
