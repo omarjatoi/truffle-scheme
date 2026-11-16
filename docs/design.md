@@ -897,7 +897,10 @@ Each entry: the decision, why, and what was rejected.
     reaches the terminal through the FFM API, so the JVM launcher gets
     `--enable-native-access=org.graalvm.shadowed.jline`; JLine's own
     native-image configuration registers the downcalls for the native
-    launcher.
+    launcher, whose build takes the same `--enable-native-access` (M8-07:
+    without it, the executable printed the JDK's restricted-method warning
+    before the first prompt). The `terminal` tools test fails on any
+    warning there, for either launcher.
     The REPL adds each input to the history itself once it is complete, as
     one entry however many lines it took (M8-06); JLine adds none, and a
     recalled entry shows its later lines with the continuation prompt.
@@ -971,6 +974,44 @@ Each entry: the decision, why, and what was rejected.
     its prelude `Source`s included, is in the image heap, the executable
     doesn't read it (nor, when it restores, the prelude files), and the
     resources the executable carries leave it out.
+  - **A pre-initialized context (M8-07).** The image is built with
+    `-Dpolyglot.image-build-time.PreinitializeContexts=scheme` (25.5's name
+    for the deprecated `--engine.PreinitializeContexts`), an option of the
+    `//:scheme-native` target, not of the language's jar: native-image
+    creates a context at build time, whose `initializeContext` restores the
+    prelude image and runs the library bodies, so the standard libraries,
+    the interaction environment and the primitives' cells are in the image
+    heap. The launcher's context, the first one of the process with the
+    default engine, takes it over: Truffle calls
+    `SchemeLanguage.patchContext` with the run's Env, which rebinds what
+    the context took from the build's:
+    - the Env itself (`SchemeContext.patch`), from which the command line,
+      the environment variables, files and the current directory, `exit`
+      and the options are read when they are used;
+    - the console ports, which keep their identity (the prelude's
+      `current-output-port` and the other two parameters hold them) and
+      write and read the new Env's stdout, stderr and stdin through
+      streams that the patch points at them (pre-initialization reads and
+      writes none, so nothing is left buffered);
+    - the library path (`-I`, `scheme.LibraryPath`), which the compiler's
+      `Libraries` keeps, with the Env it resolves directories in;
+    - the context's `AllocationReporter`.
+
+    Nothing else comes from the build: `current-jiffy` is `System.nanoTime`
+    with no saved epoch, `current-second` reads the clock when it's called,
+    and initialization reads no environment variable, file or clock (the
+    executable's strings name no build path but the linker's object files,
+    as without pre-initialization). `ContextPreinitializationTest` checks
+    each of these against a pre-initialized context on HotSpot, where
+    Truffle pre-initializes one when the same system property is set
+    before the polyglot API is first used: through the Context API, and
+    through the launcher, a program and the REPL, in child JVMs. A context
+    whose `scheme.PreludeImage` is false declines the patch and gets a new
+    context. `areOptionsCompatible` has no part in it: it decides whether
+    contexts may share code, and this language's don't (`EXCLUSIVE`, no
+    sharing layer). Only the default engine's first context is the
+    pre-initialized one; an embedder's explicit `Engine`, a second context,
+    or an image built without the option starts a context as before.
   - Code that partial evaluation reaches must not reach a method
     native-image blocklists for runtime compilation. On HotSpot such a path
     only costs code size, but native-image refuses to build: a call through
@@ -980,18 +1021,32 @@ Each entry: the decision, why, and what was rejected.
   - Numbers on an Apple M3 Max (16 cores, macOS), median of 10 runs; the
     JVM launcher is the `java` command `bazel-bin/scheme` runs (M6-06;
     since M7-05 the first context restores the prelude image, which D13
-    measures against expanding):
+    measures against expanding; the native startup rows are M8-07's, below):
 
     | | Native | JVM |
     |---|---:|---:|
-    | `scheme --version` | 15 ms, 15 MB | 228 ms, 251 MB |
-    | A hello-world program | 20 ms, 27 MB | 614 ms, 326 MB |
+    | `scheme --version` | 10 ms, 15 MB | 228 ms, 251 MB |
+    | A hello-world program | 11 ms, 19 MB | 614 ms, 326 MB |
     | ecraven's `fib` (40, 5 runs), steady iteration | 12.4 s | 13.3 s |
     | ecraven's `tak`, steady iteration | 4.7 s | 6.0 s |
     | Peak RSS over 5 iterations of `fib` / `tak` | 149 / 176 MB | 1505 / 1558 MB |
 
+    Native startup with and without the pre-initialized context (M8-07):
+    the executable before and after that task, the median of 41 runs
+    each, interleaved, wall time and peak RSS:
+
+    | | Without | With |
+    |---|---:|---:|
+    | `scheme --version` (no context) | 9.8 ms, 14.7 MB | 9.7 ms, 14.8 MB |
+    | A hello-world program | 13.1 ms, 22.5 MB | 11.0 ms, 19.4 MB |
+    | The REPL, `(+ 1 2)` then end of input | 13.9 ms, 22.8 MB | 12.0 ms, 19.4 MB |
+
+    What a program costs over `--version` drops from 3.3 ms to 1.3 ms
+    (restoring the prelude image and running the library bodies is the
+    part that goes), and 3 MB of RSS; the executable grows by 1 MB.
+
     The build takes 50–90 s and about 3 GB on that machine; the
-    executable is 47 MB. The JIT compiles in the native launcher as on the
+    executable is 55 MB. The JIT compiles in the native launcher as on the
     JVM (`--engine.TraceCompilation` shows the tier-1 compilations), and
     the first `fib` iteration (17.8 s against the JVM's 13.6 s) is the
     only one that is slower.
@@ -1027,9 +1082,9 @@ Each entry: the decision, why, and what was rejected.
     run on any x86-64 machine.
   - Limits: the tools (inspector, DAP, profilers) are only on the JVM
     launcher (`bazel-bin/scheme`); the executable is for the platform that built
-    it; and there is no auxiliary engine cache or pre-initialized context in
-    the image (each context still restores the prelude image and runs the
-    library bodies).
+    it; and there is no auxiliary engine cache in the image (only the first
+    context is pre-initialized: any other restores the prelude image and
+    runs the library bodies).
 - Why: Truffle languages get debugging, profiling and engine tuning from
   the platform; a hand-written launcher would have to re-implement or forgo
   all of it.

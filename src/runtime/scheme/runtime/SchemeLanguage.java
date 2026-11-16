@@ -15,6 +15,7 @@ import com.oracle.truffle.api.RootCallTarget;
 import com.oracle.truffle.api.TruffleLanguage;
 import com.oracle.truffle.api.debug.DebuggerTags;
 import com.oracle.truffle.api.frame.MaterializedFrame;
+import com.oracle.truffle.api.instrumentation.AllocationReporter;
 import com.oracle.truffle.api.instrumentation.ProvidedTags;
 import com.oracle.truffle.api.instrumentation.StandardTags;
 import com.oracle.truffle.api.nodes.ExecutableNode;
@@ -62,15 +63,40 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
     @Override
     protected SchemeContext createContext(Env env) {
         SchemeContext context = new SchemeContext(env);
-        context.allocationReporter.addActiveListener(active -> {
+        listenForAllocationListeners(context.allocationReporter);
+        return context;
+    }
+
+    private void listenForAllocationListeners(AllocationReporter reporter) {
+        reporter.addActiveListener(active -> {
             if (active) {
                 noAllocationListeners.invalidate();
             }
         });
-        if (context.allocationReporter.isActive()) {
+        if (reporter.isActive()) {
             noAllocationListeners.invalidate();
         }
-        return context;
+    }
+
+    /**
+     * A context pre-initialized in a native image (design.md D17, plan.md M8-07) is taken over by
+     * the run's first context: its standard libraries, restored from the prelude image at image
+     * build time, stay, and everything that came from the build's Env is rebound to the run's
+     * ({@link SchemeContext#patch}, and the compiler's library path). A run that doesn't restore
+     * from the prelude image ({@link #PRELUDE_IMAGE} false) gets a new context instead.
+     */
+    @Override
+    protected boolean patchContext(SchemeContext context, Env newEnv) {
+        if (!newEnv.getOptions().get(PRELUDE_IMAGE)) {
+            return false;
+        }
+        AllocationReporter before = context.allocationReporter;
+        context.patch(newEnv);
+        if (context.allocationReporter != before) {
+            listenForAllocationListeners(context.allocationReporter);
+        }
+        compiler().patchContext(context);
+        return true;
     }
 
     @Override

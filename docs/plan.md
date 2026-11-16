@@ -859,7 +859,7 @@ load rule.
     ending the process; multi-line inputs are one history entry.
   - **Done when** the pty test interrupts a loop and keeps the session, on the
     JVM and the native launcher.
-- [ ] **M8-07 · Native startup** *(early)*
+- [x] **M8-07 · Native startup** *(early)*
   - A pre-initialized context in the native image
     (`--engine.PreinitializeContexts`, with the language's `patchContext`), so
     the native launcher starts without restoring the prelude.

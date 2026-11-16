@@ -119,7 +119,8 @@ filegroup(
 )
 
 # `bazel-bin/scheme-native`: the launcher as a native executable (design.md D17, docs/usage.md),
-# built only when named: a minute and a few GB. The native-image build gets a large executor. On
+# built only when named: a minute and a few GB, with a pre-initialized context (design.md D17,
+# plan.md M8-07). The native-image build gets a large executor. On
 # x86-64 Linux the baseline CPU target keeps the JDK's libsimdsort (and its static libm) out of it.
 native_image(
     name = "scheme-native",
@@ -129,7 +130,14 @@ native_image(
     },
     main = "scheme.launcher/scheme.launcher.SchemeMain",
     module = ":launcher_module",
-    options = select({
+    # A context pre-initialized at build time, which the launcher's context takes over
+    # (SchemeLanguage.patchContext): the standard libraries are in the image heap, ready. JLine
+    # reaches the terminal through the FFM API, as on the JVM launcher (bazel-bin/scheme): without
+    # native access, the executable warns about it on a terminal.
+    options = [
+        "-Dpolyglot.image-build-time.PreinitializeContexts=scheme",
+        "--enable-native-access=org.graalvm.shadowed.jline",
+    ] + select({
         "//bazel:linux_x86_64": ["-march=compatibility"],
         "//conditions:default": [],
     }),

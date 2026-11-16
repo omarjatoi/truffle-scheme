@@ -286,7 +286,9 @@ D17). It's built only when named:
 bazel build //:scheme-native
 ```
 
-The executable keeps the Graal JIT, and starts in milliseconds:
+The executable keeps the Graal JIT, and starts in milliseconds: its first
+context was made when the image was built, with the standard libraries
+loaded, and the run takes it over (design.md D17):
 
 <!-- readme: run native -->
 ```sh
@@ -298,18 +300,18 @@ bazel-bin/scheme-native docs/examples/hello.scm
 Hello, world! Arguments: ()
 ```
 
-On an Apple M3 Max (median of 10 runs, from design.md D17; the JVM column is
-the `java` command `bazel-bin/scheme` runs):
+On an Apple M3 Max (from design.md D17: native startup is the median of 41 runs,
+the rest of 10; the JVM column is the `java` command `bazel-bin/scheme` runs):
 
 | | Native | JVM |
 |---|---:|---:|
-| `scheme --version` | 15 ms, 15 MB | 228 ms, 251 MB |
-| A hello-world program | 20 ms, 27 MB | 614 ms, 326 MB |
+| `scheme --version` | 10 ms, 15 MB | 228 ms, 251 MB |
+| A hello-world program | 11 ms, 19 MB | 614 ms, 326 MB |
 | ecraven's `fib`, steady iteration | 12.4 s | 13.3 s |
 | ecraven's `tak`, steady iteration | 4.7 s | 6.0 s |
 
 The build takes 50 to 90 s and about 3 GB of memory on that machine, and the
-executable is 47 MB. It has no tools (they need the JVM launcher), and it runs
+executable is 55 MB. It has no tools (they need the JVM launcher), and it runs
 on the platform that built it. CI doesn't build it: a change to its
 configuration is checked by the tests `//tests:readme_native` (this section's
 commands) and `//tests:conformance_native` (both conformance suites through

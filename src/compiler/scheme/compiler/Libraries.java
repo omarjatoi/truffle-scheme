@@ -61,8 +61,8 @@ final class Libraries {
     private final SyntacticEnvironment top;
     private final GlobalEnvironment primitives;
     private final Runner runner;
-    private final TruffleLanguage.Env env;
-    private final List<String> path;
+    private TruffleLanguage.Env env;
+    private final List<String> path = new ArrayList<>();
     private final Map<String, Library> loaded = new HashMap<>();
     private final Map<String, Declared> declared = new HashMap<>();
     private final Set<String> loading = new HashSet<>();
@@ -75,13 +75,7 @@ final class Libraries {
         this.top = top;
         this.primitives = primitives;
         this.runner = runner;
-        this.env = env;
-        this.path = new ArrayList<>();
-        for (String dir : path.split(java.util.regex.Pattern.quote(env.getPathSeparator()))) {
-            if (!dir.isEmpty()) {
-                this.path.add(dir);
-            }
-        }
+        patch(env, path);
         Map<SSymbol, Object> exports = new LinkedHashMap<>();
         for (GlobalCell cell : primitives.cells()) {
             exports.put(cell.name, cell);
@@ -91,6 +85,20 @@ final class Libraries {
             exports.put(symbols.intern(form.keyword), form);
         }
         loaded.put(PRIMITIVES, new Library(PRIMITIVES, exports));
+    }
+
+    /**
+     * Where libraries are found from now on: the Env's files and {@code path}, the library path
+     * option. A pre-initialized context gets its run's here (design.md D17).
+     */
+    void patch(TruffleLanguage.Env newEnv, String newPath) {
+        this.env = newEnv;
+        this.path.clear();
+        for (String dir : newPath.split(java.util.regex.Pattern.quote(newEnv.getPathSeparator()))) {
+            if (!dir.isEmpty()) {
+                this.path.add(dir);
+            }
+        }
     }
 
     /** The prelude's files, as this context reads them: every lookup, for {@link PreludeImage}. */
