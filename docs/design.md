@@ -419,8 +419,8 @@ Each entry: the decision, why, and what was rejected.
     no host frame ever sits between two Scheme frames (D5): a call from Java
     is always the outermost prompt.
 - **Out of scope:** Scheme-side access to other languages and the host,
-  native image in CI, threads, and SRFIs. Avoid reflection and dynamic class
-  loading so a native-image launcher (M6, optional) stays possible.
+  threads, and SRFIs. Avoid reflection and dynamic class loading: the native
+  launcher (D17) is built without any reflection configuration.
 - **Deferred to M5:** escape-only `call/cc` (done, M5-04), Fixing Letrec,
   vector storage strategies (done, M5-06), and the Static Object Model for
   records.
@@ -576,6 +576,64 @@ Each entry: the decision, why, and what was rejected.
 - The Chrome inspector, DAP and profiler tools ship as a separate optional
   distribution, and CI runs a smoke test of each against a Scheme program
   (D13's tags and source sections are what they consume).
+- **Native image (M6-06).** `mx r7rs-native-image` builds `scheme` as a
+  native executable with the dev shell's GraalVM CE `native-image`, from the
+  launcher's module path without the tools. Truffle's runtime on that path
+  makes native-image add Truffle's runtime compilation, so the executable
+  has the Graal JIT. The `SCHEME` jar carries its own configuration
+  (`src/runtime/META-INF/native-image/org.r7rs/scheme`), so any embedder's
+  image picks it up: the prelude's resources, and build-time initialization
+  of the language's packages, as GraalVM's own languages have (the language
+  provider and the DSL-generated library exports live in the image heap).
+  Static state then keeps its build-time value: `-Dscheme.torture` and
+  `-Dscheme.preludeImage` have no effect in a native image, so torture mode
+  needs the JVM. No reflection configuration is needed (D10).
+  - Code that partial evaluation reaches must not reach a method
+    native-image blocklists for runtime compilation. On HotSpot such a path
+    only costs code size, but native-image refuses to build: a call through
+    a field of a JDK functional interface (it may reach every implementation
+    in the image), a root's `getName`, and string concatenation outside a
+    `@TruffleBoundary` all failed the first build.
+  - Numbers on an Apple M3 Max (16 cores, macOS), median of 10 runs; the
+    JVM launcher is the `java` command `mx scheme` runs, without mx:
+
+    | | Native | JVM |
+    |---|---:|---:|
+    | `scheme --version` | 15 ms, 15 MB | 228 ms, 251 MB |
+    | A hello-world program | 20 ms, 27 MB | 614 ms, 326 MB |
+    | ecraven's `fib` (40, 5 runs), steady iteration | 12.4 s | 13.3 s |
+    | ecraven's `tak`, steady iteration | 4.7 s | 6.0 s |
+    | Peak RSS over 5 iterations of `fib` / `tak` | 149 / 176 MB | 1505 / 1558 MB |
+
+    The build takes 50–90 s and about 3 GB on that machine; the
+    executable is 47 MB. The JIT compiles in the native launcher as on the
+    JVM (`--engine.TraceCompilation` shows the tier-1 compilations), and
+    the first `fib` iteration (17.8 s against the JVM's 13.6 s) is the
+    only one that is slower.
+  - `mx r7rs-test --native` runs each conformance section as a process of
+    the native launcher, as `ConformanceRunner` runs it, and passes what the
+    JVM does: chibi's suite 1225/1225 and Larceny's 2162/2166, interpreted
+    and with `--compile`. `mx r7rs-status --check --native` fails if the
+    native launcher passes anything other than the status block. The
+    launcher's exit status can't tell `(exit 0)` from a program that ends,
+    which only Larceny's two exit-0 sections see.
+  - CI builds the native launcher on Linux in a workflow of its own
+    (`.github/workflows/native.yml`: weekly, by hand, and on PRs that change
+    it or the configuration), times its startup and runs that check. It is
+    not part of the required `Checks` and `Tests`: the build takes minutes
+    and gigabytes.
+  - On x86-64 Linux the image targets the baseline CPU
+    (`-march=compatibility`): with the default target (AVX2) the image
+    uses the JDK's `libsimdsort`, whose libm dependency nixpkgs'
+    native-image resolves to glibc's static `libm.a`, and linking that into
+    a dynamically linked executable fails. The baseline target is also what
+    nixpkgs' own native-image check builds with, and makes the CI artifact
+    run on any x86-64 machine.
+  - Limits: the tools (inspector, DAP, profilers) are only on the JVM
+    launcher (`mx scheme`); the executable is for the platform that built
+    it; and there is no auxiliary engine cache or prebuilt prelude in the
+    image (the first context still reads and expands the prelude, which
+    AOT-compiled code does in a few milliseconds).
 - Why: Truffle languages get debugging, profiling and engine tuning from
   the platform; a hand-written launcher would have to re-implement or forgo
   all of it.

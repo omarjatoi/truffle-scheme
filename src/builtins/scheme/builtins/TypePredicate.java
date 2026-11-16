@@ -1,7 +1,5 @@
 package scheme.builtins;
 
-import java.util.function.Predicate;
-
 import scheme.runtime.PrimitiveNode;
 
 /**
@@ -10,9 +8,20 @@ import scheme.runtime.PrimitiveNode;
  */
 final class TypePredicate extends PrimitiveNode {
 
-    private final Predicate<Object> test;
+    /**
+     * The test. An interface of its own rather than {@code java.util.function.Predicate}: a native
+     * image's analysis (design.md D17) must assume that a call through the field reaches every
+     * implementation of the interface in the image, and every JDK predicate would then be
+     * reachable from runtime-compiled code. Only these lambdas implement this one.
+     */
+    @FunctionalInterface
+    interface Test {
+        boolean test(Object value);
+    }
 
-    TypePredicate(Predicate<Object> test) {
+    private final Test test;
+
+    TypePredicate(Test test) {
         this.test = test;
     }
 

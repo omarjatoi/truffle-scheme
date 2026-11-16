@@ -1,0 +1,72 @@
+name: Native launcher
+
+# The native-image `scheme` launcher (plan.md M6-06, design.md D17): build it with the dev shell's
+# GraalVM CE native-image, time its startup, and check that it passes both conformance suites as
+# the JVM launcher does (the status block in docs/plan.md). The build takes minutes and a few GB, so
+# it isn't part of the required Checks and Tests: it runs by hand (Actions > Native launcher > Run
+# workflow, or `gh workflow run native.yml`), weekly, and on PRs that change this file or the
+# language's native-image configuration. The executable is the run's artifact.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "41 4 * * 1"   # Mondays 04:41 UTC
+  pull_request:
+    paths:
+      - .github/workflows/native.yml
+      - src/runtime/META-INF/native-image/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    name: Native launcher
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: DeterminateSystems/determinate-nix-action@v3
+      - uses: actions/cache@v6
+        with:
+          path: ~/.mx/cache
+          key: mx-cache-${{ runner.os }}-${{ hashFiles('mx.r7rs/suite.py', 'flake.lock') }}
+          restore-keys: mx-cache-${{ runner.os }}-
+      - name: Dev shell
+        run: nix develop --command sh -c 'java -version && native-image --version && mx --version'
+      - name: mx build
+        run: nix develop --command mx build
+      - name: mx r7rs-native-image
+        run: nix develop --command mx r7rs-native-image --output native/scheme
+      - name: Startup
+        run: |
+          printf '(import (scheme base) (scheme write))\n(display "hello")\n(newline)\n' > hello.scm
+          test "$(native/scheme hello.scm)" = hello
+          native/scheme --version
+          python3 - >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          import os, resource, statistics, subprocess, time
+          print('### Native launcher startup\n')
+          print(f'Median of 10 runs on the runner ({os.cpu_count()} vCPUs, shared): expect noise.\n')
+          print('| Command | Wall time | Peak RSS |\n|---|---:|---:|')
+          for args in (['--version'], ['hello.scm']):
+              times = []
+              for _ in range(10):
+                  start = time.perf_counter()
+                  subprocess.run(['native/scheme'] + args, stdout=subprocess.DEVNULL, check=True)
+                  times.append(time.perf_counter() - start)
+              rss = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss / 1024  # KB on Linux
+              print(f'| `scheme {" ".join(args)}` | {statistics.median(times) * 1000:.0f} ms | {rss:.0f} MB |')
+          print()
+          EOF
+      - name: Conformance through the native launcher
+        run: nix develop --command mx r7rs-test --native native/scheme --markdown "$GITHUB_STEP_SUMMARY"
+      - name: Passes what the status block says
+        run: nix develop --command mx r7rs-status --check --native native/scheme
+      - uses: actions/upload-artifact@v7
+        with:
+          name: scheme-native-linux-amd64
+          path: native/scheme
+          if-no-files-found: error

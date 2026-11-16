@@ -523,13 +523,18 @@ final class ControlPrimitives {
             SRecordType type = (SRecordType) args[1];
             int index = (int) (long) (Long) args[2];
             if (!(args[3] instanceof SRecord r) || r.type != type) {
-                throw notA(type.fieldNames[index], "record of type " + type.name, args[3]);
+                throw notARecord(type, index, args[3]);
             }
             if (set) {
                 r.fields[index] = args[4];
                 return SConstant.UNSPECIFIED;
             }
             return r.fields[index];
+        }
+
+        @TruffleBoundary
+        private static SchemeError notARecord(SRecordType type, int index, Object value) {
+            return notA(type.fieldNames[index], "record of type " + type.name, value);
         }
     }
 
