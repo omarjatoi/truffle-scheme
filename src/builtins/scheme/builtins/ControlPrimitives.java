@@ -529,65 +529,262 @@ final class ControlPrimitives {
 
     /**
      * {@code (equal? a b)} (R7RS §6.1): structural equality on pairs, vectors, strings and
-     * bytevectors, eqv? elsewhere. Iterative (rule 4), and it terminates on circular structure
-     * (design.md D9): a pair of objects already being compared counts as equal, which is the
-     * coinductive (bisimulation) reading of equal?.
+     * bytevectors, eqv? elsewhere (so records compare by identity). Adams and Dybvig's interleaved
+     * algorithm (design.md D9; "Efficient nondestructive equality checking for trees and graphs",
+     * ICFP 2008): a depth-first walk that starts in a fast phase, which compares without remembering
+     * anything, and alternates with short slow phases, which put the pairs and vectors they compare
+     * into one class of a union-find structure and skip a pair of nodes already in one class. The
+     * slow phases make it terminate on circular and shared structure, with the coinductive
+     * (bisimulation) reading of equal?; the fast phases keep small and acyclic data free of hashing.
+     * The walk is iterative, with an explicit stack (rule 4).
      */
     static final class Equal extends PrimitiveNode {
         @Override
         public Object execute(Object[] args) {
-            return equal(args[0], args[1]);
+            Object a = args[0];
+            Object b = args[1];
+            if (a == b) {
+                return true;
+            }
+            if (a instanceof Long x) {
+                return b instanceof Long y && x.longValue() == y.longValue();
+            }
+            if (a instanceof SSymbol) {
+                return false;
+            }
+            return equal(a, b);
         }
+
+        /** Nodes compared in the first fast phase, before any hashing (the paper's k0). */
+        private static final int FAST_STEPS = 400;
+        /** Unions in each slow phase (the paper's -kb). Pairs of nodes already in one class don't count. */
+        private static final int SLOW_STEPS = 40;
+        /*
+         * Two departures from the paper, for shared and circular data: the walk stays in the slow
+         * phase for good once a slow phase has met SLOW_FOREVER_HITS pairs of nodes already in one
+         * class, or once it has compared more than SLOW_FOREVER_RATIO nodes per union-find entry
+         * (plus SLOW_FOREVER_SLACK). Either way the fast phases would mostly re-walk structure that
+         * the slow phase skips. Fresh acyclic data meets no such pairs, and its slow phases add about
+         * two entries per 11 nodes, so neither triggers there. Termination doesn't depend on them: a
+         * slow phase ends only after SLOW_STEPS unions, and there can only be as many unions as nodes.
+         */
+        private static final int SLOW_FOREVER_HITS = SLOW_STEPS / 4;
+        private static final int SLOW_FOREVER_RATIO = 16;
+        private static final int SLOW_FOREVER_SLACK = 1024;
+
+        private static final int DIFFERENT = 0;
+        private static final int SAME = 1;
+        /** Both are pairs, or both are vectors of one length, and not eq?: compare their elements. */
+        private static final int DESCEND = 2;
 
         @TruffleBoundary
         static boolean equal(Object a, Object b) {
-            java.util.ArrayDeque<Object[]> todo = new java.util.ArrayDeque<>();
-            java.util.IdentityHashMap<Object, java.util.Set<Object>> seen = new java.util.IdentityHashMap<>();
-            todo.push(new Object[]{a, b});
-            while (!todo.isEmpty()) {
-                Object[] next = todo.pop();
-                Object x = next[0];
-                Object y = next[1];
-                if (Eqv.eqv(x, y)) {
-                    continue;
-                }
-                if (x instanceof SString s && y instanceof SString t) {
-                    if (!s.toString().equals(t.toString())) {
-                        return false;
-                    }
-                    continue;
-                }
-                if (x instanceof SBytevector u && y instanceof SBytevector v) {
-                    if (!java.util.Arrays.equals(u.bytes, v.bytes)) {
-                        return false;
-                    }
-                    continue;
-                }
-                boolean pairs = x instanceof SPair && y instanceof SPair;
-                boolean vectors = x instanceof SVector v1 && y instanceof SVector v2 && v1.elements.length == v2.elements.length;
-                if (!pairs && !vectors) {
-                    return false;
-                }
-                java.util.Set<Object> partners = seen.get(x);
-                if (partners == null) {
-                    partners = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
-                    seen.put(x, partners);
-                }
-                if (!partners.add(y)) {
-                    continue;
-                }
-                if (pairs) {
-                    todo.push(new Object[]{((SPair) x).cdr, ((SPair) y).cdr});
-                    todo.push(new Object[]{((SPair) x).car, ((SPair) y).car});
+            int top = compareShallow(a, b);
+            if (top != DESCEND) {
+                return top == SAME;
+            }
+            Object x = a;
+            Object y = b;
+            Object[] stack = null;
+            int sp = 0;
+            // k > 0: fast steps left. k <= 0: in a slow phase, which ends when k reaches -SLOW_STEPS.
+            int k = FAST_STEPS;
+            long steps = 0;
+            int hits = 0;
+            int random = 0x2545F491;
+            UnionFind classes = null;
+            while (true) {
+                // Invariant: compareShallow(x, y) == DESCEND.
+                steps++;
+                boolean known = false;
+                if (k > 0) {
+                    k--;
                 } else {
-                    Object[] xs = ((SVector) x).elements;
-                    Object[] ys = ((SVector) y).elements;
-                    for (int i = xs.length - 1; i >= 0; i--) {
-                        todo.push(new Object[]{xs[i], ys[i]});
+                    if (classes == null) {
+                        classes = new UnionFind();
                     }
+                    known = classes.union(x, y);
+                    if (known) {
+                        hits++;
+                    } else if (--k == -SLOW_STEPS) {
+                        if (hits < SLOW_FOREVER_HITS && steps <= (long) SLOW_FOREVER_RATIO * classes.size() + SLOW_FOREVER_SLACK) {
+                            hits = 0;
+                            random ^= random << 13;
+                            random ^= random >>> 17;
+                            random ^= random << 5;
+                            k = 1 + (random >>> 1) % (2 * FAST_STEPS);
+                        } else {
+                            k = -SLOW_STEPS - 1;  // slow from now on; k only decreases
+                        }
+                    }
+                }
+                if (!known) {
+                    if (x instanceof SPair p) {
+                        SPair q = (SPair) y;
+                        int car = compareShallow(p.car, q.car);
+                        if (car == DIFFERENT) {
+                            return false;
+                        }
+                        int cdr = compareShallow(p.cdr, q.cdr);
+                        if (cdr == DIFFERENT) {
+                            return false;
+                        }
+                        if (car == DESCEND) {
+                            // (cons x x) on both sides: one walk of x does (DAGs, in the fast phase).
+                            if (cdr == DESCEND && (p.cdr != p.car || q.cdr != q.car)) {
+                                stack = push(stack, sp, p.cdr, q.cdr);
+                                sp += 2;
+                            }
+                            x = p.car;
+                            y = q.car;
+                            continue;
+                        }
+                        if (cdr == DESCEND) {
+                            x = p.cdr;
+                            y = q.cdr;
+                            continue;
+                        }
+                    } else {
+                        Object[] xs = ((SVector) x).elements;
+                        Object[] ys = ((SVector) y).elements;
+                        boolean descend = false;
+                        for (int i = 0; i < xs.length; i++) {
+                            int c = compareShallow(xs[i], ys[i]);
+                            if (c == DIFFERENT) {
+                                return false;
+                            }
+                            descend |= c == DESCEND;
+                        }
+                        if (descend) {
+                            // Every element is now SAME or DESCEND; push the DESCEND ones, first on top,
+                            // and a run of one pair of nodes (as in (make-vector n x)) only once.
+                            for (int i = xs.length - 1; i >= 0; i--) {
+                                Object u = xs[i];
+                                Object v = ys[i];
+                                if (u != v && (u instanceof SPair || u instanceof SVector) && (i == 0 || xs[i - 1] != u || ys[i - 1] != v)) {
+                                    stack = push(stack, sp, u, v);
+                                    sp += 2;
+                                }
+                            }
+                        }
+                    }
+                }
+                if (sp == 0) {
+                    return true;
+                }
+                y = stack[--sp];
+                x = stack[--sp];
+                stack[sp] = null;
+                stack[sp + 1] = null;
+            }
+        }
+
+        /** Compares two objects without looking inside pairs and vectors. */
+        private static int compareShallow(Object x, Object y) {
+            if (x == y) {
+                return SAME;
+            }
+            if (x instanceof SPair) {
+                return y instanceof SPair ? DESCEND : DIFFERENT;
+            }
+            if (x instanceof SVector v) {
+                return y instanceof SVector w && v.elements.length == w.elements.length ? DESCEND : DIFFERENT;
+            }
+            if (x instanceof SString s) {
+                return y instanceof SString t && sameString(s, t) ? SAME : DIFFERENT;
+            }
+            if (x instanceof SBytevector u) {
+                return y instanceof SBytevector v && java.util.Arrays.equals(u.bytes, v.bytes) ? SAME : DIFFERENT;
+            }
+            return Eqv.eqv(x, y) ? SAME : DIFFERENT;
+        }
+
+        private static boolean sameString(SString s, SString t) {
+            int n = s.length();
+            if (n != t.length()) {
+                return false;
+            }
+            for (int i = 0; i < n; i++) {
+                if (s.codePointAt(i) != t.codePointAt(i)) {
+                    return false;
                 }
             }
             return true;
+        }
+
+        private static Object[] push(Object[] stack, int sp, Object x, Object y) {
+            Object[] s = stack;
+            if (s == null) {
+                s = new Object[16];
+            } else if (sp + 2 > s.length) {
+                s = java.util.Arrays.copyOf(s, s.length * 2);
+            }
+            s[sp] = x;
+            s[sp + 1] = y;
+            return s;
+        }
+
+        /** Union-find over node identities, with union by size and path halving. */
+        private static final class UnionFind {
+            private final java.util.IdentityHashMap<Object, Node> nodes = new java.util.IdentityHashMap<>();
+
+            private static final class Node {
+                Node parent;
+                int size = 1;
+            }
+
+            int size() {
+                return nodes.size();
+            }
+
+            /** Puts x and y in one class; returns whether they already were. */
+            boolean union(Object x, Object y) {
+                Node nx = nodes.get(x);
+                Node ny = nodes.get(y);
+                if (nx == null && ny == null) {
+                    Node n = new Node();
+                    n.size = 2;
+                    nodes.put(x, n);
+                    nodes.put(y, n);
+                    return false;
+                }
+                if (nx == null) {
+                    Node root = find(ny);
+                    root.size++;
+                    nodes.put(x, root);
+                    return false;
+                }
+                if (ny == null) {
+                    Node root = find(nx);
+                    root.size++;
+                    nodes.put(y, root);
+                    return false;
+                }
+                Node rx = find(nx);
+                Node ry = find(ny);
+                if (rx == ry) {
+                    return true;
+                }
+                if (rx.size < ry.size) {
+                    rx.parent = ry;
+                    ry.size += rx.size;
+                } else {
+                    ry.parent = rx;
+                    rx.size += ry.size;
+                }
+                return false;
+            }
+
+            private static Node find(Node node) {
+                Node n = node;
+                while (n.parent != null) {
+                    if (n.parent.parent != null) {
+                        n.parent = n.parent.parent;
+                    }
+                    n = n.parent;
+                }
+                return n;
+            }
         }
     }
 }
