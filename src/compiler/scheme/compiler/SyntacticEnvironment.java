@@ -87,6 +87,26 @@ public final class SyntacticEnvironment {
         list.add(new Entry(scopes, binding));
     }
 
+    /** Every symbol's bindings, for {@link PreludeImage}. */
+    Map<SSymbol, List<Entry>> entries() {
+        return entries;
+    }
+
+    /** Every top-level scope and its namespace, for {@link PreludeImage}. */
+    Map<Scope, GlobalEnvironment> namespaces() {
+        return namespaces;
+    }
+
+    /** Adds a binding that {@link PreludeImage} saved, after the symbol's others, without looking for one to replace. */
+    void restore(SSymbol name, ScopeSet scopes, Object binding) {
+        List<Entry> list = entries.get(name);
+        if (list == null) {
+            list = new ArrayList<>(1);
+            entries.put(name, list);
+        }
+        list.add(new Entry(scopes, binding));
+    }
+
     /** Every binding of the symbol, or an empty list. */
     List<Entry> candidates(SSymbol name) {
         List<Entry> list = entries.get(name);

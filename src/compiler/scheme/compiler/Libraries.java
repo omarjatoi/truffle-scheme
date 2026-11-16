@@ -88,6 +88,16 @@ final class Libraries {
         loaded.put("(r7rs %primitives)", new Library("(r7rs %primitives)", exports));
     }
 
+    /** Every library instantiated so far, by name, for {@link PreludeImage}. */
+    Map<String, Library> loaded() {
+        return loaded;
+    }
+
+    /** Adds a library that {@link PreludeImage} saved, as if it had been instantiated. */
+    void restore(Library library) {
+        loaded.put(library.name(), library);
+    }
+
     /** The primitives' namespace, (r7rs %primitives). */
     GlobalEnvironment primitives() {
         return primitives;

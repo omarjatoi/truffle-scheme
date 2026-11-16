@@ -134,6 +134,8 @@ final class SyntaxRules implements Transformer {
     }
 
     private final Expander expander;
+    /** The {@code syntax-rules} form, for {@link PreludeImage}, which compiles it again in each context. */
+    private final Object spec;
     private final SSymbol ellipsis;
     /** Whether the spec names its ellipsis; otherwise it is {@code ...} where not bound lexically. */
     private final boolean customEllipsis;
@@ -145,6 +147,7 @@ final class SyntaxRules implements Transformer {
     @TruffleBoundary
     SyntaxRules(Object spec, Expander expander, SSymbol defaultEllipsis, SSymbol underscore) {
         this.expander = expander;
+        this.spec = spec;
         this.underscore = underscore;
         List<Object> f = expander.list(spec);
         int at = 1;
@@ -175,6 +178,16 @@ final class SyntaxRules implements Transformer {
             Pat p = compilePattern(pattern.cdr, vars, rule);
             rules.add(new Rule(p, compileTemplate(r.get(1), vars, rule)));
         }
+    }
+
+    /** The {@code syntax-rules} form. */
+    Object spec() {
+        return spec;
+    }
+
+    /** The expander of the unit that defined this macro. */
+    Expander definedBy() {
+        return expander;
     }
 
     private static boolean sameIdentifier(Object a, Object b) {

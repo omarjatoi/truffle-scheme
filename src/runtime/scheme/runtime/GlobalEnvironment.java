@@ -1,9 +1,11 @@
 package scheme.runtime;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -21,6 +23,8 @@ public final class GlobalEnvironment {
     private final Map<SSymbol, GlobalCell> cells = new LinkedHashMap<>();
     /** Cells that no name refers to: macro-introduced top-level definitions (design.md D16). */
     private final Set<GlobalCell> hidden = Collections.newSetFromMap(new IdentityHashMap<>());
+    /** {@link #hidden}, in order of creation. */
+    private final List<GlobalCell> hiddenInOrder = new ArrayList<>();
 
     @TruffleBoundary
     public GlobalCell cell(SSymbol name) {
@@ -35,6 +39,7 @@ public final class GlobalEnvironment {
     public GlobalCell freshCell(SSymbol name) {
         GlobalCell cell = new GlobalCell(name);
         hidden.add(cell);
+        hiddenInOrder.add(cell);
         return cell;
     }
 
@@ -48,5 +53,11 @@ public final class GlobalEnvironment {
     @TruffleBoundary
     public Collection<GlobalCell> cells() {
         return cells.values();
+    }
+
+    /** Every cell that no name refers to ({@link #freshCell}), in order of creation. */
+    @TruffleBoundary
+    public List<GlobalCell> hiddenCells() {
+        return Collections.unmodifiableList(hiddenInOrder);
     }
 }

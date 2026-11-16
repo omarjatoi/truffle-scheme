@@ -1,5 +1,6 @@
 package scheme.compiler;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -38,14 +39,44 @@ public final class ProgramCompiler implements SchemeCompiler {
                             (scheme r5rs))
                     """;
 
+    /**
+     * Instantiates the standard libraries and makes the interaction environment import them, or
+     * restores both from the {@link PreludeImage} (design.md D13).
+     */
     @Override
     public void initializeContext(SchemeLanguage language, SchemeContext context) {
+        PreludeImage image = PreludeImage.get();
+        if (image != null) {
+            PreludeImage.Restored restored = image.restore(language, context, state -> newLibraries(language, context, state));
+            context.compilerState = restored.state();
+            for (SchemeRootNode body : restored.bodies()) {
+                language.withPrompt(body.getCallTarget()).call();
+            }
+            return;
+        }
         CompilerState state = new CompilerState();
         context.compilerState = state;
-        state.libraries = new Libraries(context.symbols, state.top, context.globals, body -> language.withPrompt(generate(language, body)).call(),
-                        context.getEnv(), context.getEnv().getOptions().get(SchemeLanguage.LIBRARY_PATH));
+        state.libraries = newLibraries(language, context, state);
+        boolean build = PreludeImage.shouldBuild();
+        if (build) {
+            state.recordedBodies = new ArrayList<>();
+        }
         Source imports = Source.newBuilder(SchemeLanguage.ID, INTERACTION_IMPORTS, "interaction-environment").internal(true).build();
         language.withPrompt(compile(language, context, imports, false)).call();
+        if (build) {
+            List<Ast.Lambda> bodies = state.recordedBodies;
+            state.recordedBodies = null;
+            PreludeImage.build(context, state, bodies);
+        }
+    }
+
+    private static Libraries newLibraries(SchemeLanguage language, SchemeContext context, CompilerState state) {
+        return new Libraries(context.symbols, state.top, context.globals, body -> {
+            if (state.recordedBodies != null) {
+                state.recordedBodies.add(body);
+            }
+            language.withPrompt(generate(language, body)).call();
+        }, context.getEnv(), context.getEnv().getOptions().get(SchemeLanguage.LIBRARY_PATH));
     }
 
     /**

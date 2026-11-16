@@ -1,6 +1,7 @@
 package scheme.compiler;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import scheme.reader.Scope;
@@ -24,17 +25,29 @@ final class CompilerState {
     }
 
     final SyntacticEnvironment top = new SyntacticEnvironment();
-    final Scope interactionScope = new Scope();
-    final GlobalEnvironment interaction = new GlobalEnvironment();
-    final SEnvironment interactionEnvironment = new SEnvironment(new Environment(interactionScope, interaction, true));
+    final Scope interactionScope;
+    final GlobalEnvironment interaction;
+    final SEnvironment interactionEnvironment;
     /**
      * The immutable environments made so far, by their import sets as written: they are the same
      * each time, so each is made once (and its bindings added to {@link #top} once).
      */
     final Map<String, SEnvironment> environments = new HashMap<>();
     Libraries libraries;
+    /**
+     * While the context is being initialized for {@link PreludeImage}: the library bodies run so
+     * far, in order. Otherwise null.
+     */
+    List<Ast.Lambda> recordedBodies;
 
     CompilerState() {
+        this(new Scope(), new GlobalEnvironment());
+    }
+
+    CompilerState(Scope interactionScope, GlobalEnvironment interaction) {
+        this.interactionScope = interactionScope;
+        this.interaction = interaction;
+        this.interactionEnvironment = new SEnvironment(new Environment(interactionScope, interaction, true));
         top.registerInteraction(interactionScope, interaction);
     }
 }

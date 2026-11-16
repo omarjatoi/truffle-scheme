@@ -35,10 +35,11 @@ import scheme.runtime.value.SPair;
  * CallSiteEmitter (AGENTS.md rule 2): {@code Call}, then {@code IsCapture}, then
  * {@code SuspendFrame}.
  */
-@GenerateBytecode(languageClass = SchemeLanguage.class, storeBytecodeIndexInFrame = true, enableTagInstrumentation = true)
+@GenerateBytecode(languageClass = SchemeLanguage.class, storeBytecodeIndexInFrame = true, enableTagInstrumentation = true, enableSerialization = true)
 public abstract class SchemeRootNode extends RootNode implements BytecodeRootNode {
 
-    private String name;
+    /** Package-private: Bytecode DSL serialization saves it with the root. */
+    String name;
 
     protected SchemeRootNode(SchemeLanguage language, FrameDescriptor frameDescriptor) {
         super(language, frameDescriptor);
