@@ -261,19 +261,6 @@
   },
   "selectedYankedVersions": {},
   "moduleExtensions": {
-    "//bazel:host_tools.bzl%host_tools": {
-      "general": {
-        "bzlTransitiveDigest": "/CZzMk57e0HmwhlfmeO28zA02w5Yx6mYur1c1bDWoBw=",
-        "usagesDigest": "PLLB1GTRy48YL951vUyPt0fQ7uc36XVKwZzqRBiypcg=",
-        "recordedInputs": [],
-        "generatedRepoSpecs": {
-          "chibi": {
-            "repoRuleId": "@@//bazel:host_tools.bzl%_chibi",
-            "attributes": {}
-          }
-        }
-      }
-    },
     "@@rules_android+//rules/android_sdk_repository:rule.bzl%android_sdk_repository_extension": {
       "general": {
         "bzlTransitiveDigest": "+rMrzIrv7sImYmkbXJYv+gFpTJQ79X3MpwwMLI2A+oA=",

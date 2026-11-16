@@ -54,10 +54,12 @@ push fixes.
 ## Environment
 
 Run everything inside `nix develop`. It provides `bazel` (bazelisk, at
-`.bazelversion`), Python, git, `gh`, chibi-scheme (used for differential
-testing) and a GraalVM CE 25.5 JDK (`JAVA_HOME`). Bazel downloads its own
-copy of that GraalVM release (`bazel/graalvm.bzl`): it compiles and runs
-everything, and its Graal compiler is the JIT the tests use. Truffle comes
+`.bazelversion`), Python, git, `gh`, chibi-scheme and a GraalVM CE 25.5 JDK
+(`JAVA_HOME`). Bazel downloads its own copy of that GraalVM release
+(`bazel/graalvm.bzl`): it compiles and runs everything, and its Graal
+compiler is the JIT the tests use. It also builds the chibi-scheme the
+differential tests compare against, from the same release's source
+(`bazel/chibi.bzl`). Truffle comes
 from Maven Central at exactly the GraalVM version (`TRUFFLE_VERSION` in
 `MODULE.bazel`); the build fails if the two differ (design.md D11). With a
 BuildBuddy API key in `~/.bazelrc` (see `.bazelrc`), `--config=buildbuddy`

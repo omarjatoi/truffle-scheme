@@ -21,7 +21,7 @@
           pkgs.python3
           pkgs.git
           pkgs.gh           # session protocol in AGENTS.md
-          pkgs.chibi        # differential tests (@chibi), benchmark report
+          pkgs.chibi        # running programs under chibi, benchmark report
           graalvm
         ];
         shellHook = ''

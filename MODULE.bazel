@@ -91,7 +91,15 @@ python.toolchain(
     python_version = "3.13",
 )
 
-# --- Host tools from the Nix dev shell: chibi-scheme (differential tests) ----------------------
+# --- chibi-scheme (differential tests): built from source by bazel/chibi.bzl ------------------
 
-host = use_extension("//bazel:host_tools.bzl", "host_tools")
-use_repo(host, "chibi")
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+# The release nixpkgs ships in the dev shell (flake.lock), so `chibi-scheme` there agrees.
+http_archive(
+    name = "chibi_src",
+    build_file_content = 'exports_files(["Makefile"])\nfilegroup(name = "srcs", srcs = glob(["**"]), visibility = ["//visibility:public"])',
+    sha256 = "b70a1147bc70a0f90df3fb6081bc99808237fd17a9accf9ee7a2cc20d95a4df0",
+    strip_prefix = "chibi-scheme-0.12",
+    urls = ["https://github.com/ashinn/chibi-scheme/archive/0.12.tar.gz"],
+)

@@ -74,7 +74,7 @@ unit_tests(
 diff_tests(
     name = "diff",
     srcs = glob(["diff/*.scm"]),
-    chibi = "@chibi//:chibi-scheme",
+    chibi = "//bazel:chibi-scheme",
     runtime = "//:launcher_runtime",
 )
 
