@@ -243,7 +243,8 @@ public class DebuggerTest {
     @Test
     public void lambdasAreNamedByTheirBinding() {
         String definitions = """
-                        (define-record-type point (make-point x) point? (x point-x))
+                        (define point-x (let ((index 0)) (lambda (p) (vector-ref p index))))
+                        (define (make-point x) (vector x))
                         (define h #f)
                         (set! h (lambda (p)
                                   (+ 1 (point-x p))))
@@ -264,16 +265,41 @@ public class DebuggerTest {
                 }
             })) {
                 context.eval(source);
-                session.install(Breakpoint.newBuilder(source.getURI()).lineIs(4).build());
+                session.install(Breakpoint.newBuilder(source.getURI()).lineIs(5).build());
                 assertEquals(9, context.eval(SCHEME, "(run)").asInt());
             }
         }
         // At the breakpoint in h (bound by set!), called by g (bound by let, tail-called by run);
-        // then, stepping in,
-        // the record accessor point-x (a lambda inside a let in the define-record-type template).
+        // then, stepping in, point-x (a lambda inside a let, as a record accessor was until M7-04
+        // made record procedures primitives: recordsShowTheirFields names those).
         assertTrue(stacks.toString(), stacks.size() >= 2);
         assertEquals(stacks.toString(), List.of("h", "g"), stacks.get(0).subList(0, 2));
         assertEquals(stacks.toString(), "point-x", stacks.get(1).get(0));
+    }
+
+    /**
+     * A record in a frame shows its fields (plan.md M7-04: records are static objects, whose fields
+     * the debugger reads as interop members). (A record procedure's root is named by its binding:
+     * RecordsTest.)
+     */
+    @Test
+    public void recordsShowTheirFields() {
+        String definitions = """
+                        (define-record-type point (make-point x y) point? (x point-x set-point-x!) (y point-y))
+                        (define (norm p)
+                          (+ (point-x p)
+                             (point-y p)))
+                        """;
+        List<String> fields = new ArrayList<>();
+        String result = runWithBreakpoint(definitions, "record.scm", 3, "(let ((p (make-point 3 4))) (set-point-x! p 30) (norm p))", event -> {
+            DebugValue p = event.getTopStackFrame().getScope().getDeclaredValue("p");
+            assertEquals("point", p.getMetaObject().getMetaSimpleName());
+            for (DebugValue field : p.getProperties()) {
+                fields.add(field.getName() + "=" + field.toDisplayString());
+            }
+        });
+        assertEquals("34", result);
+        assertEquals(List.of("x=30", "y=4"), fields);
     }
 
     /**

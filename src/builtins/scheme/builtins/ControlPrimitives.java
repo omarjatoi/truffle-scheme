@@ -4,16 +4,21 @@ import scheme.runtime.value.SBytevector;
 
 import java.util.List;
 
+import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.nodes.ExplodeLoop;
+import com.oracle.truffle.api.staticobject.StaticProperty;
 
 import scheme.runtime.Capture;
 import scheme.runtime.Continuation;
 import scheme.runtime.DynEnv;
 import scheme.runtime.InvokeContinuation;
 import scheme.runtime.PrimitiveNode;
+import scheme.runtime.PrimitiveRootNode;
 import scheme.runtime.PrimitiveSpec;
 import scheme.runtime.SchemeContext;
 import scheme.runtime.SchemeError;
+import scheme.runtime.SchemeLanguage;
 import scheme.runtime.TailCall;
 import scheme.runtime.printer.Printer;
 import scheme.runtime.value.MultipleValues;
@@ -80,11 +85,10 @@ final class ControlPrimitives {
                         new PrimitiveSpec("read-error?", 1, 1, () -> new ErrorObjectOp(ErrorObjectOp.READ)),
                         new PrimitiveSpec("file-error?", 1, 1, () -> new ErrorObjectOp(ErrorObjectOp.FILE)),
                         new PrimitiveSpec("%make-record-type", 2, 2, MakeRecordType::new),
-                        new PrimitiveSpec("%record-index", 2, 2, RecordIndex::new),
-                        new PrimitiveSpec("%make-record", 2, -1, MakeRecord::new),
-                        new PrimitiveSpec("%record?", 2, 2, RecordTest::new),
-                        new PrimitiveSpec("%record-ref", 3, 3, () -> new RecordAccess(false)),
-                        new PrimitiveSpec("%record-set!", 4, 4, () -> new RecordAccess(true)));
+                        new PrimitiveSpec("%record-constructor", 3, 3, () -> new RecordProcedure(RecordProcedure.CONSTRUCTOR)),
+                        new PrimitiveSpec("%record-predicate", 2, 2, () -> new RecordProcedure(RecordProcedure.PREDICATE)),
+                        new PrimitiveSpec("%record-accessor", 3, 3, () -> new RecordProcedure(RecordProcedure.ACCESSOR)),
+                        new PrimitiveSpec("%record-modifier", 3, 3, () -> new RecordProcedure(RecordProcedure.MODIFIER)));
     }
 
     /** eq?: identity, except that fixnums and characters compare by value (design.md D1). */
@@ -450,7 +454,7 @@ final class ControlPrimitives {
         }
     }
 
-    /** {@code (%make-record-type 'name '(field ...))}. */
+    /** {@code (%make-record-type 'name '(field ...))}: a new type, whatever types came before. */
     static final class MakeRecordType extends PrimitiveNode {
         @Override
         public Object invoke(Object[] args) {
@@ -458,84 +462,186 @@ final class ControlPrimitives {
         }
 
         @TruffleBoundary
-        private static SRecordType make(Object name, Object fields) {
+        private SRecordType make(Object name, Object fields) {
             Object[] names = Lists.toArray("define-record-type", fields);
             String[] strings = new String[names.length];
             for (int i = 0; i < names.length; i++) {
                 strings[i] = names[i].toString();
             }
-            return new SRecordType(Printer.print(name, Printer.Mode.DISPLAY), strings);
+            return new SRecordType(Printer.print(name, Printer.Mode.DISPLAY), strings, SchemeLanguage.get(this).recordShapes());
         }
     }
 
-    /** {@code (%record-index type 'field)}: the field's index, at definition time. */
-    static final class RecordIndex extends PrimitiveNode {
+    /**
+     * The procedures of a record type (plan.md M7-04): {@code (%record-constructor type '(field ...)
+     * 'name)}, {@code (%record-predicate type 'name)}, {@code (%record-accessor type 'field 'name)}
+     * and {@code (%record-modifier type 'field 'name)} each make a primitive procedure of its own,
+     * named {@code name}, whose node has the type and the fields' properties as constants. So a call
+     * site runs a copy of that node in place (M5-09), and an access compiles to a check of the
+     * record's type and a field load. They run when the type is defined.
+     */
+    static final class RecordProcedure extends PrimitiveNode {
+        static final int CONSTRUCTOR = 0;
+        static final int PREDICATE = 1;
+        static final int ACCESSOR = 2;
+        static final int MODIFIER = 3;
+
+        private final int kind;
+
+        RecordProcedure(int kind) {
+            this.kind = kind;
+        }
+
         @Override
         public Object invoke(Object[] args) {
-            return index((SRecordType) args[1], args[2]);
+            return make(args);
         }
 
         @TruffleBoundary
-        private static long index(SRecordType type, Object field) {
-            String name = field instanceof SSymbol ? field.toString() : "";
-            for (int i = 0; i < type.fieldNames.length; i++) {
-                if (type.fieldNames[i].equals(name)) {
-                    return i;
+        private SClosure make(Object[] args) {
+            if (!(args[1] instanceof SRecordType type)) {
+                throw notA("define-record-type", "record type", args[1]);
+            }
+            String name = Printer.print(args[args.length - 1], Printer.Mode.DISPLAY);
+            PrimitiveSpec spec;
+            switch (kind) {
+                case CONSTRUCTOR: {
+                    Object[] fields = Lists.toArray("define-record-type", args[2]);
+                    StaticProperty[] given = new StaticProperty[fields.length];
+                    boolean[] set = new boolean[type.fieldNames.length];
+                    int unsetCount = set.length;
+                    for (int i = 0; i < fields.length; i++) {
+                        int index = field(type, fields[i]);
+                        given[i] = type.properties[index];
+                        if (!set[index]) {
+                            set[index] = true;
+                            unsetCount--;
+                        }
+                    }
+                    StaticProperty[] unset = new StaticProperty[unsetCount];
+                    for (int i = 0, j = 0; i < set.length; i++) {
+                        if (!set[i]) {
+                            unset[j++] = type.properties[i];
+                        }
+                    }
+                    spec = new PrimitiveSpec(name, given.length, given.length, () -> new RecordConstructor(type, given, unset));
+                    break;
+                }
+                case PREDICATE:
+                    spec = new PrimitiveSpec(name, 1, 1, () -> new RecordPredicate(type));
+                    break;
+                case ACCESSOR: {
+                    StaticProperty property = type.properties[field(type, args[2])];
+                    spec = new PrimitiveSpec(name, 1, 1, () -> new RecordAccessor(type, property, name));
+                    break;
+                }
+                default: {
+                    StaticProperty property = type.properties[field(type, args[2])];
+                    spec = new PrimitiveSpec(name, 2, 2, () -> new RecordModifier(type, property, name));
+                    break;
                 }
             }
-            throw new SchemeError("define-record-type: " + Printer.print(field, Printer.Mode.WRITE) + " is not a field of " + type.name);
+            return PrimitiveRootNode.procedure(SchemeLanguage.get(this), spec);
         }
-    }
 
-    /** {@code (%make-record type #(index ...) value ...)}: fields not given are unspecified. */
-    static final class MakeRecord extends PrimitiveNode {
-        @Override
-        public Object invoke(Object[] args) {
-            SRecordType type = (SRecordType) args[1];
-            SVector indices = (SVector) args[2];
-            Object[] fields = new Object[type.fieldNames.length];
-            java.util.Arrays.fill(fields, SConstant.UNSPECIFIED);
-            for (int i = 0; i < indices.length; i++) {
-                fields[(int) (long) (Long) indices.get(i)] = args[i + 3];
+        private static int field(SRecordType type, Object field) {
+            int i = field instanceof SSymbol ? type.fieldIndex(field.toString()) : -1;
+            if (i < 0) {
+                throw new SchemeError("define-record-type: " + Printer.print(field, Printer.Mode.WRITE) + " is not a field of " + type.name);
             }
-            return new SRecord(type, fields);
+            return i;
         }
     }
 
-    /** {@code (%record? type x)}. */
-    static final class RecordTest extends PrimitiveNode {
-        @Override
-        public Object invoke(Object[] args) {
-            return args[2] instanceof SRecord r && r.type == args[1];
-        }
-    }
+    /** A record type's constructor: the fields it has no argument for are unspecified. */
+    static final class RecordConstructor extends PrimitiveNode {
+        private final SRecordType type;
+        private final SRecord.Factory factory;
+        @CompilationFinal(dimensions = 1) private final StaticProperty[] given;
+        @CompilationFinal(dimensions = 1) private final StaticProperty[] unset;
 
-    /** {@code (%record-ref type index r)} and {@code (%record-set! type index r value)}. */
-    static final class RecordAccess extends PrimitiveNode {
-        private final boolean set;
-
-        RecordAccess(boolean set) {
-            this.set = set;
+        RecordConstructor(SRecordType type, StaticProperty[] given, StaticProperty[] unset) {
+            this.type = type;
+            this.factory = type.factory;
+            this.given = given;
+            this.unset = unset;
         }
 
+        // The arity is checked before invoke: one argument per given field.
         @Override
+        @ExplodeLoop
         public Object invoke(Object[] args) {
-            SRecordType type = (SRecordType) args[1];
-            int index = (int) (long) (Long) args[2];
-            if (!(args[3] instanceof SRecord r) || r.type != type) {
-                throw notARecord(type, index, args[3]);
+            SRecord record = factory.create(type);
+            for (int i = 0; i < given.length; i++) {
+                given[i].setObject(record, args[i + 1]);
             }
-            if (set) {
-                r.fields[index] = args[4];
+            for (int i = 0; i < unset.length; i++) {
+                unset[i].setObject(record, SConstant.UNSPECIFIED);
+            }
+            return record;
+        }
+    }
+
+    /** A record type's predicate. */
+    static final class RecordPredicate extends PrimitiveNode {
+        private final SRecordType type;
+
+        RecordPredicate(SRecordType type) {
+            this.type = type;
+        }
+
+        @Override
+        public Object invoke(Object[] args) {
+            return args[1] instanceof SRecord r && r.type == type;
+        }
+    }
+
+    /** A field's accessor. */
+    static final class RecordAccessor extends PrimitiveNode {
+        private final SRecordType type;
+        private final StaticProperty property;
+        private final String name;
+
+        RecordAccessor(SRecordType type, StaticProperty property, String name) {
+            this.type = type;
+            this.property = property;
+            this.name = name;
+        }
+
+        @Override
+        public Object invoke(Object[] args) {
+            if (args[1] instanceof SRecord r && r.type == type) {
+                return property.getObject(r);
+            }
+            throw notOfType(name, type, args[1]);
+        }
+    }
+
+    /** A field's modifier. */
+    static final class RecordModifier extends PrimitiveNode {
+        private final SRecordType type;
+        private final StaticProperty property;
+        private final String name;
+
+        RecordModifier(SRecordType type, StaticProperty property, String name) {
+            this.type = type;
+            this.property = property;
+            this.name = name;
+        }
+
+        @Override
+        public Object invoke(Object[] args) {
+            if (args[1] instanceof SRecord r && r.type == type) {
+                property.setObject(r, args[2]);
                 return SConstant.UNSPECIFIED;
             }
-            return r.fields[index];
+            throw notOfType(name, type, args[1]);
         }
+    }
 
-        @TruffleBoundary
-        private static SchemeError notARecord(SRecordType type, int index, Object value) {
-            return notA(type.fieldNames[index], "record of type " + type.name, value);
-        }
+    @TruffleBoundary
+    private static SchemeError notOfType(String who, SRecordType type, Object value) {
+        return notA(who, "record of type " + type.name, value);
     }
 
     @TruffleBoundary

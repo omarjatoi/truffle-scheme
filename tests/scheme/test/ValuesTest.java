@@ -19,8 +19,6 @@ import scheme.runtime.value.SComplex;
 import scheme.runtime.value.SConstant;
 import scheme.runtime.value.SErrorObject;
 import scheme.runtime.value.SRational;
-import scheme.runtime.value.SRecord;
-import scheme.runtime.value.SRecordType;
 import scheme.runtime.value.SString;
 import scheme.runtime.value.SymbolTable;
 
@@ -103,12 +101,8 @@ public class ValuesTest {
     }
 
     @Test
-    public void recordsErrorsAndValues() {
-        SRecordType point = new SRecordType("point", new String[]{"x", "y"});
-        SRecord p = new SRecord(point, new Object[]{1L, 2L});
-        assertSame(point, p.type);
-        assertEquals(2L, p.fields[1]);
-
+    public void errorsAndValues() {
+        // Records need a language for their shapes (design.md D1): RecordsTest has them.
         SErrorObject error = new SErrorObject(SString.of("msg"), SConstant.EMPTY_LIST, SErrorObject.Kind.FILE);
         SchemeError thrown = new SchemeError(error);
         assertSame(error, thrown.getErrorObject());
