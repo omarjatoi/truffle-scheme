@@ -17,7 +17,7 @@ on:
       # Read and checked at image build time (design.md D17, M7-05).
       - src/compiler/scheme/compiler/PreludeImage.java
       - mx.r7rs/mx_r7rs_readme.py
-      - README.md
+      - docs/usage.md
 
 permissions:
   contents: read
@@ -43,9 +43,9 @@ jobs:
         run: nix develop --command sh -c 'java -version && native-image --version && mx --version'
       - name: mx build
         run: nix develop --command mx build
-      # README.md's native-image blocks (M6-07): `mx r7rs-native-image --output native/scheme`, then
+      # docs/usage.md's native-image blocks (M6-07): `mx r7rs-native-image --output native/scheme`, then
       # a program run with native/scheme, checked against the README's output block.
-      - name: mx r7rs-native-image (README.md's native-image commands)
+      - name: mx r7rs-native-image (docs/usage.md's native-image commands)
         run: nix develop --command mx r7rs-readme --native
       - name: Startup
         run: |
