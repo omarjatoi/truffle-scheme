@@ -56,6 +56,10 @@ common:remote --remote_executor=grpcs://remote.buildbuddy.io
 common:remote --extra_execution_platforms=@toolchains_buildbuddy//platforms:linux_x86_64
 common:remote --extra_toolchains=@toolchains_buildbuddy//toolchains/cc:ubuntu_gcc_x86_64
 common:remote --jobs=50
+# Each test's inputs are mostly the same JDK and jars: build their Merkle trees once, and write
+# test.xml in the test's own action rather than in a second remote one.
+common:remote --experimental_remote_merkle_tree_cache
+common:remote --noexperimental_split_xml_generation
 common --config=remote
 test --platforms=@toolchains_buildbuddy//platforms:linux_x86_64
 # Offline (`--config=local`): everything runs here, nothing is read from or written to BuildBuddy.
