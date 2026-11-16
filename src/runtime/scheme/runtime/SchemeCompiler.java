@@ -5,6 +5,7 @@ import com.oracle.truffle.api.source.Source;
 
 import scheme.runtime.value.SClosure;
 import scheme.runtime.value.SEnvironment;
+import scheme.runtime.value.SSymbol;
 
 /**
  * The front end, provided by the scheme.compiler project through {@link java.util.ServiceLoader}:
@@ -49,4 +50,22 @@ public interface SchemeCompiler {
      * the file, as do the compiled code's source sections (D13).
      */
     SClosure compileLoad(SchemeLanguage language, SchemeContext context, Source source, SEnvironment environment);
+
+    /**
+     * EXPLORATION: the names of the interaction environment's variables (imported or defined; not
+     * syntax), for the top scope ({@code Context.getBindings}, design.md D10).
+     */
+    java.util.List<SSymbol> interactionVariables(SchemeContext context);
+
+    /**
+     * EXPLORATION: the cell the name refers to in the interaction environment, or null if it is
+     * syntax or not bound.
+     */
+    GlobalCell interactionCell(SchemeContext context, SSymbol name);
+
+    /**
+     * EXPLORATION: the interaction environment's own namespace: the cells its definitions create
+     * (imported cells belong to their libraries).
+     */
+    GlobalEnvironment interactionNamespace(SchemeContext context);
 }

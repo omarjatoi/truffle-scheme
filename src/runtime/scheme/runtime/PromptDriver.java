@@ -41,7 +41,18 @@ final class PromptDriver extends Node {
     @Child private IndirectCallNode callNode = IndirectCallNode.create();
     @Child private ResumeNode resumeNode = PromptDriverFactory.ResumeNodeGen.create();
 
+    /**
+     * EXPLORATION: a root prompt with foreign frames between it and its caller (an interop call):
+     * full continuations it didn't capture pass through it.
+     */
+    private final boolean barrier;
+
     PromptDriver() {
+        this(false);
+    }
+
+    PromptDriver(boolean barrier) {
+        this.barrier = barrier;
     }
 
     /**
@@ -97,6 +108,7 @@ final class PromptDriver extends Node {
                                 return capture;
                             }
                             Continuation k = new Continuation(capture.segmentsBefore(pending), capture.dynEnv, false);
+                            k.owner = context.rootRun;
                             pending = k.segments;
                             value = receive(context, capture.receiver, k, capture.dynEnv, capture.dynEnv);
                             continue;
@@ -159,7 +171,7 @@ final class PromptDriver extends Node {
                 }
                 value = new PendingRaise(e.getErrorObject());
             } catch (InvokeContinuation e) {
-                if (tag != Capture.ROOT_TAG) {
+                if (tag != Capture.ROOT_TAG || (barrier && e.continuation.owner != context.rootRun)) {
                     throw e;
                 }
                 pending = e.continuation.segments;
@@ -194,7 +206,7 @@ final class PromptDriver extends Node {
     }
 
     /** Index 0 of {@code arguments} is (or is set to) the procedure. */
-    private Object callWithProcedure(Object procedure, Object[] arguments) {
+    Object callWithProcedure(Object procedure, Object[] arguments) {
         if (!(procedure instanceof SClosure closure)) {
             throw notAProcedure(procedure);
         }

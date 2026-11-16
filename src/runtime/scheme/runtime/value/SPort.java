@@ -13,9 +13,14 @@ import java.io.Reader;
 import java.io.StringReader;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.interop.InteropLibrary;
 import com.oracle.truffle.api.interop.TruffleObject;
+import com.oracle.truffle.api.library.ExportLibrary;
+import com.oracle.truffle.api.library.ExportMessage;
 
+import scheme.runtime.InteropValues;
 import scheme.runtime.SchemeError;
+import scheme.runtime.SchemeLanguage;
 
 /**
  * A port (R7RS §6.13): textual or binary, input or output. The console ports wrap the context's
@@ -26,6 +31,7 @@ import scheme.runtime.SchemeError;
  * here; calling, say, {@link #readChar()} on an output port is an internal error. I/O failures are
  * {@link SchemeError}s of kind {@code FILE} (design.md D8).
  */
+@ExportLibrary(InteropLibrary.class)
 public abstract class SPort implements TruffleObject {
 
     private boolean open = true;
@@ -432,5 +438,22 @@ public abstract class SPort implements TruffleObject {
         protected void closeResource() throws IOException {
             in.close();
         }
+    }
+
+    // EXPLORATION (design.md D10): a Scheme value to interop, shown as write prints it.
+
+    @ExportMessage
+    boolean hasLanguageId() {
+        return true;
+    }
+
+    @ExportMessage
+    String getLanguageId() {
+        return SchemeLanguage.ID;
+    }
+
+    @ExportMessage
+    Object toDisplayString(@SuppressWarnings("unused") boolean allowSideEffects) {
+        return InteropValues.display(this);
     }
 }

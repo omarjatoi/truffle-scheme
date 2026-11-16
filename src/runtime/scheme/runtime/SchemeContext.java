@@ -38,6 +38,8 @@ public final class SchemeContext {
     private DynEnv dynamicEnv = DynEnv.INITIAL;
     /** Nested non-tail calls since the root prompt (stack-depth spill, design.md "Continuations"). */
     public int callDepth;
+    /** EXPLORATION: identifies the innermost running root prompt (see {@link Continuation#owner}). */
+    public Object rootRun;
     /** Torture-mode captures completed (M2-06), for tests. */
     public long tortureCaptures;
 

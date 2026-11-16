@@ -32,14 +32,20 @@ public final class PromptRootNode extends RootNode {
     @Override
     public Object execute(VirtualFrame frame) {
         SchemeContext context = SchemeContext.get(this);
-        Object first;
+        Object outerRun = context.rootRun;
+        context.rootRun = new Object();
         try {
-            first = body.call(NO_ARGUMENTS);
-        } catch (InvokeContinuation e) {
-            context.setDynamicEnv(e.continuation.dynEnv);
-            return driver.run(Capture.ROOT_TAG, e.value, e.continuation.segments, context);
+            Object first;
+            try {
+                first = body.call(NO_ARGUMENTS);
+            } catch (InvokeContinuation e) {
+                context.setDynamicEnv(e.continuation.dynEnv);
+                return driver.run(Capture.ROOT_TAG, e.value, e.continuation.segments, context);
+            }
+            return driver.run(Capture.ROOT_TAG, first, null, context);
+        } finally {
+            context.rootRun = outerRun;
         }
-        return driver.run(Capture.ROOT_TAG, first, null, context);
     }
 
     @Override

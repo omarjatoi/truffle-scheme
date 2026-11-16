@@ -3,12 +3,12 @@ package scheme.compiler;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.IdentityHashMap;
-import java.util.Set;
 import java.util.Deque;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import com.oracle.truffle.api.bytecode.BytecodeLabel;
 import com.oracle.truffle.api.bytecode.BytecodeLocal;
@@ -173,7 +173,8 @@ final class CodeGenerator {
                 st.source = section.getSource();
             }
             for (Var v : fn.owned) {
-                st.locals.put(v, b.createLocal());
+                // EXPLORATION: named, so the debugger shows Scheme variables (DefaultBytecodeScope).
+                st.locals.put(v, b.createLocal(v.name.toString(), null));
             }
             if (!fn.program) {
                 int n = fn.params.size();

@@ -11,7 +11,6 @@ import java.util.Locale;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 
 import scheme.runtime.DynEnv;
-
 import scheme.runtime.value.MultipleValues;
 import scheme.runtime.value.SBigInteger;
 import scheme.runtime.value.SBytevector;
@@ -22,8 +21,8 @@ import scheme.runtime.value.SConstant;
 import scheme.runtime.value.SEnvironment;
 import scheme.runtime.value.SErrorObject;
 import scheme.runtime.value.SPair;
-import scheme.runtime.value.SRational;
 import scheme.runtime.value.SPort;
+import scheme.runtime.value.SRational;
 import scheme.runtime.value.SRecord;
 import scheme.runtime.value.SRecordType;
 import scheme.runtime.value.SString;
@@ -315,6 +314,11 @@ public final class Printer {
             out.append("#<record-type ").append(t.name).append('>');
         } else if (v instanceof SEnvironment) {
             out.append("#<environment>");
+        } else if (v instanceof scheme.runtime.Continuation) {
+            out.append("#<continuation>");
+        } else if (v instanceof com.oracle.truffle.api.interop.TruffleObject) {
+            // EXPLORATION: a foreign object (a host object, another language's value).
+            out.append(scheme.runtime.InteropValues.printForeign(v));
         } else {
             // Internal error, never a Scheme error (design.md D8).
             throw new IllegalArgumentException("not a Scheme value: " + v.getClass().getName());

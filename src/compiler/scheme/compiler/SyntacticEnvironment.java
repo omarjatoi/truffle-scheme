@@ -87,6 +87,11 @@ public final class SyntacticEnvironment {
         list.add(new Entry(scopes, binding));
     }
 
+    /** EXPLORATION: every symbol with a binding, for the interaction environment's top scope. */
+    java.util.Set<SSymbol> names() {
+        return entries.keySet();
+    }
+
     /** Every binding of the symbol, or an empty list. */
     List<Entry> candidates(SSymbol name) {
         List<Entry> list = entries.get(name);

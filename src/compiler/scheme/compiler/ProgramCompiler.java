@@ -166,6 +166,52 @@ public final class ProgramCompiler implements SchemeCompiler {
         return e.getErrorObject() != null ? new SchemeError(e.getErrorObject()) : new SchemeError(e.getMessage());
     }
 
+    // EXPLORATION: the interaction environment as interop's top scope (design.md D10, D15).
+
+    @Override
+    @TruffleBoundary
+    public List<SSymbol> interactionVariables(SchemeContext context) {
+        CompilerState state = (CompilerState) context.compilerState;
+        java.util.Set<SSymbol> names = new java.util.LinkedHashSet<>();
+        for (GlobalCell cell : state.interaction.cells()) {
+            names.add(cell.name);
+        }
+        names.addAll(state.top.names());
+        List<SSymbol> variables = new java.util.ArrayList<>();
+        for (SSymbol name : names) {
+            if (resolveInteraction(state, name) instanceof GlobalCell cell && cell.valueOrNull() != null) {
+                variables.add(name);
+            }
+        }
+        return variables;
+    }
+
+    @Override
+    @TruffleBoundary
+    public GlobalCell interactionCell(SchemeContext context, SSymbol name) {
+        return resolveInteraction((CompilerState) context.compilerState, name) instanceof GlobalCell cell ? cell : null;
+    }
+
+    @Override
+    public GlobalEnvironment interactionNamespace(SchemeContext context) {
+        return ((CompilerState) context.compilerState).interaction;
+    }
+
+    /** What the name refers to written at the interaction environment's top level (as Expander.resolve does). */
+    private static Object resolveInteraction(CompilerState state, SSymbol name) {
+        ScopeSet scopes = ScopeSet.EMPTY.add(state.interactionScope);
+        SyntacticEnvironment.Entry best = null;
+        for (SyntacticEnvironment.Entry entry : state.top.candidates(name)) {
+            if (entry.scopes().isSubsetOf(scopes) && (best == null || entry.scopes().size() > best.scopes().size())) {
+                best = entry;
+            }
+        }
+        if (best != null) {
+            return best.binding();
+        }
+        return state.interaction.cell(name);
+    }
+
     private static RootCallTarget generate(SchemeLanguage language, Ast.Lambda program) {
         SchemeRootNode[] root = new SchemeRootNode[1];
         // With source information, so guest stack traces and tools see file, line and column (D13).

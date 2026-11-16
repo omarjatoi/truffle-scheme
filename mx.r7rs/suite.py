@@ -91,6 +91,37 @@ suite = {
             "dependencies": [],
             "license": "UPL",
         },
+        # EXPLORATION (docs/interop-and-tools-exploration.md), not to be merged as is: GraalVM's
+        # tools (design.md D13, D17), at the Truffle version. Only the tests use them here; M6 would
+        # ship them as the optional tools distribution D17 describes.
+        "TRUFFLE_JSON": {
+            "digest": "sha512:d6347dc2e35d464e3374c1fe2074cfbb6c9edf32edbf005d5a2148d9bbb814882d24ee3966e3fadd11bdeb332de62c9233a9a3cf3759aa673abf383589dade04",
+            "maven": {"groupId": "org.graalvm.shadowed", "artifactId": "json", "version": "25.5.5.0.3"},
+            "moduleName": "org.graalvm.shadowed.org.json",
+            "dependencies": [],
+            "license": "UPL",
+        },
+        "PROFILER_TOOL": {
+            "digest": "sha512:5c6ac45386d8d4177f09841deab79f49ef7095922a76ccd274afdac169102af25f9c400444da9dc4b2b478348dc464fcdade555d070ffafae629591c7d288562",
+            "maven": {"groupId": "org.graalvm.tools", "artifactId": "profiler-tool", "version": "25.5.5.0.3"},
+            "moduleName": "com.oracle.truffle.tools.profiler",
+            "dependencies": ["TRUFFLE_API", "TRUFFLE_JSON"],
+            "license": "UPL",
+        },
+        "DAP_TOOL": {
+            "digest": "sha512:186380a9fdea9418a29a7e95ee19c893659fc5e60f6d4c17c9094dcc346376b6865a15208b6c1fe5b94748780cfc9c26b27709fa529a60c523c6efbf06a62dd6",
+            "maven": {"groupId": "org.graalvm.tools", "artifactId": "dap-tool", "version": "25.5.5.0.3"},
+            "moduleName": "com.oracle.truffle.tools.dap",
+            "dependencies": ["TRUFFLE_API", "TRUFFLE_JSON"],
+            "license": "UPL",
+        },
+        "CHROMEINSPECTOR_TOOL": {
+            "digest": "sha512:543a9606cf1db7ece91c03f0c0cfff576e56cf7e04215ce4408c1b21997509184030ee7b0977708aa62ed153d3f1467f071405c167fec510e96c84242b9ece90",
+            "maven": {"groupId": "org.graalvm.tools", "artifactId": "chromeinspector-tool", "version": "25.5.5.0.3"},
+            "moduleName": "com.oracle.truffle.tools.chromeinspector",
+            "dependencies": ["TRUFFLE_API", "PROFILER_TOOL", "TRUFFLE_JSON"],
+            "license": "UPL",
+        },
     },
 
     # Each project's mx directory (IDE files, checkstyle config) lives under
@@ -134,6 +165,15 @@ suite = {
             "javaCompliance": "25+",
             "checkstyle": "scheme.runtime",
         },
+        "scheme.interop": {
+            # EXPLORATION: (truffle interop), Scheme code reaching Java and other languages. Outside
+            # scheme.builtins, whose rule-1 check forbids InteropLibrary (docs/interop-and-tools-exploration.md).
+            "dir": "mx.r7rs/projects/interop",
+            "sourceDirs": ["../../../src/interop"],
+            "dependencies": ["scheme.runtime"],
+            "javaCompliance": "25+",
+            "checkstyle": "scheme.runtime",
+        },
         "scheme.prelude": {
             # Standard libraries (.sld) and prelude Scheme code, shipped as resources.
             "dir": "mx.r7rs/projects/prelude",
@@ -168,6 +208,11 @@ suite = {
                 # The optimizing runtime: without it Truffle falls back to an
                 # interpreter-only runtime and the Graal JIT is never used.
                 "TRUFFLE_RUNTIME",
+                # EXPLORATION: the CPU sampler's API (ProfilerTest), and the DAP and Chrome
+                # inspector instruments on the module path.
+                "PROFILER_TOOL",
+                "DAP_TOOL",
+                "CHROMEINSPECTOR_TOOL",
             ],
             # A test instrument (ToolsTest) needs its generated registration.
             "annotationProcessors": ["TRUFFLE_DSL_PROCESSOR"],
@@ -203,6 +248,8 @@ suite = {
                 "scheme.builtins",
                 "scheme.compiler",
                 "scheme.prelude",
+                # EXPLORATION: (truffle interop).
+                "scheme.interop",
             ],
             "distDependencies": [],
             # Truffle jars stay separate modules on the module path.
@@ -250,6 +297,10 @@ suite = {
             "distDependencies": ["SCHEME", "SCHEME_LAUNCHER"],
             "exclude": [
                 "mx:JUNIT",
+                "TRUFFLE_JSON",
+                "PROFILER_TOOL",
+                "DAP_TOOL",
+                "CHROMEINSPECTOR_TOOL",
                 "COLLECTIONS",
                 "WORD",
                 "NATIVEIMAGE",

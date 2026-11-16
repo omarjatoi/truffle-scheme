@@ -8,8 +8,11 @@ import org.graalvm.options.OptionKey;
 import org.graalvm.options.OptionStability;
 
 import com.oracle.truffle.api.CallTarget;
+import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.Option;
+import com.oracle.truffle.api.RootCallTarget;
 import com.oracle.truffle.api.TruffleLanguage;
+import com.oracle.truffle.api.debug.DebuggerTags;
 import com.oracle.truffle.api.instrumentation.ProvidedTags;
 import com.oracle.truffle.api.instrumentation.StandardTags;
 import com.oracle.truffle.api.nodes.Node;
@@ -17,7 +20,10 @@ import com.oracle.truffle.api.source.Source;
 
 import scheme.runtime.value.SClosure;
 
-@ProvidedTags({StandardTags.RootTag.class, StandardTags.RootBodyTag.class, StandardTags.StatementTag.class, StandardTags.CallTag.class, StandardTags.ExpressionTag.class})
+// DebuggerTags.AlwaysHalt (EXPLORATION): the debugger (DAP, Chrome inspector) installs an AlwaysHalt
+// breakpoint on every session, and the Bytecode DSL rejects a tag the language doesn't provide.
+@ProvidedTags({DebuggerTags.AlwaysHalt.class, StandardTags.RootTag.class, StandardTags.RootBodyTag.class, StandardTags.StatementTag.class, StandardTags.CallTag.class,
+                StandardTags.ExpressionTag.class})
 @TruffleLanguage.Registration(id = SchemeLanguage.ID, name = "R7RS Scheme", defaultMimeType = SchemeLanguage.MIME_TYPE, characterMimeTypes = SchemeLanguage.MIME_TYPE, contextPolicy = TruffleLanguage.ContextPolicy.EXCLUSIVE)
 public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
 
@@ -32,6 +38,7 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
     public static final OptionKey<String> LIBRARY_PATH = new OptionKey<>("");
 
     private SchemeCompiler compiler;
+    private RootCallTarget interopCall;
 
     @Override
     protected SchemeContext createContext(Env env) {
@@ -53,6 +60,8 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
             }
         }
         compiler().initializeContext(this, context);
+        // EXPLORATION: created here, never from compiled code (Truffle forbids creating nodes there).
+        interopCallTarget();
     }
 
     public static SchemeLanguage get(Node node) {
@@ -87,6 +96,34 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
     /** A program or library body with its prompt around it (design.md D6). */
     public CallTarget withPrompt(CallTarget body) {
         return new PromptRootNode(this, body).getCallTarget();
+    }
+
+    /**
+     * EXPLORATION: what runs a Scheme procedure that another language, the host or a tool calls
+     * through interop ({@code InteropLibrary.execute}): the procedure under a root prompt of its own
+     * (design.md D6, D10). See {@link InteropCallRootNode}.
+     */
+    public RootCallTarget interopCallTarget() {
+        if (interopCall == null) {
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            interopCall = new InteropCallRootNode(this).getCallTarget();
+        }
+        return interopCall;
+    }
+
+    /**
+     * EXPLORATION: the top scope ({@code Context.getBindings("scheme")}, and the debugger's global
+     * scope): the interaction environment's bindings (design.md D15).
+     */
+    @Override
+    protected Object getScope(SchemeContext context) {
+        return new TopScope(context);
+    }
+
+    /** EXPLORATION: tools show {@code long}, {@code double} and {@code boolean} as Scheme writes them. */
+    @Override
+    protected Object getLanguageView(SchemeContext context, Object value) {
+        return new LanguageView(value);
     }
 
     @Override
