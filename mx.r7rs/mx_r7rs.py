@@ -1273,17 +1273,17 @@ def _bench_options_parser():
                         help="how many times one JVM runs the suite's harness (each time `count` runs and the check)")
     parser.add_argument('--warmup', type=int, metavar='N', help='how many of those iterations are warmup')
     parser.add_argument('--count', type=int, metavar='N',
-                        help="runs per iteration (default: the program's own count, from its .input file)")
+                        help="the count in the program's .input file (default: the file's own): runs per iteration for most "
+                             "programs, the program's own loop count for those that run the harness once (array1, equal, parsing)")
     parser.add_argument('--timeout', type=int, default=0, metavar='SECONDS', help='kill the JVM after this long (0: never)')
     return parser
 
 
-def _our_postlude(implementation, iterations, count=None):
+def _our_postlude(implementation, iterations):
     """bench/postlude.scm, after the definitions it expects (bench/README.md)."""
     with open(join(_BENCH_DIR, 'postlude.scm'), 'rb') as f:
         return (f'(define %r7rs-bench-implementation "{implementation}")\n'
-                f'(define %r7rs-bench-iterations {iterations})\n'
-                f'(define %r7rs-bench-count {count or "#f"})\n').encode('utf-8') + f.read()
+                f'(define %r7rs-bench-iterations {iterations})\n').encode('utf-8') + f.read()
 
 
 def _kill_children(process):
@@ -1383,9 +1383,14 @@ class _R7RSBenchmarkSuite(mx_benchmark.StdOutBenchmarkSuite):
     def runAndReturnStdOut(self, benchmarks, bmSuiteArgs):
         program = benchmarks[0]
         options, _ = self._options(bmSuiteArgs)
-        postlude = _our_postlude(f'truffle-scheme-{options.mode}', options.iterations, options.count)
+        postlude = _our_postlude(f'truffle-scheme-{options.mode}', options.iterations)
         with open(join(self.bench_set.dir, 'inputs', program + '.input'), encoding='utf-8') as f:
             stdin = f.read()
+        if options.count:
+            # As the report's --scale does: the .input file's count. Overriding the harness's count
+            # instead multiplied, for array1, equal and parsing, which run the harness once and loop
+            # on the file's count themselves (parsing with --count=700 parsed 700 * 2500 times).
+            stdin = _with_count(stdin, options.count)
         # Programs read inputs/... and write outputs/... relative to the working directory.
         workdir = tempfile.mkdtemp(prefix=f'r7rs-bench-{program}-')
         try:
@@ -2049,6 +2054,373 @@ def _write_report_markdown(report, path):
 
 
 # ---------------------------------------------------------------------------
+# Performance thresholds (plan.md M5-08): a subset of ecraven's set with small workloads, measured
+# on CI's runner, and checked on every PR against bench/thresholds.json (bench/README.md)
+# ---------------------------------------------------------------------------
+
+_THRESHOLDS = join(_BENCH_DIR, 'thresholds.json')
+
+# How a threshold follows from the baseline runs (bench/README.md "Thresholds").
+_THRESHOLD_FLOOR = 1.4  # never closer than 1.4 times the baseline
+_THRESHOLD_SIGMAS = 4  # nor than 4 standard deviations of the baseline runs above it
+_THRESHOLD_ABOVE_MAX = 1.2  # nor than 1.2 times the slowest baseline run
+# The same for the time relative to the baseline divided by the run's machine factor, which takes
+# out most of the difference between runners (_machine_factor).
+_ADJUSTED_FLOOR = 1.25
+_ADJUSTED_ABOVE_MAX = 1.15
+_MACHINE_FACTOR_MIN = 10  # benchmarks a run needs for a machine factor
+
+
+class _CheckCase:
+    """One benchmark of `mx r7rs-bench-check`: a program of ecraven's set in one mode, with an input
+    (the program's .input file with its count replaced, or a whole input of ours, with smaller
+    arguments and their known result) that keeps one iteration well under a second; or `startup`,
+    the launcher running a hello-world program. Its metric is the median of the iterations after
+    `warmup` (JIT: once the program is compiled), in ms; for startup, the median wall time of
+    `iterations` processes."""
+
+    def __init__(self, key, mode, group, program=None, count=None, stdin=None, iterations=25, warmup=15):
+        self.key = key
+        self.mode = mode
+        self.group = group
+        self.program = program
+        self.count = count
+        self.stdin = stdin
+        self.iterations = iterations
+        self.warmup = warmup
+
+    def workload(self):
+        """What the baseline was measured on: a baseline only applies to the same workload."""
+        work = {'mode': self.mode, 'iterations': self.iterations, 'warmup': self.warmup}
+        if self.program:
+            work['program'] = self.program
+            work['input'] = self.input_text()
+        return work
+
+    def input_text(self):
+        if self.stdin is not None:
+            return self.stdin
+        with open(join(_check_bench_set().dir, 'inputs', self.program + '.input'), encoding='utf-8') as f:
+            text = f.read()
+        return _with_count(text, self.count) if self.count else text
+
+
+def _check_bench_set():
+    return next(s for s in _BENCH_SETS if s.name == 'ecraven')
+
+
+_JIT, _INTERP = 'jit', 'interpreter'
+
+# The subset: two or three programs per kind of work, in ecraven's groups. Inputs of our own (a
+# smaller argument and its result, often the "old inputs" in the .input file's comments) for the
+# programs whose count is 1, which a count can't shorten.
+_CHECK_CASES = [
+    _CheckCase('fib', _JIT, 'arithmetic', 'fib', stdin='8\n30\n832040\n'),
+    _CheckCase('tak', _JIT, 'arithmetic', 'tak', stdin='10\n24\n16\n8\n9\n'),
+    _CheckCase('fibfp', _JIT, 'arithmetic', 'fibfp', stdin='10\n30.0\n832040.0\n'),
+    _CheckCase('sum', _JIT, 'arithmetic', 'sum', count=4000),
+    _CheckCase('takl', _JIT, 'tail calls', 'takl', stdin='4\n(24 23 22 21 20 19 18 17 16 15 14 13 12 11 10 9 8 7 6 5 4 3 2 1)\n'
+               '(16 15 14 13 12 11 10 9 8 7 6 5 4 3 2 1)\n(8 7 6 5 4 3 2 1)\n9\n'),
+    _CheckCase('cpstak', _JIT, 'tail calls', 'cpstak', stdin='4\n24\n16\n8\n9\n'),
+    _CheckCase('mazefun', _JIT, 'higher-order', 'mazefun', count=250),
+    _CheckCase('deriv', _JIT, 'higher-order', 'deriv', count=500000),
+    _CheckCase('peval', _JIT, 'higher-order', 'peval', count=60),
+    _CheckCase('browse', _JIT, 'higher-order', 'browse', count=120),
+    _CheckCase('ctak', _JIT, 'continuations', 'ctak', stdin='60\n18\n12\n6\n7\n'),
+    _CheckCase('fibc', _JIT, 'continuations', 'fibc', stdin='8\n25\n75025\n'),
+    _CheckCase('fft', _JIT, 'vectors', 'fft', count=10),
+    _CheckCase('pnpoly', _JIT, 'vectors', 'pnpoly', count=30000),
+    _CheckCase('triangl', _JIT, 'vectors', 'triangl', count=2),
+    _CheckCase('puzzle', _JIT, 'vectors', 'puzzle', count=30),
+    _CheckCase('quicksort', _JIT, 'vectors', 'quicksort', count=60),
+    _CheckCase('string', _JIT, 'strings and I/O', 'string', count=40),
+    _CheckCase('parsing', _JIT, 'strings and I/O', 'parsing', count=50),
+    _CheckCase('equal', _JIT, 'strings and I/O', 'equal', count=3),
+    _CheckCase('fib-interpreter', _INTERP, 'interpreter', 'fib', stdin='5\n25\n75025\n', iterations=6, warmup=2),
+    _CheckCase('tak-interpreter', _INTERP, 'interpreter', 'tak', stdin='10\n18\n12\n6\n7\n', iterations=6, warmup=2),
+    _CheckCase('deriv-interpreter', _INTERP, 'interpreter', 'deriv', count=20000, iterations=6, warmup=2),
+    _CheckCase('string-interpreter', _INTERP, 'interpreter', 'string', count=30, iterations=6, warmup=2),
+    _CheckCase('startup', 'startup', 'startup', iterations=9, warmup=0),
+]
+
+_HELLO = '(import (scheme base) (scheme write))\n(display "hello")\n(newline)\n'
+
+
+def _median(values):
+    values = sorted(values)
+    n = len(values)
+    return values[n // 2] if n % 2 else (values[n // 2 - 1] + values[n // 2]) / 2
+
+
+def _run_check_case(case, timeout):
+    """Runs one case in fresh JVMs. Returns {metric_ms, samples_ms}, or {error}."""
+    workdir = tempfile.mkdtemp(prefix=f'r7rs-bench-check-{case.key}-')
+    try:
+        if case.mode == 'startup':
+            file = join(workdir, 'hello.scm')
+            with open(file, 'w', encoding='utf-8') as f:
+                f.write(_HELLO)
+            argv = _launcher_command([file])
+            samples = []
+            for _ in range(case.iterations):
+                start = time.monotonic()
+                measured = _run_measured(argv, workdir, None, None, timeout)
+                samples.append((time.monotonic() - start) * 1000)
+                if measured.timed_out or measured.rc != 0 or measured.output.strip() != 'hello':
+                    return {'error': 'hello.scm failed: ' + _tail(measured.output, 3)}
+            return {'metric_ms': round(_median(samples), 1), 'samples_ms': [round(s, 1) for s in samples]}
+        bench_set = _check_bench_set()
+        os.symlink(join(bench_set.dir, 'inputs'), join(workdir, 'inputs'))
+        os.mkdir(join(workdir, 'outputs'))
+        stdin_path = join(workdir, 'stdin')
+        with open(stdin_path, 'w', encoding='utf-8') as f:
+            f.write(case.input_text())
+        src = join(workdir, case.program + '.scm')
+        with open(src, 'wb') as f:
+            f.write(bench_set.program(case.program, _our_postlude(f'truffle-scheme-{case.mode}', case.iterations)))
+        argv = _launcher_command([src], vm_args=_BENCH_MODES[case.mode][0])
+        outcome = _outcome(_run_measured(argv, workdir, stdin_path, None, timeout), case.iterations)
+        if outcome['status'] != 'ok':
+            return {'error': f'{outcome["status"]}: {outcome.get("detail", "")}'}
+        samples = [t * 1000 for t in outcome['times']]
+        return {'metric_ms': round(_median(samples[case.warmup:]), 1), 'samples_ms': [round(s, 1) for s in samples]}
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+
+
+def _read_thresholds():
+    if not exists(_THRESHOLDS):
+        return {'benchmarks': {}}
+    with open(_THRESHOLDS, encoding='utf-8') as f:
+        return json.load(f)
+
+
+def _threshold_for(samples, floor, slack):
+    """(baseline, threshold, sigma) from the values of the baseline runs: the threshold is the largest
+    of `floor` times their median, their median plus _THRESHOLD_SIGMAS standard deviations, and
+    `slack` times the largest."""
+    baseline = _median(samples)
+    mean = sum(samples) / len(samples)
+    sigma = math.sqrt(sum((s - mean) ** 2 for s in samples) / (len(samples) - 1)) if len(samples) > 1 else 0.0
+    return baseline, max(baseline * floor, baseline + _THRESHOLD_SIGMAS * sigma, max(samples) * slack), sigma
+
+
+def _machine_factor(results, baselines):
+    """How fast this run's machine is, relative to the baselines' runs: the median, over the
+    benchmarks measured (at least _MACHINE_FACTOR_MIN of them), of measured / baseline. GitHub's
+    runners are of several CPU types, which shifts every benchmark alike: about 0.7 to 1.4 in the
+    runs bench/thresholds.json was measured from. A median, so that a few regressed benchmarks
+    don't move it. None if too few benchmarks were measured."""
+    ratios = [result['metric_ms'] / baselines[key] for key, result in results.items()
+              if 'metric_ms' in result and baselines.get(key)]
+    return _median(ratios) if len(ratios) >= _MACHINE_FACTOR_MIN else None
+
+
+def _bench_platform():
+    """The OS and architecture: thresholds measured on one don't apply to another (an arm64 Mac runs
+    some benchmarks relatively faster than others, which no machine factor takes out)."""
+    return f'{platform.system().lower()}-{platform.machine()}'
+
+
+def _run_platform(run):
+    m = re.match(r'(\S+) .*?\((\S+)\)', run.get('host', ''))
+    return run.get('platform') or (f'{m.group(1).lower()}-{m.group(2)}' if m else '?')
+
+
+def _matching(run, case):
+    result = run['results'].get(case.key, {})
+    return 'metric_ms' in result and result['workload'] == case.workload()
+
+
+def _update_thresholds(runs, cases, note):
+    """Rewrites bench/thresholds.json's entries for `cases` from the measurement files `runs`."""
+    thresholds = _read_thresholds()
+    entries = thresholds.get('benchmarks', {})
+    for case in cases:
+        samples = [run['results'][case.key]['metric_ms'] for run in runs if _matching(run, case)]
+        if not samples:
+            mx.abort(f'r7rs-bench-check: no measurement of {case.key} with its current workload in the files given')
+        baseline, threshold, sigma = _threshold_for(samples, _THRESHOLD_FLOOR, _THRESHOLD_ABOVE_MAX)
+        entries[case.key] = {'group': case.group, 'baseline_ms': round(baseline, 1), 'threshold_ms': round(threshold, 1),
+                             'sigma_ms': round(sigma, 1), 'runs_ms': samples, 'workload': case.workload()}
+    # The machine-adjusted thresholds, from each run's ratios divided by its machine factor.
+    baselines = {key: entry['baseline_ms'] for key, entry in entries.items()}
+    factors = [_machine_factor({c.key: run['results'][c.key] for c in _CHECK_CASES if _matching(run, c)}, baselines) for run in runs]
+    for case in cases:
+        adjusted = [run['results'][case.key]['metric_ms'] / baselines[case.key] / factor
+                    for run, factor in zip(runs, factors) if factor and _matching(run, case)]
+        entry = entries[case.key]
+        for field in ('adjusted_runs', 'adjusted_threshold'):
+            entry.pop(field, None)
+        if len(adjusted) >= 3:
+            _, threshold, _ = _threshold_for(adjusted, _ADJUSTED_FLOOR, _ADJUSTED_ABOVE_MAX)
+            entry['adjusted_runs'] = [round(a, 3) for a in adjusted]
+            entry['adjusted_threshold'] = round(threshold, 3)
+    hosts = sorted({run.get('host', '?') for run in runs})
+    platforms = sorted({_run_platform(run) for run in runs})
+    if len(platforms) != 1:
+        mx.abort(f'r7rs-bench-check: the runs come from several platforms ({", ".join(platforms)}): thresholds are for one')
+    thresholds = {
+        'about': 'Generated by `mx r7rs-bench-check --update` (plan.md M5-08, bench/README.md "Thresholds"): '
+                 "don't edit by hand. Per benchmark: each run's time in ms (runs_ms: the median of a JVM's iterations "
+                 'after the warmup, or for startup of the wall times), their median (baseline_ms) and the threshold '
+                 f'(threshold_ms: the largest of {_THRESHOLD_FLOOR} x the baseline, the baseline + {_THRESHOLD_SIGMAS} '
+                 f'sigma, and {_THRESHOLD_ABOVE_MAX} x the slowest run); and each run\'s time / baseline divided by '
+                 "that run's machine factor (adjusted_runs; the machine factor is the median of time / baseline over "
+                 'all the benchmarks of the run) and the threshold for that (adjusted_threshold: the largest of '
+                 f'{_ADJUSTED_FLOOR} x their median, their median + {_THRESHOLD_SIGMAS} sigma, and {_ADJUSTED_ABOVE_MAX} x '
+                 'the largest). '
+                 '`mx r7rs-bench-check` fails when a benchmark is past either threshold.',
+        'measured': {
+            'runs': len(runs),
+            'note': note,
+            'platform': platforms[0],
+            'hosts': hosts,
+            'commits': sorted({run.get('commit', '?') for run in runs}),
+            'dates': sorted({run.get('date', '?')[:10] for run in runs}),
+            'ci_runs': sorted({run['ci_run'] for run in runs if run.get('ci_run')}),
+        },
+        'benchmarks': {case.key: entries[case.key] for case in _CHECK_CASES if case.key in entries},
+    }
+    _write_json(thresholds, _THRESHOLDS)
+    mx.log(f'r7rs-bench-check: wrote {os.path.relpath(_THRESHOLDS, _suite.dir)} from {len(runs)} run(s)')
+
+
+def r7rs_bench_check(args):
+    """run a subset of the benchmarks and fail on a regression past bench/thresholds.json (M5-08)"""
+    parser = argparse.ArgumentParser(prog='mx r7rs-bench-check', description='See bench/README.md "Thresholds".')
+    parser.add_argument('benchmarks', nargs='*', help='which (default: all): ' + ' '.join(c.key for c in _CHECK_CASES))
+    parser.add_argument('--shard', metavar='I/N', help='every Nth benchmark, starting with the Ith')
+    parser.add_argument('--retries', type=int, default=2, metavar='N',
+                        help='rerun a benchmark past its threshold up to N times, in fresh JVMs, keeping the best (default 2)')
+    parser.add_argument('--timeout', type=int, default=300, metavar='SECONDS', help='kill a JVM after this long (default 300)')
+    parser.add_argument('--json', metavar='FILE', help='write the measurements here (what --update --from reads)')
+    parser.add_argument('--markdown', metavar='FILE', help='append the table here (CI: $GITHUB_STEP_SUMMARY)')
+    parser.add_argument('--update', action='store_true',
+                        help='rewrite the thresholds of the benchmarks chosen, from --from files, or else from --runs runs here')
+    parser.add_argument('--from', dest='sources', nargs='+', metavar='FILE', help='with --update: measurement files (--json) of CI runs')
+    parser.add_argument('--runs', type=int, default=3, metavar='N', help='with --update and no --from: runs to measure here (default 3)')
+    parser.add_argument('--note', default='', help='with --update: where and how the runs were made')
+    parser.add_argument('--measure', action='store_true', help='only measure (with --json): no thresholds, no failure')
+    parser.add_argument('--enforce', action='store_true',
+                        help='fail past a threshold even on a platform other than the one the thresholds were measured on')
+    options = parser.parse_args(args)
+    keys = [c.key for c in _CHECK_CASES]
+    unknown = [b for b in options.benchmarks if b not in keys]
+    if unknown:
+        mx.abort(f'r7rs-bench-check: unknown benchmark(s) {unknown}; choose from {" ".join(keys)}')
+    cases = [c for c in _CHECK_CASES if not options.benchmarks or c.key in options.benchmarks]
+    cases = _shard(options.shard, 'r7rs-bench-check', cases)
+    if options.update and options.sources:
+        runs = []
+        for path in options.sources:
+            with open(path, encoding='utf-8') as f:
+                runs.append(json.load(f))
+        _update_thresholds(runs, cases, options.note)
+        return 0
+
+    def measure():
+        results = {}
+        for i, case in enumerate(cases):
+            result = _run_check_case(case, options.timeout)
+            result['workload'] = case.workload()
+            results[case.key] = result
+            shown = f'{result["metric_ms"]:.1f} ms' if 'metric_ms' in result else 'ERROR ' + result['error']
+            mx.log(f'r7rs-bench-check: [{i + 1}/{len(cases)}] {case.key}: {shown}')
+        return results
+
+    def measurement(results):
+        return {'host': _host_description(), 'platform': _bench_platform(), 'commit': _git_commit(),
+                'date': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),
+                'ci_run': os.environ.get('GITHUB_RUN_ID', ''), 'results': results}
+
+    if options.update:
+        runs = []
+        for run in range(options.runs):
+            mx.log(f'r7rs-bench-check: run {run + 1} of {options.runs}')
+            runs.append(measurement(measure()))
+        _update_thresholds(runs, cases, options.note or f'{options.runs} runs on {_host_description()}')
+        return 0
+
+    results = measure()
+    if options.measure:
+        if options.json:
+            _write_json(measurement(results), options.json)
+        return 0
+    measured_on = _read_thresholds().get('measured', {}).get('platform')
+    enforced = options.enforce or measured_on == _bench_platform()
+    thresholds = _read_thresholds().get('benchmarks', {})
+    usable = {case.key: thresholds[case.key] for case in cases
+              if case.key in thresholds and thresholds[case.key]['workload'] == case.workload() and 'metric_ms' in results[case.key]}
+    factor = _machine_factor({key: results[key] for key in usable}, {key: entry['baseline_ms'] for key, entry in usable.items()})
+
+    def verdict(result, entry):
+        ratio = result['metric_ms'] / entry['baseline_ms']
+        if result['metric_ms'] > entry['threshold_ms']:
+            return 'REGRESSION', f'{result["metric_ms"]:.1f} ms, past its threshold of {entry["threshold_ms"]:.1f} ms'
+        if factor and 'adjusted_threshold' in entry and ratio / factor > entry['adjusted_threshold']:
+            return 'REGRESSION (adjusted)', (f'{ratio:.2f} x its baseline, {ratio / factor:.2f} x adjusted for this machine, '
+                                             f'past its adjusted threshold of {entry["adjusted_threshold"]:.2f}')
+        return 'ok', ''
+
+    rows, failed, slower = [], [], []
+    for case in cases:
+        result, entry = results[case.key], thresholds.get(case.key)
+        if 'error' in result:
+            status = 'ERROR'
+        elif entry is None:
+            status = 'no threshold'
+        elif entry['workload'] != case.workload():
+            status = 'workload changed'
+        else:
+            status, why = verdict(result, entry)
+            tries = 0
+            while status != 'ok' and enforced and tries < options.retries:
+                tries += 1
+                mx.log(f'r7rs-bench-check: {case.key}: {why}: retry {tries} of {options.retries}')
+                again = _run_check_case(case, options.timeout)
+                result.setdefault('retries_ms', []).append(again.get('metric_ms'))
+                if again.get('metric_ms') is not None and again['metric_ms'] < result['metric_ms']:
+                    result['metric_ms'], result['samples_ms'] = again['metric_ms'], again['samples_ms']
+                status, why = verdict(result, entry)
+        if status.startswith('REGRESSION') and not enforced:
+            status = status.replace('REGRESSION', 'slower (not enforced here)')
+            slower.append(case.key)
+        elif status != 'ok':
+            failed.append(f'{case.key} ({status})')
+        result['status'] = status
+        rows.append((case, result, entry, status))
+    if options.json:
+        _write_json(dict(measurement(results), machine_factor=factor), options.json)
+    lines = [f'Thresholds measured on {measured_on}; this is {_bench_platform()}: '
+             + ('enforced.' if enforced else 'not enforced (`--enforce` to).'), '',
+             f'Machine factor (median of measured / baseline): {f"{factor:.2f}" if factor else "none (too few benchmarks)"}', '',
+             '| Benchmark | Group | Baseline (ms) | Threshold (ms) | Measured (ms) | ×baseline | Adjusted ×baseline | Adjusted threshold | Status |',
+             '|---|---|--:|--:|--:|--:|--:|--:|---|']
+    for case, result, entry, status in rows:
+        measured = result.get('metric_ms')
+        known = entry is not None and measured is not None
+        ratio = f'{measured / entry["baseline_ms"]:.2f}' if known else ''
+        adjusted = f'{measured / entry["baseline_ms"] / factor:.2f}' if known and factor else ''
+        lines.append(f'| {case.key} | {case.group} | {entry["baseline_ms"] if entry else ""} | {entry["threshold_ms"] if entry else ""} '
+                     f'| {measured if measured is not None else ""} | {ratio} | {adjusted} '
+                     f'| {entry.get("adjusted_threshold", "") if entry else ""} | {status} |')
+    mx.log('\n'.join(lines))
+    if options.markdown:
+        with open(options.markdown, 'a', encoding='utf-8') as f:
+            f.write('## Benchmark thresholds\n\n' + '\n'.join(lines) + '\n\n')
+    if failed:
+        mx.abort('r7rs-bench-check: failed: ' + ', '.join(failed) + '. A slowdown that is intended (or a workload change) '
+                 'needs new thresholds: bench/README.md "Thresholds"')
+    if slower:
+        mx.warn(f'r7rs-bench-check: past their thresholds, but these were measured on {measured_on} and this is '
+                f'{_bench_platform()}, where they don\'t apply (--enforce to fail anyway): {" ".join(slower)}. CI checks them.')
+    else:
+        mx.log(f'r7rs-bench-check: all {len(cases)} benchmarks within their thresholds')
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Rule checks (AGENTS.md "Rules")
 # ---------------------------------------------------------------------------
 
@@ -2135,6 +2507,7 @@ _TESTS = {
     'spec': ('tests/spec: tail calls, continuations, depth (M2-00, M2-07)', lambda: r7rs_spec([])),
     'torture': ('everything that passes normally passes under --torture (M2-06)', lambda: r7rs_torture([])),
     'tools': ('the tools distribution: DAP, Chrome inspector, CPU sampler, memory tracer (M6-03)', lambda: r7rs_tools([])),
+    'bench': ('a benchmark subset within bench/thresholds.json, measured on CI\'s runner (M5-08)', lambda: r7rs_bench_check([])),
 }
 
 
@@ -2196,5 +2569,7 @@ mx.update_commands(_suite, {
     'r7rs-vendor-benchmarks': [r7rs_vendor_benchmarks, 'ecraven|larceny path/to/checkout --commit <hash>'],
     'r7rs-bench-report': [r7rs_bench_report, '[--benchmarks P,...] [--implementations I,...] [--scale F] [--interpreter-scale F] '
                           '[--jit-iterations N] [--timeout S] [--note TEXT] [--output FILE.md] [--json FILE.json] [--render-only]'],
+    'r7rs-bench-check': [r7rs_bench_check, '[benchmark...] [--shard I/N] [--retries N] [--json FILE] [--markdown FILE] [--measure] '
+                         '[--update [--from FILE...] [--runs N] [--note TEXT]]'],
     'r7rs-unittest': [r7rs_unittest, '[--compile] [--torture] [-j N] [--shard I/N] [unittest args...]'],
 })

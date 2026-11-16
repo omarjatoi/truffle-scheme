@@ -1,0 +1,92 @@
+name: Benchmark thresholds
+
+# New thresholds for `mx r7rs-bench-check` (plan.md M5-08, bench/README.md "Thresholds"): measures
+# its benchmark subset on several fresh runners, of the type CI's check runs on, and turns the
+# runs into a new bench/thresholds.json, the run's `thresholds` artifact. For a PR that changes
+# performance on purpose: `gh workflow run bench-thresholds.yml --ref <its branch>`, then commit the
+# artifact's thresholds.json in the PR. Also runs on PRs that change this file.
+on:
+  workflow_dispatch:
+    inputs:
+      benchmarks:
+        description: "Benchmarks to update (space-separated; empty: all)"
+        required: false
+        default: ""
+      note:
+        description: "Why the thresholds change (recorded in thresholds.json)"
+        required: false
+        default: ""
+  pull_request:
+    paths:
+      - .github/workflows/bench-thresholds.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-thresholds-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  measure:
+    name: Measure ${{ matrix.run }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        # Each on a runner of its own: the spread between runners is what a threshold must allow.
+        run: [1, 2, 3, 4, 5, 6, 7, 8]
+    env:
+      BENCHMARKS: ${{ github.event.inputs.benchmarks }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: DeterminateSystems/determinate-nix-action@v3
+      - uses: actions/cache@v6
+        with:
+          path: ~/.mx/cache
+          key: mx-cache-${{ runner.os }}-${{ hashFiles('mx.r7rs/suite.py', 'flake.lock') }}
+          restore-keys: mx-cache-${{ runner.os }}-
+      - name: Build
+        run: nix develop --command mx build
+      - name: mx r7rs-bench-check --measure
+        run: nix develop --command mx r7rs-bench-check $BENCHMARKS --measure --json measure-${{ matrix.run }}.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: measure-${{ matrix.run }}
+          path: measure-${{ matrix.run }}.json
+          if-no-files-found: error
+
+  thresholds:
+    name: Thresholds
+    needs: measure
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    env:
+      BENCHMARKS: ${{ github.event.inputs.benchmarks }}
+      NOTE: ${{ github.event.inputs.note }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: DeterminateSystems/determinate-nix-action@v3
+      - uses: actions/cache@v6
+        with:
+          path: ~/.mx/cache
+          key: mx-cache-${{ runner.os }}-${{ hashFiles('mx.r7rs/suite.py', 'flake.lock') }}
+          restore-keys: mx-cache-${{ runner.os }}-
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: measure-*
+          path: runs
+          merge-multiple: true
+      - name: mx r7rs-bench-check --update
+        run: |
+          nix develop --command mx r7rs-bench-check $BENCHMARKS --update --from runs/*.json \
+            --note "${NOTE:+$NOTE: }$(ls runs | wc -l) runs of the Benchmark thresholds workflow ($GITHUB_RUN_ID), each on a fresh GitHub ubuntu-26.04 runner"
+          { echo '## Changes to bench/thresholds.json'; echo; echo '```diff'; git diff bench/thresholds.json; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: thresholds
+          path: |
+            bench/thresholds.json
+            runs/
+          if-no-files-found: error

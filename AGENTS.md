@@ -68,7 +68,7 @@ and names that task.
 ```
 mx checks                                 # build (ECJ + javac, warnings are errors) and static checks
 mx checks format spotbugs                 # just those steps (see `mx checks nope` for the list)
-mx tests                                  # all tests (unit, conformance status, differential, spec, torture, tools)
+mx tests                                  # all tests (unit, conformance status, differential, spec, torture, tools, bench)
 mx tests unittest diff                    # just those steps
 mx build                                  # build everything
 mx unittest                               # JUnit tests in tests/scheme/test (Graal JIT on, background)
@@ -95,6 +95,9 @@ mx eclipseformat                          # format Java code (GraalVM's Eclipse 
 mx spotbugs                               # Java static analysis (SpotBugs)
 mx benchmark r7rs-ecraven:fib             # one benchmark program, JIT (bench/README.md: options, failures)
 mx benchmark r7rs-larceny:* -- --mode=*   # every program of a set, JIT and interpreter
+mx r7rs-bench-check                       # benchmark subset vs bench/thresholds.json, fails on a regression (part of mx tests)
+mx r7rs-bench-check --update --from F...  # new thresholds from CI measurements (bench/README.md "Thresholds")
+nix develop .#bench -c mx r7rs-bench-report   # the comparative report, docs/benchmarks.md
 ```
 
 Before opening a PR: `mx checks && mx tests`. If you touched `src/runtime` or
@@ -104,6 +107,10 @@ two commands as the required `Checks` and `Tests` checks, one step per sub-check
 plus non-blocking `Conformance` jobs (interpreter and `--compile`) whose run
 summary shows per-section results. Steps whose task hasn't landed yet report
 `SKIPPED` and name the task that brings them. This suite doesn't use `mx gate`.
+`Tests (benchmarks)` fails when a benchmark is slower than its threshold, measured on CI's
+runners: a PR that changes performance on purpose commits new thresholds from the `Benchmark
+thresholds` workflow and says why (bench/README.md "Thresholds"); never raise one by hand. The
+thresholds are for CI's linux-x86_64 runners: elsewhere `mx tests bench` only warns about them.
 
 ## Rules (each one is enforced by `mx checks` or `mx tests`)
 

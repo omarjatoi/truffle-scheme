@@ -32,7 +32,7 @@ Options, after `--` (anything else there is a JVM argument):
 | `--mode=` | `jit` | `jit` (Graal, background compilation), `interpreter` (`engine.Compilation=false`), or `*` for both |
 | `--iterations=N` | 3 (`jit`), 1 (`interpreter`) | how many times the JVM runs the suite's harness |
 | `--warmup=N` | 1 (`jit`), 0 (`interpreter`) | how many of those iterations are warmup |
-| `--count=N` | the program's | runs of the benchmark per iteration (each `.input` file's count) |
+| `--count=N` | the program's | the count in the program's `.input` file: runs of the benchmark per iteration, except for `array1`, `equal` and `parsing`, which run the harness once and loop on the count themselves |
 | `--timeout=SECONDS` | none | kill the JVM after this long |
 
 `--count=1 --iterations=1` checks every program quickly: the check is the
@@ -136,6 +136,93 @@ own counts, expect several hours.
 CI runs it on a subset at a tenth of the counts, weekly and by hand
 (`.github/workflows/benchmarks.yml`, `gh workflow run benchmarks.yml`), and
 attaches the page and JSON to the run as the `benchmark-report` artifact.
+
+## Thresholds
+
+`mx r7rs-bench-check` (plan.md M5-08) runs a subset of ecraven's set and fails if one of them
+is slower than its threshold in `thresholds.json`. CI runs it on every PR, as the `Tests
+(benchmarks)` job, one of the jobs the required `Tests` check needs; `mx tests bench` runs it too.
+
+```
+mx r7rs-bench-check                       # every benchmark of the subset: a table, and exit 1 past a threshold
+mx r7rs-bench-check fib deriv startup     # just those
+mx r7rs-bench-check --measure --json m.json   # measure only
+```
+
+The subset (`_CHECK_CASES` in `mx.r7rs/mx_r7rs.py`) has two to four programs per kind of work:
+arithmetic (`fib`, `tak`, `fibfp`, `sum`), tail calls (`takl`, `cpstak`), higher-order code
+(`mazefun`, `deriv`, `peval`, `browse`), continuations (`ctak`, `fibc`), vectors (`fft`, `pnpoly`,
+`triangl`, `puzzle`, `quicksort`), strings, reading and `equal?` (`string`, `parsing`, `equal`),
+four of them in the interpreter (`fib`, `tak`, `deriv`, `string`), and `startup`: the launcher
+running a hello-world program. Each program gets a workload of a fraction of a second per
+iteration: its `.input` file with a smaller count, or, for those whose count is 1, an input of
+ours with smaller arguments and their known result (as the "old inputs" in the files' comments).
+The program and its check are unchanged.
+
+What is measured: each program runs in a JVM of its own, one after another. A JIT benchmark's JVM
+runs the harness 25 times, and its number is the median of the last 10, once the program is
+compiled; an interpreter benchmark's runs it 6 times, the median of the last 4. `startup` is the
+median wall time of 9 runs of the launcher. A benchmark past its threshold runs again in a fresh
+JVM, up to twice (`--retries`), and keeps its best number, so one slow runner or one unlucky
+compilation doesn't fail a PR; a regression has to hold over three JVMs.
+
+How thresholds are set: the baselines are measured on GitHub's `ubuntu-26.04` runners, the
+runners CI checks on, since other machines and other load give other numbers. Several runs (24
+for the committed file), each on a fresh runner, each give every benchmark a number. Two
+thresholds follow, and the check fails past either:
+
+- The threshold on the time: the baseline is the median of the runs, and the threshold the
+  largest of 1.4 times the baseline, the baseline plus 4 standard deviations of the runs, and 1.2
+  times the slowest run. GitHub's runners are of several CPU types (AMD EPYC 7763, 9V45 and 9V74,
+  Intel Xeon 8573C and 6975P in the committed runs), and the fastest runs every benchmark about
+  1.9 times faster than the slowest, so these come out at 1.8 to 2.7 times the baseline: they catch
+  a slowdown of everything, such as a lost inlining.
+- The machine-adjusted threshold: a run's machine factor is the median, over its benchmarks, of
+  time / baseline (so a few regressed benchmarks don't move it), and a benchmark's adjusted ratio
+  its time / baseline / that factor. That takes out most of the difference between runners: the
+  runs' adjusted ratios spread by 3 to 10% for most benchmarks, against 15 to 20% unadjusted. The
+  threshold is the largest of 1.25 times the runs' median, their median plus 4 standard
+  deviations, and 1.15 times the largest; 1.2 to 1.35 for most benchmarks (startup 1.57), so a slowdown
+  of one benchmark by a third is caught. A run needs at least 10 benchmarks for a machine factor, so
+  `mx r7rs-bench-check fib` checks only the first threshold.
+
+So a slowdown of a few benchmarks is caught from about a third, but one of everything alike
+raises the machine factor, which a slower runner would explain too, and is caught only past the
+time thresholds: a uniform 2x slowdown fails about half the benchmarks on a fast runner, and all
+of them on a slow one.
+
+The thresholds apply on the platform they were measured on (`linux-x86_64`, recorded in the
+file). Elsewhere, such as on an arm64 Mac, where some benchmarks run relatively faster than
+others in a way no machine factor takes out, `mx r7rs-bench-check` (and `mx tests bench`) still
+runs everything and prints the table, but only warns about benchmarks past their thresholds; it
+fails for a program that fails, a benchmark without a threshold, or a changed workload.
+`--enforce` makes it fail past a threshold anyway.
+
+`mazefun`, `peval` and `parsing` have wide thresholds (adjusted 2.0 to 2.3), and `deriv` a
+wider one (1.4): their steady state is bimodal, some JVMs settling at about 1.7 times the time of
+others, run after run of the same commit. Small slowdowns are for `mx benchmark` and the comparative report, A/B on one
+machine. `thresholds.json` records each benchmark's runs, baseline, standard deviation, thresholds
+and the workload it was measured on (a changed workload fails the check until it is measured
+again), and where, when and at which commit the runs were made.
+
+### Updating the thresholds
+
+A PR that changes performance on purpose (a slowdown it accepts, a speedup that leaves a threshold
+far too loose, or a changed workload) commits new thresholds, measured on CI's runners, and says
+in its description which ones moved and why:
+
+```
+gh workflow run bench-thresholds.yml --ref <branch> [-f benchmarks="fib deriv"] [-f note="why"]
+gh run download <run> -n thresholds          # writes bench/thresholds.json (and runs/, the measurements)
+```
+
+The `Benchmark thresholds` workflow (`.github/workflows/bench-thresholds.yml`) measures the subset
+(or the benchmarks named) on eight fresh runners, runs `mx r7rs-bench-check --update --from` on
+the eight measurement files, and attaches the new `thresholds.json` to the run; its summary shows
+the diff. `--update --from` takes any measurement files, so the `bench-check-<attempt>` artifacts
+that CI's `Tests (benchmarks)` job uploads on every run, passing or not, work too.
+`mx r7rs-bench-check --update` without `--from` measures here instead (`--runs`, default 3), which
+is only right for a machine that runs the check itself.
 
 ## Failures
 

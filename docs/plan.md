@@ -581,7 +581,7 @@ M5-01 benchmarks and M5-02's report.
     Dybvig), replacing M3-08's coinductive walk; still iterative (rule 4).
   - **Done when** `tests/spec/deep-equal` and the `equal?` tests pass and the
     benchmarks that use `equal?` don't regress.
-- [ ] **M5-08 · Thresholds in CI** *(needs M5-02 to M5-07, M5-09, M5-10)*
+- [x] **M5-08 · Thresholds in CI** *(needs M5-02 to M5-07, M5-09, M5-10)*
   - Set per-benchmark thresholds from the measured baselines, and a CI job
     that runs the benchmarks and fails on a regression past them.
   - **Done when** the job runs on every PR and enforces the thresholds.
