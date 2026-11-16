@@ -30,7 +30,7 @@ PR once it's green.
    Say in one line what you picked.
 3. **Work** on a branch `<id>-<short-name>`, following "Working style".
    Tick the task's checkbox in `docs/plan.md` (outside the status block).
-   Run `mx checks && mx tests` before opening the PR.
+   Run `bazel test //...` before opening the PR.
 4. **Open the PR** (not a draft), titled `<ID>: <what the change does>`,
    for example `M2-05: Spill deep non-tail recursion to the heap at a depth
    threshold`. The title becomes the squash commit on `main`
@@ -52,64 +52,85 @@ push fixes.
 
 ## Environment
 
-Run everything inside `nix develop`. It provides GraalVM CE 25.5 (already set
-as `JAVA_HOME`; its Graal compiler is the JIT), `mx`, Python, git, `gh` and
-chibi-scheme (used for differential testing). There's no JDK to fetch by
-hand. Truffle comes from Maven Central
-as libraries in `mx.r7rs/suite.py`, at exactly the GraalVM version. mx refuses
-to run if the two differ (design.md D11).
+Run everything inside `nix develop`. It provides `bazel` (bazelisk, at
+`.bazelversion`), Python, git, `gh` and chibi-scheme (used for differential
+testing), and for mx, GraalVM CE 25.5 (as `JAVA_HOME`) and `mx`. Bazel
+downloads its own copy of the same GraalVM release (`bazel/graalvm.bzl`): it
+compiles, and its Graal compiler is the JIT the tests use. There's no JDK to
+fetch by hand. Truffle comes from Maven Central at exactly the GraalVM version
+(`TRUFFLE_VERSION` in `MODULE.bazel`, the libraries in `mx.r7rs/suite.py`).
+The Bazel build fails if the two differ, and mx refuses to run (design.md D11).
 
 ## Commands
 
-The suite is `mx.r7rs/`. Custom commands live in
-`mx.r7rs/mx_r7rs.py`. A command whose task hasn't landed yet exits nonzero
-and names that task.
+Bazel builds and tests everything (`MODULE.bazel`, `bazel/`, design.md D11).
+Every build step and test is cached on its inputs, so a run redoes only what
+your change affects; `bazel test //...` after a one-file edit is much cheaper
+than the first run. Bazel downloads its own pinned GraalVM, the Maven jars and
+Python; the dev shell provides `bazel` itself (bazelisk, at `.bazelversion`)
+and chibi-scheme.
 
 ```
-mx checks                                 # build (ECJ + javac, warnings are errors) and static checks
-mx checks format spotbugs                 # just those steps (see `mx checks nope` for the list)
-mx tests                                  # all tests (unit, conformance status, differential, spec, torture, tools)
-mx tests unittest diff                    # just those steps
-mx build                                  # build everything
-mx unittest                               # JUnit tests in tests/scheme/test (Graal JIT on, background)
-mx r7rs-unittest --compile                # same, compile immediately; failures are errors
-mx r7rs-test                              # both conformance suites, interpreter only (the fast loop)
-mx r7rs-test --suite larceny              # just one suite: chibi (tests/r7rs) or larceny (tests/r7rs-larceny)
+bazel build //...                         # build everything (javac, warnings are errors)
+bazel test //...                          # all checks and tests: run this before opening a PR
+bazel test --test_tag_filters=lint //...  # static checks only (CI: Checks)
+bazel test --test_tag_filters=-lint //... # tests only (CI: Tests)
+bazel test //tests:unit_jit               # JUnit, Graal JIT in background mode (a test per class)
+bazel test //tests:unit_compile           # JUnit, compile immediately; failures are errors
+bazel test //tests:unit_torture           # JUnit, capture + resume at every non-tail call
+bazel test //tests:unit_jit_ReaderTest    # one class in one mode
+bazel test //tests:conformance            # status block in docs/plan.md is current; torture passes as much
+bazel run //bazel/r7rs:status             # regenerate the status block in docs/plan.md
+bazel test //tests:diff                   # tests/diff vs chibi-scheme, normally and under torture
+bazel test //tests:diff_callcc            # one program (diff_torture_callcc: under torture)
+bazel test //tests:spec                   # tests/spec (tail-call space, continuations, depth)
+bazel test //tests:spec_tail-mutual       # one case
+bazel test //tests:space                  # tail loop and deep recursion under -Xss256k
+bazel test //tests:tools                  # the tools (DAP, inspector, profilers) against tests/tools/
+bazel test //src/runtime:all              # one project's checks: _format _checkstyle _ecj _spotbugs
+bazel run //bazel/lint:format             # format Java code (GraalVM's Eclipse formatter settings)
+bazel run @jvm//:pin                      # after changing a Maven artifact in MODULE.bazel
+```
+
+A failing test's output is printed; every test's is in
+`bazel-testlogs/<package>/<test>/test.log`. A new test class
+(`tests/scheme/test/*Test.java`), `tests/diff` program or `tests/spec` case is
+picked up by itself; a new source directory needs a `BUILD.bazel` like its
+neighbours'.
+
+mx (`mx.r7rs/`, custom commands in `mx.r7rs/mx_r7rs.py`) still builds the repo
+the same way, pinned to the same Truffle (`//bazel/r7rs:versions_test` checks).
+Use it for what Bazel doesn't do: per-section conformance results and failing
+tests, ad-hoc programs, benchmarks.
+
+```
+mx checks && mx tests                     # the same checks and tests, uncached
+mx r7rs-test                              # both conformance suites, interpreter only, per section
 mx r7rs-test -v 6.10                      # one section, listing failing tests
-mx r7rs-test 6.10                         # one conformance section (chibi's 6.10, or Larceny's base, ...)
-mx r7rs-test --torture                    # capture + resume at every non-tail call
-mx r7rs-test --compile                    # Graal JIT; compile immediately; failures are errors
-mx r7rs-spec                              # tests/spec (tail-call space, continuations, depth)
+mx r7rs-test --suite larceny --compile    # one suite, Graal JIT, compile immediately
 mx scheme [-I dir]... file.scm [arg]...   # the launcher: run a program (--help lists the engine/log options)
 mx scheme                                 # no file: a REPL on stdin
 mx scheme --dap file.scm                  # with the tools (SCHEME_TOOLS): --inspect, --dap, --cpusampler, --memtracer
-mx r7rs-tools                             # smoke tests of those tools against tests/tools/ (part of mx tests)
 mx r7rs-diff path/to/file.scm             # run under chibi and under us; compare stdout + exit status
-mx r7rs-diff-all                          # every program in tests/diff/ (part of mx tests)
-mx r7rs-space                             # tail loop and deep recursion under -Xss256k (part of mx tests)
-mx r7rs-status                            # regenerate the status block in docs/plan.md
-mx r7rs-check                             # rule 1: Java builtins never call Scheme
-mx eclipseformat                          # format Java code (GraalVM's Eclipse formatter settings)
-mx spotbugs                               # Java static analysis (SpotBugs)
 mx benchmark r7rs-ecraven:fib             # one benchmark program, JIT (bench/README.md: options, failures)
 mx benchmark r7rs-larceny:* -- --mode=*   # every program of a set, JIT and interpreter
 ```
 
-Before opening a PR: `mx checks && mx tests`. If you touched `src/runtime` or
-any Bytecode DSL operation, also run `mx r7rs-test --compile`. CI runs the same
-two commands as the required `Checks` and `Tests` checks, one step per sub-check
-(`Tests` passes when the parallel `Tests (...)` jobs that split its steps all pass),
+Before opening a PR: `bazel test //...`. If you touched `src/runtime` or any
+Bytecode DSL operation, also run `mx r7rs-test --compile`. CI runs two
+workflows while both builds exist: Bazel's `Checks (Bazel)` and
+`Tests (Bazel)`, and mx's `Checks` and `Tests` (the required checks; `Tests`
+passes when the parallel `Tests (...)` jobs that split its steps all pass),
 plus non-blocking `Conformance` jobs (interpreter and `--compile`) whose run
-summary shows per-section results. Steps whose task hasn't landed yet report
-`SKIPPED` and name the task that brings them. This suite doesn't use `mx gate`.
+summary shows per-section results. This suite doesn't use `mx gate`.
 
-## Rules (each one is enforced by `mx checks` or `mx tests`)
+## Rules (each one is enforced by `bazel test //...`, and by `mx checks` or `mx tests`)
 
 1. **Java builtins never call Scheme directly.** A builtin that must invoke a
    procedure (`apply`, `call/cc`, `call-with-values`, `eval`) returns a
    `TailCall` request instead. Anything that needs a non-tail call (`map`,
    `for-each`, `dynamic-wind`, `raise`, ...) lives in the Scheme prelude
-   (design.md D5). Check: `mx r7rs-check`.
+   (design.md D5). Check: `//bazel/r7rs:rules_test` (`mx r7rs-check`).
 2. **Every non-tail call site is emitted by `CallSiteEmitter`.** Never emit a
    raw call operation. Check: torture mode.
 3. **Continuation segments are immutable.** Resuming always goes through
@@ -128,7 +149,8 @@ summary shows per-section results. Steps whose task hasn't landed yet report
   that expect a result where R7RS says "it is an error"; adding a row needs
   the R7RS text that says so), change or delete an existing case in
   `tests/spec/`, or edit the status block in `docs/plan.md` by hand. `mx r7rs-status` regenerates the block, and the
-  `mx tests` fails if it's stale, so commit the regenerated block with your change. If a test looks wrong, explain why in the
+  `mx tests` fails if it's stale, so commit the regenerated block with your change
+  (`bazel run //bazel/r7rs:status` writes the same block). If a test looks wrong, explain why in the
   PR and stop.
 - Skip, disable, or loosen a test to make it pass. That includes listing a
   `tests/spec/` case in `_SPEC_PENDING` (`mx.r7rs/mx_r7rs.py`) once it has
@@ -136,9 +158,11 @@ summary shows per-section results. Steps whose task hasn't landed yet report
   back.
 - Merge a PR whose `Checks` or `Tests` check isn't green, or bypass branch
   protection.
-- Change the GraalVM or Truffle version (nixpkgs in `flake.lock` and the
-  Truffle libraries in `suite.py` move together), change `mxversion`, add
-  libraries, or change `flake.nix`/`flake.lock`, unless the task says to.
+- Change the GraalVM or Truffle version (nixpkgs in `flake.lock`, the
+  Truffle libraries in `suite.py`, and `bazel/graalvm.bzl` with
+  `TRUFFLE_VERSION` in `MODULE.bazel` move together), change `mxversion` or
+  `.bazelversion`, add libraries (in `suite.py` or `MODULE.bazel`), or change
+  `flake.nix`/`flake.lock`, unless the task says to.
 - Edit the vendored benchmark sets in `bench/r7rs-ecraven/` and
   `bench/r7rs-larceny/` other than their `README.md` (`mx r7rs-vendor-benchmarks`
   re-vendors them). A program that fails goes in `bench/README.md`'s Failures
@@ -164,11 +188,13 @@ summary shows per-section results. Steps whose task hasn't landed yet report
   never `java.io` or `java.nio` directly. Text operations use `Locale.ROOT`.
 - Primitive errors throw `SchemeError`, never a raw Java exception
   (design.md D8).
-- Format Java with `mx eclipseformat` before committing. `mx checks` fails if
-  the formatter would change anything, and also runs checkstyle and SpotBugs.
-- Only projects that need generated code list `TRUFFLE_DSL_PROCESSOR` in
-  `annotationProcessors`. Keep it that way
-  so edits elsewhere don't re-run the processor.
+- Format Java with `bazel run //bazel/lint:format` (or `mx eclipseformat`)
+  before committing. The `lint` tests fail if the formatter would change
+  anything, and also run Checkstyle, ECJ and SpotBugs.
+- Only projects that need generated code run the Truffle DSL processor
+  (`truffle_dsl = True` in their `BUILD.bazel`, `TRUFFLE_DSL_PROCESSOR` in
+  suite.py's `annotationProcessors`). Keep it that way so edits elsewhere
+  don't re-run the processor.
 
 ## Working style
 
@@ -222,10 +248,13 @@ prelude and declarations files are in `src/prelude/scheme/prelude/`.
 ## Layout
 
 ```
-mx.r7rs/suite.py           projects, distributions, Truffle libraries (pinned to the GraalVM version)
+MODULE.bazel               Bazel modules, the GraalVM/Truffle version, Maven artifacts (locked in maven_install.json)
+BUILD.bazel, */BUILD.bazel Bazel targets: one java_library per project, the module jars, the tests
+bazel/                     GraalVM toolchain, module jars, test drivers (r7rs/), static checks (lint/)
+mx.r7rs/suite.py           mx projects, distributions, Truffle libraries (pinned to the GraalVM version)
 mx.r7rs/mx_r7rs.py         custom mx commands: checks, tests, r7rs-*
 mx.r7rs/projects/<name>/   mx project dirs: generated IDE files + checkstyle config
-flake.nix, flake.lock      dev shell: GraalVM 25.5, mx, Python, gh, chibi-scheme
+flake.nix, flake.lock      dev shell: bazel, chibi-scheme, Python, gh; GraalVM 25.5 and mx for mx
 src/reader/                reader + datum labels
 src/compiler/              expander + core AST -> Bytecode DSL builder calls
 src/runtime/               Bytecode DSL root + operations, continuations
