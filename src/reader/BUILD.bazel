@@ -3,7 +3,7 @@ load("//bazel:java.bzl", "scheme_java_library")
 # The reader, with datum labels.
 scheme_java_library(
     name = "reader",
-    srcs = glob(["**/*.java"]),
+    srcs = glob(["scheme/reader/*.java"]),
     visibility = ["//visibility:public"],
     deps = [
         "//src/runtime",

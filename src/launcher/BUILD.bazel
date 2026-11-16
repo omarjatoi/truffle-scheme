@@ -4,7 +4,7 @@ load("//bazel:java.bzl", "scheme_java_library")
 # SchemeMain (the `scheme` launcher) and ConformanceRunner, with the optimizing runtime.
 scheme_java_library(
     name = "launcher",
-    srcs = glob(["**/*.java"]),
+    srcs = glob(["scheme/launcher/*.java"]),
     visibility = ["//visibility:public"],
     runtime_deps = [
         "//bazel:launcher_modules",
