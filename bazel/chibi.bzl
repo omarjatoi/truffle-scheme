@@ -33,6 +33,9 @@ find . -type l | while read -r link; do cp -L "$link" "$link.tmp" && mv "$link.t
         mnemonic = "ChibiMake",
         progress_message = "Building chibi-scheme",
         use_default_shell_env = True,
+        # A chibi-scheme for this machine (`bazel run`) builds here; one for the tests, which target
+        # the remote executors' platform, builds there (.bazelrc --config=remote).
+        execution_requirements = {} if ctx.target_platform_has_constraint(ctx.attr._linux[platform_common.ConstraintValueInfo]) else {"no-remote-exec": "1"},
     )
     wrapper = ctx.actions.declare_file(ctx.label.name)
     ctx.actions.write(wrapper, _WRAPPER.format(tree = tree.basename), is_executable = True)
@@ -47,6 +50,7 @@ chibi_scheme = rule(
     attrs = {
         "makefile": attr.label(allow_single_file = True, mandatory = True),
         "srcs": attr.label_list(allow_files = True, mandatory = True),
+        "_linux": attr.label(default = "@platforms//os:linux"),
     },
     executable = True,
 )

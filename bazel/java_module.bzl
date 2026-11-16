@@ -23,6 +23,10 @@ JavaModuleInfo = provider(
 
 _JDK = attr.label(default = "@bazel_tools//tools/jdk:current_java_runtime")
 
+# The JDK of the machine an action runs on (with --config=remote, an executor's), for actions that
+# run Java; _JDK is the target's, for what `bazel run` and the tests run.
+EXEC_JDK = attr.label(default = "@bazel_tools//tools/jdk:current_host_java_runtime", cfg = "exec")
+
 def _module_path(targets):
     return depset(transitive = [
         t[JavaModuleInfo].module_path if JavaModuleInfo in t else t[JavaInfo].transitive_runtime_jars
@@ -105,7 +109,7 @@ def _prelude_image_impl(ctx):
 prelude_image = rule(
     implementation = _prelude_image_impl,
     doc = "`<name>.image`: what a context of `libs` (on the class path) writes with -Dscheme.preludeImage.write.",
-    attrs = {"libs": attr.label_list(providers = [JavaInfo]), "_jdk": _JDK},
+    attrs = {"libs": attr.label_list(providers = [JavaInfo]), "_jdk": EXEC_JDK},
 )
 
 def _rlocation(ctx, f):

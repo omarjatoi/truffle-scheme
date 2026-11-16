@@ -6,7 +6,7 @@ spreads the JVMs over the machine's cores.
 
 load("@rules_java//java/common:java_common.bzl", "java_common")
 load("@rules_python//python:defs.bzl", "py_test")
-load("//bazel:java_module.bzl", "JavaModuleInfo")
+load("//bazel:java_module.bzl", "EXEC_JDK", "JavaModuleInfo")
 
 _MAIN = "//tests/harness:main.py"
 
@@ -142,7 +142,7 @@ conformance_results = rule(
         "module": attr.label(mandatory = True, providers = [JavaModuleInfo]),
         "srcs": attr.label_list(allow_files = True),
         "suite": attr.string(mandatory = True, values = ["chibi", "larceny"]),
-        "_jdk": attr.label(default = "@bazel_tools//tools/jdk:current_java_runtime"),
+        "_jdk": EXEC_JDK,
         "_tool": attr.label(default = "//tests/harness:action", executable = True, cfg = "exec"),
     },
     outputs = {"block": "%{name}.md", "json": "%{name}.json"},

@@ -545,8 +545,16 @@ Each entry: the decision, why, and what was rejected.
 
 - **Bazel builds and tests everything** (`MODULE.bazel`, Bazel 8 with
   bzlmod, `.bazelversion`). Each build step and test is cached on its
-  inputs, locally and in CI (BuildBuddy's remote cache,
-  `--config=buildbuddy`), so a change reruns only what depends on it.
+  inputs, so a change reruns only what depends on it.
+- **Remote-first.** Actions and tests execute on BuildBuddy's Linux x86_64
+  executors, with their shared cache, from CI and from a laptop alike
+  (`--config=remote`, the default; `--config=local` offline). Builds target
+  the machine Bazel runs on, so `bazel-bin/` and `bazel run` work on a Mac,
+  while their actions run remotely (Java runs on the exec platform's
+  GraalVM); tests target the executors' platform. Everything an action runs
+  comes from Bazel (the pinned GraalVM, rules_python's Python, chibi-scheme
+  built from source), plus a shell and a C toolchain from the executor image
+  (`toolchains_buildbuddy`); nothing is tagged to run locally.
   `bazel test //...` is the whole pre-PR check; the repository's other
   commands are `bazel run //:r7rs -- <command>` (`tests/harness/main.py`).
 - **Released GraalVM, pinned by Bazel.** The JDK that compiles, runs the

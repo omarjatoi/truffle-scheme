@@ -33,8 +33,6 @@ common:ci --color=yes
 common:ci --curses=no
 common:ci --show_progress_rate_limit=30
 common:ci --announce_rc
-# CI's agents have 4 GB: two test JVMs at a time (each conformance test runs two) get OOM-killed.
-test:ci --local_test_jobs=1
 # BuildBuddy (`--config=buildbuddy`): a remote cache shared by CI and local builds, and each
 # invocation's results at app.buildbuddy.io. It needs an API key: CI passes the
 # BUILDBUDDY_API_KEY secret; locally, put `common:buildbuddy
@@ -46,6 +44,25 @@ common:buildbuddy --remote_timeout=10m
 common:buildbuddy --remote_cache_compression
 # Download only what the command needs at the end (a test's results, a run's runfiles).
 common:buildbuddy --remote_download_toplevel
+
+# Remote execution (`--config=remote`, the default) on BuildBuddy's Linux x86_64 executors
+# (toolchains_buildbuddy's Ubuntu 22.04 image, MODULE.bazel), with BuildBuddy's cache. Builds still
+# target this machine, so `bazel-bin/` and `bazel run` work on a Mac; tests target the executors'
+# platform and run there.
+common:remote --config=buildbuddy
+common:remote --remote_executor=grpcs://remote.buildbuddy.io
+common:remote --extra_execution_platforms=@toolchains_buildbuddy//platforms:linux_x86_64
+common:remote --extra_toolchains=@toolchains_buildbuddy//toolchains/cc:ubuntu_gcc_x86_64
+common:remote --jobs=50
+common --config=remote
+test --platforms=@toolchains_buildbuddy//platforms:linux_x86_64
+# Offline (`--config=local`): everything runs here, nothing is read from or written to BuildBuddy.
+common:local --remote_executor=
+common:local --remote_cache=
+common:local --bes_backend=
+common:local --noremote_upload_local_results
+common:local --extra_execution_platforms=
+common:local --platforms=@bazel_tools//tools:host_platform
 
 # Per-user settings (a remote cache key, a local disk cache), not checked in.
 try-import %workspace%/user.bazelrc
