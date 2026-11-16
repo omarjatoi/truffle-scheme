@@ -1,0 +1,535 @@
+"""Smoke tests for GraalVM's tools against the `scheme` launcher (plan.md M6-03, design.md D17).
+
+`mx r7rs-tools` (and `mx tests tools`) starts the launcher in a child JVM with the optional tools
+distribution (SCHEME_TOOLS) on its module path, and drives each tool against a program in
+tests/tools/:
+
+- `help`: the tools show in `--help` with SCHEME_TOOLS, and not without it (the language and the
+  launcher don't depend on the tools).
+- `dap`: the Debug Adapter Protocol (`--dap`): a line breakpoint, the stack, a local by name,
+  step over, continue to the next hit, then run to the end.
+- `inspect`: the Chrome DevTools Protocol over a websocket (`--inspect`): the same session.
+- `cpusampler`: the CPU sampler's histogram and call tree name the program's procedures.
+- `memtracer`: the memory tracer runs and writes its histogram.
+
+The DAP and CDP clients are dependency-free (the standard library only), ported from the
+exploration in #76. Every wait has a timeout, and the child JVM is killed whatever happens, so a
+hung tool fails the step instead of hanging CI.
+"""
+
+import base64
+import collections
+import json
+import os
+import re
+import socket
+import struct
+import subprocess
+import tempfile
+import time
+import urllib.request
+from os.path import join
+
+import mx
+
+# Seconds to wait for a tool's server to accept a connection, for one protocol message, and for the
+# program to finish. CI runners are slow; a healthy run takes a few seconds per test.
+_CONNECT_TIMEOUT = 120
+_MESSAGE_TIMEOUT = 120
+_EXIT_TIMEOUT = 120
+
+# tests/tools/debugme.scm: the breakpoint goes on `square`'s body, which runs once per i in 0..4.
+_DEBUG_PROGRAM = 'debugme.scm'
+_BREAK_LINE = 3
+_DEBUG_OUTPUT = '30\n'
+# tests/tools/profileme.scm: fib, called from the loop in run-fib.
+_PROFILE_PROGRAM = 'profileme.scm'
+
+
+class SmokeFailure(Exception):
+    pass
+
+
+def _check(condition, message):
+    if not condition:
+        raise SmokeFailure(message)
+
+
+def _free_port():
+    """A TCP port that was free a moment ago. A tool that loses the race fails to bind, and the
+    test starts over with another port (_with_free_port)."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(('127.0.0.1', 0))
+        return s.getsockname()[1]
+
+
+class _Launcher:
+    """The launcher in a child JVM, stdout and stderr in files (pipes could fill and block it).
+    A context manager: leaving it kills the JVM if it's still running."""
+
+    def __init__(self, command, workdir):
+        self.command = command
+        self.workdir = workdir
+        self.out_path = join(workdir, 'stdout.txt')
+        self.err_path = join(workdir, 'stderr.txt')
+        self.process = None
+
+    def __enter__(self):
+        mx.logv('r7rs-tools: ' + ' '.join(self.command))
+        with open(self.out_path, 'wb') as out, open(self.err_path, 'wb') as err:
+            self.process = subprocess.Popen(self.command, cwd=self.workdir, stdin=subprocess.DEVNULL, stdout=out, stderr=err)
+        return self
+
+    def __exit__(self, *exc):
+        if self.process.poll() is None:
+            self.process.kill()
+            self.process.wait(30)
+
+    def running(self):
+        return self.process.poll() is None
+
+    def wait(self, timeout=_EXIT_TIMEOUT):
+        try:
+            return self.process.wait(timeout)
+        except subprocess.TimeoutExpired:
+            raise SmokeFailure(f'the launcher did not exit within {timeout}s\n{self.describe()}') from None
+
+    def stdout(self):
+        with open(self.out_path, encoding='utf-8', errors='replace') as f:
+            return f.read()
+
+    def stderr(self):
+        with open(self.err_path, encoding='utf-8', errors='replace') as f:
+            return f.read()
+
+    def describe(self):
+        tail = '\n'.join('    ' + line for line in self.stderr().splitlines()[-15:]) or '    (empty)'
+        return f'  stdout: {self.stdout()[-500:]!r}\n  stderr (tail):\n{tail}'
+
+    def lost_bind_race(self):
+        return not self.running() and re.search(r'(?i)address already in use|BindException', self.stderr()) is not None
+
+
+def _connect(launcher, port):
+    """A socket connected to the tool's server, retried until it listens."""
+    deadline = time.time() + _CONNECT_TIMEOUT
+    while True:
+        if not launcher.running():
+            raise SmokeFailure(f'the launcher exited ({launcher.process.returncode}) before its tool accepted a connection\n{launcher.describe()}')
+        try:
+            s = socket.create_connection(('127.0.0.1', port), timeout=5)
+            s.settimeout(_MESSAGE_TIMEOUT)
+            return s
+        except OSError:
+            if time.time() > deadline:
+                raise SmokeFailure(f'nothing listening on port {port} after {_CONNECT_TIMEOUT}s\n{launcher.describe()}') from None
+            time.sleep(0.2)
+
+
+# ---------------------------------------------------------------------------
+# DAP: Content-Length framed JSON over TCP
+# ---------------------------------------------------------------------------
+
+class _DapClient:
+
+    def __init__(self, sock):
+        self.sock = sock
+        self.file = sock.makefile('rwb')
+        self.seq = 0
+        self.events = []
+        self.output = []
+
+    def close(self):
+        try:
+            self.file.close()
+        finally:
+            self.sock.close()
+
+    def _send(self, command, arguments):
+        self.seq += 1
+        body = json.dumps({'seq': self.seq, 'type': 'request', 'command': command, 'arguments': arguments}).encode()
+        self.file.write(b'Content-Length: %d\r\n\r\n' % len(body) + body)
+        self.file.flush()
+        return self.seq
+
+    def _recv(self):
+        length = None
+        while True:
+            line = self.file.readline()
+            if not line:
+                raise SmokeFailure('DAP: the server closed the connection')
+            line = line.strip()
+            if not line:
+                break
+            if line.lower().startswith(b'content-length:'):
+                length = int(line.split(b':')[1])
+        _check(length is not None, 'DAP: a message without Content-Length')
+        message = json.loads(self.file.read(length))
+        mx.logvv('DAP <- ' + json.dumps(message)[:300])
+        if message.get('type') == 'event' and message.get('event') == 'output':
+            self.output.append(message.get('body', {}).get('output', ''))
+        return message
+
+    def request(self, command, **arguments):
+        """Sends a request and returns its response's body; fails unless it succeeded."""
+        seq = self._send(command, arguments)
+        while True:
+            message = self._recv()
+            if message.get('type') == 'response' and message.get('request_seq') == seq:
+                _check(message.get('success'), f'DAP {command} failed: {message.get("message")}')
+                return message.get('body', {})
+            if message.get('type') == 'event':
+                self.events.append(message)
+
+    def wait_event(self, *names):
+        while True:
+            while self.events:
+                event = self.events.pop(0)
+                if event['event'] in names:
+                    return event
+            self.events.append(self._recv())
+
+    def variables(self, frame_id):
+        """Every variable in every scope of a frame, as {name: value}."""
+        found = {}
+        for scope in self.request('scopes', frameId=frame_id)['scopes']:
+            for variable in self.request('variables', variablesReference=scope['variablesReference']).get('variables', []):
+                found.setdefault(variable['name'], variable['value'])
+        return found
+
+
+def _dap_stopped(client, path, expected_x):
+    """At the breakpoint in `square`: checks the stack and x, and returns the thread."""
+    event = client.wait_event('stopped', 'terminated', 'exited')
+    _check(event['event'] == 'stopped', f'DAP: expected to stop at the breakpoint, got {event["event"]}')
+    _check(event['body'].get('reason') == 'breakpoint', f'DAP: stopped for {event["body"].get("reason")}, not the breakpoint')
+    thread = event['body']['threadId']
+    frames = client.request('stackTrace', threadId=thread)['stackFrames']
+    names = [f['name'] for f in frames]
+    top = frames[0]
+    _check(top['name'] == 'square' and top['line'] == _BREAK_LINE and top.get('source', {}).get('path') == path,
+           f'DAP: expected to stop in square at {path}:{_BREAK_LINE}, got {top["name"]} at {top.get("source", {}).get("path")}:{top["line"]}')
+    _check('loop' in names[1:], f'DAP: square\'s caller loop is not on the stack: {names}')
+    variables = client.variables(top['id'])
+    _check(variables.get('x') == expected_x, f'DAP: expected x = {expected_x} in square, got {variables}')
+    mx.log(f'  dap: stopped at the breakpoint in square, stack {names}, x = {variables["x"]}')
+    return thread, top
+
+
+def _dap(workdir, port, command):
+    path = join(workdir, _DEBUG_PROGRAM)
+    with _Launcher(command(['--dap=127.0.0.1:' + str(port), '--dap.WaitAttached', '--dap.Suspend=false', path]), workdir) as launcher:
+        client = _DapClient(_connect(launcher, port))
+        try:
+            client.request('initialize', adapterID='scheme', linesStartAt1=True, columnsStartAt1=True, pathFormat='path')
+            client.request('attach')
+            breakpoints = client.request('setBreakpoints', source={'path': path}, breakpoints=[{'line': _BREAK_LINE}])['breakpoints']
+            _check(len(breakpoints) == 1, f'DAP: setBreakpoints answered {breakpoints}')
+            client.request('configurationDone')
+
+            # The first hit: square(0). Step over one statement: still in square.
+            thread, first = _dap_stopped(client, path, '0')
+            client.request('next', threadId=thread)
+            event = client.wait_event('stopped', 'terminated', 'exited')
+            # GraalVM's adapter reports a finished step as 'debugger_statement'; 'step' is DAP's own word.
+            _check(event['event'] == 'stopped' and event['body'].get('reason') in ('step', 'debugger_statement'),
+                   f'DAP: expected to stop after the step, got {event["event"]} {event.get("body")}')
+            top = client.request('stackTrace', threadId=event['body']['threadId'])['stackFrames'][0]
+            _check(top['name'] == 'square' and (top['line'], top['column']) != (first['line'], first['column']),
+                   f'DAP: after stepping over, expected a later statement of square, got {top["name"]} at {top["line"]}:{top["column"]}')
+            mx.log(f'  dap: stepped over to {top["name"]} {top["line"]}:{top["column"]}, variables {client.variables(top["id"])}')
+
+            # Continue: the next hit is square(1). Then clear the breakpoint and run to the end.
+            client.request('continue', threadId=thread)
+            thread, _ = _dap_stopped(client, path, '1')
+            client.request('setBreakpoints', source={'path': path}, breakpoints=[])
+            client.request('continue', threadId=thread)
+            event = client.wait_event('terminated', 'exited')
+            mx.log(f'  dap: continued to the end ({event["event"]})')
+        finally:
+            client.close()
+        status = launcher.wait()
+        # The adapter writes its banner to stdout before the program runs.
+        _check(status == 0 and launcher.stdout().endswith('\n' + _DEBUG_OUTPUT) and '[Graal DAP] Client connected' in launcher.stdout(),
+               f'DAP: the program should print {_DEBUG_OUTPUT!r} and exit 0; exit {status}\n{launcher.describe()}')
+
+
+# ---------------------------------------------------------------------------
+# Chrome DevTools Protocol: JSON over a websocket
+# ---------------------------------------------------------------------------
+
+class _CdpClient:
+
+    def __init__(self, sock, ws_path, port):
+        self.sock = sock
+        self.ids = 0
+        self.events = []
+        key = base64.b64encode(os.urandom(16)).decode()
+        sock.sendall((f'GET {ws_path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n'
+                      f'Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n').encode())
+        response = b''
+        while b'\r\n\r\n' not in response:
+            chunk = sock.recv(1)
+            _check(chunk, 'CDP: the server closed the connection during the websocket handshake')
+            response += chunk
+        status = response.split(b'\r\n')[0].decode()
+        _check(' 101 ' in status, f'CDP: websocket handshake answered {status}')
+
+    def close(self):
+        self.sock.close()
+
+    def _send(self, obj):
+        data = json.dumps(obj).encode()
+        mask = os.urandom(4)
+        n = len(data)
+        if n < 126:
+            header = bytes([0x81, 0x80 | n])
+        elif n < 65536:
+            header = bytes([0x81, 0x80 | 126]) + struct.pack('>H', n)
+        else:
+            header = bytes([0x81, 0x80 | 127]) + struct.pack('>Q', n)
+        self.sock.sendall(header + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(data)))
+
+    def _recv_exact(self, n):
+        buf = b''
+        while len(buf) < n:
+            chunk = self.sock.recv(n - len(buf))
+            if not chunk:
+                raise SmokeFailure('CDP: the server closed the connection')
+            buf += chunk
+        return buf
+
+    def _recv(self):
+        """The next text message (fragmented messages are reassembled; pings are skipped)."""
+        payload = b''
+        while True:
+            b1, b2 = self._recv_exact(2)
+            n = b2 & 0x7f
+            if n == 126:
+                n = struct.unpack('>H', self._recv_exact(2))[0]
+            elif n == 127:
+                n = struct.unpack('>Q', self._recv_exact(8))[0]
+            data = self._recv_exact(n)
+            opcode = b1 & 0x0f
+            if opcode == 8:
+                raise SmokeFailure('CDP: the server closed the websocket')
+            if opcode in (9, 10):
+                continue
+            payload += data
+            if b1 & 0x80:
+                message = json.loads(payload)
+                mx.logvv('CDP <- ' + json.dumps(message)[:300])
+                return message
+
+    def call(self, method, **params):
+        """Sends a command and returns its result; fails if it answers with an error."""
+        self.ids += 1
+        self._send({'id': self.ids, 'method': method, 'params': params})
+        while True:
+            message = self._recv()
+            if message.get('id') == self.ids:
+                _check('error' not in message, f'CDP {method} failed: {message.get("error")}')
+                return message.get('result', {})
+            self.events.append(message)
+
+    def wait_event(self, method):
+        while True:
+            while self.events:
+                event = self.events.pop(0)
+                if event.get('method') == method:
+                    return event['params']
+            self.events.append(self._recv())
+
+    def scope_variables(self, frame):
+        """The variables of a call frame's local scopes (not the global one), as {name: description}."""
+        found = {}
+        for scope in frame['scopeChain']:
+            if scope['type'] == 'global':
+                continue
+            for p in self.call('Runtime.getProperties', objectId=scope['object']['objectId'], ownProperties=True)['result']:
+                value = p.get('value', {})
+                found.setdefault(p['name'], value.get('description', value.get('value')))
+        return found
+
+
+def _cdp_paused(client, path, expected_x):
+    paused = client.wait_event('Debugger.paused')
+    frames = paused['callFrames']
+    names = [f['functionName'] for f in frames]
+    top = frames[0]
+    line = top['location']['lineNumber'] + 1
+    _check(top['functionName'] == 'square' and line == _BREAK_LINE and top.get('url', '').endswith(path),
+           f'CDP: expected to pause in square at {path}:{_BREAK_LINE}, got {top["functionName"]} at {top.get("url")}:{line}')
+    _check('loop' in names[1:], f'CDP: square\'s caller loop is not on the stack: {names}')
+    variables = client.scope_variables(top)
+    _check(str(variables.get('x')) == expected_x, f'CDP: expected x = {expected_x} in square, got {variables}')
+    mx.log(f'  inspect: paused at the breakpoint in square ({paused["reason"]}), stack {names}, x = {variables["x"]}')
+    return top
+
+
+def _inspect(workdir, port, command):
+    path = join(workdir, _DEBUG_PROGRAM)
+    with _Launcher(command(['--inspect=' + str(port), '--inspect.WaitAttached', '--inspect.Suspend=false', path]), workdir) as launcher:
+        _connect(launcher, port).close()
+        targets = None
+        deadline = time.time() + _CONNECT_TIMEOUT
+        while targets is None:
+            try:
+                with urllib.request.urlopen(f'http://127.0.0.1:{port}/json', timeout=10) as response:
+                    targets = json.load(response)
+            except OSError:
+                if time.time() > deadline or not launcher.running():
+                    raise SmokeFailure(f'CDP: no target list at http://127.0.0.1:{port}/json\n{launcher.describe()}') from None
+                time.sleep(0.2)
+        _check(targets and 'webSocketDebuggerUrl' in targets[0], f'CDP: target list {targets}')
+        ws_path = '/' + targets[0]['webSocketDebuggerUrl'].split('/', 3)[3]
+        client = _CdpClient(_connect(launcher, port), ws_path, port)
+        try:
+            client.call('Runtime.enable')
+            client.call('Debugger.enable')
+            breakpoint = client.call('Debugger.setBreakpointByUrl', lineNumber=_BREAK_LINE - 1, url='file://' + path)
+            client.call('Runtime.runIfWaitingForDebugger')
+
+            # The first hit: square(0). Step over one statement: still in square.
+            first = _cdp_paused(client, path, '0')
+            client.call('Debugger.stepOver')
+            top = client.wait_event('Debugger.paused')['callFrames'][0]
+            location = top['location']
+            _check(top['functionName'] == 'square' and (location['lineNumber'], location.get('columnNumber', 0)) !=
+                   (first['location']['lineNumber'], first['location'].get('columnNumber', 0)),
+                   f'CDP: after stepping over, expected a later statement of square, got {top["functionName"]} at {location}')
+            mx.log(f'  inspect: stepped over to {top["functionName"]} {location["lineNumber"] + 1}:{location.get("columnNumber", 0) + 1}')
+
+            # Resume: the next hit is square(1). Then remove the breakpoint and run to the end.
+            client.call('Debugger.resume')
+            _cdp_paused(client, path, '1')
+            client.call('Debugger.removeBreakpoint', breakpointId=breakpoint['breakpointId'])
+            client.call('Debugger.resume')
+            deadline = time.time() + _EXIT_TIMEOUT
+            while not launcher.stdout().endswith(_DEBUG_OUTPUT) and launcher.running() and time.time() < deadline:
+                time.sleep(0.1)
+        finally:
+            # The inspector keeps the JVM alive until its client goes away.
+            client.close()
+        status = launcher.wait()
+        # The inspector writes its banner (the websocket URL) to stdout before the program runs.
+        _check(status == 0 and launcher.stdout().endswith('\n' + _DEBUG_OUTPUT) and 'Debugger listening on ws://127.0.0.1:' in launcher.stdout(),
+               f'CDP: the program should print {_DEBUG_OUTPUT!r} and exit 0; exit {status}\n{launcher.describe()}')
+        mx.log('  inspect: resumed to the end')
+
+
+# ---------------------------------------------------------------------------
+# The profilers
+# ---------------------------------------------------------------------------
+
+def _profile(workdir, command, options, expected):
+    """Runs the profile program with these options, given the output file's path; checks that the
+    tool's output (the file if it wrote one, else stdout) matches each of `expected`."""
+    output = join(workdir, 'profile.txt')
+    with _Launcher(command(options(output) + [join(workdir, _PROFILE_PROGRAM)]), workdir) as launcher:
+        status = launcher.wait()
+        _check(status == 0, f'the program failed: exit {status}\n{launcher.describe()}')
+        if os.path.exists(output):
+            with open(output, encoding='utf-8') as f:
+                text = f.read()
+        else:
+            text = launcher.stdout()
+    for pattern in expected:
+        _check(re.search(pattern, text, re.MULTILINE), f'the output does not match {pattern!r}:\n{text[:3000]}')
+    return text
+
+
+def _cpusampler(workdir, commands):
+    command = commands.tools
+    # Rows read: ` name || total || self || file~lines:chars`. fib must be sampled at its own
+    # definition (lines 2-5), and the call tree must have fib under the loop under <program>.
+    histogram = _profile(workdir, command, lambda out: ['--cpusampler', '--cpusampler.Period=1ms', '--cpusampler.OutputFile=' + out],
+                         [r'^Sampling Histogram\.', r'^ fib +\|\|.*\|\| \S*profileme\.scm~2-5:', r'^ loop +\|\|.*profileme\.scm~12-15:'])
+    samples = re.search(r'Recorded (\d+) samples', histogram)
+    _check(samples and int(samples.group(1)) > 0, f'cpusampler: no samples\n{histogram[:2000]}')
+    mx.log(f'  cpusampler: histogram names fib and loop ({samples.group(1)} samples)')
+    _profile(workdir, command, lambda out: ['--cpusampler=calltree', '--cpusampler.Period=1ms', '--cpusampler.OutputFile=' + out],
+             [r'^Sampling Call Tree\.', r'^  <program> +\|\|', r'^   loop +\|\|.*profileme\.scm~12-15:', r'^    fib +\|\|.*profileme\.scm~2-5:'])
+    mx.log('  cpusampler: call tree has <program> > loop > fib')
+
+
+def _memtracer(workdir, commands):
+    # The language doesn't report allocations yet (no AllocationReporter), so the histogram is
+    # empty: this checks only that the tool runs on a Scheme program and writes its output (to
+    # stdout: the memory tracer has no output file option).
+    _profile(workdir, commands.tools, lambda out: ['--experimental-options', '--memtracer'],
+             [r'Location Histogram with Allocation Counts\. Recorded a total of \d+ allocations\.'])
+    mx.log('  memtracer: wrote its histogram')
+
+
+def _help(workdir, commands):
+    command = commands.tools
+    tools = ['--inspect', '--dap', '--cpusampler', '--memtracer']
+    with _Launcher(command(['--help:tools']), workdir) as launcher:
+        status = launcher.wait()
+        text = launcher.stdout()
+    _check(status == 0, f'--help:tools: exit {status}\n{launcher.describe()}')
+    missing = [t for t in tools if not re.search(r'^\s+' + re.escape(t) + r'\b', text, re.MULTILINE)]
+    _check(not missing, f'--help:tools with the tools does not list {missing}:\n{text[:3000]}')
+    with _Launcher(command(['--help']), workdir) as launcher:
+        launcher.wait()
+        listed = launcher.stdout()
+    for tool in ('inspect', 'dap', 'cpusampler', 'memtracer'):
+        _check(re.search(r'^  ' + tool + r' ', listed, re.MULTILINE), f'--help\'s Tools table does not list {tool}:\n{listed[-2000:]}')
+    with _Launcher(commands.bare(['--help:tools']), workdir) as launcher:
+        launcher.wait()
+        bare = launcher.stdout()
+    present = [t for t in tools if re.search(r'^\s+' + re.escape(t) + r'\b', bare, re.MULTILINE)]
+    _check(not present, f'without SCHEME_TOOLS, --help:tools should list no tool options, but lists {present}')
+    mx.log('  help: the Tools table and --help:tools list inspect, dap, cpusampler and memtracer; without SCHEME_TOOLS, none')
+
+
+def _with_free_port(test, attempts=3):
+    """Runs test(workdir, port, command), with another port if the tool lost the race for the first one."""
+    def run(workdir, commands):
+        for attempt in range(attempts):
+            try:
+                return test(workdir, _free_port(), commands.tools)
+            except SmokeFailure as failure:
+                if attempt + 1 < attempts and 'Address already in use' in str(failure):
+                    mx.log(f'  port taken, retrying: {failure}')
+                    continue
+                raise
+    return run
+
+
+SMOKE_TESTS = {
+    'help': ('--help lists the tools only with SCHEME_TOOLS', _help),
+    'dap': ('DAP: breakpoint, stack, locals, step over, continue', _with_free_port(_dap)),
+    'inspect': ('Chrome inspector: breakpoint, call frames, scope variables, step over, resume', _with_free_port(_inspect)),
+    'cpusampler': ('CPU sampler: histogram and call tree name the procedures', _cpusampler),
+    'memtracer': ('memory tracer runs and writes its histogram', _memtracer),
+}
+
+
+Commands = collections.namedtuple('Commands', ['tools', 'bare'])
+Commands.__doc__ = """`tools(args)` is the java command line that runs the launcher with SCHEME_TOOLS on its
+module path, `bare(args)` the one without it."""
+
+
+def run(names, programs_dir, commands):
+    """Runs the named smoke tests (all if none) with these Commands. Returns the names that failed."""
+    unknown = [n for n in names if n not in SMOKE_TESTS]
+    if unknown:
+        mx.abort(f'mx r7rs-tools: unknown test(s) {unknown}; tests: ' + ' '.join(SMOKE_TESTS))
+    failed = []
+    for name in names or list(SMOKE_TESTS):
+        description, test = SMOKE_TESTS[name]
+        start = time.time()
+        with tempfile.TemporaryDirectory(prefix='r7rs-tools-') as workdir:
+            workdir = os.path.realpath(workdir)
+            for program in (_DEBUG_PROGRAM, _PROFILE_PROGRAM):
+                with open(join(programs_dir, program), encoding='utf-8') as src, open(join(workdir, program), 'w', encoding='utf-8') as dst:
+                    dst.write(src.read())
+            try:
+                test(workdir, commands)
+                mx.log(f'PASS    {name}: {description} ({time.time() - start:.1f}s)')
+            except (SmokeFailure, OSError, ValueError, KeyError, IndexError) as e:
+                failed.append(name)
+                mx.log(f'FAIL    {name}: {description} ({time.time() - start:.1f}s)\n  {type(e).__name__}: {e}')
+    return failed

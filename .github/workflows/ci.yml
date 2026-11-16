@@ -78,6 +78,10 @@ jobs:
             shard: 2/2
           - name: torture, space
             steps: [torture, space]
+          # The tools distribution (M6-03): DAP and the Chrome inspector drive a Scheme program
+          # (breakpoint, stack, locals, step), and the CPU sampler and memory tracer profile one.
+          - name: tools
+            steps: [tools]
     steps:
       - uses: actions/checkout@v7
       - uses: DeterminateSystems/determinate-nix-action@v3
@@ -109,6 +113,10 @@ jobs:
       - name: Torture
         if: contains(matrix.steps, 'torture')
         run: nix develop --command mx tests torture
+      - name: Tools smoke tests (DAP, Chrome inspector, CPU sampler, memory tracer)
+        if: contains(matrix.steps, 'tools')
+        timeout-minutes: 20
+        run: nix develop --command mx tests tools
 
   # Required check on main: all tests. It passes only if every test job above succeeded;
   # a failed, cancelled or skipped test job fails it.

@@ -663,7 +663,7 @@ that edit the same files.
   - **Done when** Java tests pass Scheme values both ways, call Scheme
     procedures (including ones that capture and re-enter continuations, and
     raise), and read globals through the bindings.
-- [ ] **M6-03 · Tools distribution and smoke tests** *(needs M6-01)*
+- [x] **M6-03 · Tools distribution and smoke tests** *(needs M6-01)*
   - D17: an optional distribution with the Chrome inspector, DAP and the CPU
     sampler (and memory tracer), usable as `--inspect`, `--dap`,
     `--cpusampler` from the launcher. CI smoke tests drive DAP and the
