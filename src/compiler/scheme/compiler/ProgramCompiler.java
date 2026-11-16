@@ -47,7 +47,7 @@ public final class ProgramCompiler implements SchemeCompiler {
      */
     @Override
     public void initializeContext(SchemeLanguage language, SchemeContext context) {
-        PreludeImage image = PreludeImage.get();
+        PreludeImage image = PreludeImage.get(context);
         if (image != null) {
             PreludeImage.Restored restored = image.restore(language, context, state -> newLibraries(language, context, state));
             context.compilerState = restored.state();
@@ -59,7 +59,7 @@ public final class ProgramCompiler implements SchemeCompiler {
         CompilerState state = new CompilerState();
         context.compilerState = state;
         state.libraries = newLibraries(language, context, state);
-        boolean build = PreludeImage.shouldBuild();
+        boolean build = PreludeImage.shouldBuild(context);
         if (build) {
             state.recordedBodies = new ArrayList<>();
         }

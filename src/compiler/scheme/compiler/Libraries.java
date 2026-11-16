@@ -42,6 +42,9 @@ final class Libraries {
     /** The feature identifiers cond-expand recognizes (R7RS Appendix B): the ones features returns. */
     static final Set<String> FEATURES = Set.copyOf(Features.NAMES);
 
+    /** The library of the primitives and the core forms. */
+    static final String PRIMITIVES = "(r7rs %primitives)";
+
     /** Runs an expanded library body (with its prompt, design.md D6). */
     interface Runner {
         void run(Ast.Lambda body);
@@ -63,6 +66,8 @@ final class Libraries {
     private final Map<String, Library> loaded = new HashMap<>();
     private final Map<String, Declared> declared = new HashMap<>();
     private final Set<String> loading = new HashSet<>();
+    /** The prelude's files, as this context reads them (for {@link PreludeImage}). */
+    private final SourceDir.Resources resources = new SourceDir.Resources(new LinkedHashMap<>());
 
     /** {@code path}: the library path option, directories separated by the path separator. */
     Libraries(SymbolTable symbols, SyntacticEnvironment top, GlobalEnvironment primitives, Runner runner, TruffleLanguage.Env env, String path) {
@@ -85,7 +90,12 @@ final class Libraries {
         for (CoreForm form : CoreForm.values()) {
             exports.put(symbols.intern(form.keyword), form);
         }
-        loaded.put("(r7rs %primitives)", new Library("(r7rs %primitives)", exports));
+        loaded.put(PRIMITIVES, new Library(PRIMITIVES, exports));
+    }
+
+    /** The prelude's files, as this context reads them: every lookup, for {@link PreludeImage}. */
+    SourceDir.Resources resources() {
+        return resources;
     }
 
     /** Every library instantiated so far, by name, for {@link PreludeImage}. */
@@ -149,9 +159,9 @@ final class Libraries {
     /** The library's file: a prelude resource, else the first on the library path; or null. */
     private Object[] locate(List<String> parts) {
         String resource = String.join(".", parts).replace("%", "") + ".sld";
-        Source source = SourceDir.Resources.INSTANCE.find(resource);
+        Source source = resources.find(resource);
         if (source != null) {
-            return new Object[]{source, SourceDir.Resources.INSTANCE};
+            return new Object[]{source, resources};
         }
         String relative = String.join("/", parts) + ".sld";
         for (String dir : path) {

@@ -188,6 +188,19 @@ suite = {
             "javaCompliance": "25+",
             "checkstyle": "scheme.runtime",
         },
+        "scheme.prelude.image": {
+            # The standard libraries, expanded and compiled at build time (M7-05, design.md D13):
+            # prelude.image, which a context with the projects below writes as it initializes
+            # (mx_r7rs.PreludeImageProject). It goes into the SCHEME jar beside the prelude.
+            "class": "PreludeImageProject",
+            "dependencies": [],
+            "buildDependencies": [
+                "scheme.launcher",
+                "scheme.compiler",
+                "scheme.builtins",
+                "scheme.prelude",
+            ],
+        },
         "scheme.launcher": {
             # Host-side tools that embed the language: the conformance runner (M1-01)
             # and SchemeMain, the `scheme` launcher (M6-01, design.md D17), which
@@ -251,6 +264,7 @@ suite = {
                 "scheme.builtins",
                 "scheme.compiler",
                 "scheme.prelude",
+                "scheme.prelude.image",
             ],
             "distDependencies": [],
             # Truffle jars stay separate modules on the module path.

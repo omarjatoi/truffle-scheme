@@ -14,6 +14,8 @@ on:
     paths:
       - .github/workflows/native.yml
       - src/runtime/META-INF/native-image/**
+      # Read and checked at image build time (design.md D17, M7-05).
+      - src/compiler/scheme/compiler/PreludeImage.java
       - mx.r7rs/mx_r7rs_readme.py
       - README.md
 

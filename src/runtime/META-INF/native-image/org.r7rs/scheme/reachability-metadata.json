@@ -2,7 +2,11 @@
   "resources": [
     {
       "module": "scheme",
-      "glob": "scheme/prelude/*"
+      "glob": "scheme/prelude/*.sld"
+    },
+    {
+      "module": "scheme",
+      "glob": "scheme/prelude/*.scm"
     }
   ]
 }
