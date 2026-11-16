@@ -45,12 +45,27 @@ public final class Reader {
     private final boolean literals;
     private boolean foldCase;
 
+    /**
+     * Whether reading ran into the end of the input: after an error, the datum was cut off by the
+     * end (a REPL should ask for more), rather than malformed.
+     */
+    public boolean ranIntoEnd() {
+        return sawEnd;
+    }
+
+    /** The line of the next character (1-based). */
+    public int line() {
+        return line;
+    }
+
     /** Starts folding case, as if the text began with {@code #!fold-case} ({@code include-ci}). */
     public void setFoldCase(boolean fold) {
         this.foldCase = fold;
     }
 
     private int line = 1;
+    /** Whether a read has seen the end of the input. */
+    private boolean sawEnd;
     /** The UTF-16 index of the next character (what {@link SourceSection}s count). */
     private int position;
     private final int[] pushback = new int[2];
@@ -84,11 +99,14 @@ public final class Reader {
     // Characters
 
     private int peek() {
-        return pushed > 0 ? pushback[pushed - 1] : in.peek();
+        int c = pushed > 0 ? pushback[pushed - 1] : in.peek();
+        sawEnd |= c < 0;
+        return c;
     }
 
     private int next() {
         int c = pushed > 0 ? pushback[--pushed] : in.next();
+        sawEnd |= c < 0;
         if (c == '\n') {
             line++;
         }

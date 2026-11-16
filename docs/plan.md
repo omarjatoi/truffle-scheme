@@ -321,7 +321,7 @@ They follow design.md D3, D4, D5 and D7.
     for each Scheme frame (a unit test reads `getPolyglotStackTrace()`), an
     error inside a library names that library's file, and the M0-03 call-site
     numbers are unchanged within noise (`fib(30)`, `tak`).
-- [ ] **M3-10 · Errors and tools through Truffle** *(needs M3-09)*
+- [x] **M3-10 · Errors and tools through Truffle** *(needs M3-09)*
   - `SchemeError` reports its exception type through interop: syntax errors
     are `PARSE_ERROR` (with incomplete-source detection for unfinished
     input), `exit` is `EXIT`, everything else `RUNTIME_ERROR`, and each has

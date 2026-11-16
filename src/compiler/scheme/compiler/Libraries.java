@@ -14,7 +14,6 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.TruffleLanguage;
 import com.oracle.truffle.api.source.Source;
 
-import scheme.reader.Reader;
 import scheme.reader.Scope;
 import scheme.reader.ScopeSet;
 import scheme.reader.Syntax;
@@ -185,8 +184,7 @@ final class Libraries {
 
     /** The {@code define-library} form for {@code key} in a library file. */
     private Object findDefinition(Source source, String key, Expander errors, Object name) {
-        Reader reader = Reader.forSource(source, symbols, true);
-        for (Object form = reader.readSyntax(); form != SConstant.EOF; form = reader.readSyntax()) {
+        for (Object form : Expander.readForms(source, symbols, false)) {
             if (Syntax.toDatum(form) instanceof SPair p && p.car instanceof SSymbol s && s.toString().equals("define-library") && p.cdr instanceof SPair q &&
                             key(q.car).equals(key)) {
                 return form;
