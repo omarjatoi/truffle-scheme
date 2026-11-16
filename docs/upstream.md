@@ -256,7 +256,7 @@ a parameter there.
 
 The reproducer can't be part of the build, so the test runs `javac` on it, with
 the DSL processor (the test runner passes its path as `-Dr7rs.truffle.dslProcessor`,
-in `tests/harness/main.py`) and Truffle's jars from the test JVM's module
+in `bazel/jvm_test.bzl`) and Truffle's jars from the test JVM's module
 path: once as it is, and once without `@ReportPolymorphism`, which compiles.
 
 - **Expected:** it compiles, like the same source without the annotation.

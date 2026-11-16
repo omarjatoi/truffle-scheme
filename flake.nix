@@ -42,8 +42,7 @@
         # The default shell plus the other R7RS implementations that the
         # benchmark report runs ecraven's benchmarks on (bench/README.md), next to
         # chibi-scheme. A shell of its own, `nix develop .#bench`, so that the
-        # default one, which every CI job downloads, stays small: Racket alone is
-        # most of a gigabyte.
+        # default one stays small: Racket alone is most of a gigabyte.
         devShells.bench = pkgs.mkShell {
           inherit shellHook;
           packages = packages ++ [

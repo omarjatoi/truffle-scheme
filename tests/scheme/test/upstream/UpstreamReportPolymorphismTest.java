@@ -98,7 +98,7 @@ public class UpstreamReportPolymorphismTest {
     /** Compiles {@code source} as repro/PolyRoot.java with the Truffle DSL processor. */
     private static Result javac(String source) throws IOException, InterruptedException {
         String processor = System.getProperty("r7rs.truffle.dslProcessor");
-        assertNotNull("the test runner sets -Dr7rs.truffle.dslProcessor (tests/harness/main.py)", processor);
+        assertNotNull("the test runner sets -Dr7rs.truffle.dslProcessor (bazel/jvm_test.bzl)", processor);
         // Truffle's jars are on the test JVM's module path; javac only needs them as a class path.
         String classPath = String.join(File.pathSeparator, Stream.of(System.getProperty("jdk.module.path"), System.getProperty("java.class.path")) //
                         .filter(p -> p != null && !p.isEmpty()).toList());

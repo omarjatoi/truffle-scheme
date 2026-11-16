@@ -1,7 +1,8 @@
-"""What the test drivers and commands share: the runtime, our runner and chibi's, the conformance suites.
+"""What the Python tests (check_*.py) and the commands share: the runtime, our runner and chibi's, the
+conformance suites.
 
-Paths: tests and build actions see the repository's files in their runfiles (or execroot); `bazel
-run` commands read and write the checkout itself ($BUILD_WORKSPACE_DIRECTORY).
+Paths: tests see the repository's files in their runfiles; `bazel run` commands read and write the
+checkout itself ($BUILD_WORKSPACE_DIRECTORY).
 """
 
 import concurrent.futures
@@ -77,17 +78,8 @@ def rlocation(path):
     return join(runfiles_dir(), path)
 
 
-_ROOT = []
-
-
-def set_repo_root(path):
-    _ROOT[:] = [path]
-
-
 def repo_root():
-    """The source tree: the checkout under `bazel run`, else the runfiles (or a build action's execroot)."""
-    if _ROOT:
-        return _ROOT[0]
+    """The source tree: the checkout under `bazel run`, else the runfiles."""
     return os.environ.get('BUILD_WORKSPACE_DIRECTORY') or rlocation('_main')
 
 
@@ -466,16 +458,6 @@ def replace_status_block(text, block):
     """(text with its status block replaced by block, the block it had)."""
     begin, end = text.index(STATUS_BEGIN), text.index(STATUS_END) + len(STATUS_END)
     return text[:begin] + block + text[end:], text[begin:end]
-
-
-def summary(results, sections):
-    """One line per section: passing/total, and what aborted."""
-    lines = []
-    for s in sections:
-        r = results[(s.suite.name, s.id)]
-        note = '' if r['complete'] else '  (aborted: ' + r['message'] + ')'
-        lines.append(f'{s.suite.name:<8} {s.id:<34} {r["pass"]:>4}/{s.total:<4} {s.title}{note}')
-    return '\n'.join(lines)
 
 
 def _expected_results(suite):

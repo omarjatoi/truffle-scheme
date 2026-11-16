@@ -91,7 +91,7 @@ maven.install(
 )
 use_repo(maven, "eclipse_formatter", "lint")
 
-# --- Python: the test drivers (bazel/r7rs/*.py), on rules_python's hermetic interpreter ---------
+# --- Python: the commands and checks in tests/harness, on rules_python's hermetic interpreter ----
 
 python = use_extension("@rules_python//python/extensions:python.bzl", "python")
 python.toolchain(
