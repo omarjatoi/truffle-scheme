@@ -17,7 +17,7 @@ final class TypePredicate extends PrimitiveNode {
     }
 
     @Override
-    public Object execute(Object[] args) {
-        return test.test(args[0]);
+    public Object invoke(Object[] args) {
+        return test.test(args[1]);
     }
 }

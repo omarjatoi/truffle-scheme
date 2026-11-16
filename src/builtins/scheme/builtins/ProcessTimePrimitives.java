@@ -53,8 +53,8 @@ final class ProcessTimePrimitives {
      */
     static final class EmergencyExit extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            throw exit(this, args.length == 0 ? Boolean.TRUE : args[0]);
+        public Object invoke(Object[] args) {
+            throw exit(this, args.length == 1 ? Boolean.TRUE : args[1]);
         }
 
         @TruffleBoundary
@@ -79,7 +79,7 @@ final class ProcessTimePrimitives {
     /** {@code (command-line)}: the application arguments the embedder gave the context. */
     static final class CommandLine extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
+        public Object invoke(Object[] args) {
             return strings(SchemeContext.get(this).getEnv());
         }
 
@@ -97,9 +97,9 @@ final class ProcessTimePrimitives {
     /** {@code (get-environment-variable name)}: its value, or #f; through the Env (design.md D10). */
     static final class GetEnvironmentVariable extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            if (!(args[0] instanceof SString name)) {
-                throw ControlPrimitives.notA("get-environment-variable", "string", args[0]);
+        public Object invoke(Object[] args) {
+            if (!(args[1] instanceof SString name)) {
+                throw ControlPrimitives.notA("get-environment-variable", "string", args[1]);
             }
             return lookup(SchemeContext.get(this).getEnv(), name);
         }
@@ -114,7 +114,7 @@ final class ProcessTimePrimitives {
     /** {@code (get-environment-variables)}: an alist of fresh strings, (name . value). */
     static final class GetEnvironmentVariables extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
+        public Object invoke(Object[] args) {
             return alist(SchemeContext.get(this).getEnv());
         }
 
@@ -131,7 +131,7 @@ final class ProcessTimePrimitives {
     /** {@code (current-second)}: seconds since the epoch (UTC, standing in for TAI), inexact. */
     static final class CurrentSecond extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
+        public Object invoke(Object[] args) {
             return now();
         }
 
@@ -145,14 +145,14 @@ final class ProcessTimePrimitives {
     /** {@code (current-jiffy)}: an exact count of nanoseconds since an arbitrary, fixed epoch. */
     static final class CurrentJiffy extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
+        public Object invoke(Object[] args) {
             return System.nanoTime();
         }
     }
 
     static final class JiffiesPerSecond extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
+        public Object invoke(Object[] args) {
             return JIFFIES_PER_SECOND;
         }
     }
@@ -160,7 +160,7 @@ final class ProcessTimePrimitives {
     /** {@code (features)}: a fresh list of the feature identifiers cond-expand recognizes. */
     static final class FeatureList extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
+        public Object invoke(Object[] args) {
             return symbols(SchemeContext.get(this));
         }
 

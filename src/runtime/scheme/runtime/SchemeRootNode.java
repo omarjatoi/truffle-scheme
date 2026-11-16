@@ -8,6 +8,7 @@ import com.oracle.truffle.api.bytecode.ConstantOperand;
 import com.oracle.truffle.api.bytecode.ContinuationRootNode;
 import com.oracle.truffle.api.bytecode.GenerateBytecode;
 import com.oracle.truffle.api.bytecode.Operation;
+import com.oracle.truffle.api.bytecode.StoreBytecodeIndex;
 import com.oracle.truffle.api.bytecode.Variadic;
 import com.oracle.truffle.api.bytecode.Yield;
 import com.oracle.truffle.api.dsl.Bind;
@@ -61,13 +62,6 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
 
     // ------------------------------------------------------------------------------------------
     // Calls
-
-    static Object[] withProcedure(Object procedure, Object[] arguments) {
-        Object[] all = new Object[arguments.length + 1];
-        all[0] = procedure;
-        System.arraycopy(arguments, 0, all, 1, arguments.length);
-        return all;
-    }
 
     @TruffleBoundary
     static SchemeError notAProcedure(Object value) {
@@ -126,22 +120,49 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
      * A non-tail call: calls the procedure, then runs the trampoline. Past {@link #SPILL_DEPTH}
      * nested calls it returns a spill capture instead of calling. It stores the bytecode index:
      * guest frames below it need this call's location (design.md D13).
+     *
+     * <p>The arguments start at index 1 of the variadic array, and index 0 is set to the
+     * procedure: the array is the callee's frame arguments as it is, without a copy.
+     *
+     * <p>A primitive that only returns values ({@link PrimitiveSpec#returnsValue()}) runs in place
+     * (plan.md M5-09): the site caches a node of its own for it, so there is no Truffle call and
+     * each site has its own type profile. The cache is keyed on the call target, so a global
+     * redefined to another procedure fails the guard. The primitive neither counts toward the spill
+     * depth (it doesn't nest) nor is tortured (it can't capture), and its errors are raised here, as
+     * from a primitive that was called (design.md D8).
      */
     @Operation(storeBytecodeIndex = true)
     public static final class Call {
+        @Specialization(guards = {"procedure.callTarget == cachedTarget", "primitive != null"}, limit = "4")
+        static Object doPrimitive(SClosure procedure, @Variadic(startOffset = 1) Object[] arguments,
+                        @Bind Node node,
+                        @Cached("procedure.callTarget") RootCallTarget cachedTarget,
+                        @Cached("inPlace(cachedTarget)") PrimitiveSpec spec,
+                        @Cached("createNode(spec)") PrimitiveNode primitive,
+                        @Shared @Cached IndirectCallNode trampolineNode) {
+            arguments[0] = procedure;
+            try {
+                spec.checkArity(arguments.length - 1);
+                return inPlaceResult(primitive.invoke(arguments));
+            } catch (SchemeError e) {
+                return raiseHere(e, SchemeContext.get(node), trampolineNode);
+            }
+        }
+
         @Specialization(guards = "procedure.callTarget == cachedTarget", limit = "4")
-        static Object doDirect(SClosure procedure, @Variadic Object[] arguments,
+        static Object doDirect(SClosure procedure, @Variadic(startOffset = 1) Object[] arguments,
                         @Bind Node node,
                         @Cached("procedure.callTarget") RootCallTarget cachedTarget,
                         @Cached("create(cachedTarget)") DirectCallNode callNode,
                         @Shared @Cached IndirectCallNode trampolineNode) {
+            arguments[0] = procedure;
             SchemeContext context = SchemeContext.get(node);
             if (++context.callDepth > SPILL_DEPTH) {
                 context.callDepth--;
-                return Capture.spill(withProcedure(procedure, arguments), context.getDynamicEnv());
+                return Capture.spill(arguments, context.getDynamicEnv());
             }
             try {
-                return tortured(trampoline(callNode.call(withProcedure(procedure, arguments)), trampolineNode), cachedTarget, context);
+                return tortured(trampoline(callNode.call(arguments), trampolineNode), cachedTarget, context);
             } catch (SchemeError e) {
                 return raiseHere(e, context, trampolineNode);
             } finally {
@@ -150,16 +171,17 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
         }
 
         @Specialization(replaces = "doDirect")
-        static Object doIndirect(SClosure procedure, @Variadic Object[] arguments,
+        static Object doIndirect(SClosure procedure, @Variadic(startOffset = 1) Object[] arguments,
                         @Bind Node node,
                         @Shared @Cached IndirectCallNode trampolineNode) {
+            arguments[0] = procedure;
             SchemeContext context = SchemeContext.get(node);
             if (++context.callDepth > SPILL_DEPTH) {
                 context.callDepth--;
-                return Capture.spill(withProcedure(procedure, arguments), context.getDynamicEnv());
+                return Capture.spill(arguments, context.getDynamicEnv());
             }
             try {
-                return tortured(trampoline(trampolineNode.call(procedure.callTarget, withProcedure(procedure, arguments)), trampolineNode), procedure.callTarget, context);
+                return tortured(trampoline(trampolineNode.call(procedure.callTarget, arguments), trampolineNode), procedure.callTarget, context);
             } catch (SchemeError e) {
                 return raiseHere(e, context, trampolineNode);
             } finally {
@@ -168,18 +190,62 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
         }
 
         @Fallback
-        static Object doNotAProcedure(Object procedure, @SuppressWarnings("unused") @Variadic Object[] arguments) {
+        static Object doNotAProcedure(Object procedure, @SuppressWarnings("unused") @Variadic(startOffset = 1) Object[] arguments) {
             throw notAProcedure(procedure);
+        }
+
+        static PrimitiveSpec inPlace(RootCallTarget target) {
+            return PrimitiveRootNode.inPlace(target);
+        }
+
+        static PrimitiveNode createNode(PrimitiveSpec spec) {
+            return PrimitiveRootNode.createNode(spec);
         }
     }
 
-    /** A tail call: returns a request to the caller's trampoline instead of calling. */
-    @Operation
+    /**
+     * A tail call: returns a request to the caller's trampoline instead of calling. The arguments
+     * start at index 1, as in {@link Call}, and the array becomes the callee's frame arguments.
+     *
+     * <p>A primitive that only returns values runs in place instead, as at a non-tail call site
+     * (plan.md M5-09), and its value is this procedure's. That is safe because it is a leaf
+     * (AGENTS.md rule 1): it runs in constant space, and this frame has nothing left to do. Its error
+     * leaves this frame for the call site that called it, which raises it (design.md D8): the site
+     * whose trampoline would otherwise have called the primitive. Only that specialization stores
+     * the bytecode index, so the frame's location is this call's while the primitive runs.
+     */
+    @Operation(storeBytecodeIndex = false)
     public static final class MakeTailCall {
-        @Specialization
-        static TailCall doMake(Object procedure, @Variadic Object[] arguments) {
-            return new TailCall(procedure, withProcedure(procedure, arguments));
+        @Specialization(guards = {"procedure.callTarget == cachedTarget", "primitive != null"}, limit = "4")
+        @StoreBytecodeIndex
+        static Object doPrimitive(SClosure procedure, @Variadic(startOffset = 1) Object[] arguments,
+                        @Cached("procedure.callTarget") RootCallTarget cachedTarget,
+                        @Cached("inPlace(cachedTarget)") PrimitiveSpec spec,
+                        @Cached("createNode(spec)") PrimitiveNode primitive) {
+            arguments[0] = procedure;
+            spec.checkArity(arguments.length - 1);
+            return inPlaceResult(primitive.invoke(arguments));
         }
+
+        @Specialization
+        static TailCall doMake(Object procedure, @Variadic(startOffset = 1) Object[] arguments) {
+            arguments[0] = procedure;
+            return new TailCall(procedure, arguments);
+        }
+
+        static PrimitiveSpec inPlace(RootCallTarget target) {
+            return PrimitiveRootNode.inPlace(target);
+        }
+
+        static PrimitiveNode createNode(PrimitiveSpec spec) {
+            return PrimitiveRootNode.createNode(spec);
+        }
+    }
+
+    /** A primitive run in place returns a value: never a request for a trampoline or a prompt. */
+    static Object inPlaceResult(Object result) {
+        assert !(result instanceof TailCall) && !(result instanceof Capture);
+        return result;
     }
 
     /** Identity test, used to turn a self tail call into a loop. */

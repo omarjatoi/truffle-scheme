@@ -135,8 +135,8 @@ final class NumberPrimitives {
         }
 
         @Override
-        public Object execute(Object[] args) {
-            return f.apply(args[0]);
+        public Object invoke(Object[] args) {
+            return f.apply(args[1]);
         }
     }
 
@@ -148,8 +148,8 @@ final class NumberPrimitives {
         }
 
         @Override
-        public Object execute(Object[] args) {
-            return f.apply(args[0], args[1]);
+        public Object invoke(Object[] args) {
+            return f.apply(args[1], args[2]);
         }
     }
 
@@ -164,10 +164,10 @@ final class NumberPrimitives {
         }
 
         @Override
-        public Object execute(Object[] args) {
+        public Object invoke(Object[] args) {
             Object acc = identity;
-            for (Object a : args) {
-                acc = f.apply(acc, a);
+            for (int i = 1; i < args.length; i++) {
+                acc = f.apply(acc, args[i]);
             }
             return acc;
         }
@@ -221,12 +221,12 @@ final class NumberPrimitives {
         @Child private ArithmeticNodes.AddNode add = ArithmeticNodesFactory.AddNodeGen.create();
 
         @Override
-        public Object execute(Object[] args) {
-            if (args.length == 0) {
+        public Object invoke(Object[] args) {
+            if (args.length == 1) {
                 return 0L;
             }
-            Object acc = Arithmetic.check("+", args[0]);
-            for (int i = 1; i < args.length; i++) {
+            Object acc = Arithmetic.check("+", args[1]);
+            for (int i = 2; i < args.length; i++) {
                 acc = add.execute(acc, args[i]);
             }
             return acc;
@@ -237,18 +237,18 @@ final class NumberPrimitives {
         @Child private ArithmeticNodes.SubNode sub = ArithmeticNodesFactory.SubNodeGen.create();
 
         @Override
-        public Object execute(Object[] args) {
-            if (args.length == 1) {
+        public Object invoke(Object[] args) {
+            if (args.length == 2) {
                 // Negation, not 0 - x: (- 0.0) is -0.0.
-                if (args[0] instanceof Double d) {
+                if (args[1] instanceof Double d) {
                     return -d;
-                } else if (args[0] instanceof SComplex) {
-                    return Arithmetic.negate(args[0]);
+                } else if (args[1] instanceof SComplex) {
+                    return Arithmetic.negate(args[1]);
                 }
-                return sub.execute(0L, args[0]);
+                return sub.execute(0L, args[1]);
             }
-            Object acc = Arithmetic.check("-", args[0]);
-            for (int i = 1; i < args.length; i++) {
+            Object acc = Arithmetic.check("-", args[1]);
+            for (int i = 2; i < args.length; i++) {
                 acc = sub.execute(acc, args[i]);
             }
             return acc;
@@ -259,12 +259,12 @@ final class NumberPrimitives {
         @Child private ArithmeticNodes.MulNode mul = ArithmeticNodesFactory.MulNodeGen.create();
 
         @Override
-        public Object execute(Object[] args) {
-            if (args.length == 0) {
+        public Object invoke(Object[] args) {
+            if (args.length == 1) {
                 return 1L;
             }
-            Object acc = Arithmetic.check("*", args[0]);
-            for (int i = 1; i < args.length; i++) {
+            Object acc = Arithmetic.check("*", args[1]);
+            for (int i = 2; i < args.length; i++) {
                 acc = mul.execute(acc, args[i]);
             }
             return acc;
@@ -292,14 +292,14 @@ final class NumberPrimitives {
         }
 
         @Override
-        public Object execute(Object[] args) {
+        public Object invoke(Object[] args) {
             if (kind == EQ) {
-                Arithmetic.check(name, args[0]);
+                Arithmetic.check(name, args[1]);
             } else {
-                Arithmetic.checkReal(name, args[0]);
+                Arithmetic.checkReal(name, args[1]);
             }
             boolean result = true;
-            for (int i = 1; i < args.length; i++) {
+            for (int i = 2; i < args.length; i++) {
                 boolean ok;
                 if (kind == EQ && (args[i - 1] instanceof SComplex || args[i] instanceof SComplex)) {
                     ok = Arithmetic.numericEquals(name, args[i - 1], args[i]);
@@ -322,12 +322,12 @@ final class NumberPrimitives {
     /** {@code (/ z)} is 1/z; {@code (/ z1 z2 ...)} divides left to right. */
     static final class Div extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            if (args.length == 1) {
-                return Arithmetic.div(1L, args[0]);
+        public Object invoke(Object[] args) {
+            if (args.length == 2) {
+                return Arithmetic.div(1L, args[1]);
             }
-            Object acc = Arithmetic.check("/", args[0]);
-            for (int i = 1; i < args.length; i++) {
+            Object acc = Arithmetic.check("/", args[1]);
+            for (int i = 2; i < args.length; i++) {
                 acc = Arithmetic.div(acc, args[i]);
             }
             return acc;
@@ -345,16 +345,16 @@ final class NumberPrimitives {
         }
 
         @Override
-        public Object execute(Object[] args) {
+        public Object invoke(Object[] args) {
             return extremum(name, direction, args);
         }
 
         @TruffleBoundary
         private static Object extremum(String name, int direction, Object[] args) {
-            Object best = Arithmetic.checkReal(name, args[0]);
+            Object best = Arithmetic.checkReal(name, args[1]);
             boolean inexact = best instanceof Double;
             boolean nan = best instanceof Double d && Double.isNaN(d);
-            for (int i = 1; i < args.length; i++) {
+            for (int i = 2; i < args.length; i++) {
                 Object x = Arithmetic.checkReal(name, args[i]);
                 inexact |= x instanceof Double;
                 nan |= x instanceof Double d && Double.isNaN(d);
@@ -371,19 +371,19 @@ final class NumberPrimitives {
 
     static final class Log extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            Object x = Arithmetic.log(args[0]);
-            return args.length == 1 ? x : Arithmetic.div(x, Arithmetic.log(args[1]));
+        public Object invoke(Object[] args) {
+            Object x = Arithmetic.log(args[1]);
+            return args.length == 2 ? x : Arithmetic.div(x, Arithmetic.log(args[2]));
         }
     }
 
     static final class Atan extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            if (args.length == 1) {
-                return Arithmetic.trig("atan", args[0]);
+        public Object invoke(Object[] args) {
+            if (args.length == 2) {
+                return Arithmetic.trig("atan", args[1]);
             }
-            return atan2(args[0], args[1]);
+            return atan2(args[1], args[2]);
         }
 
         @TruffleBoundary
@@ -397,8 +397,8 @@ final class NumberPrimitives {
     /** {@code (number->string z [radix])}: radix 2, 8, 10 or 16; inexact numbers in radix 10. */
     static final class NumberToString extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            return SString.of(convert(args[0], args.length > 1 ? args[1] : 10L));
+        public Object invoke(Object[] args) {
+            return SString.of(convert(args[1], args.length > 2 ? args[2] : 10L));
         }
 
         @TruffleBoundary
@@ -424,8 +424,8 @@ final class NumberPrimitives {
     /** {@code (string->number string [radix])}: the reader's number syntax, or #f. */
     static final class StringToNumber extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            return parse(args[0], args.length > 1 ? args[1] : 10L);
+        public Object invoke(Object[] args) {
+            return parse(args[1], args.length > 2 ? args[2] : 10L);
         }
 
         @TruffleBoundary
