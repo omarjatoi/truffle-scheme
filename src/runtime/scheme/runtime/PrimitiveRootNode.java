@@ -1,14 +1,15 @@
 package scheme.runtime;
 
-import java.util.Arrays;
-
-import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.RootCallTarget;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.RootNode;
 
 /**
  * The root of a primitive procedure. Hand-written rather than a Bytecode DSL root: it only checks the
- * arity and delegates to a {@link PrimitiveNode}, which has no bytecode to interpret.
+ * arity and delegates to a {@link PrimitiveNode}, which has no bytecode to interpret. Most calls of
+ * a primitive don't reach it: call sites run a node of their own instead (plan.md M5-09). It runs
+ * the calls that aren't run in place: from a site that has seen too many procedures, a trampoline
+ * or a prompt, and the calls of primitives that transfer control.
  */
 public final class PrimitiveRootNode extends RootNode {
 
@@ -23,18 +24,28 @@ public final class PrimitiveRootNode extends RootNode {
 
     @Override
     public Object execute(VirtualFrame frame) {
-        Object[] all = frame.getArguments();
-        int count = all.length - 1;
-        if (count < spec.minArgs() || (spec.maxArgs() >= 0 && count > spec.maxArgs())) {
-            throw arity(count);
-        }
-        return body.execute(Arrays.copyOfRange(all, 1, all.length));
+        Object[] args = frame.getArguments();
+        spec.checkArity(args.length - 1);
+        return body.invoke(args);
     }
 
-    @TruffleBoundary
-    private SchemeError arity(int count) {
-        String expected = spec.maxArgs() < 0 ? "at least " + spec.minArgs() : spec.minArgs() == spec.maxArgs() ? Integer.toString(spec.minArgs()) : spec.minArgs() + " to " + spec.maxArgs();
-        return new SchemeError(spec.name() + ": expected " + expected + " arguments, got " + count);
+    /**
+     * The spec of {@code target}'s primitive if call sites run it in place (it only returns values),
+     * else null.
+     */
+    static PrimitiveSpec inPlace(RootCallTarget target) {
+        return target.getRootNode() instanceof PrimitiveRootNode root && root.spec.returnsValue() ? root.spec : null;
+    }
+
+    /** A new node for {@code spec}'s primitive, for a call site of its own; null if there is no spec. */
+    static PrimitiveNode createNode(PrimitiveSpec spec) {
+        return spec == null ? null : spec.factory().get();
+    }
+
+    /** A primitive that only returns values is a leaf: inlined in every tier when it is called. */
+    @Override
+    public boolean isTrivial() {
+        return spec.returnsValue();
     }
 
     @Override
