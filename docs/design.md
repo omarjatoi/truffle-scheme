@@ -898,6 +898,56 @@ Each entry: the decision, why, and what was rejected.
     `--enable-native-access=org.graalvm.shadowed.jline`; JLine's own
     native-image configuration registers the downcalls for the native
     launcher.
+    The REPL adds each input to the history itself once it is complete, as
+    one entry however many lines it took (M8-06); JLine adds none, and a
+    recalled entry shows its later lines with the continuation prompt.
+  - **Interrupts (M8-06).** On a terminal, Ctrl-C while an input runs calls
+    `Context.interrupt` (`Interrupter`, in the launcher), which stops the
+    evaluation at its next Truffle safepoint; the REPL prints `Interrupted`
+    and reads the next input in the same context. The handler is the
+    terminal's (`Terminal.handle(Signal.INT, ...)`), which JLine replaces with
+    its own while it reads a line, and gives back after. JLine's native
+    signals are off: with them, each of those swaps unregistered the
+    process's handler before registering the next, and a Ctrl-C in between
+    got the JVM's default handler and ended the process (the pty test did,
+    one run in three, when Ctrl-C came as `read-line` started). Instead the
+    launcher registers SIGINT, SIGWINCH and SIGCONT once, through JLine's
+    `Signals` (`sun.misc.Signal` by reflection, which already worked in the
+    native launcher), and passes each to the terminal's handler of the
+    moment. Ctrl-C while JLine reads a line for the REPL drops the line as before,
+    and while it reads one for Scheme code it interrupts the evaluation: the
+    read returns an empty line once the interrupt has been submitted (its
+    thread waits for the evaluation), so the evaluation stops at its next
+    safepoint, at the latest when the read's primitive returns, instead of
+    possibly ending first. The interrupt runs on its own thread (it waits
+    for the evaluation to stop), and the REPL waits for it before reading
+    again, so it never reaches the REPL's own reads. Without a terminal, SIGINT ends the
+    process, as it does for a program.
+    - The runtime needs nothing for it: Bytecode DSL roots poll at
+      back-edges, and Truffle polls when a root returns, so a loop (a
+      self tail call is a back-edge), the trampoline's tail calls, a
+      recursion spilled to the heap, and `call/cc` all stop. Primitive loops
+      don't poll, and needn't: each walks data the program built (cycles
+      are detected, D9), so it ends in time proportional to that.
+      Truffle's interrupt exception isn't a `SchemeError`, so no Scheme
+      handler (`guard`, `with-exception-handler`) catches it.
+    - **The after-thunks an interrupt skips don't run**, unlike an uncaught
+      error's (D8, M7-06). R7RS doesn't define interrupts. While an
+      interrupt is in progress, Truffle throws it again at every safepoint
+      the thread polls, so Scheme code can't run until the evaluation has
+      left the context: an after-thunk would itself be interrupted at its
+      first call or loop. And an interrupt is for code that doesn't stop,
+      which an after-thunk can be. The root prompt still puts the dynamic
+      environment back in its Java `finally` (parameters, handlers, the
+      current ports), as after an error, and the spill depth is restored the
+      same way, so the next input runs as the one before it did.
+    - A Ctrl-C while an interrupt has waited a second or more (the
+      evaluation is in host code that never polls, such as opening a FIFO)
+      saves the history and ends the process with status 130, as SIGINT's
+      default action would; a quicker second Ctrl-C does nothing more.
+    - With assertions on, an interrupt that lands at a Bytecode DSL root's
+      return fails an assertion in Truffle (docs/upstream.md); the launcher
+      runs without them.
 - The Chrome inspector, DAP and profiler tools are optional modules
   (`//bazel:tools_modules`), which `bazel-bin/scheme` puts on the module
   path, and CI runs a smoke test of each against a Scheme program
