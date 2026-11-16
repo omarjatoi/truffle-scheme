@@ -1,11 +1,17 @@
 package scheme.runtime.value;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.interop.InteropLibrary;
 import com.oracle.truffle.api.interop.TruffleObject;
+import com.oracle.truffle.api.library.ExportLibrary;
+import com.oracle.truffle.api.library.ExportMessage;
 
+import scheme.runtime.InteropValues;
 import scheme.runtime.SchemeError;
+import scheme.runtime.SchemeLanguage;
 
 /** A character: one Unicode scalar value. Characters 0-255 are cached. */
+@ExportLibrary(InteropLibrary.class)
 public final class SChar implements TruffleObject {
 
     private static final SChar[] CACHE = new SChar[256];
@@ -41,5 +47,45 @@ public final class SChar implements TruffleObject {
     @TruffleBoundary
     public String toString() {
         return new String(Character.toChars(codePoint));
+    }
+
+    // A character is a one-character string to interop (design.md D10).
+
+    @ExportMessage
+    boolean isString() {
+        return true;
+    }
+
+    @ExportMessage
+    @TruffleBoundary
+    String asString() {
+        return toString();
+    }
+
+    // Interop (design.md D10).
+
+    @ExportMessage
+    boolean hasLanguageId() {
+        return true;
+    }
+
+    @ExportMessage
+    String getLanguageId() {
+        return SchemeLanguage.ID;
+    }
+
+    @ExportMessage
+    boolean hasMetaObject() {
+        return true;
+    }
+
+    @ExportMessage
+    Object getMetaObject() {
+        return SchemeType.CHAR;
+    }
+
+    @ExportMessage
+    Object toDisplayString(@SuppressWarnings("unused") boolean allowSideEffects) {
+        return InteropValues.display(this);
     }
 }

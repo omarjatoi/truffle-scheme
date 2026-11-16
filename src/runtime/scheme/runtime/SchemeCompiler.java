@@ -1,10 +1,13 @@
 package scheme.runtime;
 
+import java.util.List;
+
 import com.oracle.truffle.api.CallTarget;
 import com.oracle.truffle.api.source.Source;
 
 import scheme.runtime.value.SClosure;
 import scheme.runtime.value.SEnvironment;
+import scheme.runtime.value.SSymbol;
 
 /**
  * The front end, provided by the scheme.compiler project through {@link java.util.ServiceLoader}:
@@ -51,4 +54,23 @@ public interface SchemeCompiler {
      * the file, as do the compiled code's source sections (D13).
      */
     SClosure compileLoad(SchemeLanguage language, SchemeContext context, Source source, SEnvironment environment);
+
+    /**
+     * The names of the interaction environment's bound variables, imported or defined (not syntactic
+     * keywords): the top scope's members (design.md D10).
+     */
+    List<SSymbol> interactionVariables(SchemeContext context);
+
+    /**
+     * The cell a name refers to at the interaction environment's top level (possibly unbound), or
+     * null if the name is a syntactic keyword there.
+     */
+    GlobalCell interactionCell(SchemeContext context, SSymbol name);
+
+    /**
+     * {@code (define name value)} at the interaction environment's top level: defines, redefines or
+     * shadows an import, as the REPL would. False, changing nothing, if the name is a syntactic
+     * keyword there.
+     */
+    boolean interactionDefine(SchemeContext context, SSymbol name, Object value);
 }

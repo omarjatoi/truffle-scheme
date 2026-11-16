@@ -1,15 +1,21 @@
 package scheme.runtime.value;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.interop.InteropLibrary;
 import com.oracle.truffle.api.interop.TruffleObject;
+import com.oracle.truffle.api.library.ExportLibrary;
+import com.oracle.truffle.api.library.ExportMessage;
 
+import scheme.runtime.InteropValues;
 import scheme.runtime.SchemeError;
+import scheme.runtime.SchemeLanguage;
 
 /**
  * A mutable Scheme string with O(1) indexing and {@code string-set!} (design.md D1). It is stored as
  * Latin-1 bytes until a character above 255 is stored, then as UTF-32 code points. Literals are
  * immutable.
  */
+@ExportLibrary(InteropLibrary.class)
 public final class SString implements TruffleObject {
 
     private byte[] latin1;
@@ -130,5 +136,45 @@ public final class SString implements TruffleObject {
             sb.appendCodePoint(codePointAt(i));
         }
         return sb.toString();
+    }
+
+    // A string to interop (design.md D10). Other languages get a copy (asString).
+
+    @ExportMessage
+    boolean isString() {
+        return true;
+    }
+
+    @ExportMessage
+    @TruffleBoundary
+    String asString() {
+        return toString();
+    }
+
+    // Interop (design.md D10).
+
+    @ExportMessage
+    boolean hasLanguageId() {
+        return true;
+    }
+
+    @ExportMessage
+    String getLanguageId() {
+        return SchemeLanguage.ID;
+    }
+
+    @ExportMessage
+    boolean hasMetaObject() {
+        return true;
+    }
+
+    @ExportMessage
+    Object getMetaObject() {
+        return SchemeType.STRING;
+    }
+
+    @ExportMessage
+    Object toDisplayString(@SuppressWarnings("unused") boolean allowSideEffects) {
+        return InteropValues.display(this);
     }
 }

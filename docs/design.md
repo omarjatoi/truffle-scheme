@@ -306,12 +306,71 @@ Each entry: the decision, why, and what was rejected.
   `singleThreaded`.
 - **All I/O goes through `TruffleLanguage.Env`**: `TruffleFile` and the Env's
   streams, never `java.io` or `java.nio` directly.
-- **Interop for embedders (M6):** Scheme values answer Truffle's
-  `InteropLibrary` as what they are: numbers as numbers (fitting
-  `long`/`double`/`BigInteger`), strings as strings, booleans, `SChar` as a
-  one-character string, procedures as executables (calling one runs it
-  under a prompt, D6), vectors as arrays, the empty list and unspecified as
-  null. Scheme code does not reach into other languages or the host in v1.
+- **Interop for embedders (M6-02).** Scheme values answer Truffle's
+  `InteropLibrary` as what they are, each with the language `scheme`, its
+  `write` syntax as display string (`Value.toString()`), and a meta object:
+  - Numbers: fixnums and flonums are `long` and `double`. A bignum is a
+    number that fits in a `BigInteger` (never a `long`: it would have been
+    demoted, D1), and in a `double` or `float` only when the conversion is
+    exact. An exact rational is a number that fits in no integer type, and
+    in a `double` or `float` only when exact (`1/2` yes, `1/3` no: Java reads
+    it as a string). A non-real complex number is not an interop number
+    (interop's numbers are real); its display string is `1+2i`.
+  - Strings, and characters as one-character strings (`asString` copies).
+    Symbols are not strings: their name is their display string, so a
+    symbol never turns into a string by crossing and back. Booleans are
+    `boolean`.
+  - Vectors and bytevectors are arrays (bytevector elements are integers
+    0–255); literal ones are read-only (R7RS §3.4). Zero or several values
+    are a read-only array. Lists are iterables (`hasIterator`), walked lazily
+    up to the first non-pair; `'()` is null *and* an empty iterable, the
+    unspecified value is null. Records are objects with their fields as
+    read-only members.
+  - Procedures are executables. Each `execute` runs the procedure under a
+    root prompt of its own, as a program or REPL input runs (D6), so tail
+    calls, captures and depth spills stay inside. A continuation captured
+    during one call is delimited by that call's prompt: invoked during a
+    later call (from Java or from Scheme), it runs the rest of the call that
+    captured it, and the later call returns what that rest returns, as with
+    REPL inputs. Segments are immutable (copied on resume), so any number of
+    such re-entries leave both calls intact. A wrong number of arguments is
+    a Scheme error, not an interop `ArityException`, so primitives,
+    variadic procedures and `case-lambda` behave alike.
+  - Meta objects are R7RS §3.2's disjoint types, named as their predicates
+    without `?` (`boolean`, `number`, `char`, `string`, `symbol`, `pair`,
+    `null`, `vector`, `bytevector`, `procedure`, `port`, `eof-object`), plus
+    `error-object`, `environment`, `record-type`, `unspecified` and
+    `values`; a record's meta object is its record type. `long`, `double`
+    and `boolean` get theirs, and their Scheme display strings (`#t`,
+    `+inf.0`), through `getLanguageView`.
+  - Errors and exit: an error a call doesn't handle surfaces as a
+    `PolyglotException` guest error whose message is the error object's
+    message and irritants (or `uncaught exception: <obj>` for a raised
+    non-condition); `exit` surfaces as an exit with its status, after the
+    after-thunks (D9). Either way, the dynamic environment (parameters,
+    handlers, winders) is the caller's again afterwards; the after-thunks of
+    an *error* are not run (as with an uncaught error in a program, D8).
+  - **Values from outside** (arguments, array elements, bindings) become the
+    one Scheme representation of each: interop's integers are exact
+    integers, floats and doubles flonums, a `char` a character, a string a
+    fresh mutable string, and foreign numbers, strings and booleans (a host
+    `BigInteger`) likewise. Anything else, Java `null` included, stays a
+    **foreign value**: Scheme can store it, return it (Java gets the same
+    object back) and compare it with `eq?`, `eqv?` and `equal?` (identity),
+    `write` shows it as `#<foreign ...>`, and every type predicate is false,
+    so a primitive given one raises a Scheme error (D8) and calling one is a
+    "not a procedure" error. Truffle wraps a Java object afresh at each
+    crossing, so the context keeps one wrapper per Java object, weakly, and
+    the same object is `eq?` to itself across calls.
+  - `context.getBindings("scheme")` (`getScope`) is the interaction
+    environment (D15): its bound variables, imported or defined, are members;
+    syntactic keywords are not, and `%`-names are readable but not listed.
+    `putMember` is `(define name value)` there: it defines, redefines, or
+    shadows an import as the REPL would; a keyword can't be redefined that
+    way. Programs (D15) keep their own top level and don't appear in it.
+  - Scheme code does not reach into other languages or the host in v1, so
+    no host frame ever sits between two Scheme frames (D5): a call from Java
+    is always the outermost prompt.
 - **Out of scope:** Scheme-side access to other languages and the host,
   native image in CI, threads, and SRFIs. Avoid reflection and dynamic class
   loading so a native-image launcher (M6, optional) stays possible.

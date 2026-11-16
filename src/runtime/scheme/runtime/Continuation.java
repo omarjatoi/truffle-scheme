@@ -1,6 +1,9 @@
 package scheme.runtime;
 
+import com.oracle.truffle.api.interop.InteropLibrary;
 import com.oracle.truffle.api.interop.TruffleObject;
+import com.oracle.truffle.api.library.ExportLibrary;
+import com.oracle.truffle.api.library.ExportMessage;
 
 /**
  * A captured continuation: its segments and flattened prompts (innermost first) and the dynamic
@@ -11,6 +14,7 @@ import com.oracle.truffle.api.interop.TruffleObject;
  * <p>Segments are never resumed in place: every resume copies the frame (design.md
  * "Continuations"), so a continuation can be invoked any number of times.
  */
+@ExportLibrary(InteropLibrary.class)
 public final class Continuation implements TruffleObject {
 
     public final SegmentList segments;
@@ -21,5 +25,22 @@ public final class Continuation implements TruffleObject {
         this.segments = segments;
         this.dynEnv = dynEnv;
         this.composable = composable;
+    }
+
+    // Interop (design.md D10).
+
+    @ExportMessage
+    boolean hasLanguageId() {
+        return true;
+    }
+
+    @ExportMessage
+    String getLanguageId() {
+        return SchemeLanguage.ID;
+    }
+
+    @ExportMessage
+    Object toDisplayString(@SuppressWarnings("unused") boolean allowSideEffects) {
+        return "#<continuation>";
     }
 }

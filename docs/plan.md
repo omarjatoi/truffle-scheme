@@ -652,7 +652,7 @@ that edit the same files.
   - **Done when** tests run a program with arguments, an `-I` library, and a
     scripted REPL session (multi-line input, an error, then more input), and
     `exit` statuses reach the process.
-- [ ] **M6-02 · Interop for embedders** *(early)*
+- [x] **M6-02 · Interop for embedders** *(early)*
   - D10: `@ExportLibrary(InteropLibrary.class)` on the value classes (strings
     and characters as strings, bignums as big integers, vectors and
     bytevectors as arrays, lists as iterators, records as objects, `'()` and
