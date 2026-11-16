@@ -13,8 +13,10 @@ import com.oracle.truffle.api.Option;
 import com.oracle.truffle.api.RootCallTarget;
 import com.oracle.truffle.api.TruffleLanguage;
 import com.oracle.truffle.api.debug.DebuggerTags;
+import com.oracle.truffle.api.frame.MaterializedFrame;
 import com.oracle.truffle.api.instrumentation.ProvidedTags;
 import com.oracle.truffle.api.instrumentation.StandardTags;
+import com.oracle.truffle.api.nodes.ExecutableNode;
 import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.source.Source;
 
@@ -90,6 +92,30 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
     @Override
     protected CallTarget parse(ParsingRequest request) {
         return program(SchemeContext.get(null), request.getSource());
+    }
+
+    /**
+     * Code evaluated in a suspended frame of a Scheme procedure (the debugger's
+     * {@code DebugStackFrame.eval}, plan.md M6-05): the forms run as a body whose variables are the
+     * frame's ({@link FrameVariables}: what its scope shows) inside the interaction environment
+     * (design.md D15). Elsewhere, or without a frame, Truffle evaluates it as a program.
+     */
+    @Override
+    protected ExecutableNode parse(InlineParsingRequest request) {
+        if (request.getFrame() == null) {
+            return null;
+        }
+        FrameVariables variables = FrameVariables.at(request.getLocation(), request.getFrame(), true);
+        if (variables == null) {
+            return null;
+        }
+        MaterializedFrame own = FrameVariables.resolve(variables.bytecode, request.getFrame());
+        boolean[] boxed = new boolean[variables.names.length];
+        for (int k = 0; k < boxed.length; k++) {
+            boxed[k] = variables.raw(own, k) instanceof Box;
+        }
+        SClosure procedure = compiler().compileInFrame(this, SchemeContext.get(null), request.getSource(), variables.names, boxed);
+        return new FrameEvalNode(this, variables, procedure);
     }
 
     /**

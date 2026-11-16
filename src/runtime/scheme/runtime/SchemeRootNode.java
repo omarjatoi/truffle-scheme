@@ -23,6 +23,7 @@ import com.oracle.truffle.api.nodes.DirectCallNode;
 import com.oracle.truffle.api.nodes.IndirectCallNode;
 import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.nodes.RootNode;
+import com.oracle.truffle.api.source.SourceSection;
 
 import scheme.runtime.value.SClosure;
 import scheme.runtime.value.SConstant;
@@ -36,11 +37,22 @@ import scheme.runtime.value.SPair;
  * CallSiteEmitter (AGENTS.md rule 2): {@code Call}, then {@code IsCapture}, then
  * {@code SuspendFrame}.
  */
-@GenerateBytecode(languageClass = SchemeLanguage.class, storeBytecodeIndexInFrame = true, enableTagInstrumentation = true, enableSerialization = true)
+@GenerateBytecode(languageClass = SchemeLanguage.class, storeBytecodeIndexInFrame = true, enableTagInstrumentation = true, enableSerialization = true, //
+                tagTreeNodeLibrary = SchemeTagTreeNodeExports.class)
 public abstract class SchemeRootNode extends RootNode implements BytecodeRootNode {
 
-    /** Package-private: Bytecode DSL serialization saves it with the root. */
+    // Package-private: Bytecode DSL serialization saves these with the root (the prelude image,
+    // design.md D13).
+
+    /** The name of the variable the procedure is bound to, or null for an anonymous lambda. */
     String name;
+    /**
+     * The names of the captured variables by slot of {@link SClosure#captured}, null for one that
+     * tools don't show (plan.md M6-05); null if none shows. Only {@link FrameVariables} reads it.
+     */
+    String[] capturedNames;
+    /** The name of the fixed letrec* variable that is the running closure here, or null. */
+    String selfName;
 
     protected SchemeRootNode(SchemeLanguage language, FrameDescriptor frameDescriptor) {
         super(language, frameDescriptor);
@@ -50,14 +62,41 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
         this.name = name;
     }
 
+    /** What the scope shows besides the locals (plan.md M6-05): see {@link FrameVariables}. */
+    public void setVariableNames(String[] captured, String self) {
+        this.capturedNames = captured;
+        this.selfName = self;
+    }
+
+    /**
+     * The name of the variable the procedure is bound to, or null: what {@code write} shows of it
+     * ({@code #<procedure name>}) and its interop executable name.
+     */
+    public String getProcedureName() {
+        return name;
+    }
+
+    /**
+     * The name tools show (stack traces, the debugger, profilers): the procedure's name, or for an
+     * anonymous lambda, where it is ({@code <lambda@file.scm:3:5>}).
+     */
     @Override
     public String getName() {
-        return name;
+        return name != null ? name : anonymousName();
+    }
+
+    @TruffleBoundary
+    private String anonymousName() {
+        SourceSection section = getSourceSection();
+        if (section == null || !section.isAvailable()) {
+            return "<lambda>";
+        }
+        return "<lambda@" + section.getSource().getName() + ":" + section.getStartLine() + ":" + section.getStartColumn() + ">";
     }
 
     @Override
     public String toString() {
-        return name == null ? "<lambda>" : name;
+        return getName();
     }
 
     // ------------------------------------------------------------------------------------------

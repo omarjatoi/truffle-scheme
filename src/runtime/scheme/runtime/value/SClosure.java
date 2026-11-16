@@ -13,10 +13,12 @@ import com.oracle.truffle.api.library.ExportLibrary;
 import com.oracle.truffle.api.library.ExportMessage;
 import com.oracle.truffle.api.nodes.IndirectCallNode;
 import com.oracle.truffle.api.nodes.Node;
+import com.oracle.truffle.api.nodes.RootNode;
 import com.oracle.truffle.api.source.SourceSection;
 
 import scheme.runtime.InteropValues;
 import scheme.runtime.SchemeLanguage;
+import scheme.runtime.SchemeRootNode;
 
 /** A procedure: a flat closure (design.md D2) over a Bytecode DSL root. */
 @ExportLibrary(InteropLibrary.class)
@@ -40,12 +42,15 @@ public final class SClosure implements TruffleObject {
     }
 
     /**
-     * The procedure's name, or null. Behind a boundary: it asks the root node, and a root's
-     * {@code getName} (an OSR root's formats a string) is not for partial evaluation.
+     * The procedure's name, or null if it is an anonymous lambda: what {@code write} shows. Tools
+     * name an anonymous lambda's frames by its location instead ({@link SchemeRootNode#getName}).
+     * Behind a boundary: it asks the root node, and a root's {@code getName} (an OSR root's formats
+     * a string) is not for partial evaluation.
      */
     @TruffleBoundary
     public String getName() {
-        return callTarget.getRootNode().getName();
+        RootNode root = callTarget.getRootNode();
+        return root instanceof SchemeRootNode scheme ? scheme.getProcedureName() : root.getName();
     }
 
     // An executable to interop (design.md D10): executing it runs it under a root prompt of its own

@@ -221,7 +221,7 @@ public final class Expander {
     /** Expands one macro use (Flatt 2016): flip a fresh introduction scope on the use and on the result. */
     @TruffleBoundary
     private Object expandMacro(Macro macro, Object form, Scope useSite) {
-        Scope intro = new Scope();
+        Scope intro = Scope.introduction();
         ScopeSet adds = useSite == null ? ScopeSet.EMPTY : ScopeSet.EMPTY.add(useSite);
         Object input = Syntax.adjust(form, adds, ScopeSet.EMPTY.add(intro));
         Object result = Syntax.flipScope(macro.transformer().transform(input, this), intro);
@@ -338,7 +338,21 @@ public final class Expander {
             check(id, form, what);
             bound.add(id);
             local.bind(symbol(id), scopes(id), binding);
+            if (binding instanceof Var v) {
+                v.introduced = introduced(id);
+            }
         }
+    }
+
+    /** Whether a macro's template introduced the identifier (its user didn't write it). */
+    private static boolean introduced(Object id) {
+        ScopeSet scopes = scopes(id);
+        for (int i = 0; i < scopes.size(); i++) {
+            if (scopes.get(i).isIntroduction()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private Expr reference(Var v, Lambda lambda, Object id) {
@@ -529,6 +543,30 @@ public final class Expander {
         Lambda thunk = new Lambda(null, false);
         thunk.name = "load";
         return analyzed((Lambda) run(new ProgramFrame(addScope(forms, topScope), thunk)), false);
+    }
+
+    /**
+     * Expands code a debugger evaluates in a suspended frame (plan.md M6-05) at this unit's top
+     * level: {@code (lambda (name ...) form ...)}, whose parameters are the frame's variables. A
+     * parameter with {@code boxed} set gets its variable's Box as its argument and uses it as its own
+     * ({@link Ast.Var#preboxed}), so {@code set!} writes the frame's variable; {@code set!} of any other
+     * parameter would write only a copy, so it is a syntax error.
+     */
+    Lambda expandInFrame(List<Object> forms, List<SSymbol> names, boolean[] boxed) {
+        Object formals = SConstant.EMPTY_LIST;
+        for (int i = names.size() - 1; i >= 0; i--) {
+            formals = new SPair(Syntax.addScope(names.get(i), topScope), formals);
+        }
+        Object form = forms.isEmpty() ? formals : forms.get(0);
+        Lambda fn = (Lambda) run(new LambdaFrame(formals, addScope(forms, topScope), null, "<eval>", form));
+        for (int i = 0; i < fn.params.size(); i++) {
+            Var v = fn.params.get(i);
+            v.preboxed = boxed[i];
+            if (v.assigned && !v.preboxed) {
+                throw syntax("set! of a variable that the program never assigns, which the debugger can't change", names.get(i));
+            }
+        }
+        return analyzed(fn, false);
     }
 
     // ------------------------------------------------------------------------------------------

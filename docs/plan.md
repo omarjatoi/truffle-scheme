@@ -677,7 +677,7 @@ that edit the same files.
   - **Done when** a test sees every frame of a recursion deeper than the
     spill threshold in a guest stack trace and in a suspended debugger's
     stack, in order, and torture still passes.
-- [ ] **M6-05 · Debugger scopes and names** *(needs M5-05)*
+- [x] **M6-05 · Debugger scopes and names** *(needs M5-05)*
   - A custom scope (`tagTreeNodeLibrary`) that shows Scheme variables as
     Scheme sees them: captured variables, unboxed `Box` contents, no compiler
     temporaries; frame evaluation in the debugger; names for anonymous

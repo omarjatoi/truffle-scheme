@@ -75,6 +75,7 @@ final class Closures {
                 if (!v.assigned && !blocked.contains(v)) {
                     v.fixed = true;
                     v.self = fn;
+                    fn.self = v;
                 }
             } else {
                 blocked.addAll(pending);
