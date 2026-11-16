@@ -61,9 +61,14 @@ compiler is the JIT the tests use. It also builds the chibi-scheme the
 differential tests compare against, from the same release's source
 (`bazel/chibi.bzl`). Truffle comes
 from Maven Central at exactly the GraalVM version (`TRUFFLE_VERSION` in
-`MODULE.bazel`); the build fails if the two differ (design.md D11). With a
-BuildBuddy API key in `~/.bazelrc` (see `.bazelrc`), `--config=buildbuddy`
-shares CI's cache.
+`MODULE.bazel`); the build fails if the two differ (design.md D11).
+
+Bazel executes remotely by default, on BuildBuddy's Linux executors with
+their shared cache (`--config=remote` in `.bazelrc`): builds still produce
+this machine's binaries, and tests run on the executors. It needs a
+BuildBuddy API key in `~/.bazelrc`:
+`common:buildbuddy --remote_header=x-buildbuddy-api-key=<key>`. Offline,
+`--config=local` runs everything here.
 
 ## Commands
 
@@ -122,8 +127,9 @@ what runs on every commit: `checks` (the lint tests), `tests` (every other
 test and the readme check), and soft-fail `conformance-*` steps (interpreter
 and `--compile`) whose annotations show per-section results. The required
 check is the build, `buildkite/truffle-scheme`; which steps can fail it is
-set in `.buildkite/pipeline.yml`. CI's cache is in BuildBuddy; the
-`buildbuddy` annotation links each step's results.
+set in `.buildkite/pipeline.yml`. Its actions and tests run on BuildBuddy's
+executors, like everyone's; the `buildbuddy` annotation links each step's
+results.
 Benchmarks, the threshold check and the native image are local commands.
 
 ## Rules (each one is enforced by `bazel test //...`)
