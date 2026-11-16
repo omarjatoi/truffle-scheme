@@ -571,7 +571,7 @@ M5-01 benchmarks and M5-02's report.
     when every element is a fixnum or flonum, generalizing on the first other
     store, with DSL specializations on the accessors.
   - **Done when** the vector-heavy benchmarks improve and every suite passes.
-- [ ] **M5-07 · `equal?` fast path** *(early)*
+- [x] **M5-07 · `equal?` fast path** *(early)*
   - D9's union-find algorithm with a fast path for small trees (Adams &
     Dybvig), replacing M3-08's coinductive walk; still iterative (rule 4).
   - **Done when** `tests/spec/deep-equal` and the `equal?` tests pass and the
