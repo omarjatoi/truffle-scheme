@@ -299,6 +299,14 @@ def listed_exceptions(suite, section, output):
     return marks
 
 
+def exception_count(suite, section, result):
+    """How many of a section's failing tests the suite lists as exceptions: counted from its
+    output, or as a result records it."""
+    if 'exceptions' in result:
+        return result['exceptions']
+    return sum(listed_exceptions(suite, section, result['output']))
+
+
 def _temp_dir(prefix):
     return tempfile.mkdtemp(prefix=prefix, dir=os.environ.get('TEST_TMPDIR'))
 
@@ -437,7 +445,7 @@ def suite_block(suite, results):
         total += s.total
         row = f'| {s.title}{" (compiled: depends on speed)" if s.jit else ""} | {result["pass"]} | {s.total} |'
         if listing:
-            exceptions = sum(listed_exceptions(suite, s, result['output']))
+            exceptions = exception_count(suite, s, result)
             total_exceptions += exceptions
             row += f' {exceptions} |'
         lines.append(row)

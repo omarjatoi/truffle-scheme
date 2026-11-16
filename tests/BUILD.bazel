@@ -127,16 +127,43 @@ filegroup(
     srcs = glob(["r7rs-larceny/**"]) + glob(["lib/**"]),
 )
 
-# `conformance_results_<suite>` (cached build actions), `conformance_status` (docs/plan.md's status
-# block is current) and `conformance_torture_<suite>` (no section passes less under torture).
+# The suites' sections, as their sections.tsv lists them (the vendored suites don't change).
+CHIBI_SECTIONS = ["4.1", "4.2", "4.3", "5", "6.1", "6.2", "6.3", "6.4", "6.5", "6.6", "6.7", "6.8", "6.9", "6.10", "6.11", "6.12", "6.13", "6.14"]
+
+LARCENY_SECTIONS = [
+    "base",
+    "case-lambda",
+    "char",
+    "complex",
+    "cxr",
+    "eval",
+    "file",
+    "inexact",
+    "lazy",
+    "load",
+    "read",
+    "repl",
+    "time",
+    "write",
+    "process-context",
+    "process-context-getenv",
+    "process-context-emergency-exit",
+    "process-context-emergency-exit-37",
+    "process-context-exit",
+    "process-context-exit-46",
+]
+
+# `conformance_<suite>_<section>`, `conformance_compile_<suite>_<section>` and
+# `conformance_torture_<suite>_<section>`: each section passes, interpreted, compiled and under
+# torture, but for the listed exceptions. `conformance_status`: docs/plan.md's status block is
+# what they check.
 conformance_tests(
     name = "conformance",
-    module = "//:launcher_module",
     plan = "//:docs/plan.md",
     runtime = "//:launcher_runtime",
     suites = {
-        "chibi": ":chibi_suite",
-        "larceny": ":larceny_suite",
+        "chibi": (":chibi_suite", CHIBI_SECTIONS),
+        "larceny": (":larceny_suite", LARCENY_SECTIONS),
     },
 )
 
