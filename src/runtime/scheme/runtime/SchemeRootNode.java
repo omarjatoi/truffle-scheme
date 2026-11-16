@@ -271,6 +271,26 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
         }
     }
 
+    /**
+     * The value a suspended frame is resumed with: the value of its call. A {@link SchemeError}
+     * instead is an uncaught error unwinding through the frame (plan.md M6-04, {@code PromptDriver}):
+     * the frame throws it from its call site, so the error's guest stack trace has the frame. An
+     * error is never a Scheme value, so no call returns one. The frame's location is its call's,
+     * whose bytecode index the call stored.
+     */
+    @Operation(storeBytecodeIndex = false)
+    public static final class Resumed {
+        @Specialization
+        static Object doUnwind(SchemeError error) {
+            throw error;
+        }
+
+        @Fallback
+        static Object doValue(Object value) {
+            return value;
+        }
+    }
+
     // ------------------------------------------------------------------------------------------
     // Procedures and arguments
 

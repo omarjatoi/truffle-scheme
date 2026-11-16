@@ -1,6 +1,11 @@
 package scheme.runtime;
 
+import java.util.List;
+
+import com.oracle.truffle.api.TruffleStackTraceElement;
+import com.oracle.truffle.api.frame.Frame;
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.nodes.RootNode;
 
 /**
@@ -13,7 +18,7 @@ public final class PromptProcedureRootNode extends RootNode {
     @Child private PromptDriver driver;
 
     PromptProcedureRootNode(SchemeLanguage language) {
-        super(language);
+        super(language, PromptDriver.frameDescriptor());
         this.driver = new PromptDriver();
     }
 
@@ -25,7 +30,22 @@ public final class PromptProcedureRootNode extends RootNode {
         }
         SchemeContext context = SchemeContext.get(this);
         Object first = driver.callThunk(arguments[2]);
-        return driver.run(arguments[1], first, null, context);
+        return driver.run(frame, arguments[1], first, null, context);
+    }
+
+    /** The frames pending in this prompt, on the heap (plan.md M6-04): tools show them after it. */
+    @Override
+    protected List<TruffleStackTraceElement> findAsynchronousFrames(Frame frame) {
+        return PromptDriver.pendingFrames(frame);
+    }
+
+    /**
+     * No instrumentable node: so a debugger lists this frame (it skips a frame whose call node isn't
+     * in instrumented code), and finds the frames pending in it (plan.md M6-04).
+     */
+    @Override
+    protected Node findInstrumentableCallNode(Node callNode, Frame frame, int bytecodeIndex) {
+        return null;
     }
 
     @Override
