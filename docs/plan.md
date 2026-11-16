@@ -347,9 +347,85 @@ They follow design.md D3, D4, D5 and D7.
 
 ## M4 · Fan-out (parallel agents)
 
-One agent per area: numeric tower, characters and strings, lists and vectors,
-bytevectors, control and exceptions, I/O and ports, `eval` and environments,
-process context and time.
+One task per area (AGENTS.md "Areas"). Each touches only its area's files: its
+builtins file, its prelude and declarations files, its own tests
+(`tests/scheme/test/<Area>Test.java`, `tests/diff/<area>-*.scm`). If an area
+needs a procedure another area owns, add it to that area's files in a separate
+PR first. Every task is *(early)*: they need only M3, so they can run in
+parallel. Section counts are from the status block when M4 was drafted.
+
+- [ ] **M4-01 · Numeric tower** *(early)*
+  - The rest of R7RS §6.2 and `(scheme complex)`, `(scheme inexact)`
+    (design.md D1): complex numbers (`SComplex`, same-exactness parts),
+    `exact`/`inexact` on every type, `floor/` `truncate/` and the quotient
+    families, `gcd` `lcm` `numerator` `denominator` `rationalize`, `min`
+    `max` (inexact contagion), `floor` `ceiling` `round` `truncate`,
+    `exact-integer?` and friends, `string->number` (every R7RS number syntax,
+    sharing the reader's parser) and `number->string` in every radix,
+    transcendental functions with R7RS's branch cuts. Arithmetic keeps its
+    `long`/`double` fast paths with overflow into `SBigInteger`.
+  - **Done when** section 6.2 (129/211) passes in full, normally and under
+    `--torture`, and `tests/diff/numbers-*.scm` programs match chibi.
+- [ ] **M4-02 · Characters, strings and symbols** *(early)*
+  - R7RS §6.5–6.7 and `(scheme char)`: every character procedure (simple case
+    mapping, `digit-value`), every string procedure (`SString`'s Latin-1 and
+    UTF-32 storage, full case mapping for `string-upcase` and friends,
+    `Locale.ROOT`, design.md D9), `string->symbol`, `symbol->string`,
+    `symbol=?`, `string-map` and `string-for-each` in the prelude (D5).
+  - **Done when** sections 6.5 (6/17), 6.6 (0/79) and 6.7 (10/130) pass in
+    full, normally and under `--torture`.
+- [ ] **M4-03 · Lists and vectors** *(early)*
+  - R7RS §6.4 and §6.8: `list?` (tortoise and hare, D9), `make-list`,
+    `list-tail` `list-ref` `list-set!` `list-copy`, `member` and `assoc` with
+    an optional predicate, the `vector` procedures (`vector-copy`
+    `vector-copy!` `vector-append` `vector-fill!` with ranges,
+    `vector->list` `list->vector`, `vector->string` `string->vector`),
+    `vector-map` and `vector-for-each` in the prelude (D5), and the rest of
+    `(scheme cxr)`.
+  - **Done when** sections 6.4 (39/65) and 6.8 (10/43) pass in full,
+    normally and under `--torture`.
+- [ ] **M4-04 · Bytevectors** *(early)*
+  - R7RS §6.9 on `SBytevector`: `bytevector` `make-bytevector`
+    `bytevector-u8-ref` `bytevector-u8-set!` `bytevector-length`
+    `bytevector-copy` `bytevector-copy!` `bytevector-append`, `utf8->string`
+    and `string->utf8` with ranges; literals are immutable.
+  - **Done when** section 6.9 (0/39) passes in full, normally and under
+    `--torture`.
+- [ ] **M4-05 · Control, booleans and exceptions** *(early)*
+  - R7RS §6.3, §6.10 and §6.11: `boolean=?`, `procedure?`, the rest of
+    `apply` `map` `for-each` `call-with-values` `dynamic-wind` (multiple
+    lists, re-entry safety), `string-map` `vector-map` if M4-02/03 haven't,
+    `values` edge cases, the error-object and condition behaviour §6.11
+    tests, and `make-parameter`'s remaining cases.
+  - **Done when** sections 6.3 (10/18), 6.10 (19/34) and 6.11 (14/30) pass in
+    full, normally and under `--torture`.
+- [ ] **M4-06 · Input and output** *(early)*
+  - R7RS §6.13 and `(scheme read)`, `(scheme write)`, `(scheme file)`:
+    input ports (string, bytevector, file), binary ports, `read-char`
+    `peek-char` `read-line` `read-string` `read-u8` `char-ready?`, `read`
+    (the reader, raising read errors, D8), `write`/`display`/`write-shared`
+    on every port, file ports through `TruffleFile` (D10),
+    `call-with-port`, `with-input-from-file` and friends (as parameterize
+    over `current-input-port`/`current-output-port`), `eof-object`, and the
+    "Read syntax" and "Numeric syntax" groups.
+  - **Done when** section 6.13 (7/376) passes in full, normally and under
+    `--torture`.
+- [ ] **M4-07 · eval and environments** *(early)*
+  - R7RS §6.12: `eval` compiles in the given environment and tail-calls the
+    result (design.md D6, D5), `environment` returns a fresh environment
+    importing the given libraries (D7), `interaction-environment`,
+    `scheme-report-environment`, `null-environment`.
+  - **Done when** section 6.12 (0/4) passes in full, normally and under
+    `--torture`.
+- [ ] **M4-08 · Process context and time** *(early)*
+  - R7RS §6.14: `exit` runs the outstanding after-thunks through `rewind`
+    and exits the context (D9; `EXIT` through interop, D13),
+    `emergency-exit` skips them, `command-line`, `get-environment-variable(s)`
+    (through the Env, D10), `current-second`, `current-jiffy`,
+    `jiffies-per-second`, `features`.
+  - **Done when** section 6.14 (0/13) passes in full, normally and under
+    `--torture`, and `tests/spec/cont-exit` runs (its `_SPEC_PENDING` entry
+    goes) and passes.
 
 **Exit:** 100% of the chibi suite, both normally and with `--torture`.
 
