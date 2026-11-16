@@ -19,13 +19,13 @@ jobs:
   # Required check on main: build and static checks.
   checks:
     name: Checks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: DeterminateSystems/determinate-nix-action@v3
       # Maven jars (Truffle, JUnit, checkstyle, SpotBugs, ...) that mx downloads, keyed by the pinned versions.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/.mx/cache
           key: mx-cache-${{ runner.os }}-${{ hashFiles('mx.r7rs/suite.py', 'flake.lock') }}
@@ -47,15 +47,41 @@ jobs:
       - name: Rule checks (AGENTS.md)
         run: nix develop --command mx checks rules
 
-  # Required check on main: all tests.
-  tests:
-    name: Tests
-    runs-on: ubuntu-latest
+  # The steps of `mx tests`, spread over parallel jobs so the slow ones (unit tests in
+  # compile-immediately mode, spec, torture) don't queue behind each other. Each job builds
+  # for itself and runs only its own steps; the others show as skipped. Together they run
+  # every step of `mx tests`. The `Tests` job below is the required check and passes only
+  # if every one of these jobs passed.
+  test-jobs:
+    name: Tests (${{ matrix.name }})
+    runs-on: ubuntu-26.04
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: unit, status, diff
+            steps: [unittest, conformance, diff]
+          # The two slowest steps keep all of a runner's cores busy (mx runs their JVMs in
+          # parallel), so each is split over two runners: every other test class or case.
+          - name: unit, compile immediately 1/2
+            steps: [unittest-compile]
+            shard: 1/2
+          - name: unit, compile immediately 2/2
+            steps: [unittest-compile]
+            shard: 2/2
+          - name: spec 1/2
+            steps: [spec]
+            shard: 1/2
+          - name: spec 2/2
+            steps: [spec]
+            shard: 2/2
+          - name: torture, space
+            steps: [torture, space]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: DeterminateSystems/determinate-nix-action@v3
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/.mx/cache
           key: mx-cache-${{ runner.os }}-${{ hashFiles('mx.r7rs/suite.py', 'flake.lock') }}
@@ -63,26 +89,49 @@ jobs:
       - name: Build
         run: nix develop --command mx build
       - name: Unit tests
+        if: contains(matrix.steps, 'unittest')
         run: nix develop --command mx tests unittest
-      - name: Unit tests (compile immediately)
-        run: nix develop --command mx tests unittest-compile
+      - name: Unit tests (compile immediately) ${{ matrix.shard }}
+        if: contains(matrix.steps, 'unittest-compile')
+        run: nix develop --command sh -c 'mx r7rs-unittest --compile --jobs "$(nproc)" --shard ${{ matrix.shard }}'
       - name: Conformance status block is up to date
+        if: contains(matrix.steps, 'conformance')
         run: nix develop --command mx tests conformance
       - name: Differential tests (tests/diff vs chibi-scheme)
+        if: contains(matrix.steps, 'diff')
         run: nix develop --command mx tests diff
       - name: Constant stack (tail loop, deep recursion under -Xss256k)
+        if: contains(matrix.steps, 'space')
         run: nix develop --command mx tests space
-      - name: Spec tests
-        run: nix develop --command mx tests spec
+      - name: Spec tests ${{ matrix.shard }}
+        if: contains(matrix.steps, 'spec')
+        run: nix develop --command mx r7rs-spec --shard ${{ matrix.shard }}
       - name: Torture
+        if: contains(matrix.steps, 'torture')
         run: nix develop --command mx tests torture
+
+  # Required check on main: all tests. It passes only if every test job above succeeded;
+  # a failed, cancelled or skipped test job fails it.
+  tests:
+    name: Tests
+    needs: test-jobs
+    if: always()
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    steps:
+      - name: Every test job passed
+        env:
+          RESULT: ${{ needs.test-jobs.result }}
+        run: |
+          echo "Test jobs: $RESULT"
+          test "$RESULT" = success
 
   # Progress tracking, not a merge gate: the main ruleset requires only Checks and
   # Tests, and continue-on-error keeps a failing run from marking the workflow red.
   # Each run's per-section table is in the workflow run summary.
   conformance:
     name: Conformance (${{ matrix.mode }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 60
     continue-on-error: true
     strategy:
@@ -94,9 +143,9 @@ jobs:
           - mode: compile
             flags: "--compile"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: DeterminateSystems/determinate-nix-action@v3
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/.mx/cache
           key: mx-cache-${{ runner.os }}-${{ hashFiles('mx.r7rs/suite.py', 'flake.lock') }}
