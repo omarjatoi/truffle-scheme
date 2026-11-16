@@ -26,13 +26,13 @@ edit it by hand.
 | 6.6 Characters | 0 | 79 |
 | 6.7 Strings | 10 | 130 |
 | 6.8 Vectors | 11 | 43 |
-| 6.9 Bytevectors | 0 | 39 |
+| 6.9 Bytevectors | 39 | 39 |
 | 6.10 Control Features | 19 | 34 |
 | 6.11 Exceptions | 14 | 30 |
 | 6.12 Environments and evaluation | 0 | 4 |
 | 6.13 Input and output | 7 | 376 |
 | 6.14 System interface | 0 | 13 |
-| **Total** | **493** | **1225** |
+| **Total** | **532** | **1225** |
 <!-- status:end -->
 
 ---
@@ -384,7 +384,7 @@ parallel. Section counts are from the status block when M4 was drafted.
     `(scheme cxr)`.
   - **Done when** sections 6.4 (39/65) and 6.8 (10/43) pass in full,
     normally and under `--torture`.
-- [ ] **M4-04 · Bytevectors** *(early)*
+- [x] **M4-04 · Bytevectors** *(early)*
   - R7RS §6.9 on `SBytevector`: `bytevector` `make-bytevector`
     `bytevector-u8-ref` `bytevector-u8-set!` `bytevector-length`
     `bytevector-copy` `bytevector-copy!` `bytevector-append`, `utf8->string`
