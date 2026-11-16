@@ -23,12 +23,16 @@ import org.junit.Test;
  * Java stack the thread has, so these recursions of a few thousand calls spill many times. The
  * counts of in-place and copied resumes ({@code (%in-place-resumes)}, {@code (%copied-resumes)})
  * are checked outside torture mode only: under torture, every non-tail call captures, so every
- * segment is shared and copied, as before, and only the results are checked.
+ * segment is shared and copied, as before, and only the results are checked. Under owned torture
+ * ({@code -Dscheme.torture.owned=true}, {@code //tests:unit_torture_owned}) the torture captures'
+ * frames are owned too, so every non-tail call resumes frames in place: a recursion that captures
+ * no continuation still copies none.
  */
 public class OwnedSegmentsTest {
 
     private static final String SCHEME = "scheme";
     private static final boolean TORTURE = Boolean.getBoolean("scheme.torture");
+    private static final boolean OWNED_TORTURE = TORTURE && Boolean.getBoolean("scheme.torture.owned");
 
     /** The recursions' depth and what {@link #RECURSIONS}' {@code down} and {@code up} return for it. */
     private static final int N = 3000;
@@ -93,7 +97,11 @@ public class OwnedSegmentsTest {
             assertEquals("10000", eval(context, "(count 0 10000)"));
             long[] d = since(before, context);
             assertTrue("spills: " + d[0], d[0] > 100);
-            if (TORTURE) {
+            if (OWNED_TORTURE) {
+                // Every frame spilled or was tortured, and was resumed in place, most many times.
+                assertTrue("in place: " + d[1], d[1] >= 10000);
+                assertEquals("copied", 0, d[2]);
+            } else if (TORTURE) {
                 assertTrue("copied: " + d[2], d[2] > 0);
             } else {
                 // Every frame but the last few, on the Java stack, spilled and was resumed in place.
@@ -159,7 +167,7 @@ public class OwnedSegmentsTest {
             before = counts(context);
             assertEquals("5000", eval(context, "(count 0 5000)"));
             d = since(before, context);
-            if (!TORTURE) {
+            if (!TORTURE || OWNED_TORTURE) {
                 assertTrue("in place: " + d[1], d[1] >= 5000 - 100);
                 assertEquals("copied", 0, d[2]);
             }

@@ -50,20 +50,21 @@ chibi_output = rule(
 )
 
 def diff_tests(name, srcs, module, chibi):
-    """`<name>_<program>` and `<name>_torture_<program>`: the same stdout and exit status as chibi-scheme,
-    whose output for each program is a build action (`<name>_chibi_<program>`), so it reruns only when
-    the program or chibi-scheme changes. The tests run tests/driver's Diff, in the pinned JDK."""
+    """`<name>_<program>`, `<name>_torture_<program>` and `<name>_torture_owned_<program>`: the same
+    stdout and exit status as chibi-scheme, whose output for each program is a build action
+    (`<name>_chibi_<program>`), so it reruns only when the program or chibi-scheme changes. The tests
+    run tests/driver's Diff, in the pinned JDK."""
     tests = []
     for src in srcs:
         base = src.rsplit("/", 1)[-1].removesuffix(".scm")
         expected = "%s_chibi_%s" % (name, base)
         chibi_output(name = expected, src = src, chibi = chibi)
-        for torture in ("", "torture_"):
+        for torture in ("", "torture_", "torture_owned_"):
             java_driver_test(
                 name = name + "_" + torture + base,
                 args = ["--file=$(rlocationpath %s)" % src] +
                        ["--chibi-%s=$(rlocationpath :%s.%s)" % (part, expected, part) for part in ("out", "err", "status")] +
-                       (["--torture=true"] if torture else []),
+                       (["--torture=" + torture.removesuffix("_")] if torture else []),
                 data = [src] + [":%s.%s" % (expected, part) for part in ("out", "err", "status")],
                 main = "Diff",
                 module = module,
@@ -123,12 +124,14 @@ _CONFORMANCE_MODES = {
     "interpreter": ("", "medium", []),
     "compile": ("compile_", "large", ["cpu:2"]),
     "torture": ("torture_", "large", ["cpu:2"]),
+    "torture_owned": ("torture_owned_", "large", ["cpu:2"]),
 }
 
 def conformance_tests(name, module, suites, plan):
     """For each suite (`{suite: (files, directory, [section id, ...])}`), each section and each mode,
-    a test: `<name>_<suite>_<section>` (interpreted), `<name>_compile_<suite>_<section>` and
-    `<name>_torture_<suite>_<section>`, tests/driver's Conformance in the pinned JDK. Each passes when
+    a test: `<name>_<suite>_<section>` (interpreted), `<name>_compile_<suite>_<section>`,
+    `<name>_torture_<suite>_<section>` and `<name>_torture_owned_<suite>_<section>` (torture whose
+    captures stay owned), tests/driver's Conformance in the pinned JDK. Each passes when
     every test of the section passes but the suite's listed exceptions, which must fail.
     `<name>_status`: docs/plan.md's status block is what they check (editing plan.md reruns only it)."""
     tests = []

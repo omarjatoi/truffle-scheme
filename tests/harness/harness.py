@@ -30,6 +30,9 @@ INTERPRETER_VM_ARGS = [
 ]
 # Torture: capture + resume at every non-tail call.
 TORTURE_VM_ARGS = ['-Dscheme.torture=true']
+# Owned torture: the same, but the captured frames stay owned, so they are resumed in place
+# (design.md "Owned segments").
+TORTURE_OWNED_VM_ARGS = TORTURE_VM_ARGS + ['-Dscheme.torture.owned=true']
 # Truffle on JDK 25 uses restricted native access and sun.misc.Unsafe; so does JLine, for the
 # REPL's terminal (M7-07).
 TRUFFLE_VM_ARGS = [
@@ -40,9 +43,11 @@ LAUNCHER_MAIN = 'scheme.launcher/scheme.launcher.SchemeMain'
 
 
 def vm_args(compile=False, torture=False):
-    """Interpreter only unless compile, plus torture."""
+    """Interpreter only unless compile, plus torture (true, or 'owned' for owned torture)."""
     args = list(COMPILE_VM_ARGS if compile else INTERPRETER_VM_ARGS)
-    if torture:
+    if torture == 'owned':
+        args += TORTURE_OWNED_VM_ARGS
+    elif torture:
         args += TORTURE_VM_ARGS
     return args
 

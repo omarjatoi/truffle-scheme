@@ -181,13 +181,28 @@ full R7RS-small conformance comes first.
     good: creating a `Continuation` (`call/cc`, a delimited capture, so
     `guard` and `raise` handlers, generators, and continuations an embedder
     re-enters through interop), and a torture-mode capture (so torture
-    checks every resume as before). A segment that a capture re-links from
+    checks every resume as before; not under owned torture, below). A segment that a capture re-links from
     an inner prompt's pending list into another (`Capture.addOuter`, the
     flattening of `%call-with-prompt`, `guard` and `%call/ec` prompts) is
     made shared too. Every other segment (from a `call/cc` or delimited
-    capture, torture, a composable continuation's frames) is shared from the
-    start. Tools only read pending frames (M6-04), and an error that unwinds
+    capture, plain torture, a composable continuation's frames) is shared
+    from the start. Tools only read pending frames (M6-04), and an error that unwinds
     through pending frames resumes copies, so neither changes ownership.
+  - *Checked by two torture modes.* Torture (`-Dscheme.torture=true`)
+    shares every capture, so every resume is from a copy, checked against
+    the original (AGENTS.md rule 3). Owned torture (with
+    `-Dscheme.torture.owned=true` too) keeps a torture capture's segments
+    owned, as a spill's (the driver claims them, and doesn't bump the epoch),
+    so every non-tail call's return resumes frames in place, and whatever a
+    continuation then reaches is copied and checked. In both, a segment
+    resumed in place that is resumed again, in place or from a copy, is an
+    internal error: the sign of a continuation that reached an owned segment.
+    Both run the unit tests, every conformance section and the `tests/diff`
+    programs. With the epoch bump taken out of `Continuation.capture`, owned
+    torture fails 14 targets (conformance chibi 6.10 and Larceny's base, two
+    diff programs, ten unit test classes), plain torture none, and the JIT
+    and compiled modes only the tests that spill (`OwnedSegmentsTest`,
+    `SpillTest`, `SpilledFramesTest`, `tests/spec/cont-deep`).
   - *Why:* a spill of a recursion deeper than the stack (`ack(3,12)`) copies
     nearly every frame once, about 1 KB and 240 ns each (M8-01), and nothing
     can ever see the original again. Resuming in place cut `ack(3,10)` by
@@ -736,7 +751,7 @@ Each entry: the decision, why, and what was rejected.
   `.#ci` shell): the lint tests and the other tests. The required check is the
   build (`buildkite/truffle-scheme`); the pipeline says which steps can
   fail it. Conformance is a test per suite section and mode (interpreted,
-  compiled, under torture), which passes when every test of the section
+  compiled, under torture and owned torture), which passes when every test of the section
   passes but the suite's listed exceptions, and those fail; docs/plan.md's
   status block is what they check, and the per-section table is a report
   of their results.
@@ -1220,7 +1235,8 @@ Each entry: the decision, why, and what was rejected.
   image picks it up: the prelude's resources, and build-time initialization
   of the language's packages, as GraalVM's own languages have (the language
   provider and the DSL-generated library exports live in the image heap).
-  Static state then keeps its build-time value: `-Dscheme.torture` and
+  Static state then keeps its build-time value: `-Dscheme.torture` (and
+  `.owned`) and
   `-Dscheme.preludeImage` (and its `.file`) have no effect in a native image,
   so torture mode needs the JVM. No reflection configuration is needed (D10).
   - The build-time prelude image (D13, M7-05) is read and checked when

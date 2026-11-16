@@ -8,7 +8,8 @@ import java.util.Map;
  * as under chibi-scheme, whose output is a build action's (tests/harness/defs.bzl chibi_output).
  *
  * <p>
- * {@code --module-path=JARS --file=PROGRAM --chibi-out=F --chibi-err=F --chibi-status=F [--torture=true]}
+ * {@code --module-path=JARS --file=PROGRAM --chibi-out=F --chibi-err=F --chibi-status=F
+ * [--torture=torture|torture_owned]} ({@link Launch#vmArgs})
  */
 public final class Diff {
 
@@ -21,7 +22,7 @@ public final class Diff {
         String chibiOut = Launch.read(Launch.runfile(launch.option("chibi-out")));
         String chibiErr = Launch.read(Launch.runfile(launch.option("chibi-err")));
         int chibiStatus = Integer.parseInt(Launch.read(Launch.runfile(launch.option("chibi-status"))).strip());
-        Launch.Result ours = launch.run(Launch.vmArgs(false, launch.flag("torture")), Launch.LAUNCHER_MAIN,
+        Launch.Result ours = launch.run(Launch.vmArgs(false, launch.options.get("torture")), Launch.LAUNCHER_MAIN,
                         List.of(Launch.runfile(file).toString()), null, Map.of(), 600);
         if (ours.status() == chibiStatus && ours.out().equals(chibiOut)) {
             Launch.log("same (exit " + ours.status() + ", " + ours.out().length() + " chars of stdout): " + file);

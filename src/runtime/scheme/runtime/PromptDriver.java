@@ -125,8 +125,13 @@ final class PromptDriver extends Node {
                                 return capture;
                             }
                             context.tortureCaptures++;
-                            // Torture checks every resume (rule 3): so every segment is shared.
-                            context.shareSegments();
+                            if (SchemeRootNode.TORTURE_OWNED) {
+                                // Owned torture: only this driver holds the frames, as a spill's.
+                                capture.claim(context);
+                            } else {
+                                // Torture checks every resume (rule 3): so every segment is shared.
+                                context.shareSegments();
+                            }
                             pending = capture.segmentsBefore(pending);
                             value = capture.value;
                             continue;
@@ -275,12 +280,18 @@ final class PromptDriver extends Node {
     private Object resume(Capture.Segment segment, Object value, SchemeContext context) {
         if (segment.isOwned(context)) {
             context.inPlaceResumes++;
+            if (SchemeRootNode.TORTURE) {
+                // Rule 3: an owned segment is resumed in place once, and never again (owned torture,
+                // SchemeRootNode.TORTURE_OWNED, does this at every non-tail call).
+                segment.checkResume(true);
+            }
             return resumeNode.execute(segment.root(), segment.frame(), value);
         }
         context.copiedResumes++;
         if (SchemeRootNode.TORTURE) {
             // Rule 3: resuming must never change the segment. Resume one copy, then check the
-            // original against a second, untouched copy.
+            // original against a second, untouched copy; and it was never resumed in place.
+            segment.checkResume(false);
             MaterializedFrame witness = copy(segment.frame());
             Object result = resumeNode.execute(segment.root(), copy(segment.frame()), value);
             checkUnchanged(segment.frame(), witness);
