@@ -164,7 +164,7 @@ Each entry: the decision, why, and what was rejected.
 | empty list, unspecified, eof, default object | singletons |
 | procedure | `SClosure { RootCallTarget, Object[] captured }` |
 | multiple values | a single value is returned as itself; zero or 2+ values are a `MultipleValues` (`Object[]`) |
-| record | `SRecord { SRecordType, Object[] fields }` |
+| record | `SRecord { SRecordType }`, a static object of Truffle's Static Object Model whose fields are its record fields (M7-04) |
 
 - `eq?` compares `long` and `SChar` by value and everything else by identity,
   so boxing never leaks into results.
@@ -187,12 +187,30 @@ Each entry: the decision, why, and what was rejected.
     fast paths, with overflow checks on the `long` path. `SBigInteger`,
     `SRational` and `SComplex` go through one generic path marked
     `@TruffleBoundary`, so compiled code stays small for the common cases.
+- **Records (M7-04)** are static objects (Truffle's Static Object Model):
+  their fields are fields of the object itself, so a record is one
+  allocation and a field access is a field load. A language has one
+  `StaticShape` per number of fields, every field an `Object`, shared by all
+  the record types with that many fields (`RecordShapes`); the record's type
+  is a field of `SRecord`. On HotSpot a shape is a class the model generates;
+  in a native image it is an array-based layout, built at run time without
+  reflection configuration. Each evaluation of a `define-record-type` makes
+  a new `SRecordType`, and a constructor, predicate, accessors and modifiers
+  that are primitives made for that type (`%record-constructor`,
+  `%record-accessor`, ...), named by their bindings: their nodes hold the
+  type and the fields' properties as constants, so call sites run them in
+  place (M5-09), and an accessor compiles to a type check and a field load.
+  Interop and the debugger see the fields as read-only members (D10).
 - *Rejected:* `MutableTruffleString` for strings (no compaction, conversion
   costs on every operation); Java `String` (UTF-16, immutable); inexact-only
   complex numbers (the chibi suite assumes the full tower); complex numbers
   with mixed-exactness parts (adds cases to every operation for almost no
-  real use); Truffle's Static Object Model for records (revisit in M5 if
-  profiles show it matters).
+  real use); records as an `Object[]` of fields with accessors that are
+  closures over a generic `%record-ref` (two allocations per record, and a
+  Truffle call, index unboxing and an array bounds check per access: what
+  M7-04 replaced); a shape per record type (a generated class per evaluation
+  of a definition, so a definition in a loop or in `eval` makes classes
+  without bound; the type check it would save is one field load).
 
 ### D2. Closures: flat closures with assignment conversion
 
@@ -480,7 +498,7 @@ Each entry: the decision, why, and what was rejected.
   launcher (D17) is built without any reflection configuration.
 - **Deferred to M5:** escape-only `call/cc` (done, M5-04), Fixing Letrec,
   vector storage strategies (done, M5-06), and the Static Object Model for
-  records.
+  records (done, M7-04, D1).
 
 ### D11. Build and tooling
 
@@ -565,8 +583,10 @@ Each entry: the decision, why, and what was rejected.
   compiles the code (`parse(InlineParsingRequest)`) as a body whose
   parameters are the frame's variables, in the interaction environment, and
   passes a boxed variable as its Box. A procedure's frames are named by its
-  binding (`define`, `let`, `letrec*`, `set!`, through a let body, as a
-  record accessor is), else by its location, `<lambda@file.scm:3:5>`;
+  binding (`define`, `let`, `letrec*`, `set!`, through a let body), else by
+  its location, `<lambda@file.scm:3:5>`; a record type's procedures are
+  primitives named by their bindings (D1), which have no frame when run in
+  place;
   `write` still shows only binding names. A `TailCall` (what a procedure
   ending in a tail call returns, so a debugger's return value after stepping
   out of it) shows as the call it stands for, `#<tail call (g 2)>`.

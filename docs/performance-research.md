@@ -399,7 +399,7 @@ performance. Don't add `injectBranchProbability` without evidence.
 - **Static Object Model for records** (D1 deferral). With item 7, a record
   access is a type check plus an array load at a constant index. SOM would
   remove one indirection. Revisit if a record-heavy benchmark profiles hot
-  there.
+  there. (Done in M7-04: design.md D1, "Records".)
 - **`TruffleString` for strings.** D1 rejects `MutableTruffleString` for
   good reasons, and the current `SString` already has O(1) indexing and
   Latin-1 compaction. Symbols already use `TruffleString` names.
