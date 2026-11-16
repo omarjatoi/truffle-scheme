@@ -2,6 +2,9 @@ package scheme.compiler;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.Set;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
@@ -9,6 +12,7 @@ import java.util.Map;
 
 import com.oracle.truffle.api.bytecode.BytecodeLabel;
 import com.oracle.truffle.api.bytecode.BytecodeLocal;
+import com.oracle.truffle.api.instrumentation.StandardTags;
 import com.oracle.truffle.api.source.Source;
 import com.oracle.truffle.api.source.SourceSection;
 
@@ -59,6 +63,8 @@ final class CodeGenerator {
     private final SchemeRootNodeGen.Builder b;
     private final Deque<Runnable> tasks = new ArrayDeque<>();
     private final Deque<State> states = new ArrayDeque<>();
+    /** The expressions in statement position: body sequence elements and root bodies. */
+    private final Set<Expr> statements = Collections.newSetFromMap(new IdentityHashMap<>());
 
     CodeGenerator(SchemeRootNodeGen.Builder b) {
         this.b = b;
@@ -87,32 +93,63 @@ final class CodeGenerator {
      */
     private Runnable gen(Expr e, Ctx ctx) {
         return () -> {
-            SourceSection section = e.source;
-            if (section == null || !section.isAvailable()) {
+            Class<?>[] tags = tags(e, ctx);
+            SourceSection section = e.source != null && e.source.isAvailable() ? e.source : null;
+            if (section == null && tags.length == 0) {
                 push(expand(e, ctx));
                 return;
             }
             State st = state();
             Source outer = st.source;
-            Source source = section.getSource();
+            Source source = section == null ? null : section.getSource();
             List<Runnable> seq = new ArrayList<>();
             seq.add(() -> {
-                if (source != outer) {
-                    b.beginSource(source);
-                    st.source = source;
+                if (section != null) {
+                    if (source != outer) {
+                        b.beginSource(source);
+                        st.source = source;
+                    }
+                    b.beginSourceSection(section.getCharIndex(), section.getCharLength());
                 }
-                b.beginSourceSection(section.getCharIndex(), section.getCharLength());
+                if (tags.length > 0) {
+                    b.beginTag(tags);
+                }
             });
             seq.addAll(expand(e, ctx));
             seq.add(() -> {
-                b.endSourceSection();
-                if (source != outer) {
-                    b.endSource();
-                    st.source = outer;
+                if (tags.length > 0) {
+                    b.endTag(tags);
+                }
+                if (section != null) {
+                    b.endSourceSection();
+                    if (source != outer) {
+                        b.endSource();
+                        st.source = outer;
+                    }
                 }
             });
             push(seq);
         };
+    }
+
+    /**
+     * Truffle's standard instrumentation tags for an expression (design.md D13): every call is a
+     * call; each expression of a body sequence and each root's body is a statement; an expression
+     * in value position is an expression (in tail position its operation is a void return). Tags
+     * cost nothing until a tool attaches.
+     */
+    private Class<?>[] tags(Expr e, Ctx ctx) {
+        List<Class<?>> tags = new ArrayList<>(3);
+        if (statements.contains(e)) {
+            tags.add(StandardTags.StatementTag.class);
+        }
+        if (e instanceof Ast.Call) {
+            tags.add(StandardTags.CallTag.class);
+        }
+        if (ctx == Ctx.VALUE && !(e instanceof Lambda fn && fn.program)) {
+            tags.add(StandardTags.ExpressionTag.class);
+        }
+        return tags.toArray(new Class<?>[0]);
     }
 
     private State state() {
@@ -160,6 +197,9 @@ final class CodeGenerator {
                 b.beginReturn();
             }
         });
+        if (!(fn.body instanceof Ast.Seq)) {
+            statements.add(fn.body);
+        }
         seq.add(gen(fn.body, fn.program ? Ctx.VALUE : Ctx.TAIL));
         seq.add(() -> {
             State st = states.pop();
@@ -288,6 +328,7 @@ final class CodeGenerator {
             List<Runnable> seq = new ArrayList<>();
             seq.add(b::beginBlock);
             for (int k = 0; k < s.body.size(); k++) {
+                statements.add(s.body.get(k));
                 seq.add(gen(s.body.get(k), k == s.body.size() - 1 ? ctx : Ctx.VALUE));
             }
             seq.add(b::endBlock);

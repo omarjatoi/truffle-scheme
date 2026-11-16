@@ -93,11 +93,7 @@ public final class Expander {
      */
     @TruffleBoundary
     public static String show(SymbolTable symbols, GlobalEnvironment globals, SyntacticEnvironment top, String program) {
-        Reader reader = Reader.forSource(Source.newBuilder(SchemeLanguage.ID, program, "show.scm").build(), symbols, true);
-        List<Object> forms = new ArrayList<>();
-        for (Object datum = reader.readSyntax(); datum != SConstant.EOF; datum = reader.readSyntax()) {
-            forms.add(datum);
-        }
+        List<Object> forms = readForms(Source.newBuilder(SchemeLanguage.ID, program, "show.scm").build(), symbols, false);
         return AstPrinter.print(new Expander(symbols, globals, top, null, null, null).expandProgram(forms).body);
     }
 
@@ -220,7 +216,7 @@ public final class Expander {
     private SchemeError syntax(String message, Object form) {
         Syntax at = form instanceof Syntax s && s.source != null ? s : current;
         String line = at == null ? "" : " (" + at.source.getSource().getName() + ", line " + at.source.getStartLine() + ", column " + at.source.getStartColumn() + ")";
-        return new SchemeError("syntax error: " + message + ": " + Printer.print(Syntax.toDatum(form), Printer.Mode.WRITE) + line);
+        return SchemeError.syntax("syntax error: " + message + ": " + Printer.print(Syntax.toDatum(form), Printer.Mode.WRITE) + line, at == null ? null : at.source, false);
     }
 
     /** The elements of a proper list (syntax objects stay wrapped), or a syntax error. */
@@ -454,11 +450,29 @@ public final class Expander {
         if (source == null) {
             throw syntax("cannot find file " + name, form);
         }
+        return readForms(source, symbols, foldCase);
+    }
+
+    /**
+     * Every form in program text, as syntax. A read error here is a syntax error, and an incomplete
+     * one if the text ended inside a datum (design.md D13); {@code read} at run time raises read
+     * errors instead.
+     */
+    @TruffleBoundary
+    static List<Object> readForms(Source source, SymbolTable symbols, boolean foldCase) {
         Reader reader = Reader.forSource(source, symbols, true);
         reader.setFoldCase(foldCase);
         List<Object> forms = new ArrayList<>();
-        for (Object datum = reader.readSyntax(); datum != SConstant.EOF; datum = reader.readSyntax()) {
-            forms.add(datum);
+        try {
+            for (Object datum = reader.readSyntax(); datum != SConstant.EOF; datum = reader.readSyntax()) {
+                forms.add(datum);
+            }
+        } catch (SchemeError e) {
+            if (e.isSyntaxError()) {
+                throw e;
+            }
+            SourceSection at = source.hasCharacters() && reader.line() <= source.getLineCount() ? source.createSection(reader.line()) : null;
+            throw SchemeError.syntax("syntax error: " + e.getMessage() + " (" + source.getName() + ")", at, reader.ranIntoEnd());
         }
         return forms;
     }

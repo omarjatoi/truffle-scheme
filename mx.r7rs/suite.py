@@ -168,6 +168,8 @@ suite = {
                 # interpreter-only runtime and the Graal JIT is never used.
                 "TRUFFLE_RUNTIME",
             ],
+            # A test instrument (ToolsTest) needs its generated registration.
+            "annotationProcessors": ["TRUFFLE_DSL_PROCESSOR"],
             "javaCompliance": "25+",
             "checkstyle": "scheme.runtime",
             "testProject": True,
