@@ -1,0 +1,50 @@
+# Buildkite pipeline: the Bazel build and tests that .github/workflows/bazel.yml runs.
+#
+# UNTESTED: written without a Buildkite organization to run it in. .buildkite/README.md says
+# which agents it expects, how they cache, and what switching from GitHub Actions takes.
+#
+# Upload it from the pipeline's settings with: buildkite-agent pipeline upload .buildkite/pipeline.yml
+#
+# Every command runs inside the Nix dev shell (`nix develop`), which provides bazelisk (as
+# `bazel`, at .bazelversion) and chibi-scheme; Bazel downloads its own pinned GraalVM, Maven
+# jars and Python. Agents keep Bazel's output base and caches between builds, so a build reruns
+# only what its change affects.
+
+steps:
+  - label: ":bazel: Checks"
+    key: checks
+    agents:
+      queue: bazel
+    timeout_in_minutes: 60
+    command:
+      # Every project (javac, warnings are errors) and the static checks; not the conformance
+      # suites, which `bazel build //...` would run (see .github/workflows/bazel.yml).
+      - nix develop --command bazel test --config=buildkite --build_tests_only --test_tag_filters=lint //...
+    # A commit status named like the required check on main.
+    notify:
+      - github_commit_status:
+          context: "Checks"
+
+  - label: ":bazel: Tests"
+    key: tests
+    agents:
+      queue: bazel
+    timeout_in_minutes: 60
+    command:
+      - nix develop --command bazel test --config=buildkite --test_tag_filters=-lint //...
+      # The interpreter-only conformance results, as the build's annotation.
+      - |
+        {
+          echo '### Conformance (interpreter only)'
+          cat bazel-bin/tests/conformance_results_chibi.md bazel-bin/tests/conformance_results_larceny.md
+        } | buildkite-agent annotate --style info --context conformance
+    artifact_paths:
+      - "bazel-testlogs/**/test.log"
+    retry:
+      automatic:
+        # An agent that disappears mid-build (spot instance, restart): run the step again.
+        - exit_status: -1
+          limit: 2
+    notify:
+      - github_commit_status:
+          context: "Tests"
