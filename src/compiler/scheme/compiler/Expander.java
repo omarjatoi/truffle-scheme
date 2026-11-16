@@ -178,6 +178,15 @@ public final class Expander {
         return x == y;
     }
 
+    /**
+     * Whether the identifier is bound lexically (a variable or a local macro), so that it is not
+     * {@code free-identifier=?} to a top-level or library binding of the same name.
+     */
+    boolean isLexicallyBound(Object id) {
+        Object binding = resolve(id);
+        return binding instanceof Var || binding instanceof Macro;
+    }
+
     /** The binding of the form's head identifier, or null if it isn't a list headed by one. */
     private Object headBinding(Object form) {
         return Syntax.e(form) instanceof SPair p && isIdentifier(p.car) ? resolve(p.car) : null;
@@ -532,9 +541,25 @@ public final class Expander {
         return forms;
     }
 
-    /** Every form in a file found in {@link #dir}, as syntax. */
+    /**
+     * Every form in a file, as syntax. R7RS §4.1.7 leaves the search to the implementation: the
+     * file is looked for next to the file the include form is in, then in {@link #dir} (the
+     * program's or library's directory), then in each directory of the library path ({@code -I}),
+     * since some libraries include files relative to the library root.
+     */
     List<Object> readFile(String name, boolean foldCase, Object form) {
-        Source source = dir == null ? null : dir.find(name);
+        Source source = null;
+        if (dir != null) {
+            if (form instanceof Syntax s && s.source != null && s.source.getSource().getPath() != null) {
+                source = dir.dirOf(s.source.getSource()).find(name);
+            }
+            if (source == null) {
+                source = dir.find(name);
+            }
+        }
+        if (source == null && libraries != null) {
+            source = libraries.findOnPath(name);
+        }
         if (source == null) {
             throw syntax("cannot find file " + name, form);
         }
@@ -1132,7 +1157,15 @@ public final class Expander {
         return (libraries == null ? namespace : libraries.primitives()).cell(symbols.intern(name));
     }
 
-    private record QTask(Object template, int depth, Object[] slot, int index) {
+    /**
+     * A part of a quasiquote template to expand into {@code slot[index]}. {@code operands}: the
+     * template is the operand list of an unquote, unquote-splicing or quasiquote, so its head is
+     * not a keyword.
+     */
+    private record QTask(Object template, int depth, Object[] slot, int index, boolean operands) {
+        QTask(Object template, int depth, Object[] slot, int index) {
+            this(template, depth, slot, index, false);
+        }
     }
 
     /**
@@ -1140,6 +1173,10 @@ public final class Expander {
      * (which the use site can't shadow), with constant parts folded back into literals. Nested
      * quasiquotes raise the level that unquote must reach. Built top-down on an explicit stack
      * (rule 4).
+     * <p>
+     * In a list, {@code (unquote e ...)} and {@code (unquote-splicing e ...)} may have any number
+     * of operands, with R6RS's meaning (§11.17): the values of all of them are inserted, or all
+     * spliced. R7RS calls such templates unpredictable, so this is a compatible extension.
      */
     private Object quasiquote(Object template, Lambda lambda) {
         GlobalCell cons = primitive("cons");
@@ -1155,37 +1192,42 @@ public final class Expander {
             Object d = Syntax.e(t.template());
             Object result;
             if (d instanceof SPair p) {
-                CoreForm head = isIdentifier(p.car) && resolve(p.car) instanceof CoreForm c ? c : null;
+                CoreForm head = !t.operands() && isIdentifier(p.car) && resolve(p.car) instanceof CoreForm c ? c : null;
                 boolean special = head == CoreForm.UNQUOTE || head == CoreForm.QUASIQUOTE || head == CoreForm.UNQUOTE_SPLICING;
-                List<Object> two = special ? list(t.template()) : null;
-                if (special && two.size() != 2) {
+                List<Object> operands = special ? list(t.template()) : null;
+                boolean multi = special && t.depth() > 0 && head != CoreForm.QUASIQUOTE;
+                if (special && !multi && operands.size() != 2) {
                     throw syntax(head.keyword + " takes one expression", t.template());
                 }
                 Object car = Syntax.e(p.car);
                 CoreForm carHead = car instanceof SPair q && isIdentifier(q.car) && resolve(q.car) instanceof CoreForm c ? c : null;
                 if (head == CoreForm.UNQUOTE && t.depth() == 0) {
-                    result = two.get(1);
+                    result = operands.get(1);
                 } else if (head == CoreForm.UNQUOTE_SPLICING && t.depth() == 0) {
                     throw syntax("unquote-splicing outside a list", t.template());
                 } else if (special) {
-                    // (unquote e), (unquote-splicing e) or (quasiquote e) at a deeper level: a list
-                    // of the keyword and e, one level in or out.
+                    // (unquote e ...), (unquote-splicing e ...) or (quasiquote e) at a deeper
+                    // level: a list of the keyword and the operands, one level in or out.
                     int depth = t.depth() + (head == CoreForm.QUASIQUOTE ? 1 : -1);
-                    PrimCall rest = new PrimCall(cons, null, new Ast.Const(SConstant.EMPTY_LIST));
-                    PrimCall call = new PrimCall(cons, new Ast.Const(symbols.intern(head.keyword)), rest);
+                    PrimCall call = new PrimCall(cons, new Ast.Const(symbols.intern(head.keyword)), null);
                     calls.add(call);
-                    calls.add(rest);
-                    tasks.push(new QTask(two.get(1), depth, rest.args, 0));
+                    tasks.push(new QTask(p.cdr, depth, call.args, 1, true));
                     t.slot()[t.index()] = call;
                     continue;
-                } else if (carHead == CoreForm.UNQUOTE_SPLICING && t.depth() == 0) {
-                    List<Object> splice = list(p.car);
-                    if (splice.size() != 2) {
-                        throw syntax("unquote-splicing takes one expression", p.car);
+                } else if ((carHead == CoreForm.UNQUOTE || carHead == CoreForm.UNQUOTE_SPLICING) && t.depth() == 0) {
+                    // (unquote e ...) inserts each value; (unquote-splicing e ...) splices each.
+                    List<Object> unquote = list(p.car);
+                    Object[] slot = t.slot();
+                    int index = t.index();
+                    for (Object e : unquote.subList(1, unquote.size())) {
+                        PrimCall call = new PrimCall(carHead == CoreForm.UNQUOTE ? cons : append, e, null);
+                        calls.add(call);
+                        slot[index] = call;
+                        slot = call.args;
+                        index = 1;
                     }
-                    PrimCall call = new PrimCall(append, splice.get(1), null);
-                    tasks.push(new QTask(p.cdr, t.depth(), call.args, 1));
-                    result = call;
+                    tasks.push(new QTask(p.cdr, t.depth(), slot, index));
+                    continue;
                 } else {
                     PrimCall call = new PrimCall(cons, null, null);
                     tasks.push(new QTask(p.cdr, t.depth(), call.args, 1));

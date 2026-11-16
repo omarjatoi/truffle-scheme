@@ -137,6 +137,15 @@ public class ReaderTest {
     }
 
     @Test
+    public void lineCommentsEndAtAnyLineEnding() {
+        // R7RS §7.1.1: a line ending is \n, \r or \r\n (M4-12, Larceny's read tests).
+        Reader r = Reader.forString("yes; this is a comment \nbut;\r\n this is;too\rnot", symbols, false);
+        assertEquals("yes but this is not", String.join(" ", Printer.print(r.read(), Mode.WRITE), Printer.print(r.read(), Mode.WRITE), Printer.print(r.read(), Mode.WRITE),
+                        Printer.print(r.read(), Mode.WRITE), Printer.print(r.read(), Mode.WRITE)));
+        assertSame(SConstant.EOF, r.read());
+    }
+
+    @Test
     public void errorsReportTheLine() {
         assertTrue(readError("\n\n(1 . 2 3)").getMessage().contains("line 3"));
     }

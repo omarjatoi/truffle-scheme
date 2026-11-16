@@ -165,6 +165,26 @@ public class DerivedSyntaxTest {
     }
 
     @Test
+    public void quasiquoteWithSeveralOperands() {
+        // M4-12: R7RS calls (unquote e ...) with other than one operand unpredictable; we give it
+        // R6RS's meaning (§11.17), as Larceny's base tests expect: in a list, every operand's value
+        // is inserted, or spliced.
+        check("(foo foo foo)", "(let ((name 'foo)) `((unquote name name name)))");
+        check("(foo foo foo)", "(let ((name '(foo))) `((unquote-splicing name name name)))");
+        check("(a b)", "`(a (unquote) b)");
+        check("(a 1 2 3 b)", "(let ((x '(1 2)) (y '(3))) `(a (unquote-splicing x y) b))");
+        check("(foo (2 3 4 5) -9)", "(let ((x '(2 3)) (y '(4 5))) `(foo (unquote (append x y) (- 9))))");
+        // At a deeper level they stay, and an unquote-splicing inside one splices into it.
+        check("(quasiquote (foo (unquote (append x y) (sqrt 9))))", "(let ((q '((append x y) (sqrt 9)))) ``(foo ,,@q))");
+        check("(quasiquote (a (unquote x y)))", "``(a (unquote x y))");
+        try (Context context = Context.create(SCHEME)) {
+            // Outside a list, unquote still takes one expression.
+            PolyglotException e = assertThrows(PolyglotException.class, () -> context.eval(SCHEME, "`(unquote 1 2)"));
+            assertTrue(e.getMessage(), e.getMessage().contains("unquote takes one expression"));
+        }
+    }
+
+    @Test
     public void caseLambda() {
         // §4.2.9
         String range = "(define range (case-lambda ((e) (range 0 e)) ((b e) (do ((r '() (cons e r)) (e (- e 1) (- e 1))) ((< e b) r)))))";

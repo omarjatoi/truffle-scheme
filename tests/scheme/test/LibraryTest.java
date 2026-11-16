@@ -170,6 +170,22 @@ public class LibraryTest {
     }
 
     @Test
+    public void includeSearchesNextToTheIncludingFileThenTheLibraryPath() throws IOException {
+        // M4-12: Larceny's libraries include files by their path from the library root (R7RS
+        // §4.1.7 leaves the search to the implementation), and an included file includes files
+        // next to itself.
+        file("suite/tests/lib.sld", """
+                        (define-library (suite tests lib)
+                          (import (scheme base))
+                          (export a b)
+                          (include "suite/tests/parts/a.scm"))
+                        """);
+        file("suite/tests/parts/a.scm", "(define a 1) (include \"b.scm\")");
+        file("suite/tests/parts/b.scm", "(define b 2)");
+        assertEquals("(1 2)", run("(import (scheme base) (scheme write) (suite tests lib)) (display (list a b))"));
+    }
+
+    @Test
     public void errors() {
         assertTrue(error("(define-library (test loop) (import (test loop)) (export) (begin))(import (test loop))").contains("library imports itself"));
         assertTrue(error("(define-library (test bad) (frobnicate)) (import (test bad))").contains("invalid library declaration"));

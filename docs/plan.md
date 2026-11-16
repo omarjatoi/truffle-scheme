@@ -38,29 +38,32 @@ chibi-scheme's R7RS suite (`tests/r7rs/`):
 
 Larceny's R7RS test suite (`tests/r7rs-larceny/`):
 
-| Library | Passing | Tests |
-|---|---:|---:|
-| (scheme base) | 0 | 1079 |
-| (scheme case-lambda) | 5 | 5 |
-| (scheme char) | 139 | 139 |
-| (scheme complex) | 68 | 69 |
-| (scheme cxr) | 28 | 28 |
-| (scheme eval) | 5 | 5 |
-| (scheme file) | 75 | 75 |
-| (scheme inexact) | 590 | 592 |
-| (scheme lazy) | 33 | 33 |
-| (scheme load) | 4 | 4 |
-| (scheme read) | 43 | 44 |
-| (scheme repl) | 10 | 10 |
-| (scheme time) (compiled: depends on speed) | 2 | 2 |
-| (scheme write) | 63 | 63 |
-| (scheme process-context) | 2 | 2 |
-| (scheme process-context) --test-getenv TEMPORARY_ENV_VAR 2776e8e | 4 | 4 |
-| (scheme process-context) --test-emergency-exit | 3 | 3 |
-| (scheme process-context) --test-emergency-exit 37 | 3 | 3 |
-| (scheme process-context) --test-exit | 3 | 3 |
-| (scheme process-context) --test-exit 46 | 3 | 3 |
-| **Total** | **1083** | **2166** |
+Exceptions: failing tests that expect a result where R7RS says "it is an error",
+listed in `tests/r7rs-larceny/README.md`.
+
+| Library | Passing | Tests | Exceptions |
+|---|---:|---:|---:|
+| (scheme base) | 1075 | 1079 | 4 |
+| (scheme case-lambda) | 5 | 5 | 0 |
+| (scheme char) | 139 | 139 | 0 |
+| (scheme complex) | 69 | 69 | 0 |
+| (scheme cxr) | 28 | 28 | 0 |
+| (scheme eval) | 5 | 5 | 0 |
+| (scheme file) | 75 | 75 | 0 |
+| (scheme inexact) | 592 | 592 | 0 |
+| (scheme lazy) | 33 | 33 | 0 |
+| (scheme load) | 4 | 4 | 0 |
+| (scheme read) | 44 | 44 | 0 |
+| (scheme repl) | 10 | 10 | 0 |
+| (scheme time) (compiled: depends on speed) | 2 | 2 | 0 |
+| (scheme write) | 63 | 63 | 0 |
+| (scheme process-context) | 2 | 2 | 0 |
+| (scheme process-context) --test-getenv TEMPORARY_ENV_VAR 2776e8e | 4 | 4 | 0 |
+| (scheme process-context) --test-emergency-exit | 3 | 3 | 0 |
+| (scheme process-context) --test-emergency-exit 37 | 3 | 3 | 0 |
+| (scheme process-context) --test-exit | 3 | 3 | 0 |
+| (scheme process-context) --test-exit 46 | 3 | 3 | 0 |
+| **Total** | **2162** | **2166** | **4** |
 <!-- status:end -->
 
 ---
@@ -488,7 +491,7 @@ one at a time.
   - **Done when** it runs in CI's conformance jobs and its status is
     generated; passing it in full is part of M4's exit.
 
-- [ ] **M4-12 · Larceny's suite in full** *(needs M4-11)*
+- [x] **M4-12 · Larceny's suite in full** *(needs M4-11)*
   - Make `(scheme base)` load and pass, then the rest: `include` also
     searches the library path (`-I`), since Larceny's libraries include files
     relative to the library root (R7RS §4.1.7 leaves the search to the

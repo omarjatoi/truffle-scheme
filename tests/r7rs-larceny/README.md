@@ -65,6 +65,23 @@ test expects), so the vendoring command has the shim skip that test under
 chibi (`R7RS_TEST_SKIP`: counted, not run) and runs the section again. The
 `chibi` column of `sections.tsv` shows that, and how many tests chibi passes.
 
+## Exceptions
+
+A few tests expect a particular result where R7RS says "it is an error". We
+keep signalling those errors (design.md D8), so these tests fail by design,
+and the status block counts them in its `Exceptions` column (plan.md M4-12).
+`mx r7rs-test -v` marks them `(listed exception)`. Each row is the library
+(its section in `sections.tsv`), the test as the shim reports it, and the
+R7RS text that makes it an error. Add a row only with that text; a test that
+fails for any other reason is a bug.
+
+| Library | Test | Larceny's result | R7RS |
+|---|---|---|---|
+| `base` | `(begin (vector-copy! a 2 a 0) (quote unspec))` | copies the 3 elements that fit into the 5-element `a` and ignores the rest | §6.8 `vector-copy!`: "It is also an error if (- (vector-length to) at) is less than (- end start)." (here 3 < 5) |
+| `base` | `a` | `#(1 2 1 2 3)`, the vector after that truncated copy (we leave it unchanged) | the same |
+| `base` | `(bytevector-u8-ref (make-bytevector 10 -1) 9)` | 255: the fill is taken modulo 256 | §6.9: "A byte is an exact integer in the range from 0 to 255 inclusive", and `make-bytevector`'s fill is a byte; §1.3.3: "it is an error for a procedure to be presented with an argument that it is not specified to handle" |
+| `base` | `(bytevector-u8-ref (make-bytevector 10 -128) 9)` | 128, the same way | the same |
+
 ## Re-vendoring
 
 ```

@@ -135,6 +135,8 @@ final class SyntaxRules implements Transformer {
 
     private final Expander expander;
     private final SSymbol ellipsis;
+    /** Whether the spec names its ellipsis; otherwise it is {@code ...} where not bound lexically. */
+    private final boolean customEllipsis;
     private final SSymbol underscore;
     private final List<Object> literals = new ArrayList<>();
     private final List<Rule> rules = new ArrayList<>();
@@ -148,9 +150,11 @@ final class SyntaxRules implements Transformer {
         int at = 1;
         if (f.size() > at && Expander.isIdentifier(f.get(at))) {
             this.ellipsis = Expander.symbol(f.get(at));
+            this.customEllipsis = true;
             at++;
         } else {
             this.ellipsis = defaultEllipsis;
+            this.customEllipsis = false;
         }
         if (f.size() <= at) {
             throw expander.syntaxError("syntax-rules needs a list of literals", spec);
@@ -186,9 +190,13 @@ final class SyntaxRules implements Transformer {
         return false;
     }
 
-    /** The ellipsis identifier: by name, unless it is a literal (R7RS §4.3.2). */
+    /**
+     * The ellipsis identifier: by name, unless it is a literal (R7RS §4.3.2). The default
+     * {@code ...} is the ellipsis only where it isn't bound lexically: a {@code ...} that a
+     * {@code let} binds is an ordinary identifier, as {@code free-identifier=?} would say.
+     */
     private boolean isEllipsis(Object o) {
-        return Expander.isIdentifier(o) && Expander.symbol(o) == ellipsis && !isLiteral(o);
+        return Expander.isIdentifier(o) && Expander.symbol(o) == ellipsis && !isLiteral(o) && (customEllipsis || !expander.isLexicallyBound(o));
     }
 
     // ------------------------------------------------------------------------------------------

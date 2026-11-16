@@ -370,6 +370,18 @@ final class Arithmetic {
         return SBigInteger.normalize(new BigDecimal(r.numerator).divide(new BigDecimal(r.denominator), 0, rounding).toBigIntegerExact());
     }
 
+    /** {@code (- z)}: the negation, so that the sign of a zero flonum (part) flips. */
+    @TruffleBoundary
+    static Object negate(Object z) {
+        check("-", z);
+        if (z instanceof Double d) {
+            return -d;
+        } else if (z instanceof SComplex c) {
+            return SComplex.make(negate(c.real), negate(c.imag));
+        }
+        return sub(0L, z);
+    }
+
     /** The simplest rational within {@code y} of {@code x} (R7RS §6.2.6), by the Stern–Brocot walk. */
     @TruffleBoundary
     static Object rationalize(Object x, Object y) {
@@ -377,7 +389,12 @@ final class Arithmetic {
         checkReal("rationalize", y);
         boolean inexact = x instanceof Double || y instanceof Double;
         if (inexact && (!Double.isFinite(flo(x)) || !Double.isFinite(flo(y)))) {
-            return Double.isNaN(flo(x)) || Double.isNaN(flo(y)) ? Double.NaN : Double.isInfinite(flo(y)) ? 0.0 : flo(x);
+            // Every real is within an infinite y of a finite x, and 0 is the simplest; no rational is
+            // within any y of an infinite x, or (IEEE: inf - inf) within infinite y of it.
+            if (Double.isNaN(flo(x)) || Double.isNaN(flo(y)) || Double.isInfinite(flo(x)) && Double.isInfinite(flo(y))) {
+                return Double.NaN;
+            }
+            return Double.isInfinite(flo(y)) ? 0.0 : flo(x);
         }
         Object ex = exact("rationalize", x);
         Object ey = exact("rationalize", y);
@@ -433,7 +450,8 @@ final class Arithmetic {
     @TruffleBoundary
     static Object log(Object z) {
         check("log", z);
-        if (!(z instanceof SComplex) && sign("log", z) >= 0) {
+        // -0.0 is on the negative side of the branch cut: (log -0.0) is -inf.0+pi*i.
+        if (!(z instanceof SComplex) && sign("log", z) >= 0 && !(z instanceof Double d && d == 0.0 && Double.doubleToRawLongBits(d) != 0)) {
             return Math.log(flo(z));
         }
         return complexResult(Math.log(magnitudeDouble(z)), angleDouble(z));
