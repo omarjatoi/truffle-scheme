@@ -128,7 +128,8 @@ what runs on every commit: `checks` (the lint tests) and `tests` (every other
 test, the conformance tests and the docs' commands among them); its
 `conformance` annotation is their table. The required
 check is the build, `buildkite/truffle-scheme`; which steps can fail it is
-set in `.buildkite/pipeline.yml`. Its actions and tests run on BuildBuddy's
+set in `.buildkite/pipeline.yml`. Its steps use `nix develop .#ci` (just
+`bazel`). Its actions and tests run on BuildBuddy's
 executors, like everyone's; the `buildbuddy` annotation links each step's
 results.
 Benchmarks, the threshold check and the native image are local commands.
