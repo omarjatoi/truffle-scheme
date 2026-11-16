@@ -28,11 +28,11 @@ edit it by hand.
 | 6.8 Vectors | 11 | 43 |
 | 6.9 Bytevectors | 0 | 39 |
 | 6.10 Control Features | 19 | 34 |
-| 6.11 Exceptions | 14 | 30 |
+| 6.11 Exceptions | 17 | 30 |
 | 6.12 Environments and evaluation | 0 | 4 |
-| 6.13 Input and output | 7 | 376 |
+| 6.13 Input and output | 29 | 376 |
 | 6.14 System interface | 0 | 13 |
-| **Total** | **493** | **1225** |
+| **Total** | **518** | **1225** |
 <!-- status:end -->
 
 ---
@@ -399,7 +399,7 @@ parallel. Section counts are from the status block when M4 was drafted.
     tests, and `make-parameter`'s remaining cases.
   - **Done when** sections 6.3 (10/18), 6.10 (19/34) and 6.11 (14/30) pass in
     full, normally and under `--torture`.
-- [ ] **M4-06 · Input and output** *(early)*
+- [x] **M4-06 · Input and output** *(early)*
   - R7RS §6.13 and `(scheme read)`, `(scheme write)`, `(scheme file)`:
     input ports (string, bytevector, file), binary ports, `read-char`
     `peek-char` `read-line` `read-string` `read-u8` `char-ready?`, `read`
