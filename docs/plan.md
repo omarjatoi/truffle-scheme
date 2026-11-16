@@ -833,13 +833,18 @@ load rule.
   - **Done when** the report shows live heap per program, any retention found
     is fixed with a test, and the benchmark harness runs our JVM with a
     documented heap setting.
-- [ ] **M8-03 · Warmup** *(needs M8-01)*
+- [x] **M8-03 · Warmup** *(needs M8-01)*
   - Shorten the gap between first-run and steady-state times: profile
     compilation (tiers, thresholds, inlining and splitting budgets, deopts in
     the first iteration), bignum arithmetic for `pi`, and the interpreter's
     cost before compilation.
   - **Done when** the first-run geometric mean improves in a regenerated
     report and the steady state doesn't regress.
+  - Done (2026-11-16): the launcher warms the JIT up on a thread of its own
+    (design.md D17, "The JIT warm-up"). Measured the report's way on 24
+    programs (3 interleaved rounds against `main`): first run 0.918 times,
+    steady state 0.993 times; the report itself is regenerated at the
+    milestone's exit. `pi`'s bignums are M8-05's.
 - [ ] **M8-04 · Interpreter** *(needs M8-03)*
   - The interpreter passes 52 of 57 programs within the report's timeout;
     `string` became about 5% slower in it with M7-03's boxing elimination.
