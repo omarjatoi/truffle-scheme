@@ -37,7 +37,7 @@ Options (anything else is a JVM argument):
 `--count=1 --iterations=1` checks every program quickly: the check is the
 same, only the timing loop is shorter. With the programs' own counts, one JIT
 iteration of ecraven's set takes about half an hour of JVM time (November
-2026, on a 16-core Apple M-series machine), so `r7rs-ecraven:*` with the
+2026, on a 16-core Apple M-series machine), so `ecraven:*` with the
 defaults takes about an hour and a half. The interpreter is about 10-40 times
 slower, and Larceny's inputs are larger: one run of its `takl` takes over
 eight minutes with the JIT, and neither its `takl` nor its `ntakl` finishes

@@ -1,6 +1,4 @@
-"""The test drivers and the repository's commands, in one program.
-
-As commands, `bazel run //:r7rs -- <command> ...` (AGENTS.md "Commands"):
+"""The repository's commands: `bazel run //:r7rs -- <command> ...` (AGENTS.md "Commands").
 
   test [section] [--suite S] [--compile] [--torture] [--native FILE] [-v] [--markdown FILE]
                      the conformance suites, per section (ad hoc; the checks are the tests)
@@ -14,8 +12,8 @@ As commands, `bazel run //:r7rs -- <command> ...` (AGENTS.md "Commands"):
   benchmark, bench-report, bench-check, vendor-benchmarks   bench.py
   vendor-chibi, vendor-larceny                              vendor.py
 
-The tests that use Python have their own entry scripts (check_*.py); tests/driver runs the
-others in Java.
+The tests aren't commands: those in Python have their own entry scripts (check_*.py), and
+tests/driver runs the others in Java.
 
 The options before the command name the runfiles of the runtime and tools it uses; the targets that
 run this pass them.
@@ -57,18 +55,10 @@ def _diff_text(expected, actual, from_name, to_name):
 
 def diff(o):
     """A program under chibi-scheme and under ours, interpreted (and under torture with --torture):
-    stdout and exit status must be the same. The tests take chibi-scheme's from a build action
-    (--chibi-out/-err/-status); `bazel run //:r7rs -- diff FILE` runs it."""
+    stdout and exit status must be the same. The tests are tests/driver's Diff."""
     file = resolve(o.file)
     check(exists(file), f'no such file: {file}')
-    if o.chibi_out:
-        chibi = {}
-        for part in ('out', 'err', 'status'):
-            with open(rlocation(getattr(o, 'chibi_' + part)), encoding='utf-8', errors='replace') as f:
-                chibi[part] = f.read()
-        chibi_rc, chibi_out, chibi_err = int(chibi['status']), chibi['out'], chibi['err']
-    else:
-        chibi_rc, chibi_out, chibi_err = harness.run_chibi(rlocation(o.chibi), file)
+    chibi_rc, chibi_out, chibi_err = harness.run_chibi(rlocation(o.chibi), file)
     ours_rc, ours_out, ours_err = harness.run_ours(Runtime.from_manifest(o.runtime), file,
                                                    harness.vm_args(compile=o.compile, torture=o.torture))
     if chibi_rc == ours_rc and chibi_out == ours_out:
@@ -90,7 +80,7 @@ _MODES = ('interpreter', 'compile', 'torture')
 
 def conformance_report(o):
     """The conformance tests' results (their result.json, from bazel-testlogs) as a table per suite:
-    a row per section, a column per mode. CI's annotation."""
+    a row per section, a column per mode."""
     import zipfile
     testlogs = join(harness.workspace(), 'bazel-testlogs', 'tests')
     results = {}
@@ -230,8 +220,6 @@ def main():
 
     p = sub.add_parser('diff')
     p.add_argument('file')
-    for part in ('out', 'err', 'status'):
-        p.add_argument('--chibi-' + part, help=f"chibi-scheme's {part}, from its build action (tests)")
     p.add_argument('--compile', action='store_true')
     p.add_argument('--torture', action='store_true')
     p = sub.add_parser('tools')
@@ -245,9 +233,9 @@ def main():
     p.add_argument('--torture', action='store_true', help='capture + resume at every non-tail call')
     p.add_argument('--native', metavar='FILE', help='through this native launcher (native-image)')
     p.add_argument('-v', '--verbose', action='store_true', help='also list failing tests')
-    p.add_argument('--markdown', metavar='FILE', help='append a Markdown table to FILE (e.g. a CI summary)')
+    p.add_argument('--markdown', metavar='FILE', help='append a Markdown table to FILE')
     p = sub.add_parser('conformance-report', help="the conformance tests' results, a table per suite")
-    p.add_argument('--markdown', metavar='FILE', help='write it here (CI: the annotation)')
+    p.add_argument('--markdown', metavar='FILE', help='write it here')
     p = sub.add_parser('status', help='rewrite the status block in docs/plan.md')
     p.add_argument('--check', action='store_true')
     sub.add_parser('format', help='the Eclipse formatter over src/ and tests/')
