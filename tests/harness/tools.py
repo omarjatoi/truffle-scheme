@@ -48,10 +48,11 @@ _CONNECT_TIMEOUT = 120
 _MESSAGE_TIMEOUT = 120
 _EXIT_TIMEOUT = 120
 
-# tests/tools/debugme.scm: the breakpoint goes on `square`'s body, which runs once per i in 0..4.
+# tests/tools/debugme.scm: the breakpoint goes on `square`'s body, which runs once per i in 0..4,
+# called by `weighted`, a closure that captures sum-squares's n = 5.
 _DEBUG_PROGRAM = 'debugme.scm'
 _BREAK_LINE = 3
-_DEBUG_OUTPUT = '30\n'
+_DEBUG_OUTPUT = '150\n'
 # tests/tools/profileme.scm: fib, called from the loop in run-fib.
 _PROFILE_PROGRAM = 'profileme.scm'
 # tests/tools/spillme.scm: spin, at the bottom of a recursion 500 deep, most of it on the heap.
@@ -221,15 +222,15 @@ def _dap_stopped(client, path, expected_x):
     top = frames[0]
     _check(top['name'] == 'square' and top['line'] == _BREAK_LINE and top.get('source', {}).get('path') == path,
            f'DAP: expected to stop in square at {path}:{_BREAK_LINE}, got {top["name"]} at {top.get("source", {}).get("path")}:{top["line"]}')
-    _check(names[1:2] == ['sum-squares'], f'DAP: square\'s caller sum-squares is not next on the stack: {names}')
+    _check(names[1:2] == ['weighted'], f'DAP: square\'s caller weighted is not next on the stack: {names}')
+    _check('sum-squares' in names[2:], f'DAP: weighted\'s caller sum-squares is not on the stack: {names}')
     variables = client.variables(top['id'])
     _check(variables.get('x') == expected_x, f'DAP: expected x = {expected_x} in square, got {variables}')
-    # The caller runs its named let as a loop of its own (plan.md M7-02): the frame has the loop's
-    # variables and its own parameter n (plan.md M6-05).
+    # The caller, the closure weighted, has its parameter and the captured n (plan.md M6-05).
     caller = client.variables(frames[1]['id'])
-    _check(caller.get('i') == expected_x and caller.get('n') == '5' and 'acc' in caller,
-           f'DAP: expected i = {expected_x}, acc and n = 5 in sum-squares, got {caller}')
-    log(f'  dap: stopped at the breakpoint in square, stack {names}, x = {variables["x"]}, sum-squares\'s n = {caller["n"]}')
+    _check(caller.get('i') == expected_x and caller.get('n') == '5',
+           f'DAP: expected i = {expected_x} and the captured n = 5 in weighted, got {caller}')
+    log(f'  dap: stopped at the breakpoint in square, stack {names}, x = {variables["x"]}, weighted\'s captured n = {caller["n"]}')
     return thread, top
 
 
@@ -380,10 +381,16 @@ def _cdp_paused(client, path, expected_x):
     line = top['location']['lineNumber'] + 1
     _check(top['functionName'] == 'square' and line == _BREAK_LINE and top.get('url', '').endswith(path),
            f'CDP: expected to pause in square at {path}:{_BREAK_LINE}, got {top["functionName"]} at {top.get("url")}:{line}')
-    _check(names[1:2] == ['sum-squares'], f'CDP: square\'s caller sum-squares is not next on the stack: {names}')
+    _check(names[1:2] == ['weighted'], f'CDP: square\'s caller weighted is not next on the stack: {names}')
+    _check('sum-squares' in names[2:], f'CDP: weighted\'s caller sum-squares is not on the stack: {names}')
     variables = client.scope_variables(top)
     _check(str(variables.get('x')) == expected_x, f'CDP: expected x = {expected_x} in square, got {variables}')
-    log(f'  inspect: paused at the breakpoint in square ({paused["reason"]}), stack {names}, x = {variables["x"]}')
+    # The caller, the closure weighted, has its parameter and the captured n (plan.md M6-05).
+    caller = client.scope_variables(frames[1])
+    _check(str(caller.get('i')) == expected_x and str(caller.get('n')) == '5',
+           f'CDP: expected i = {expected_x} and the captured n = 5 in weighted, got {caller}')
+    log(f'  inspect: paused at the breakpoint in square ({paused["reason"]}), stack {names}, x = {variables["x"]}, '
+        f'weighted\'s captured n = {caller["n"]}')
     return top
 
 
