@@ -1796,8 +1796,8 @@ def _write_report_markdown(report, path):
     out('')
     out('## Conditions')
     out('')
-    out(f'- Generated {report["generated"]} by `{report["command"]}`, at commit `{report["commit"]}`, '
-        f'in {report.get("minutes", "?")} minutes.')
+    out(f'- Run by `{report["command"]}`, at commit `{report["commit"]}`, from {report["generated"]}, '
+        f'for {report.get("minutes", "?")} minutes.')
     out(f'- Host: {report["host"]}.')
     if report['note']:
         out(f'- {report["note"]}')
@@ -1876,17 +1876,24 @@ def _write_report_markdown(report, path):
     out('')
     out('## Failures')
     out('')
-    failures = [(program, impls[key]['title'], result) for program, entry in programs.items()
+    failures = [(program, key, result) for program, entry in programs.items()
                 for key, result in entry['results'].items() if result['status'] != 'ok']
+    limits = {'jit': report['timeout'] * report['jit_iterations'], 'interpreter': interpreter_timeout}
     if not failures:
         out('None.')
     else:
+        out('A timeout is a run killed at its limit (Conditions); our interpreter\'s limit may be shorter '
+            'than the others\', so its timeouts say only that it took longer than that.')
+        out('')
         out('| Program | Implementation | Status | Last line of output |')
         out('|---|---|---|---|')
-        for program, title, result in failures:
+        for program, key, result in failures:
             last = (result.get('detail') or '').strip().splitlines()
             last = last[-1].replace('|', '\\|').replace('`', "'")[:120] if last else ''
-            out(f'| {program} | {title} | {result["status"]} | {"`" + last + "`" if last else ""} |')
+            status = result['status']
+            if status.endswith('timeout'):
+                status += f' ({limits.get(key, report["timeout"])} s)'
+            out(f'| {program} | {impls[key]["title"]} | {status} | {"`" + last + "`" if last else ""} |')
     out('')
     out('## How each implementation ran')
     out('')

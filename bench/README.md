@@ -122,10 +122,16 @@ Options: `--benchmarks` and `--implementations` choose rows and columns;
 times that again, its time scaled back up and marked; our JIT's JVM runs the
 harness `--jit-iterations` (3) times, the first being the comparable number
 and the best of the rest the steady state; `--timeout` (300 s, ecraven's
-`CPU_LIMIT`) kills a run. Implementations take turns per program, in a
-rotating order, so a machine whose load changes during the run affects them
-evenly. With the programs' own counts the whole set takes a few hours, most of
-it chibi, Gauche and our interpreter.
+`CPU_LIMIT`) kills a run, and `--interpreter-timeout` our interpreter's (ten
+programs have a count of 1, which no scale reduces). Implementations take
+turns per program, in a rotating order, so a machine whose load changes during
+the run affects them evenly.
+
+How long it takes: the committed report (`--scale 0.1 --interpreter-timeout
+60`, every program) took 105 minutes on a loaded 16-core machine, most of it
+chibi's and our interpreter's timeouts and the programs whose count is 1; CI's
+twelve programs at the same scale take about 25 minutes. With the programs'
+own counts, expect several hours.
 
 CI runs it on a subset at a tenth of the counts, weekly and by hand
 (`.github/workflows/benchmarks.yml`, `gh workflow run benchmarks.yml`), and
