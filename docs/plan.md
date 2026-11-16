@@ -21,18 +21,18 @@ edit it by hand.
 | 6.1 Equivalence Predicates | 25 | 25 |
 | 6.2 Numbers | 211 | 211 |
 | 6.3 Booleans | 10 | 18 |
-| 6.4 Lists | 39 | 65 |
-| 6.5 Symbols | 6 | 17 |
-| 6.6 Characters | 0 | 79 |
-| 6.7 Strings | 10 | 130 |
-| 6.8 Vectors | 11 | 43 |
-| 6.9 Bytevectors | 39 | 39 |
-| 6.10 Control Features | 19 | 34 |
-| 6.11 Exceptions | 14 | 30 |
+| 6.4 Lists | 65 | 65 |
+| 6.5 Symbols | 17 | 17 |
+| 6.6 Characters | 79 | 79 |
+| 6.7 Strings | 130 | 130 |
+| 6.8 Vectors | 43 | 43 |
+| 6.9 Bytevectors | 0 | 39 |
+| 6.10 Control Features | 28 | 34 |
+| 6.11 Exceptions | 27 | 30 |
 | 6.12 Environments and evaluation | 0 | 4 |
 | 6.13 Input and output | 7 | 376 |
 | 6.14 System interface | 0 | 13 |
-| **Total** | **532** | **1225** |
+| **Total** | **783** | **1225** |
 <!-- status:end -->
 
 ---
@@ -366,7 +366,7 @@ parallel. Section counts are from the status block when M4 was drafted.
     `long`/`double` fast paths with overflow into `SBigInteger`.
   - **Done when** section 6.2 (129/211) passes in full, normally and under
     `--torture`, and `tests/diff/numbers-*.scm` programs match chibi.
-- [ ] **M4-02 · Characters, strings and symbols** *(early)*
+- [x] **M4-02 · Characters, strings and symbols** *(early)*
   - R7RS §6.5–6.7 and `(scheme char)`: every character procedure (simple case
     mapping, `digit-value`), every string procedure (`SString`'s Latin-1 and
     UTF-32 storage, full case mapping for `string-upcase` and friends,
@@ -374,7 +374,7 @@ parallel. Section counts are from the status block when M4 was drafted.
     `symbol=?`, `string-map` and `string-for-each` in the prelude (D5).
   - **Done when** sections 6.5 (6/17), 6.6 (0/79) and 6.7 (10/130) pass in
     full, normally and under `--torture`.
-- [ ] **M4-03 · Lists and vectors** *(early)*
+- [x] **M4-03 · Lists and vectors** *(early)*
   - R7RS §6.4 and §6.8: `list?` (tortoise and hare, D9), `make-list`,
     `list-tail` `list-ref` `list-set!` `list-copy`, `member` and `assoc` with
     an optional predicate, the `vector` procedures (`vector-copy`
@@ -384,7 +384,7 @@ parallel. Section counts are from the status block when M4 was drafted.
     `(scheme cxr)`.
   - **Done when** sections 6.4 (39/65) and 6.8 (10/43) pass in full,
     normally and under `--torture`.
-- [x] **M4-04 · Bytevectors** *(early)*
+- [ ] **M4-04 · Bytevectors** *(early)*
   - R7RS §6.9 on `SBytevector`: `bytevector` `make-bytevector`
     `bytevector-u8-ref` `bytevector-u8-set!` `bytevector-length`
     `bytevector-copy` `bytevector-copy!` `bytevector-append`, `utf8->string`
