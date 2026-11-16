@@ -1,6 +1,8 @@
-load("//bazel:java.bzl", "scheme_java_library")
-load("//bazel:java_module.bzl", "java_module_jar", "scheme_runtime")
-load("//tests/harness:defs.bzl", "conformance_tests", "diff_tests", "harness_test", "space_test", "spec_tests", "tools_tests", "unit_tests")
+load("@rules_java//java:defs.bzl", "java_library")
+load("//bazel:java.bzl", "SCHEME_JAVACOPTS", "scheme_java_library")
+load("//bazel:java_module.bzl", "java_module_jar")
+load("//bazel:junit.bzl", "unit_tests")
+load("//tests/harness:defs.bzl", "conformance_tests", "diff_tests", "harness_test", "space_test", "spec_tests", "tools_tests")
 
 # Everything under tests/ but the harness is described here: tests/r7rs/ and tests/r7rs-larceny/ are
 # read-only vendored suites (AGENTS.md "Never"), so they get no BUILD files of their own.
@@ -9,14 +11,14 @@ package(default_visibility = ["//visibility:public"])
 
 # --- JUnit (tests/scheme/test) -----------------------------------------------------------------
 
+# All of it, compiled together for the lint tests (format, Checkstyle, ECJ) only.
 scheme_java_library(
     name = "scheme_test_lib",
-    srcs = glob(["scheme/test/**/*.java"]),
-    # The vendored suite's files that SuiteReadSyntaxTest and SyntaxRulesTest read as resources.
-    resource_strip_prefix = "tests",
-    resources = glob(["r7rs/**"]),
+    srcs = glob([
+        "scheme/test/*.java",
+        "scheme/test/upstream/*.java",
+    ]),
     spotbugs = False,
-    # Test instruments (ToolsTest, ResultProbe) need their generated registrations.
     truffle_dsl = True,
     deps = [
         "//src/compiler",
@@ -29,46 +31,80 @@ scheme_java_library(
     ],
 )
 
-# scheme.test.jar, which exports and opens its packages to JUnit.
-java_module_jar(
-    name = "test_module",
-    exports = [
-        "scheme.test to junit",
-        "scheme.test.upstream to junit",
+# What the test classes share (instruments, recorders): in each "full" test class's module.
+java_library(
+    name = "test_support",
+    srcs = [
+        "scheme/test/AllocationRecorder.java",
+        "scheme/test/EventRecorder.java",
+        "scheme/test/ResultProbe.java",
     ],
-    libs = [":scheme_test_lib"],
-    module_name = "scheme.test",
-    opens = [
-        "scheme.test to junit",
-        "scheme.test.upstream to junit",
-    ],
-    requires = [
-        "junit",
-        "org.graalvm.polyglot",
-        "org.graalvm.truffle",
-        "scheme",
-        "scheme.launcher",
-    ],
+    javacopts = SCHEME_JAVACOPTS,
     deps = [
-        "//:launcher_module",
-        "@jvm//:junit_junit",
+        "//bazel:truffle_dsl_processor",
+        "//src/runtime",
+        "@jvm//:org_graalvm_polyglot_polyglot",
+        "@jvm//:org_graalvm_truffle_truffle_api",
     ],
 )
 
-scheme_runtime(
-    name = "junit_runtime",
-    module = ":test_module",
+# The runtime and the reader only, as the module `scheme`: the "core" tests' language, so an edit to
+# the compiler, the builtins or the prelude doesn't rerun them.
+java_module_jar(
+    name = "core_module",
+    exports = [
+        "scheme.reader",
+        "scheme.runtime",
+        "scheme.runtime.printer",
+        "scheme.runtime.value",
+    ],
+    jar_name = "scheme-core",
+    libs = [
+        "//src/reader",
+        "//src/runtime",
+    ],
+    module_name = "scheme",
+    requires = [
+        "org.graalvm.collections",
+        "org.graalvm.nativeimage",
+        "org.graalvm.polyglot",
+        "org.graalvm.truffle",
+        "org.graalvm.word",
+    ],
+    uses = [
+        "scheme.runtime.BuiltinLibrary",
+        "scheme.runtime.SchemeCompiler",
+    ],
+    deps = ["//bazel:truffle_modules"],
 )
 
 # `unit_<mode>_<Class>` for every *Test.java, in the modes jit (the Graal JIT in the background),
-# compile (compile immediately, failures are errors) and torture; `unit_<mode>` and `unit` group them.
+# compile (compile immediately, failures are errors) and torture; `unit_<mode>` and `unit` group
+# them. Each class is its own library and module, so an edit to it reruns only its tests.
 unit_tests(
     name = "unit",
-    srcs = glob(["scheme/test/**/*Test.java"]),
-    runtime = ":junit_runtime",
+    kinds = {
+        "PrinterTest": "core",
+        "ReaderTest": "core",
+        "SuiteReadSyntaxTest": "core",
+        "UpstreamAsyncStacksTest": "upstream",
+        "UpstreamNestedRootSourceTest": "upstream",
+        "UpstreamReportPolymorphismTest": "upstream",
+        "ValuesTest": "core",
+    },
+    # The vendored suite's files that these read as resources.
+    resources = {
+        "SuiteReadSyntaxTest": glob(["r7rs/**"]),
+        "SyntaxRulesTest": glob(["r7rs/**"]),
+    },
+    # SyntaxRulesTest reads chibi's section 4.3 with SuiteReadSyntaxTest's helper.
+    extra_srcs = {"SyntaxRulesTest": ["scheme/test/SuiteReadSyntaxTest.java"]},
+    support = "test_support",
+    tests = glob([
+        "scheme/test/*Test.java",
+        "scheme/test/upstream/*Test.java",
+    ]),
 )
-
-# --- Programs ----------------------------------------------------------------------------------
 
 # tests/diff: `diff_<program>` and `diff_torture_<program>`, against chibi-scheme.
 diff_tests(

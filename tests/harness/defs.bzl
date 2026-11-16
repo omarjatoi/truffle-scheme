@@ -24,35 +24,6 @@ def harness_test(name, args, data, size = "medium", tags = []):
 def _runtime(runtime):
     return "--runtime=$(rlocationpath %s)" % runtime
 
-# mode: (size, tags). The JIT's background compiler threads take a second core; compiling
-# immediately is the slowest.
-_UNIT_MODES = {
-    "jit": ("medium", ["cpu:2"]),
-    "compile": ("large", []),
-    "torture": ("medium", ["cpu:2"]),
-}
-
-_PROCESSOR = "@jvm//:org_graalvm_truffle_truffle_dsl_processor"
-
-def unit_tests(name, srcs, runtime):
-    """`<name>_<mode>_<Class>` for each *Test.java in each mode, and a test_suite per mode."""
-    for mode, (size, tags) in _UNIT_MODES.items():
-        tests = []
-        for src in srcs:
-            path = src.removesuffix(".java")
-            test = "%s_%s_%s" % (name, mode, path.rsplit("/", 1)[-1])
-            harness_test(
-                name = test,
-                args = ["unit", _runtime(runtime), "--mode=" + mode, "--processor=$(rlocationpath %s)" % _PROCESSOR,
-                        path.replace("/", ".")],
-                data = [runtime, _PROCESSOR],
-                size = size,
-                tags = tags,
-            )
-            tests.append(test)
-        native.test_suite(name = "%s_%s" % (name, mode), tests = tests)
-    native.test_suite(name = name, tests = ["%s_%s" % (name, mode) for mode in _UNIT_MODES])
-
 def _chibi_output_impl(ctx):
     chibi = ctx.attr.chibi[DefaultInfo]
     ctx.actions.run_shell(
