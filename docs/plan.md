@@ -427,12 +427,96 @@ parallel. Section counts are from the status block when M4 was drafted.
     `--torture`, and `tests/spec/cont-exit` runs (its `_SPEC_PENDING` entry
     goes) and passes.
 
-**Exit:** 100% of the chibi suite, both normally and with `--torture`.
+R7RS beyond what the chibi suite exercises. These follow design.md D14–D16
+and touch the expander and compiler, so they are not area tasks; run them
+one at a time.
+
+- [ ] **M4-09 · `syntax-error` and `load`**
+  - `syntax-error` (R7RS §4.3.3) as an expander form: expanding it is a
+    syntax error carrying its message and irritants.
+  - `load` (`(scheme load)`): read a file through `TruffleFile`, compile it in
+    the given environment (default: the interaction environment), and
+    tail-call the result (D5, D6), like `eval` (M4-07).
+  - **Done when** unit tests cover R7RS §4.3.3's `simple-let` example and
+    `load` into the interaction environment and into an `environment`, and
+    `tests/diff/` programs using both match chibi.
+- [ ] **M4-10 · Programs, bodies and top-level hygiene** *(needs M4-09)*
+  - D14: definitions after expressions in a body.
+  - D15: a program's top level is its imports only; core forms are exported
+    by `(r7rs %primitives)` and re-exported by the standard libraries; the
+    by-name core fallback is limited to the interaction environment.
+  - D16: macro-introduced top-level definitions bind fresh cells.
+  - **Done when** unit tests show each (a program importing `(only (scheme
+    base) car)` can't see `cdr`; two expansions of a helper-defining macro
+    don't collide; a mixed body runs in order), and everything that passed
+    before still passes, normally and under `--torture`.
+- [ ] **M4-11 · A second conformance suite** *(early)*
+  - Vendor a second, independently written R7RS test suite read-only next to
+    `tests/r7rs/` (Larceny's R7RS test libraries are the leading candidate;
+    choose by coverage and a compatible license), run it with the same
+    runner and shim approach, and give it its own rows in the status block.
+  - Where it disagrees with chibi's suite, R7RS decides (and the PR says
+    which way and why).
+  - **Done when** it runs in CI's conformance jobs and its status is
+    generated; passing it in full is part of M4's exit.
+
+**Exit:** 100% of the chibi suite and of the second suite (M4-11), both
+normally and with `--torture`.
 
 ## M5 · Performance
 
-The escape-only `call/cc` fast path, Fixing Letrec, vector storage strategies,
-and benchmark thresholds in CI using `mx benchmark` with ecraven's
-`r7rs-benchmarks`.
+Starts once M4's exit holds (both conformance suites pass in full), so every
+benchmark measures a conforming implementation. Benchmark first, then optimize
+against the numbers.
 
-**Exit:** thresholds set from measured baselines, and CI enforcing them.
+- **Benchmarks:** vendor, read-only like `tests/r7rs/`, both standard R7RS
+  benchmark sets: ecraven's `r7rs-benchmarks`
+  (https://ecraven.github.io/r7rs-benchmarks/, the Gabriel and newer programs
+  most Scheme comparisons use) and Larceny's
+  `test/Benchmarking/R7RS`. Run them under `mx benchmark` (D11), with the
+  JIT, reporting time after warmup, peak memory, and pass/fail of each
+  program's own result check, in the interpreter too.
+- **Comparative report:** run the same programs on the other R7RS
+  implementations the dev shell can provide (chibi-scheme already; add Chez
+  Scheme, Gauche, Chicken, Guile or Racket's R7RS mode, as nixpkgs has them,
+  through `flake.nix`), using each suite's own driver conventions so numbers
+  are comparable with ecraven's published tables. Publish a report (a table
+  per benchmark: time relative to the fastest, failures, and our
+  interpreter/JIT split) as a generated page in the repo and as a CI
+  artifact, and keep it reproducible with one `mx` command.
+- **Optimizations**, each measured against that baseline and the report:
+  - the escape-only `call/cc` fast path (design.md "Continuations",
+    `unwindExceptions`), Fixing Letrec, and vector storage strategies (D10);
+  - context startup: cache the compiled standard libraries with Bytecode DSL
+    serialization (D13's proposal), so a context doesn't recompile the
+    prelude; measure context creation before and after;
+  - `equal?`'s union-find fast path for small trees (D9; M3-08's `equal?` is
+    the plain coinductive walk);
+  - compile `((lambda (x ...) body) arg ...)` (what `let`, `or` and named
+    `let` expand to) without allocating a closure.
+
+**Exit:** both benchmark sets run under `mx benchmark` with every program
+passing its own check, the comparative report is published and reproducible,
+thresholds are set from the measured baselines, and CI enforces them.
+
+## M6 · Release
+
+Make it usable on the platform it's built on (design.md D10, D13, D17).
+
+- The `scheme` launcher on GraalVM's launcher framework (D17): programs,
+  `-I`, `command-line`, a REPL with incomplete-input continuation, and the
+  standard engine and tool options.
+- Tools: a distribution with the Chrome inspector, DAP and the CPU sampler,
+  and CI smoke tests that set a breakpoint, step, and sample a Scheme
+  program. Spilled frames (heap segments, M2-05) appear in guest stack traces
+  and in the debugger's stack.
+- Interop for embedders (D10): Scheme values through `InteropLibrary`, with
+  tests from Java and from another Truffle language if one is available.
+- Documentation: a README with build and usage, the conformance status, and
+  an embedding guide.
+- *(optional)* A native-image launcher, if GraalVM CE's native-image is in
+  the dev shell; otherwise a recorded decision to leave it for later.
+
+**Exit:** the launcher and tools work end to end with smoke tests in CI,
+embedders can call Scheme procedures with Scheme values crossing the
+boundary, and the README documents all of it.

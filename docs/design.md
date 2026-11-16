@@ -281,9 +281,15 @@ Each entry: the decision, why, and what was rejected.
   `singleThreaded`.
 - **All I/O goes through `TruffleLanguage.Env`**: `TruffleFile` and the Env's
   streams, never `java.io` or `java.nio` directly.
-- **Out of scope:** polyglot interop beyond what the test runner needs,
+- **Interop for embedders (M6):** Scheme values answer Truffle's
+  `InteropLibrary` as what they are: numbers as numbers (fitting
+  `long`/`double`/`BigInteger`), strings as strings, booleans, `SChar` as a
+  one-character string, procedures as executables (calling one runs it
+  under a prompt, D6), vectors as arrays, the empty list and unspecified as
+  null. Scheme code does not reach into other languages or the host in v1.
+- **Out of scope:** Scheme-side access to other languages and the host,
   native image in CI, threads, and SRFIs. Avoid reflection and dynamic class
-  loading so native image remains possible later.
+  loading so a native-image launcher (M6, optional) stays possible.
 - **Deferred to M5:** escape-only `call/cc`, Fixing Letrec, vector storage
   strategies, and the Static Object Model for records.
 
@@ -357,3 +363,64 @@ Each entry: the decision, why, and what was rejected.
   `call/cc` fast path (already under "Continuations").
 - *Rejected:* hand-rolled position tracking in our own frames or exceptions
   (duplicates Truffle and doesn't reach tools).
+
+### D14. Bodies may mix definitions and expressions
+
+- R7RS §5.3.2 puts a body's definitions before its expressions and calls
+  anything else "an error", which leaves the behaviour to the implementation.
+  We accept definitions after expressions, with letrec* semantics over the
+  whole body: every definition's variable is bound throughout, and the forms
+  run in order (an expression before a definition is an anonymous binding).
+- Why: real code does it (chibi, Gauche and Chicken accept it), it costs the
+  expander nothing (partial expansion just keeps going past expressions), and
+  a program that R7RS accepts means the same.
+- *Rejected:* rejecting it (pedantic, breaks portable-in-practice code).
+
+### D15. Programs are isolated; the interaction environment is not
+
+- A program (R7RS §5.1: text whose first form is `import`, run by the
+  launcher or evaluated as a file) gets its own top level: it sees exactly
+  the bindings its import sets give it, its own definitions, and nothing
+  else. Assigning to an imported binding is an error (D7).
+- Text without a leading `import` (REPL input, `Context.eval` snippets, the
+  prelude's own environment) runs in the interaction environment (D7), which
+  imports every standard library and persists across inputs.
+- Core forms are bindings like any other: `(r7rs %primitives)` exports them,
+  the standard libraries re-export them, and the expander's by-name
+  fallback for core keywords goes away outside the interaction environment.
+- Why: §5.1 and §5.2 define a program's environment by its imports;
+  isolation is what makes `(import (only (scheme base) car))` mean something,
+  and it is how libraries already work (M3-04).
+
+### D16. Macro-introduced top-level definitions are hygienic
+
+- A top-level `define` (in a program, a library or the interaction
+  environment) whose identifier was introduced by a macro (its scopes include
+  scopes beyond the unit's top-level scope) binds a fresh cell, visible only
+  to identifiers with those scopes, instead of the cell named by its symbol.
+  A library exports it only if the export spec names it with the same scopes.
+- Why: this is what sets of scopes (D3) already does inside bodies; without
+  it, two expansions of a macro that defines a helper at top level (as
+  `define-values` does) silently share one global.
+- *Rejected:* by-name top-level definitions (the M3-02 shortcut).
+
+### D17. The launcher is a GraalVM polyglot launcher
+
+- `scheme` is built on GraalVM's launcher framework
+  (`org.graalvm.launcher.AbstractLanguageLauncher`, the `launcher-common`
+  library at the Truffle version, D11). That gives the standard command line
+  for free: `--engine.*` and `--compiler.*` options, `--log.*`, `--inspect`
+  (Chrome DevTools), `--dap` (debug adapter), `--cpusampler` and
+  `--memtracer` when those tools are on the module path, `--help`, and
+  `--version`.
+- With a file, it runs it as a program (D15) with the remaining arguments as
+  `command-line`; `-I dir` adds to the library path; with no file, it starts
+  a REPL in the interaction environment that reads until a datum is complete
+  (D13's incomplete-source signal) and prints each input's values.
+- The Chrome inspector, DAP and profiler tools ship as a separate optional
+  distribution, and CI runs a smoke test of each against a Scheme program
+  (D13's tags and source sections are what they consume).
+- Why: Truffle languages get debugging, profiling and engine tuning from
+  the platform; a hand-written launcher would have to re-implement or forgo
+  all of it.
+
