@@ -4,9 +4,7 @@ A target per JUnit class, program and spec case: each reruns only when its input
 spreads the JVMs over the machine's cores.
 """
 
-load("@rules_java//java/common:java_common.bzl", "java_common")
 load("@rules_python//python:defs.bzl", "py_test")
-load("//bazel:java_module.bzl", "EXEC_JDK", "JavaModuleInfo")
 
 _MAIN = "//tests/harness:main.py"
 
@@ -113,58 +111,36 @@ def tools_tests(name, runtime, tools_runtime, programs):
         )
     native.test_suite(name = name, tests = ["%s_%s" % (name, t) for t in tests])
 
-def _conformance_results_impl(ctx):
-    jdk = ctx.attr._jdk[java_common.JavaRuntimeInfo]
-    module_path = ctx.attr.module[JavaModuleInfo].module_path
-    args = ctx.actions.args()
-    args.add_all(["conformance-results", "--suite", ctx.attr.suite, "--java", jdk.java_executable_exec_path])
-    args.add_all("--module-path", module_path)
-    args.add_all(["--json", ctx.outputs.json, "--block", ctx.outputs.block])
-    ctx.actions.run(
-        executable = ctx.executable._tool,
-        arguments = [args],
-        inputs = depset(ctx.files.srcs, transitive = [module_path, jdk.files]),
-        outputs = [ctx.outputs.json, ctx.outputs.block],
-        mnemonic = "R7rsConformance",
-        progress_message = "Running the %s conformance suite" % ctx.attr.suite,
-        # 6.14 checks that PATH is set: --incompatible_strict_action_env's fixed one.
-        use_default_shell_env = True,
-        resource_set = _four_cpus,
-    )
+# mode: (prefix of the test's name, size, tags).
+_CONFORMANCE_MODES = {
+    "interpreter": ("", "medium", []),
+    "compile": ("compile_", "large", ["cpu:2"]),
+    "torture": ("torture_", "large", ["cpu:2"]),
+}
 
-def _four_cpus(_os, _inputs):
-    return {"cpu": 4, "memory": 2048}  # a JVM per section, four at a time
-
-conformance_results = rule(
-    implementation = _conformance_results_impl,
-    doc = "One suite, interpreted only, as a cached build action: `<name>.md` (its part of the status block) and `<name>.json`.",
-    attrs = {
-        "module": attr.label(mandatory = True, providers = [JavaModuleInfo]),
-        "srcs": attr.label_list(allow_files = True),
-        "suite": attr.string(mandatory = True, values = ["chibi", "larceny"]),
-        "_jdk": EXEC_JDK,
-        "_tool": attr.label(default = "//tests/harness:action", executable = True, cfg = "exec"),
-    },
-    outputs = {"block": "%{name}.md", "json": "%{name}.json"},
-)
-
-def conformance_tests(name, module, runtime, suites, plan):
-    """`<name>_results_<suite>` (build actions), `<name>_torture_<suite>`, and `<name>_status`: the
-    status block in docs/plan.md is what the suites give. Editing plan.md reruns only the latter."""
-    for suite, files in suites.items():
-        conformance_results(name = "%s_results_%s" % (name, suite), module = module, srcs = [files], suite = suite)
-        harness_test(
-            name = "%s_torture_%s" % (name, suite),
-            args = ["torture", _runtime(runtime), "--suite=" + suite],
-            data = [runtime, files],
-            size = "large",
-            tags = ["cpu:4"],  # two JVMs at a time normally and two under torture
-        )
-    blocks = [":%s_results_%s.md" % (name, suite) for suite in suites]
+def conformance_tests(name, runtime, suites, plan):
+    """For each suite (`{suite: (files, [section id, ...])}`), each section and each mode, a test:
+    `<name>_<suite>_<section>` (interpreted), `<name>_compile_<suite>_<section>` and
+    `<name>_torture_<suite>_<section>`. Each passes when every test of the section passes but the
+    suite's listed exceptions, which must fail. `<name>_status`: docs/plan.md's status block is what
+    they check (editing plan.md reruns only it)."""
+    tests = []
+    for suite, (files, sections) in suites.items():
+        for section in sections:
+            for mode, (prefix, size, tags) in _CONFORMANCE_MODES.items():
+                test = "%s_%s%s_%s" % (name, prefix, suite, section)
+                harness_test(
+                    name = test,
+                    args = ["conformance", _runtime(runtime), "--suite=" + suite, "--section=" + section, "--mode=" + mode],
+                    data = [runtime, files],
+                    size = size,
+                    tags = tags,
+                )
+                tests.append(test)
     harness_test(
         name = name + "_status",
-        args = ["conformance-status", "$(rlocationpath %s)" % plan] + ["$(rlocationpath %s)" % b for b in blocks],
-        data = [plan] + blocks,
+        args = ["conformance-status", "$(rlocationpath %s)" % plan],
+        data = [plan] + [files for files, _ in suites.values()],
         size = "small",
     )
-    native.test_suite(name = name, tests = [name + "_status"] + ["%s_torture_%s" % (name, s) for s in suites])
+    native.test_suite(name = name, tests = [name + "_status"] + tests)

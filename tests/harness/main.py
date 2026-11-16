@@ -3,7 +3,9 @@
 As commands, `bazel run //:r7rs -- <command> ...` (AGENTS.md "Commands"):
 
   test [section] [--suite S] [--compile] [--torture] [--native FILE] [-v] [--markdown FILE]
-                     the conformance suites, per section
+                     the conformance suites, per section (ad hoc; the checks are the tests)
+  conformance-report [--markdown FILE]
+                     the conformance tests' last results, a table per suite
   status [--check] [--native FILE]
                      rewrite (or check) the status block in docs/plan.md
   diff FILE [--compile] [--torture]
@@ -16,15 +18,14 @@ As commands, `bazel run //:r7rs -- <command> ...` (AGENTS.md "Commands"):
   benchmark, bench-report, bench-check, vendor-benchmarks   bench.py
   vendor-chibi, vendor-larceny                              vendor.py
 
-As Bazel tests and build actions (tests/harness/defs.bzl, bazel/lint/defs.bzl): unit, program,
-conformance-results, conformance-status, torture, tools, rules, versions, lint.
+As Bazel tests (tests/harness/defs.bzl, bazel/lint/defs.bzl): unit, program, conformance,
+conformance-status, tools, rules, versions, lint.
 
 The options before the command name the runfiles of the runtime and tools it uses; the targets that
 run this pass them.
 """
 
 import argparse
-import concurrent.futures
 import difflib
 import json
 import os
@@ -144,33 +145,65 @@ def program(o):
         _expect(runtime, file, limits, status, f.read())
 
 
-def conformance_results(o):
-    """Build action: one suite, interpreted only, a JVM per section four at a time. Writes the
-    suite's part of the status block and the passing counts; cached on the language and the suite."""
-    harness.set_repo_root(os.getcwd())  # the execroot
-    runtime = Runtime(os.path.abspath(o.java), [os.path.abspath(p) for p in o.module_path])
+def _expected_results(suite):
+    """What each section of a suite gives when its tests pass: its total, but for the tests the
+    suite lists as exceptions (tests/r7rs-larceny/README.md), which fail."""
+    exceptions = suite.exceptions()
+    return {(suite.name, s.id): {'pass': s.total - len(exceptions.get(s.id, [])), 'exceptions': len(exceptions.get(s.id, [])),
+                                 'complete': True, 'message': 'ok'}
+            for s in suite.sections()}
+
+
+def expected_status_block():
+    """docs/plan.md's status block: what the conformance tests check, when they all pass."""
+    return harness.status_block([harness.suite_block(suite, _expected_results(suite)) for suite in harness.suites()])
+
+
+_MODES = {'interpreter': {}, 'compile': {'compile': True}, 'torture': {'torture': True}}
+
+
+def conformance_test(o):
+    """Test: one section of a suite, interpreted, compiled or under torture, passes every test but
+    the ones the suite lists as exceptions, and those fail. Writes its counts to result.json among
+    the test's outputs (conformance-report reads them)."""
+    runtime = Runtime.from_manifest(o.runtime)
     suite = harness.suites(o.suite)[0]
-    sections = suite.sections()
-    results = harness.run_conformance(runtime, sections, jobs=4)
-    with open(o.block, 'w', encoding='utf-8') as f:
-        f.write(harness.suite_block(suite, results) + '\n')
-    with open(o.json, 'w', encoding='utf-8') as f:
-        json.dump({'passing': {f'{k[0]}/{k[1]}': r['pass'] for k, r in sorted(results.items())},
-                   'summary': harness.summary(results, sections).splitlines()}, f, indent=1)
-        f.write('\n')
-
-
-def _status_from(blocks):
-    parts = []
-    for path in blocks:
-        with open(rlocation(path), encoding='utf-8') as f:
-            parts.append(f.read())
-    return harness.status_block(parts)
+    sections = [s for s in suite.sections() if s.id == o.section]
+    check(sections, f'{o.suite} has no section {o.section}')
+    section = sections[0]
+    r = harness.run_conformance(runtime, [section], **_MODES[o.mode])[(suite.name, section.id)]
+    listed = suite.exceptions().get(section.id, [])
+    unexpected = list(harness.failing_tests(r['output']))
+    now_passing = []
+    for test in listed:
+        if test in unexpected:
+            unexpected.remove(test)
+        else:
+            now_passing.append(test)
+    expected = section.total - len(listed)
+    result = {'suite': suite.name, 'section': section.id, 'title': section.title, 'mode': o.mode, 'pass': r['pass'],
+              'total': section.total, 'expected': expected, 'complete': r['complete'], 'message': r['message']}
+    outputs = os.environ.get('TEST_UNDECLARED_OUTPUTS_DIR')
+    if outputs:
+        with open(join(outputs, 'result.json'), 'w', encoding='utf-8') as f:
+            json.dump(result, f, indent=1, sort_keys=True)
+    log(f'{suite.name} {section.id} ({o.mode}): {r["pass"]}/{section.total}, {expected} expected')
+    problems = []
+    if not r['complete']:
+        problems.append(f'aborted: {r["message"]}')
+    if unexpected:
+        problems.append('these tests fail, and the suite doesn\'t list them as exceptions:\n    ' + '\n    '.join(unexpected))
+    if now_passing:
+        problems.append(f'these tests pass now, but {suite.rel_dir}/README.md lists them as exceptions (expected '
+                        'failures): remove their rows from its Exceptions table\n    ' + '\n    '.join(now_passing))
+    if r['pass'] != expected and not problems:
+        problems.append(f'{r["pass"]} tests pass, {expected} expected')
+    check(not problems, f'{suite.name} {section.id} ({o.mode}): ' + '\n'.join(problems) + '\n\n' + tail(r['output'], 40))
 
 
 def conformance_status(o):
-    """docs/plan.md's status block is the one the suites give."""
-    block = _status_from(o.blocks)
+    """Test: docs/plan.md's status block says what the conformance tests check."""
+    block = expected_status_block()
     with open(rlocation(o.plan), encoding='utf-8') as f:
         _, current = harness.replace_status_block(f.read(), block)
     check(current == block, 'The status block in docs/plan.md is stale. Run `bazel run //:r7rs -- status` and commit '
@@ -178,19 +211,51 @@ def conformance_status(o):
     log('status block in docs/plan.md is up to date')
 
 
-def torture(o):
-    """Every section of a suite passes as many tests under torture as normally: the two runs at
-    once, a JVM per section, two at a time each."""
-    runtime = Runtime.from_manifest(o.runtime)
-    sections = harness.suites(o.suite)[0].sections()
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-        normal = pool.submit(harness.run_conformance, runtime, sections, jobs=2)
-        tortured = pool.submit(harness.run_conformance, runtime, sections, torture=True, jobs=2)
-        normal, tortured = normal.result(), tortured.result()
-    log('normally:\n' + harness.summary(normal, sections) + '\nunder torture:\n' + harness.summary(tortured, sections))
-    worse = [f'{s.id}: {normal[(o.suite, s.id)]["pass"]} normally, {tortured[(o.suite, s.id)]["pass"]} under torture'
-             for s in sections if tortured[(o.suite, s.id)]['pass'] < normal[(o.suite, s.id)]['pass']]
-    check(not worse, 'sections that pass less under torture:\n  ' + '\n  '.join(worse))
+def conformance_report(o):
+    """The conformance tests' results (their result.json, from bazel-testlogs) as a table per suite:
+    a row per section, a column per mode. CI's annotation."""
+    import zipfile
+    testlogs = join(harness.workspace(), 'bazel-testlogs', 'tests')
+    results = {}
+    for name in sorted(os.listdir(testlogs)) if os.path.isdir(testlogs) else []:
+        if not name.startswith('conformance_'):
+            continue
+        outputs = join(testlogs, name, 'test.outputs')
+        data = None
+        if os.path.isfile(join(outputs, 'outputs.zip')):
+            with zipfile.ZipFile(join(outputs, 'outputs.zip')) as z:
+                if 'result.json' in z.namelist():
+                    data = json.loads(z.read('result.json'))
+        elif os.path.isfile(join(outputs, 'result.json')):
+            with open(join(outputs, 'result.json'), encoding='utf-8') as f:
+                data = json.load(f)
+        if data:
+            results[(data['suite'], data['section'], data['mode'])] = data
+    lines = []
+    for suite in harness.suites():
+        sections = suite.sections()
+        totals = {mode: sum(results[(suite.name, s.id, mode)]['pass'] for s in sections if (suite.name, s.id, mode) in results)
+                  for mode in _MODES}
+        lines += [f'### {suite.heading}', '',
+                  f'| {suite.column} | Tests | ' + ' | '.join(_MODES) + ' |', '|---|---:|' + '---:|' * len(_MODES)]
+        for s in sections:
+            cells = []
+            for mode in _MODES:
+                r = results.get((suite.name, s.id, mode))
+                if r is None:
+                    cells.append('')
+                else:
+                    mark = '' if r['pass'] == r['expected'] and r['complete'] else ' ❌'
+                    cells.append(f'{r["pass"]}{mark}')
+            lines.append(f'| {s.title} | {s.total} | ' + ' | '.join(cells) + ' |')
+        lines.append(f'| **Total** | **{sum(s.total for s in sections)}** | ' + ' | '.join(f'**{totals[m]}**' for m in _MODES) + ' |')
+        lines.append('')
+    text = '\n'.join(lines) + '\n'
+    if o.markdown:
+        with open(resolve(o.markdown), 'w', encoding='utf-8') as f:
+            f.write(text)
+    else:
+        print(text)
 
 
 def tools_test(o):
@@ -342,19 +407,19 @@ def test(o):
 
 
 def status(o):
-    """Rewrites the status block in docs/plan.md from the cached conformance results; with --check,
-    fails if it differs; with --native, checks it against a run through the native launcher."""
+    """Rewrites the status block in docs/plan.md from what the conformance tests check (the
+    suites' totals and listed exceptions); with --check, fails if it differs; with --native, checks
+    it against a run through that native launcher."""
     plan = join(harness.workspace(), 'docs', 'plan.md')
     with open(plan, encoding='utf-8') as f:
         text = f.read()
+    block = expected_status_block()
     if o.native:
         all_suites = harness.suites()
         sections = [s for suite in all_suites for s in suite.sections()]
         results = harness.run_conformance(None, sections, native=resolve(o.native))
-        block = harness.status_block([harness.suite_block(suite, results) for suite in all_suites])
-    else:
-        check(o.results, '--results: the conformance results, A,B')
-        block = _status_from(o.results.split(','))
+        native = harness.status_block([harness.suite_block(suite, results) for suite in all_suites])
+        check(native == block, 'Through the native launcher, the suites give a different status block:\n' + native)
     new, current = harness.replace_status_block(text, block)
     if o.check or o.native:
         check(current == block, 'The status block in docs/plan.md differs from what the suites give:\n' + block)
@@ -411,7 +476,6 @@ def main():
     common = argparse.ArgumentParser(add_help=False)
     for option in ('--runtime', '--tools-runtime', '--chibi', '--formatter', '--prefs'):
         common.add_argument(option, default=argparse.SUPPRESS)
-    common.add_argument('--results', default=argparse.SUPPRESS, help="the conformance results' status block parts, A,B")
     parser = argparse.ArgumentParser(prog='bazel run //:r7rs --', description=__doc__.split('\n\n')[0], parents=[common])
     sub = parser.add_subparsers(dest='command', required=True)
     add = sub.add_parser
@@ -434,15 +498,12 @@ def main():
     p.add_argument('file')
     p.add_argument('--expect')
     p.add_argument('--limits')
-    p = sub.add_parser('conformance-results')
-    for option in ('--suite', '--java', '--json', '--block'):
-        p.add_argument(option, required=True)
-    p.add_argument('--module-path', nargs='+', required=True)
+    p = sub.add_parser('conformance')
+    p.add_argument('--suite', choices=['chibi', 'larceny'], required=True)
+    p.add_argument('--section', required=True)
+    p.add_argument('--mode', choices=list(_MODES), required=True)
     p = sub.add_parser('conformance-status')
     p.add_argument('plan')
-    p.add_argument('blocks', nargs='+')
-    p = sub.add_parser('torture')
-    p.add_argument('--suite', choices=['chibi', 'larceny'], required=True)
     p = sub.add_parser('tools')
     p.add_argument('--programs', help='a program in tests/tools (default: the checkout\'s)')
     p.add_argument('name', choices=list(tools.SMOKE_TESTS))
@@ -463,6 +524,8 @@ def main():
     p.add_argument('--native', metavar='FILE', help='through this native launcher (native-image)')
     p.add_argument('-v', '--verbose', action='store_true', help='also list failing tests')
     p.add_argument('--markdown', metavar='FILE', help='append a Markdown table to FILE (e.g. a CI summary)')
+    p = sub.add_parser('conformance-report', help="the conformance tests' results, a table per suite")
+    p.add_argument('--markdown', metavar='FILE', help='write it here (CI: the annotation)')
     p = sub.add_parser('status', help='rewrite the status block in docs/plan.md')
     p.add_argument('--check', action='store_true')
     p.add_argument('--native', metavar='FILE', help='check it against a run through this native launcher')
@@ -475,7 +538,7 @@ def main():
         add(name, add_help=False)
 
     o, rest = parser.parse_known_args()
-    for option in ('runtime', 'tools_runtime', 'chibi', 'formatter', 'prefs', 'results'):
+    for option in ('runtime', 'tools_runtime', 'chibi', 'formatter', 'prefs'):
         setattr(o, option, getattr(o, option, None))  # SUPPRESS'd when not given (parents share actions)
     # Under `bazel run`, file names on the command line are relative to where it ran.
     os.environ['RUNFILES_DIR'] = os.path.abspath(harness.runfiles_dir())
@@ -489,8 +552,8 @@ def main():
     if o.chibi:
         vendor.CHIBI[:] = [rlocation(o.chibi)]
     commands = {
-        'unit': unit, 'diff': diff, 'program': program, 'conformance-results': conformance_results,
-        'conformance-status': conformance_status, 'torture': torture, 'tools': tools_test, 'rules': rules,
+        'unit': unit, 'diff': diff, 'program': program, 'conformance': conformance_test,
+        'conformance-status': conformance_status, 'conformance-report': conformance_report, 'tools': tools_test, 'rules': rules,
         'versions': versions, 'lint': lint, 'test': test, 'status': status, 'format': format_sources,
         'readme': readme_command,
     }

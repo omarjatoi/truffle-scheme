@@ -85,7 +85,8 @@ bazel test //tests:unit_jit               # JUnit in tests/scheme/test, Graal JI
 bazel test //tests:unit_compile           # same, compile immediately; failures are errors
 bazel test //tests:unit_torture           # same, capture + resume at every non-tail call
 bazel test //tests:unit_jit_ReaderTest    # one class in one mode
-bazel test //tests:conformance            # status block in docs/plan.md is current; torture passes as much
+bazel test //tests:conformance            # every suite section, interpreted, compiled and under torture; the status block
+bazel test //tests:conformance_larceny_base   # one section (conformance_compile_..., conformance_torture_... for the other modes)
 bazel test //tests:diff //tests:spec      # tests/diff vs chibi-scheme (and under torture); tests/spec
 bazel test //tests:space //tests:tools    # tail loop and deep recursion under -Xss256k; the tools' smoke tests
 bazel test //src/runtime:all              # one project's static checks (format, checkstyle, ecj, spotbugs)
@@ -95,6 +96,7 @@ bazel run //:r7rs -- test                 # both conformance suites, interpreter
 bazel run //:r7rs -- test -v 6.10         # one section (chibi's 6.10, Larceny's base, ...), listing failing tests
 bazel run //:r7rs -- test --compile       # Graal JIT, compile immediately (also --torture, --suite larceny)
 bazel run //:r7rs -- status               # regenerate the status block in docs/plan.md
+bazel run //:r7rs -- conformance-report   # the conformance tests' last results, a table per suite
 bazel run //:r7rs -- diff path/to/file.scm   # run under chibi and under us; compare stdout + exit status
 bazel run //:r7rs -- format               # format Java code (GraalVM's Eclipse formatter settings)
 bazel run //:r7rs -- readme               # run docs/usage.md's and docs/embedding.md's commands, check their samples
@@ -123,9 +125,9 @@ raise one by hand. If it changes the native-image configuration, run `bazel
 run //:r7rs -- readme --native`.
 
 CI runs on Buildkite (`.buildkite/pipeline.yml`), for every commit, and only
-what runs on every commit: `checks` (the lint tests), `tests` (every other
-test and the readme check), and soft-fail `conformance-*` steps (interpreter
-and `--compile`) whose annotations show per-section results. The required
+what runs on every commit: `checks` (the lint tests) and `tests` (every other
+test, the conformance tests among them, and the readme check); its
+`conformance` annotation is their table. The required
 check is the build, `buildkite/truffle-scheme`; which steps can fail it is
 set in `.buildkite/pipeline.yml`. Its actions and tests run on BuildBuddy's
 executors, like everyone's; the `buildbuddy` annotation links each step's

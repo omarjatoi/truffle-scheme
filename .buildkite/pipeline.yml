@@ -1,9 +1,9 @@
 # CI, uploaded by the pipeline's settings (`buildkite-agent pipeline upload`), for every commit.
 # Every step runs on Buildkite's hosted linux-small agents (2 vCPUs, the default queue):
 # hooks/pre-command installs Nix, and the commands run in its dev shell, as AGENTS.md "Commands"
-# does. Main requires the build's status, `buildkite/truffle-scheme`: `checks` and `tests` fail
-# it, and the conformance steps (soft_fail) post their tables as annotations and never do. Each
-# step also posts its own status, `buildkite/truffle-scheme/<key>`.
+# does. Main requires the build's status, `buildkite/truffle-scheme`, which `checks` and `tests`
+# fail; each also posts its own, `buildkite/truffle-scheme/<key>`. The conformance tests are among
+# `tests` (a test per suite section and mode); their table is the `conformance` annotation.
 #
 # Actions and tests run on BuildBuddy's executors, with its cache (.bazelrc --config=remote, the
 # default), with the API key from the cluster secret BUILDBUDDY_API_KEY; the `buildbuddy` annotation
@@ -30,19 +30,8 @@ steps:
     timeout_in_minutes: 75
     command:
       - 'printf -- "- tests: https://app.buildbuddy.io/invocation/%s\n" "$$BUILDKITE_JOB_ID" | buildkite-agent annotate --context buildbuddy --append'
-      - nix develop --command bazel test --config=ci --remote_header=x-buildbuddy-api-key=$$BUILDBUDDY_API_KEY --invocation_id=$$BUILDKITE_JOB_ID --test_tag_filters=-lint //...
-      - nix develop --command bazel run --config=ci --remote_header=x-buildbuddy-api-key=$$BUILDBUDDY_API_KEY //:r7rs -- readme
-
-  - label: ":memo: Conformance (interpreter)"
-    key: conformance-interpreter
-    soft_fail: true
-    command:
-      - nix develop --command bazel run --config=ci --remote_header=x-buildbuddy-api-key=$$BUILDBUDDY_API_KEY //:r7rs -- test --markdown "$$PWD/conformance.md"
-      - buildkite-agent annotate --context conformance-interpreter < conformance.md
-
-  - label: ":memo: Conformance (compile)"
-    key: conformance-compile
-    soft_fail: true
-    command:
-      - nix develop --command bazel run --config=ci --remote_header=x-buildbuddy-api-key=$$BUILDBUDDY_API_KEY //:r7rs -- test --compile --markdown "$$PWD/conformance.md"
-      - buildkite-agent annotate --context conformance-compile < conformance.md
+      - nix develop --command bazel test --config=ci --remote_header=x-buildbuddy-api-key=$$BUILDBUDDY_API_KEY --invocation_id=$$BUILDKITE_JOB_ID --test_tag_filters=-lint //... || status=$$?
+      - nix develop --command bazel run --config=ci --remote_header=x-buildbuddy-api-key=$$BUILDBUDDY_API_KEY //:r7rs -- conformance-report --markdown "$$PWD/conformance.md"
+      - buildkite-agent annotate --context conformance < conformance.md
+      - nix develop --command bazel run --config=ci --remote_header=x-buildbuddy-api-key=$$BUILDBUDDY_API_KEY //:r7rs -- readme || status=$$?
+      - exit $${status:-0}
