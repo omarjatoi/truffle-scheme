@@ -540,7 +540,7 @@ M5-01 benchmarks and M5-02's report.
     `generator`, `text`) import R7RS-large libraries: they stay in the set as
     listed failures, out of scope, as the conformance suite leaves out
     Larceny's Red Edition tests.
-- [ ] **M5-02 · Comparative report** *(needs M5-01)*
+- [x] **M5-02 · Comparative report** *(needs M5-01)*
   - Add the other R7RS implementations nixpkgs has (Chez Scheme, Gauche,
     Chicken, Guile, Racket's R7RS mode, as available) to the dev shell
     (`flake.nix`, which this task may change), next to chibi-scheme, and run

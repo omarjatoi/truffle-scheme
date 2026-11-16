@@ -7,16 +7,25 @@ matching entry in `_PENDING_GATE_TASKS`.
 
 import argparse
 import concurrent.futures
+import datetime
 import difflib
 import functools
 import hashlib
+import json
+import math
 import os
+import platform
 import re
+import shlex
 import shutil
 import signal
 import subprocess
+import sys
+import tarfile
 import tempfile
 import time
+import urllib.error
+import urllib.request
 from os.path import exists, join
 
 import mx
@@ -1130,6 +1139,14 @@ def _bench_options_parser():
     return parser
 
 
+def _our_postlude(implementation, iterations, count=None):
+    """bench/postlude.scm, after the definitions it expects (bench/README.md)."""
+    with open(join(_BENCH_DIR, 'postlude.scm'), 'rb') as f:
+        return (f'(define %r7rs-bench-implementation "{implementation}")\n'
+                f'(define %r7rs-bench-iterations {iterations})\n'
+                f'(define %r7rs-bench-count {count or "#f"})\n').encode('utf-8') + f.read()
+
+
 def _kill_children(process):
     """On a timeout, before mx kills the process: kills its children. The RSS tracker's poller runs
     the JVM in a session of its own, which killing the poller doesn't reach; left running, the JVM
@@ -1227,11 +1244,7 @@ class _R7RSBenchmarkSuite(mx_benchmark.StdOutBenchmarkSuite):
     def runAndReturnStdOut(self, benchmarks, bmSuiteArgs):
         program = benchmarks[0]
         options, _ = self._options(bmSuiteArgs)
-        implementation = f'truffle-scheme-{options.mode}'
-        with open(join(_BENCH_DIR, 'postlude.scm'), 'rb') as f:
-            postlude = (f'(define %r7rs-bench-implementation "{implementation}")\n'
-                        f'(define %r7rs-bench-iterations {options.iterations})\n'
-                        f'(define %r7rs-bench-count {options.count or "#f"})\n').encode('utf-8') + f.read()
+        postlude = _our_postlude(f'truffle-scheme-{options.mode}', options.iterations, options.count)
         with open(join(self.bench_set.dir, 'inputs', program + '.input'), encoding='utf-8') as f:
             stdin = f.read()
         # Programs read inputs/... and write outputs/... relative to the working directory.
@@ -1280,6 +1293,620 @@ class _R7RSBenchmarkSuite(mx_benchmark.StdOutBenchmarkSuite):
 
 for _bench_set in _BENCH_SETS:
     mx_benchmark.add_bm_suite(_R7RSBenchmarkSuite(_bench_set))
+
+
+# ---------------------------------------------------------------------------
+# Comparative report (plan.md M5-02): ecraven's set on us and on the other R7RS implementations
+# in `nix develop .#bench`, each run the way ecraven's bench script runs it (bench/README.md)
+# ---------------------------------------------------------------------------
+
+# Downloads, kept between runs (gitignored).
+_REPORT_CACHE = join(_BENCH_DIR, '.cache')
+
+# Third-party files the other implementations need, fetched at run time and never committed
+# (bench/r7rs-ecraven/README.md), each pinned:
+# - the implementations' preludes and postludes, from ecraven's repository at the vendored commit;
+_ECRAVEN_SRC_URL = 'https://raw.githubusercontent.com/ecraven/r7rs-benchmarks/{commit}/src/{file}'
+# - for Chez: ecraven's R7RS libraries for Chez Scheme (GPL-3.0), which his bench script loads
+#   with `--libdirs` (scheme/*.sls; they import (srfi :9) from chez-srfi);
+_CHEZ_R7RS = ('https://codeload.github.com/ecraven/chez-scheme-libraries/tar.gz/50f5f85b91b85ed18bd19c981e1bf15811fb8f73',
+              '394939fe34f4cb9c7dc813e86fdaeddea081fd2e0ea509003e4077f2d2010773')
+# - for Gauche: SLIB, which Gauche-postlude.scm imports (for scheme-implementation-version);
+_SLIB = ('https://groups.csail.mit.edu/mac/ftpdir/scm/slib-3b7.tar.gz',
+         'b679e4b8e775ded2111b387589d015d1381c9e2e86a2158d83a5371fba0add83')
+# - for Racket: the r7rs package, for Racket-prelude.scm's `#lang r7rs`.
+_RACKET_R7RS = 'https://github.com/lexi-lambda/racket-r7rs.git?path=r7rs-lib#dfe5a961eb6f305a84a086af788a6fd0f603e5da'
+
+
+class _ReportError(Exception):
+    pass
+
+
+def _fetch(url, name, sha256=None, missing_ok=False):
+    """The contents of url, downloaded into the cache once (as `name`), checked against sha256 if
+    given. With missing_ok, a 404 gives b'' (as the bench script uses /dev/null for a prelude or
+    postlude an implementation doesn't have)."""
+    path = join(_REPORT_CACHE, 'downloads', name)
+    if not exists(path):
+        mx.log(f'r7rs-bench-report: downloading {url}')
+        try:
+            with urllib.request.urlopen(url, timeout=120) as response:
+                data = response.read()
+        except urllib.error.HTTPError as e:
+            if not (missing_ok and e.code == 404):
+                raise _ReportError(f'{url}: {e}') from e
+            data = b''
+        except OSError as e:
+            raise _ReportError(f'{url}: {e}') from e
+        if sha256 and hashlib.sha256(data).hexdigest() != sha256:
+            raise _ReportError(f'{url}: SHA-256 is {hashlib.sha256(data).hexdigest()}, expected {sha256}')
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path + '.tmp', 'wb') as f:
+            f.write(data)
+        os.replace(path + '.tmp', path)
+    with open(path, 'rb') as f:
+        return f.read()
+
+
+def _extract(url, sha256, name, dest):
+    """Downloads a pinned tarball and extracts it into dest (a fresh directory). Returns its one
+    top-level directory."""
+    _fetch(url, name, sha256)
+    with tarfile.open(join(_REPORT_CACHE, 'downloads', name)) as tar:
+        tar.extractall(dest, filter='data')
+    entries = os.listdir(dest)
+    if len(entries) != 1:
+        raise _ReportError(f'{url}: expected one top-level directory, found {entries}')
+    return join(dest, entries[0])
+
+
+def _library_definitions(text):
+    """The names an R6RS library form's body defines with `define` (not nested definitions)."""
+    names, depth, i = set(), 0, 0
+    token = re.compile(r'\(define\s+\(?([^\s()]+)')
+    while i < len(text):
+        c = text[i]
+        if c == ';':
+            i = text.find('\n', i)
+            i = len(text) if i < 0 else i
+        elif c == '"':
+            i += 1
+            while i < len(text) and text[i] != '"':
+                i += 2 if text[i] == '\\' else 1
+        elif text.startswith('#\\', i):
+            i += 2
+        elif c == '(':
+            m = token.match(text, i)
+            if m and depth == 1:
+                names.add(m.group(1))
+            depth += 1
+        elif c == ')':
+            depth -= 1
+        i += 1
+    return names
+
+
+def _setup_chez(work):
+    """ecraven's Chez R7RS libraries, compiled. They predate Chez 10, which added some of the
+    procedures they define (vector-copy!, vector-append) to (chezscheme); each library is patched
+    to except what it defines from its (chezscheme) import, or Chez rejects the duplicate."""
+    libs = _extract(*_CHEZ_R7RS, 'chez-scheme-libraries.tar.gz', join(work, 'chez'))
+    query = "(for-each (lambda (s) (display s) (newline)) (library-exports '(chezscheme)))"
+    exports = set(subprocess.run(['scheme', '-q'], input=query, capture_output=True, text=True, check=True).stdout.split())
+    patched = []
+    for name in sorted(os.listdir(join(libs, 'scheme'))):
+        path = join(libs, 'scheme', name)
+        with open(path, encoding='utf-8') as f:
+            text = f.read()
+        defined = _library_definitions(text)
+        renamed = set(re.findall(r'\(([^\s()]+) %[^\s()]+\)', text))
+        clash = sorted((defined & exports) - renamed)
+        if clash:
+            text = text.replace('(chezscheme)', f'(except (chezscheme) {" ".join(clash)})', 1)
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write(text)
+            patched.append(f'{name}: {" ".join(clash)}')
+    libdirs = libs + os.pathsep + os.environ.get('CHEZSCHEMELIBDIRS', '')
+    # Compile them now, not in the first benchmark's run.
+    imports = ' '.join(f'(scheme {n[:-4]})' for n in sorted(os.listdir(join(libs, 'scheme'))) if n.endswith('.sls')
+                       and n not in ('repl.sls', 'load.sls', 'eval.sls'))
+    with open(join(work, 'chez-warm.scm'), 'w', encoding='utf-8') as f:
+        f.write(f'(import {imports})\n')
+    done = subprocess.run(['scheme', '--compile-imported-libraries', '--libdirs', libdirs, '--program', join(work, 'chez-warm.scm')],
+                          capture_output=True, text=True, check=False)
+    if done.returncode != 0:
+        raise _ReportError('compiling the Chez R7RS libraries failed:\n' + _tail(done.stdout + done.stderr))
+    return {'chezlibs': libdirs}, ['ecraven/chez-scheme-libraries, patched: ' + ('; '.join(patched) or 'nothing')]
+
+
+def _setup_gauche(work):
+    return {'slib': _extract(*_SLIB, 'slib.tar.gz', join(work, 'slib')) + os.sep}, ['SLIB 3b7']
+
+
+def _setup_racket(work):
+    addon = join(_REPORT_CACHE, 'racket')
+    marker = join(addon, 'installed')
+    if not exists(marker) or open(marker, encoding='utf-8').read() != _RACKET_R7RS:
+        shutil.rmtree(addon, ignore_errors=True)
+        os.makedirs(addon)
+        mx.log(f'r7rs-bench-report: installing {_RACKET_R7RS}')
+        done = subprocess.run(['raco', 'pkg', 'install', '--batch', '--auto', '--scope', 'user', '--no-docs', _RACKET_R7RS],
+                              env=dict(os.environ, PLTADDONDIR=addon), capture_output=True, text=True, check=False)
+        if done.returncode != 0:
+            raise _ReportError('installing the r7rs package failed:\n' + _tail(done.stdout + done.stderr))
+        with open(marker, 'w', encoding='utf-8') as f:
+            f.write(_RACKET_R7RS)
+    return {'racket': addon}, ['the r7rs package (lexi-lambda/racket-r7rs, r7rs-lib)']
+
+
+def _setup_guile(work):
+    # guild compile writes, and guile reads, compiled files under $XDG_CACHE_HOME/guile/ccache.
+    return {'guilecache': join(work, 'guile-cache')}, []
+
+
+class _Implementation:
+    """One column of the report. Another implementation runs as ecraven's bench script runs it:
+    the program is `cat <name>-prelude.scm <program>.scm common.scm <name>-postlude.scm
+    common-postlude.scm`, built with its `<name>_comp` command, run with its `<name>_exec` command
+    and the program's .input on standard input. In the commands, {src} is the program, {exe} its
+    compiled form, and the other words come from setup."""
+
+    def __init__(self, key, title, name=None, executable=None, compile_cmd=None, run_cmd=None, env=None, setup=None):
+        self.key = key
+        self.title = title
+        self.name = name  # the bench script's NAME, which names the prelude and postlude; None for ours
+        self.executable = executable
+        self.compile_cmd = compile_cmd or []
+        self.run_cmd = run_cmd or []
+        self.env = env or {}
+        self.setup = setup
+
+
+# In the bench script's order of speed in ecraven's tables, roughly: the column order of the report.
+_IMPLEMENTATIONS = [
+    _Implementation('jit', 'Ours, JIT'),
+    _Implementation('interpreter', 'Ours, interpreter'),
+    _Implementation('chez', 'Chez', 'Chez', 'scheme', run_cmd=[
+        'scheme', '--optimize-level', '2', '--compile-imported-libraries', '--libdirs', '{chezlibs}', '--program', '{src}'],
+        setup=_setup_chez),
+    _Implementation('racket', 'Racket', 'Racket', 'racket', ['raco', 'make', '{src}'], ['racket', '{src}'],
+                    env={'PLTADDONDIR': '{racket}'}, setup=_setup_racket),
+    _Implementation('chicken', 'Chicken', 'Chicken', 'csc',
+                    ['csc', '-R', 'r7rs', '-X', 'r7rs', '-block', '-O3', '-C', '-O3', '-d0', '{src}', '-o', '{exe}'], ['{exe}']),
+    _Implementation('guile', 'Guile', 'Guile', 'guile', ['guild', 'compile', '-O3', '{src}'], ['guile', '{src}'],
+                    env={'GC_INITIAL_HEAP_SIZE': '100000000', 'XDG_CACHE_HOME': '{guilecache}'}, setup=_setup_guile),
+    _Implementation('gauche', 'Gauche', 'Gauche', 'gosh', run_cmd=['gosh', '-r7', '-b', '{src}'],
+                    env={'SCHEME_LIBRARY_PATH': '{slib}'}, setup=_setup_gauche),
+    _Implementation('chibi', 'Chibi', 'Chibi', 'chibi-scheme', run_cmd=['chibi-scheme', '-m', 'scheme.load', '-e', '(load "{src}")']),
+]
+
+
+class _Measured:
+    def __init__(self, rc, output, timed_out, rss_bytes):
+        self.rc = rc
+        self.output = output
+        self.timed_out = timed_out
+        self.rss_bytes = rss_bytes
+
+
+def _run_measured(argv, cwd, stdin_path, env, timeout):
+    """Runs argv to completion or until timeout seconds have passed, and measures its peak RSS
+    (the largest of the process and the descendants it waited for, from wait4)."""
+    with tempfile.TemporaryFile() as out, open(stdin_path or os.devnull, 'rb') as stdin:
+        process = subprocess.Popen(argv, cwd=cwd, stdin=stdin, stdout=out, stderr=subprocess.STDOUT, env=env,
+                                   start_new_session=True)
+        deadline = time.monotonic() + timeout
+        timed_out = False
+        while True:
+            pid, status, rusage = os.wait4(process.pid, os.WNOHANG)
+            if pid:
+                break
+            if time.monotonic() > deadline:
+                timed_out = True
+                os.killpg(process.pid, signal.SIGKILL)
+                _, status, rusage = os.wait4(process.pid, 0)
+                break
+            time.sleep(0.05)
+        process.returncode = os.waitstatus_to_exitcode(status)
+        out.seek(0)
+        output = out.read().decode('utf-8', errors='replace')
+    # ru_maxrss is in bytes on macOS, in kilobytes on Linux.
+    rss = rusage.ru_maxrss * (1 if sys.platform == 'darwin' else 1024)
+    return _Measured(process.returncode, output, timed_out, rss)
+
+
+def _outcome(measured, iterations, stage=''):
+    """{status, times, rss_mb, detail}: status is ok, or what went wrong."""
+    times = [float(m.group(1)) for m in _ELAPSED_LINE.finditer(measured.output)]
+    error = re.search(r'^(ERROR|INTERNAL ERROR):.*$', measured.output, re.MULTILINE)
+    if measured.timed_out:
+        status = f'{stage}timeout'
+    elif error and 'incorrect result' in error.group(0):
+        status = 'wrong result'
+    elif error:
+        status = f'{stage}error'
+    elif measured.rc != 0:
+        status = f'{stage}crash (exit {measured.rc})'
+    elif len(times) < iterations:
+        status = 'no result'
+    else:
+        status = 'ok'
+    result = {'status': status, 'times': times, 'rss_mb': round(measured.rss_bytes / 2**20, 1)}
+    if status != 'ok':
+        result['detail'] = '\n'.join(measured.output.rstrip('\n').splitlines()[-8:])
+    m = re.search(r'^\+!CSVLINE!\+([^,\n]*),', measured.output, re.MULTILINE)
+    if m:
+        result['version'] = m.group(1)
+    return result
+
+
+def _with_count(text, count):
+    """An .input file with its first datum, the count, replaced."""
+    return re.sub(r'\A((?:[ \t]*(?:;[^\n]*)?\n)*[ \t]*)\d+', lambda m: m.group(1) + str(count), text, count=1)
+
+
+def _input_count(text):
+    m = re.match(r'\A(?:[ \t]*(?:;[^\n]*)?\n)*[ \t]*(\d+)', text)
+    if not m:
+        raise _ReportError('an .input file without a count')
+    return int(m.group(1))
+
+
+def _run_one(impl, words, lude, bench_set, program, count, options, root):
+    """Runs one program on one implementation, in a fresh directory. Returns its outcome."""
+    workdir = tempfile.mkdtemp(prefix=f'{impl.key}-{program}-', dir=root)
+    try:
+        os.symlink(join(bench_set.dir, 'inputs'), join(workdir, 'inputs'))
+        os.mkdir(join(workdir, 'outputs'))
+        with open(join(bench_set.dir, 'inputs', program + '.input'), encoding='utf-8') as f:
+            stdin_text = _with_count(f.read(), count)
+        stdin_path = join(workdir, 'stdin')
+        with open(stdin_path, 'w', encoding='utf-8') as f:
+            f.write(stdin_text)
+        src = join(workdir, program + '.scm')
+        if impl.name is None:
+            iterations = options.jit_iterations if impl.key == 'jit' else 1
+            with open(src, 'wb') as f:
+                f.write(bench_set.program(program, _our_postlude(f'truffle-scheme-{impl.key}', iterations)))
+            vm_args = _BENCH_MODES[impl.key][0]
+            argv = mx.get_jdk().generate_java_command(_TRUFFLE_VM_ARGS + list(vm_args) + list(_launcher_jvm_args())
+                                                      + ['-m', 'scheme.launcher/scheme.launcher.SchemeMain', src])
+            timeout = options.timeout * iterations if impl.key == 'jit' else options.interpreter_timeout
+            return _outcome(_run_measured(argv, workdir, stdin_path, None, timeout), iterations)
+        with open(src, 'wb') as f:
+            f.write(b''.join([lude['prelude'], bench_set._read('src', program + '.scm'), bench_set._read('src', 'common.scm'),
+                              lude['postlude'], bench_set._read('src', 'common-postlude.scm')]))
+        words = dict(words, src=src, exe=join(workdir, program + '.exe'))
+        env = dict(os.environ, **{k: v.format(**words) for k, v in impl.env.items()})
+        if impl.compile_cmd:
+            measured = _run_measured([w.format(**words) for w in impl.compile_cmd], workdir, None, env, options.timeout)
+            if measured.timed_out or measured.rc != 0:
+                return _outcome(measured, 1, stage='compile ')
+        return _outcome(_run_measured([w.format(**words) for w in impl.run_cmd], workdir, stdin_path, env, options.timeout), 1)
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+
+
+def _git_commit():
+    done = subprocess.run(['git', 'rev-parse', '--short=12', 'HEAD'], cwd=_suite.dir, capture_output=True, text=True, check=False)
+    return done.stdout.strip() or 'unknown'
+
+
+def _host_description():
+    cpu = platform.processor() or platform.machine()
+    if sys.platform == 'darwin':
+        brand = subprocess.run(['sysctl', '-n', 'machdep.cpu.brand_string'], capture_output=True, text=True, check=False).stdout.strip()
+        cpu = brand or cpu
+    elif exists('/proc/cpuinfo'):
+        with open('/proc/cpuinfo', encoding='utf-8') as f:
+            m = re.search(r'^model name\s*:\s*(.*)$', f.read(), re.MULTILINE)
+            cpu = m.group(1) if m else cpu
+    memory = 0
+    if sys.platform == 'darwin':
+        memory = int(subprocess.run(['sysctl', '-n', 'hw.memsize'], capture_output=True, text=True, check=False).stdout.strip() or 0)
+    elif exists('/proc/meminfo'):
+        with open('/proc/meminfo', encoding='utf-8') as f:
+            m = re.search(r'^MemTotal:\s*(\d+) kB', f.read(), re.MULTILINE)
+            memory = int(m.group(1)) * 1024 if m else 0
+    memory = f', {memory / 2**30:.0f} GB of memory' if memory else ''
+    return f'{platform.system()} {platform.release()} ({platform.machine()}), {cpu}, {os.cpu_count()} CPUs{memory}'
+
+
+def r7rs_bench_report(args):
+    """run ecraven's benchmarks on us and on other R7RS implementations, and write docs/benchmarks.md (M5-02)"""
+    keys = [impl.key for impl in _IMPLEMENTATIONS]
+    bench_set = next(s for s in _BENCH_SETS if s.name == 'ecraven')
+    parser = argparse.ArgumentParser(prog='mx r7rs-bench-report',
+                                     description='Run inside `nix develop .#bench`, which has the other implementations. See bench/README.md.')
+    parser.add_argument('--benchmarks', metavar='P,...', help="programs of ecraven's set (default: all, in the bench script's order)")
+    parser.add_argument('--implementations', metavar='I,...', default=','.join(keys), help='columns (default: all of ' + ','.join(keys) + ')')
+    parser.add_argument('--scale', type=float, default=1.0, metavar='F',
+                        help="run each program max(1, round(F * its count)) times, on every implementation (default 1: the program's count, as in ecraven's tables)")
+    parser.add_argument('--interpreter-scale', type=float, default=0.1, metavar='F',
+                        help='and our interpreter F times that, its time scaled back up to the full count (default 0.1)')
+    parser.add_argument('--jit-iterations', type=int, default=3, metavar='N',
+                        help='times our JIT JVM runs the harness: the first is the comparable number, the best of the rest the steady state (default 3)')
+    parser.add_argument('--timeout', type=int, default=300, metavar='SECONDS',
+                        help="kill a run after this long (default 300, as ecraven's CPU_LIMIT; our JIT gets it once per iteration)")
+    parser.add_argument('--interpreter-timeout', type=int, metavar='SECONDS',
+                        help="the same for our interpreter (default: --timeout); a program whose count is 1 can't be scaled down")
+    parser.add_argument('--note', default='', help='conditions to state in the report, e.g. how loaded the machine was')
+    parser.add_argument('--output', default=join(_suite.dir, 'docs', 'benchmarks.md'), metavar='FILE.md')
+    parser.add_argument('--json', default=join(_suite.dir, 'docs', 'benchmarks.json'), metavar='FILE.json')
+    parser.add_argument('--render-only', action='store_true', help='rewrite --output from --json without running anything')
+    options = parser.parse_args(args)
+    options.interpreter_timeout = options.interpreter_timeout or options.timeout
+    if options.render_only:
+        with open(options.json, encoding='utf-8') as f:
+            report = json.load(f)
+        _write_report_markdown(report, options.output)
+        return
+    selected = options.implementations.split(',')
+    unknown = [k for k in selected if k not in keys]
+    if unknown:
+        mx.abort(f'r7rs-bench-report: unknown implementation(s) {unknown}; choose from {keys}')
+    all_programs = [program for program, _ in bench_set.benchmarks()]
+    programs = options.benchmarks.split(',') if options.benchmarks else all_programs
+    unknown = [p for p in programs if p not in all_programs]
+    if unknown:
+        mx.abort(f'r7rs-bench-report: not in ecraven\'s set: {unknown}')
+    if options.scale <= 0 or options.interpreter_scale <= 0 or options.jit_iterations < 1:
+        mx.abort('r7rs-bench-report: --scale and --interpreter-scale must be positive, --jit-iterations at least 1')
+    impls = [impl for impl in _IMPLEMENTATIONS if impl.key in selected]
+    if any(impl.name is None for impl in impls):
+        _command('build', [], 'build failed')()
+
+    root = tempfile.mkdtemp(prefix='r7rs-bench-report-')
+    report = {
+        'generated': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),
+        'command': 'mx r7rs-bench-report ' + shlex.join(args),
+        'host': _host_description(),
+        'note': options.note,
+        'commit': _git_commit(),
+        'ecraven_commit': bench_set.commit(),
+        'scale': options.scale,
+        'interpreter_scale': options.interpreter_scale,
+        'jit_iterations': options.jit_iterations,
+        'timeout': options.timeout,
+        'interpreter_timeout': options.interpreter_timeout,
+        'implementations': {},
+        'programs': {},
+    }
+    try:
+        words, ludes = {}, {}
+        for impl in impls:
+            info = {'title': impl.title, 'notes': []}
+            report['implementations'][impl.key] = info
+            if impl.name is None:
+                info['version'] = f'truffle-scheme {report["commit"]}, GraalVM {_graalvm_version(mx.get_jdk().home)}'
+                info['command'] = ('java ' + ' '.join(_BENCH_MODES[impl.key][0] or ['(Graal JIT, background compilation)'])
+                                   + ' -m scheme.launcher/scheme.launcher.SchemeMain {src} < {input}')
+                info['notes'].append('`bench/postlude.scm` as the postlude')
+                continue
+            info['command'] = ' '.join(impl.compile_cmd + (['&&'] if impl.compile_cmd else []) + impl.run_cmd + ['<', '{input}'])
+            if not shutil.which(impl.executable):
+                info['unavailable'] = f'`{impl.executable}` is not on PATH: run inside `nix develop .#bench`'
+                continue
+            try:
+                commit = bench_set.commit()
+                ludes[impl.key] = {part: _fetch(_ECRAVEN_SRC_URL.format(commit=commit, file=f'{impl.name}-{part}.scm'),
+                                                f'ecraven-{commit[:12]}-{impl.name}-{part}.scm', missing_ok=True)
+                                   for part in ('prelude', 'postlude')}
+                used = [f'`{impl.name}-{part}.scm`' for part, text in ludes[impl.key].items() if text]
+                info['notes'].append(' and '.join(used) if used else 'no prelude or postlude')
+                if impl.setup:
+                    more, notes = impl.setup(root)
+                    words.update(more)
+                    info['notes'] += notes
+            except (_ReportError, subprocess.CalledProcessError, OSError) as e:
+                info['unavailable'] = f'setup failed: {e}'
+                mx.log(f'r7rs-bench-report: {impl.title}: {info["unavailable"]}')
+        runnable = [impl for impl in impls if 'unavailable' not in report['implementations'][impl.key]]
+        start = time.time()
+        for i, program in enumerate(programs):
+            with open(join(bench_set.dir, 'inputs', program + '.input'), encoding='utf-8') as f:
+                full = _input_count(f.read())
+            count = max(1, round(full * options.scale))
+            entry = {'count': count, 'program_count': full, 'results': {}}
+            report['programs'][program] = entry
+            # Each program runs every implementation, in an order rotated from one program to the
+            # next, so that the machine's load drifting over the run spreads evenly over them.
+            order = runnable[i % len(runnable):] + runnable[:i % len(runnable)] if runnable else []
+            for impl in order:
+                run_count = max(1, round(count * options.interpreter_scale)) if impl.key == 'interpreter' else count
+                try:
+                    result = _run_one(impl, words, ludes.get(impl.key), bench_set, program, run_count, options, root)
+                except _ReportError as e:
+                    result = {'status': 'error', 'times': [], 'detail': str(e)}
+                result['count'] = run_count
+                if result['status'] == 'ok':
+                    # The comparable number: the first (or only) run in a fresh process, as in
+                    # ecraven's tables; the interpreter's scaled up to the count the rest ran.
+                    result['seconds'] = result['times'][0] * count / run_count
+                    if impl.key == 'jit' and len(result['times']) > 1:
+                        result['steady_seconds'] = min(result['times'][1:])
+                    if 'version' in result:
+                        report['implementations'][impl.key].setdefault('version', result['version'])
+                entry['results'][impl.key] = result
+                shown = f'{result["seconds"]:.3f}s' if result['status'] == 'ok' else result['status']
+                mx.log(f'r7rs-bench-report: [{i + 1}/{len(programs)}, {(time.time() - start) / 60:.0f} min] '
+                       f'{program} on {impl.title} (count {run_count}): {shown}')
+            _write_json(report, options.json)
+        report['minutes'] = round((time.time() - start) / 60, 1)
+        _write_json(report, options.json)
+        _write_report_markdown(report, options.output)
+        mx.log(f'r7rs-bench-report: wrote {options.output} and {options.json}')
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _write_json(report, path):
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    with open(path + '.tmp', 'w', encoding='utf-8') as f:
+        json.dump(report, f, indent=1, sort_keys=False)
+        f.write('\n')
+    os.replace(path + '.tmp', path)
+
+
+_SHORT_STATUS = [('timeout', 'timeout'), ('compile', 'compile error'), ('wrong', 'wrong result'), ('crash', 'crash'),
+                 ('error', 'error'), ('no result', 'no result')]
+
+
+def _short_status(status):
+    return next((short for prefix, short in _SHORT_STATUS if prefix in status), status)
+
+
+def _write_report_markdown(report, path):
+    impls = report['implementations']
+    programs = report['programs']
+    keys = list(impls)
+    # The columns: each implementation, and our JIT's steady state next to its first run.
+    columns = []
+    for key in keys:
+        columns.append((key, 'seconds', impls[key]['title']))
+        if key == 'jit' and report['jit_iterations'] > 1:
+            columns.append((key, 'steady_seconds', 'Ours, JIT steady'))
+
+    def time_of(program, key, field):
+        result = programs[program]['results'].get(key)
+        return result.get(field) if result and result['status'] == 'ok' else None
+
+    # Time relative to the fastest comparable run (steady state excluded: it isn't one).
+    fastest = {}
+    for program in programs:
+        times = [time_of(program, key, 'seconds') for key in keys]
+        times = [t for t in times if t is not None]
+        fastest[program] = min(times) if times else None
+
+    def ratio(program, key, field):
+        t = time_of(program, key, field)
+        return t / fastest[program] if t is not None and fastest[program] else None
+
+    lines = []
+    out = lines.append
+    out('# Benchmarks')
+    out('')
+    out('<!-- Generated by `mx r7rs-bench-report`: don\'t edit by hand. -->')
+    out('')
+    out("ecraven's R7RS benchmarks (`bench/r7rs-ecraven/`, the set behind "
+        '<https://ecraven.github.io/r7rs-benchmarks/>) on this implementation and on the other R7RS '
+        "implementations in `nix develop .#bench`, each run with its own prelude and postlude and as "
+        "ecraven's `bench` script runs it, so the numbers compare with his tables. How to run it, and "
+        'what is measured: `bench/README.md`.')
+    out('')
+    out('## Conditions')
+    out('')
+    out(f'- Run by `{report["command"]}`, at commit `{report["commit"]}`, from {report["generated"]}, '
+        f'for {report.get("minutes", "?")} minutes.')
+    out(f'- Host: {report["host"]}.')
+    if report['note']:
+        out(f'- {report["note"]}')
+    scale = report['scale']
+    out('- Counts: ' + ("each program's own count (its `.input` file), as in ecraven's tables" if scale == 1
+                        else f"{scale:g} times each program's own count (at least 1), on every implementation; "
+                        "the Count column gives it") + '.')
+    if 'interpreter' in impls:
+        out(f'- Ours, interpreter: run {report["interpreter_scale"]:g} times that count (at least 1), its time '
+            'then scaled up to the count the others ran, marked †.')
+    if 'jit' in impls:
+        out(f'- Ours, JIT: one JVM runs the harness {report["jit_iterations"]} times. The first, in a fresh process, '
+            "is the comparable number (as for every other implementation, and in ecraven's tables: the harness's "
+            'own timing, startup excluded); "JIT steady" is the best of the others, once the JIT has compiled the program.')
+    interpreter_timeout = report.get('interpreter_timeout', report['timeout'])
+    out(f'- A run is killed after {report["timeout"]} s (ecraven\'s `CPU_LIMIT`), our JIT\'s after that '
+        'once per iteration' + (f', our interpreter\'s after {interpreter_timeout} s' if interpreter_timeout != report['timeout'] else '')
+        + '. Peak memory is the process\'s maximum resident set size. Our JVMs run with the default heap '
+        'limits (no `-Xmx`), so theirs is as much as the JVM\'s default ergonomics let the heap grow.')
+    out('')
+    out('## Summary')
+    out('')
+    out('Geometric mean of the time relative to the fastest, over the programs the implementation passed '
+        '(failures are not counted, so compare it alongside the failures), and the median peak memory.')
+    out('')
+    out('| Implementation | Version | Passed | Fastest on | Geometric mean ×fastest | Median peak memory (MB) |')
+    out('|---|---|--:|--:|--:|--:|')
+    for key, field, title in columns:
+        info = impls[key]
+        if 'unavailable' in info:
+            out(f'| {title} | not run: {info["unavailable"]} | | | | |')
+            continue
+        ratios = [ratio(p, key, field) for p in programs]
+        ratios = [r for r in ratios if r is not None]
+        passed = sum(1 for p in programs if time_of(p, key, field) is not None)
+        ran = sum(1 for p in programs if key in programs[p]['results'])
+        wins = sum(1 for r in ratios if r == 1.0) if field == 'seconds' else '–'
+        geomean = f'{math.exp(sum(math.log(r) for r in ratios) / len(ratios)):.2f}' if ratios else '–'
+        rss = sorted(programs[p]['results'][key]['rss_mb'] for p in programs
+                     if key in programs[p]['results'] and 'rss_mb' in programs[p]['results'][key])
+        median = f'{rss[len(rss) // 2]:.0f}' if rss and field == 'seconds' else ''
+        out(f'| {title} | {info.get("version", "?")} | {passed}/{ran} | {wins} | {geomean} | {median} |')
+    out('')
+    out('## Time')
+    out('')
+    out('Seconds for the count, and in parentheses the time relative to the fastest; the fastest is in bold.')
+    out('')
+    out('| Program | Count | ' + ' | '.join(title for _, _, title in columns) + ' |')
+    out('|---|--:|' + '--:|' * len(columns))
+    for program, entry in programs.items():
+        cells = []
+        for key, field, _ in columns:
+            result = entry['results'].get(key)
+            if result is None:
+                cells.append('')
+            elif result['status'] != 'ok':
+                cells.append(_short_status(result['status']))
+            else:
+                t, r = result[field], ratio(program, key, field)
+                mark = '†' if key == 'interpreter' and result['count'] != entry['count'] else ''
+                text = f'{t:.2f}{mark} ({r:.1f})'
+                cells.append(f'**{text}**' if r == 1.0 and field == 'seconds' else text)
+        out(f'| {program} | {entry["count"]} | ' + ' | '.join(cells) + ' |')
+    out('')
+    out('## Peak memory')
+    out('')
+    out('Maximum resident set size in MB, failed runs included (our JIT\'s over all its iterations).')
+    out('')
+    mem_columns = [(key, title) for key, field, title in columns if field == 'seconds']
+    out('| Program | ' + ' | '.join(title for _, title in mem_columns) + ' |')
+    out('|---|' + '--:|' * len(mem_columns))
+    for program, entry in programs.items():
+        cells = [f'{entry["results"][key]["rss_mb"]:.0f}' if 'rss_mb' in entry['results'].get(key, {}) else ''
+                 for key, _ in mem_columns]
+        out(f'| {program} | ' + ' | '.join(cells) + ' |')
+    out('')
+    out('## Failures')
+    out('')
+    failures = [(program, key, result) for program, entry in programs.items()
+                for key, result in entry['results'].items() if result['status'] != 'ok']
+    limits = {'jit': report['timeout'] * report['jit_iterations'], 'interpreter': interpreter_timeout}
+    if not failures:
+        out('None.')
+    else:
+        out('A timeout is a run killed at its limit (Conditions); our interpreter\'s limit may be shorter '
+            'than the others\', so its timeouts say only that it took longer than that.')
+        out('')
+        out('| Program | Implementation | Status | Last line of output |')
+        out('|---|---|---|---|')
+        for program, key, result in failures:
+            last = (result.get('detail') or '').strip().splitlines()
+            last = last[-1].replace('|', '\\|').replace('`', "'")[:120] if last else ''
+            status = result['status']
+            if status.endswith('timeout'):
+                status += f' ({limits.get(key, report["timeout"])} s)'
+            out(f'| {program} | {impls[key]["title"]} | {status} | {"`" + last + "`" if last else ""} |')
+    out('')
+    out('## How each implementation ran')
+    out('')
+    out('`{src}` is the program as the bench script builds it, `{input}` its `.input` file '
+        '(with the count above).')
+    out('')
+    for key, info in impls.items():
+        extra = f' With {"; ".join(info["notes"])}.' if info.get('notes') else ''
+        out(f'- {info["title"]}: `{info["command"]}`.{extra}')
+    out('')
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write('\n'.join(lines))
 
 
 # ---------------------------------------------------------------------------
@@ -1424,5 +2051,7 @@ mx.update_commands(_suite, {
     'r7rs-vendor-chibi': [r7rs_vendor_chibi, 'path/to/r7rs-tests.scm --version <chibi version>'],
     'r7rs-vendor-larceny': [r7rs_vendor_larceny, 'path/to/larceny --commit <hash>'],
     'r7rs-vendor-benchmarks': [r7rs_vendor_benchmarks, 'ecraven|larceny path/to/checkout --commit <hash>'],
+    'r7rs-bench-report': [r7rs_bench_report, '[--benchmarks P,...] [--implementations I,...] [--scale F] [--interpreter-scale F] '
+                          '[--jit-iterations N] [--timeout S] [--note TEXT] [--output FILE.md] [--json FILE.json] [--render-only]'],
     'r7rs-unittest': [r7rs_unittest, '[--compile] [--torture] [-j N] [--shard I/N] [unittest args...]'],
 })
