@@ -19,6 +19,7 @@ import scheme.runtime.value.SChar;
 import scheme.runtime.value.SClosure;
 import scheme.runtime.value.SComplex;
 import scheme.runtime.value.SConstant;
+import scheme.runtime.value.SEnvironment;
 import scheme.runtime.value.SErrorObject;
 import scheme.runtime.value.SPair;
 import scheme.runtime.value.SRational;
@@ -312,6 +313,8 @@ public final class Printer {
             out.append("#<port>");
         } else if (v instanceof SRecordType t) {
             out.append("#<record-type ").append(t.name).append('>');
+        } else if (v instanceof SEnvironment) {
+            out.append("#<environment>");
         } else {
             // Internal error, never a Scheme error (design.md D8).
             throw new IllegalArgumentException("not a Scheme value: " + v.getClass().getName());

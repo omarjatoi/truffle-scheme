@@ -29,10 +29,10 @@ edit it by hand.
 | 6.9 Bytevectors | 0 | 39 |
 | 6.10 Control Features | 19 | 34 |
 | 6.11 Exceptions | 14 | 30 |
-| 6.12 Environments and evaluation | 0 | 4 |
+| 6.12 Environments and evaluation | 4 | 4 |
 | 6.13 Input and output | 7 | 376 |
 | 6.14 System interface | 0 | 13 |
-| **Total** | **493** | **1225** |
+| **Total** | **497** | **1225** |
 <!-- status:end -->
 
 ---
@@ -410,7 +410,7 @@ parallel. Section counts are from the status block when M4 was drafted.
     "Read syntax" and "Numeric syntax" groups.
   - **Done when** section 6.13 (7/376) passes in full, normally and under
     `--torture`.
-- [ ] **M4-07 · eval and environments** *(early)*
+- [x] **M4-07 · eval and environments** *(early)*
   - R7RS §6.12: `eval` compiles in the given environment and tail-calls the
     result (design.md D6, D5), `environment` returns a fresh environment
     importing the given libraries (D7), `interaction-environment`,
