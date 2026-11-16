@@ -124,20 +124,15 @@ the run affects them evenly.
 
 How long it takes: the committed report (`--scale 0.1 --interpreter-timeout
 60`, every program) took 105 minutes on a loaded 16-core machine, most of it
-chibi's and our interpreter's timeouts and the programs whose count is 1; CI's
+chibi's and our interpreter's timeouts and the programs whose count is 1;
 twelve programs at the same scale take about 25 minutes. With the programs'
-own counts, expect several hours.
-
-CI doesn't run it: the committed report comes from a dedicated machine, and a
-shared CI agent is too noisy for one.
+own counts, expect several hours. It runs locally, never in CI (design.md D11).
 
 ## Thresholds
 
 `bazel run //:r7rs -- bench-check` (plan.md M5-08) runs a subset of ecraven's set and fails if one of them
-is slower than its threshold in `thresholds.json`. CI runs it on demand, not on every PR (the
-maintainer's choice, design.md D11): in a Buildkite build started with `BENCH=check` in its
-environment (`bk build create -b <branch> -e BENCH=check`), or for a commit whose message says
-`[bench check]`, on a hosted `linux-small` agent (2 vCPUs). It is not a `bazel test`: its JVMs
+is slower than its threshold in `thresholds.json`. It runs locally, not in CI (design.md D11): a
+PR that may change performance runs it before it is opened. It is not a `bazel test`: its JVMs
 run one after another, with the machine to themselves.
 
 ```
@@ -212,20 +207,16 @@ again), and where, when and at which commit the runs were made.
 ### Updating the thresholds
 
 A PR that changes performance on purpose (a slowdown it accepts, a speedup that leaves a threshold
-far too loose, or a changed workload) commits new thresholds, measured on CI's agents, and says
-in its description which ones moved and why:
+far too loose, or a changed workload) commits new thresholds, measured on the platform the file
+records, and says in its description which ones moved and why:
 
 ```
-bk build create -b <branch> -e BENCH=measure        # or a commit message with [bench measure]
-bk artifacts download -b <build> bench/thresholds.json
+bazel run //:r7rs -- bench-check --measure --json /tmp/runs/m1.json   # several times, while the machine is quiet
+bazel run //:r7rs -- bench-check --update --from /tmp/runs/*.json --note "how loaded the machine was"
 ```
 
-Such a build's eight `Measure` steps run `bench-check --measure` on fresh `linux-small` agents,
-and its `Thresholds` step runs `bench-check --update --from` on the eight files and attaches the
-new `bench/thresholds.json`. `--update --from` takes any measurement files, so the `measure-*.json`
-artifacts of several builds can be combined, and so can a `BENCH=check` build's
-`bench-check.json`. `bench-check --update` without `--from` measures here instead (`--runs`,
-default 3), which is only right for a machine that runs the check itself.
+`bench-check --update` without `--from` measures and updates in one go (`--runs`, default 3).
+Separate `--measure` runs let you note the load around each.
 
 ## Failures
 

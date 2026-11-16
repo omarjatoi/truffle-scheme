@@ -535,15 +535,12 @@ Each entry: the decision, why, and what was rejected.
   `gh`, chibi-scheme (the differential tests take it from the shell) and a
   GraalVM JDK for running and embedding outside Bazel. `nix develop .#bench`
   adds the other R7RS implementations for the comparative benchmark report.
-- **CI runs on Buildkite** (`.buildkite/pipeline.yml`), on its hosted
-  `linux-small` agents (2 vCPUs), in the Nix dev shell; there are no GitHub
-  Actions. Its steps post the required `Checks` and `Tests` commit
-  statuses. The rest runs on demand, for a build started with a variable
-  (by hand or by a schedule in the pipeline's settings), by the
-  maintainer's choice: the benchmark threshold check (`BENCH=check`) and
-  its re-measure on the same agents (`BENCH=measure`), and the native
-  launcher (`NATIVE=1`, D17). The comparative benchmark report is run
-  locally (bench/README.md).
+- **CI runs only what runs on every commit**, on Buildkite
+  (`.buildkite/pipeline.yml`, hosted `linux-small` agents, the Nix dev
+  shell): the required `Checks` and `Tests` and the conformance tables.
+  Benchmarks, the threshold check (`bench/thresholds.json`, measured on the
+  maintainer's Mac) and the native image are local commands, by the
+  maintainer's choice.
 - **Measured** when Bazel replaced mx (same commit; Apple M3 Max, 16 cores,
   shared with other builds at load 15–25; GitHub's `ubuntu-26.04` runners):
 
@@ -863,9 +860,9 @@ Each entry: the decision, why, and what was rejected.
     system that the program exited normally"*), not what a program that
     ends does, so the default (0, as chibi-scheme) and the option are ours
     to choose.
-  - CI builds the native launcher on Linux on demand (a Buildkite build
-    with `NATIVE=1`) and runs that check. It is not part of the required
-    `Checks` and `Tests`: the build takes minutes and gigabytes.
+  - CI doesn't build it (D11): the build takes minutes and gigabytes. A PR
+    that changes the native-image configuration runs `bazel run //:r7rs --
+    readme --native` and that check locally.
   - On x86-64 Linux the image targets the baseline CPU
     (`-march=compatibility`): with the default target (AVX2) the image
     uses the JDK's `libsimdsort`, whose libm dependency nixpkgs'

@@ -585,8 +585,7 @@ M5-01 benchmarks and M5-02's report.
   - Set per-benchmark thresholds from the measured baselines, and a CI job
     that runs the benchmarks and fails on a regression past them.
   - **Done when** the job runs on every PR and enforces the thresholds.
-  - Since the move to Buildkite (design.md D11) the check runs on demand,
-    not on every PR, by the maintainer's choice.
+  - Replaced by a local check (design.md D11): CI no longer enforces them.
 
 From `docs/performance-research.md`'s ranking, confirmed by M5-01's
 baseline (the fixnum-overflow fix already landed in #74):
