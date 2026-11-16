@@ -23,8 +23,10 @@ checks it on every commit. It is for the interpreter; CI also runs both
 suites with every function compiled on first call and under torture, and the
 native launcher passes the same tests (design.md D17). Proper tail calls run in
 constant space, deep non-tail recursion spills to the heap instead of
-overflowing the Java stack, and a torture mode captures and re-enters a
-continuation at every non-tail call; `tests/spec/` holds those cases.
+overflowing the Java stack (once it has used most of the thread's stack, so a
+larger `-Xss` keeps more of it on the stack, where it is faster), and a
+torture mode captures and re-enters a continuation at every non-tail call;
+`tests/spec/` holds those cases.
 
 [docs/plan.md](plan.md) tracks the milestones and what is left.
 

@@ -83,7 +83,8 @@ public class SourceLocationTest {
                               (+ 1 (down (- n 1)))))
                         (down 200)
                         """, "deep.scm").build();
-        try (Context context = Context.create(SCHEME)) {
+        // Spills past 50 nested calls, however much Java stack there is (plan.md M8-01).
+        try (Context context = Context.newBuilder(SCHEME).allowExperimentalOptions(true).option("scheme.SpillDepth", "50").build()) {
             List<String> frames = locations(error(context, source));
             // The frame that called car (in tail position) is down's recursive call site.
             assertTrue(frames.toString(), frames.contains("deep.scm:4:12"));

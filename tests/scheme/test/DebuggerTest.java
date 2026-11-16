@@ -123,7 +123,9 @@ public class DebuggerTest {
      */
     private static String runWithBreakpoint(String definitions, String name, int line, String expression, Consumer<SuspendedEvent> handler) {
         Source source = Source.newBuilder(SCHEME, definitions, name).buildLiteral();
-        try (Context context = Context.newBuilder(SCHEME).out(new ByteArrayOutputStream()).build()) {
+        // Spills past 50 nested calls, however much Java stack there is (plan.md M8-01), so that
+        // variablesOfSpilledFramesAreReadOnly has frames on the heap.
+        try (Context context = Context.newBuilder(SCHEME).allowExperimentalOptions(true).option("scheme.SpillDepth", "50").out(new ByteArrayOutputStream()).build()) {
             Debugger debugger = Debugger.find(context.getEngine());
             try (DebuggerSession session = debugger.startSession(event -> {
                 handler.accept(event);

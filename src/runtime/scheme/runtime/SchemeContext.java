@@ -60,8 +60,23 @@ public final class SchemeContext {
      */
     public Object unwindRoot;
     private DynEnv dynamicEnv = DynEnv.INITIAL;
-    /** Nested non-tail calls since the root prompt (stack-depth spill, design.md "Continuations"). */
-    public int callDepth;
+    /**
+     * The Java stack, in bytes, that the non-tail calls nested since the root prompt are taken to use
+     * (stack-depth spill, design.md "Continuations"): see {@link StackBudget}.
+     */
+    int stackUse;
+    /** Past this {@link #stackUse}, a call spills instead ({@link StackBudget}). */
+    int stackLimit;
+    /** Whether {@link #stackLimit} is final for this thread: measured, or fixed by an option. */
+    boolean stackMeasured;
+    /** Whether the {@code scheme.SpillDepth} option fixes the limit as a count of nested calls. */
+    boolean spillDepthFixed;
+    /** What a non-tail call adds to {@link #stackUse} ({@link StackBudget#callCost}). */
+    int interpretedCallCost;
+    int compiledCallCost;
+    int compiledSlotCost;
+    /** Stack-depth spills completed, for tests (plan.md M8-01). */
+    public long spills;
     /**
      * The capture a non-tail call site's {@code IsValue} found, for the {@code SuspendFrame} right
      * after it (SchemeRootNode): set and cleared with no Scheme code in between.
@@ -78,6 +93,7 @@ public final class SchemeContext {
 
     SchemeContext(TruffleLanguage.Env env) {
         this.env = env;
+        StackBudget.initialize(this, env.getOptions().get(SchemeLanguage.SPILL_DEPTH));
         this.stdout = new ConsoleOutput(env.out());
         this.stderr = new ConsoleOutput(env.err());
         this.stdin = new ConsoleInput(env.in());
@@ -101,6 +117,8 @@ public final class SchemeContext {
         stderr.target = newEnv.err();
         stdin.target = newEnv.in();
         this.allocationReporter = newEnv.lookup(AllocationReporter.class);
+        // The run's options, and the run's threads: the stack measured so far was the image build's.
+        StackBudget.initialize(this, newEnv.getOptions().get(SchemeLanguage.SPILL_DEPTH));
     }
 
     public static SchemeContext get(Node node) {

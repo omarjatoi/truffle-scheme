@@ -82,7 +82,8 @@ public class StableWarmupTest {
     @Test
     public void onlySitesThatSpilledCompileTheSpill() throws IOException {
         Path log = Files.createTempFile("stable-warmup", ".log");
-        Context.Builder builder = Context.newBuilder(SCHEME).allowExperimentalOptions(true).option("log.file", log.toString()).out(new ByteArrayOutputStream());
+        // Spills past 50 nested calls, however much Java stack there is (plan.md M8-01).
+        Context.Builder builder = Context.newBuilder(SCHEME).allowExperimentalOptions(true).option("scheme.SpillDepth", "50").option("log.file", log.toString()).out(new ByteArrayOutputStream());
         builder.option("engine.Compilation", "true").option("engine.CompileImmediately", "false").option("engine.BackgroundCompilation", "false");
         builder.option("engine.MultiTier", "false").option("engine.SingleTierCompilationThreshold", "100").option("engine.TraceCompilation", "true");
         Context context;

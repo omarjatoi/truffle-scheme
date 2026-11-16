@@ -1,8 +1,5 @@
 package scheme.runtime;
 
-import java.util.ArrayList;
-import java.util.List;
-
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.bytecode.ContinuationRootNode;
 import com.oracle.truffle.api.frame.MaterializedFrame;
@@ -83,8 +80,15 @@ public final class Capture implements TruffleObject {
     /** For REINSTATE. */
     public final Continuation continuation;
     public final Object value;
-    /** Segments and prompt markers, innermost first. */
-    private final List<Object> segments = new ArrayList<>();
+    /**
+     * Segments and prompt markers, innermost first: the cells of the list {@link #segmentsBefore}
+     * hands over, built front to back as the frames suspend, outward (plan.md M8-01: no array to
+     * grow and copy, and no second list at the end). Null while empty.
+     */
+    private SegmentList first;
+    private SegmentList last;
+    /** Whether {@link #segmentsBefore} has handed the list over: nothing may be added after. */
+    private boolean handedOver;
 
     private Capture(Kind kind, Object tag, Object receiver, DynEnv dynEnv, Continuation continuation, Object value) {
         this.kind = kind;
@@ -115,28 +119,58 @@ public final class Capture implements TruffleObject {
         return new Capture(Kind.SPILL, ROOT_TAG, null, dynEnv, null, arguments);
     }
 
-    @TruffleBoundary
+    /** A frame suspends into the capture: it goes after (outside) the frames already in it. */
     public void addSegment(ContinuationRootNode root, MaterializedFrame frame) {
-        segments.add(new Segment(root, frame));
+        append(new Segment(root, frame));
+    }
+
+    private void append(Object item) {
+        if (handedOver) {
+            throw handedOver();
+        }
+        SegmentList cell = new SegmentList(item, null);
+        if (last == null) {
+            first = cell;
+        } else {
+            last.tail = cell;
+        }
+        last = cell;
+    }
+
+    @TruffleBoundary
+    private static IllegalStateException handedOver() {
+        return new IllegalStateException("a capture's segments were added to after it was completed");
+    }
+
+    /** Whether a prompt with {@code tag} was flattened into the capture (before it is handed over). */
+    boolean hasPrompt(Object promptTag) {
+        return SegmentList.hasPrompt(first, promptTag);
     }
 
     /** A prompt driver passes the capture through: its pending segments, then itself as a marker. */
     @TruffleBoundary
     void addOuter(SegmentList pending, PromptMarker prompt) {
         for (SegmentList l = pending; l != null; l = l.tail) {
-            segments.add(l.head);
+            append(l.head);
         }
-        segments.add(prompt);
+        append(prompt);
     }
 
-    /** This capture's segments, innermost first, followed by {@code outer}. */
-    @TruffleBoundary
+    /**
+     * This capture's segments, innermost first, followed by {@code outer}: the list its frames
+     * suspended into, now linked to {@code outer}, and so handed over once, by the driver that
+     * completes the capture.
+     */
     public SegmentList segmentsBefore(SegmentList outer) {
-        SegmentList list = outer;
-        for (int i = segments.size() - 1; i >= 0; i--) {
-            list = new SegmentList(segments.get(i), list);
+        if (handedOver) {
+            throw handedOver();
         }
-        return list;
+        handedOver = true;
+        if (last == null) {
+            return outer;
+        }
+        last.tail = outer;
+        return first;
     }
 
     /** eq? on tags: identity, fixnums and characters by value (design.md D1). */

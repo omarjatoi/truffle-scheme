@@ -49,6 +49,13 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
     @Option(name = "PreludeImage", help = "Restore the standard libraries from the prelude image instead of expanding them.", category = OptionCategory.INTERNAL, stability = OptionStability.STABLE) //
     public static final OptionKey<Boolean> PRELUDE_IMAGE = new OptionKey<>(true);
 
+    /**
+     * Spill past this many nested non-tail calls, however much Java stack there is (0, the default:
+     * from the stack the thread has, StackBudget). For tests that need frames on the heap.
+     */
+    @Option(name = "SpillDepth", help = "Spill deep recursion to the heap past this many nested calls (0: from the Java stack available).", category = OptionCategory.INTERNAL, stability = OptionStability.EXPERIMENTAL) //
+    public static final OptionKey<Integer> SPILL_DEPTH = new OptionKey<>(0);
+
     private SchemeCompiler compiler;
     /** What runs a procedure called through interop (design.md D10): see {@link #interopCallTarget}. */
     @CompilationFinal private RootCallTarget interopCall;

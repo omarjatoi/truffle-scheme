@@ -816,7 +816,7 @@ Close the largest gaps the M7 report shows (docs/benchmarks.md, at
 (bench/README.md); each task measures with interleaved A/B runs and keeps the
 load rule.
 
-- [ ] **M8-01 · Deep recursion** *(early)*
+- [x] **M8-01 · Deep recursion** *(early)*
   - Make deep non-tail recursion cheap: measure where `ack`, `divrec` and
     `primes` spend their time (the spill every `scheme.spillDepth` frames,
     capture and resume, the trampoline), then choose the spill depth from the

@@ -41,6 +41,7 @@ public final class PromptRootNode extends RootNode {
         // leaves the dynamic environment as it found it, so the next program or interop call
         // (D10) doesn't run with its parameters or handlers.
         DynEnv outer = context.getDynamicEnv();
+        StackBudget.enterRoot(context);
         try {
             Object first;
             try {

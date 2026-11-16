@@ -225,7 +225,10 @@ A procedure is an executable: `execute(args...)` calls it, with any number of
 arguments for a variadic procedure or a `case-lambda`. A wrong number of
 arguments is a Scheme error, not an interop `ArityException`. Each call runs
 under a prompt of its own (D6), as a program does, so tail calls run in
-constant space and deep recursion spills to the heap inside it.
+constant space and deep recursion spills to the heap inside it. It spills
+once it has used most of the calling thread's Java stack, which the first
+deep recursion on each thread measures (a few milliseconds, design.md
+"Continuations").
 
 `context.getBindings("scheme")` is the interaction environment. Its bound
 variables, imported or defined, are its members; syntactic keywords are not.

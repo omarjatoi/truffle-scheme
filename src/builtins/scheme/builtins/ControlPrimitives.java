@@ -63,6 +63,7 @@ final class ControlPrimitives {
                         PrimitiveSpec.transfersControl("call-with-current-continuation", 1, 1, CallCC::new),
                         PrimitiveSpec.transfersControl("%capture-to-prompt", 2, 2, CaptureToPrompt::new),
                         new PrimitiveSpec("%torture-captures", 0, 0, TortureCaptures::new),
+                        new PrimitiveSpec("%spills", 0, 0, Spills::new),
                         PrimitiveSpec.transfersControl("%apply-continuation", 2, 2, () -> new ContinuationOps(ContinuationOps.APPLY)),
                         PrimitiveSpec.transfersControl("%reinstate", 2, 2, () -> new ContinuationOps(ContinuationOps.REINSTATE)),
                         new PrimitiveSpec("%continuation-composable?", 1, 1, () -> new ContinuationOps(ContinuationOps.COMPOSABLE)),
@@ -279,6 +280,14 @@ final class ControlPrimitives {
         @Override
         public Object invoke(Object[] args) {
             return SchemeContext.get(this).tortureCaptures;
+        }
+    }
+
+    /** {@code (%spills)}: how many stack-depth spills this context has made (M8-01 tests). */
+    static final class Spills extends PrimitiveNode {
+        @Override
+        public Object invoke(Object[] args) {
+            return SchemeContext.get(this).spills;
         }
     }
 

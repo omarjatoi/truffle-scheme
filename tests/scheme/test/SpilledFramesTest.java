@@ -36,8 +36,16 @@ public class SpilledFramesTest {
 
     private static final String SCHEME = "scheme";
 
-    /** Far deeper than the spill depth (50 by default). */
+    /** Far deeper than the spill depth, which {@link #spilling} fixes at 50 nested calls. */
     private static final int DEPTH = 1000;
+
+    /**
+     * A context that spills past 50 nested calls, however much Java stack there is (plan.md M8-01):
+     * the frames past that are on the heap, which is what these tests look at.
+     */
+    private static Context.Builder spilling() {
+        return Context.newBuilder(SCHEME).allowExperimentalOptions(true).option("scheme.SpillDepth", "50");
+    }
 
     // %raise-uncaught throws an error that no call site raises: the trace is the live frames'.
     private static final String DEEP_ERROR = """
@@ -93,7 +101,7 @@ public class SpilledFramesTest {
     @Test
     public void guestStackTraceHasEverySpilledFrame() {
         Source source = Source.newBuilder(SCHEME, DEEP_ERROR, "deep.scm").buildLiteral();
-        try (Context context = Context.create(SCHEME)) {
+        try (Context context = spilling().build()) {
             List<String> expected = new ArrayList<>();
             // The innermost frame is where %raise-uncaught ran in place (so it has no call location);
             // each frame above it waits at the recursive call on line 4, and the program at its call
@@ -112,7 +120,7 @@ public class SpilledFramesTest {
         // Like a JVM's, the trace of an error 100,000 frames deep stops: after the frames on the
         // Java stack, it has the 10,000 innermost frames on the heap, then the prompt.
         Source source = Source.newBuilder(SCHEME, "(define (down n) (if (= n 0) (car '()) (+ 1 (down (- n 1)))))\n(down 100000)\n", "deeper.scm").buildLiteral();
-        try (Context context = Context.create(SCHEME)) {
+        try (Context context = spilling().build()) {
             List<String> frames = frames(error(context, source));
             List<String> runs = runs(frames.subList(frames.indexOf("down:1"), frames.size()));
             assertEquals(runs.toString(), 2, runs.size());
@@ -136,7 +144,7 @@ public class SpilledFramesTest {
                         (define r (down DEPTH))
                         (if (< r (+ DEPTH 3)) (k (- r DEPTH)))
                         """.replace("DEPTH", Integer.toString(DEPTH)), "resumed.scm").buildLiteral();
-        try (Context context = Context.create(SCHEME)) {
+        try (Context context = spilling().build()) {
             List<String> expected = new ArrayList<>();
             // %raise-uncaught runs in place in bottom's frame, which therefore has no call location.
             expected.add("bottom");
@@ -162,7 +170,7 @@ public class SpilledFramesTest {
                         (down DEPTH)
                         """.replace("DEPTH", Integer.toString(DEPTH)), "debug-deep.scm").buildLiteral();
         List<List<String>> suspensions = new ArrayList<>();
-        try (Context context = Context.newBuilder(SCHEME).out(new ByteArrayOutputStream()).build()) {
+        try (Context context = spilling().out(new ByteArrayOutputStream()).build()) {
             Debugger debugger = Debugger.find(context.getEngine());
             try (DebuggerSession session = debugger.startSession(event -> {
                 suspensions.add(describe(event, true));
@@ -207,7 +215,7 @@ public class SpilledFramesTest {
                         (down DEPTH)
                         """.replace("DEPTH", Integer.toString(depth)), "down-and-up.scm").buildLiteral();
         List<List<String>> suspensions = new ArrayList<>();
-        try (Context context = Context.newBuilder(SCHEME).out(new ByteArrayOutputStream()).build()) {
+        try (Context context = spilling().out(new ByteArrayOutputStream()).build()) {
             Debugger debugger = Debugger.find(context.getEngine());
             try (DebuggerSession session = debugger.startSession(event -> {
                 // Before the first spill and after the last resume, the program's frame is on the Java
