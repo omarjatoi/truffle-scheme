@@ -5,7 +5,7 @@ reproducer that doesn't use Scheme. Filing them at
 <https://github.com/oracle/graal/issues> is a human's call: nothing here has
 been filed. Each section has the issue text, ready to paste.
 
-All three are in Truffle 25.5.5.0.3 (Maven Central), on GraalVM CE 25.5.5.0.3
+All four are in Truffle 25.5.5.0.3 (Maven Central), on GraalVM CE 25.5.5.0.3
 (JDK 25.0.5.0.3, `nix develop`).
 
 ## The reproducers are inverted tests
@@ -33,6 +33,7 @@ instrumentation and one trivial operation (the DSL warns if a root has none).
 | [Nested root source sections](#nested-root-source-sections) | `UpstreamNestedRootSourceTest` | `CodeGenerator.usable` (`src/compiler/scheme/compiler/CodeGenerator.java`) |
 | [Empty asynchronous stacks](#empty-asynchronous-stacks) | `UpstreamAsyncStacksTest` | `DebuggerTest.frameNames`, `SpilledFramesTest.everyFrameOnceAtEveryLevelDownAndBackUp` and `describe` (`tests/scheme/test/`) |
 | [ReportPolymorphism on an operation](#reportpolymorphism-on-an-operation) | `UpstreamReportPolymorphismTest` | `SchemeRootNode.Call`'s cache initializer `Trampoline.megamorphic` (`src/runtime/scheme/runtime/`) |
+| [ThreadDeath in generated roots](#threaddeath-in-generated-roots) | none (a compiler warning, not behavior) | `BYTECODE_ROOT_JAVACOPTS` (`bazel/java.bzl`) |
 
 ## Nested root source sections
 
@@ -358,4 +359,97 @@ The generated code:
 
 The errors are the same when a specialization has cached state (`@Cached IndirectCallNode call`
 added to `doInt`), where the operation's node isn't a shared singleton.
+````
+
+## ThreadDeath in generated roots
+
+**Found in** #131. **Test:** none. It's a compiler warning, not behavior, and
+the build shows it: drop `bytecode_root = True` from `//src/runtime` and javac
+fails on it.
+
+Every class the Bytecode DSL generates for a `@GenerateBytecode` root refers
+to `java.lang.ThreadDeath`, which JDK 20 deprecated for removal, so javac
+warns (`[removal]`) on generated code. The processor's own
+`@SuppressWarnings` on the class has `"deprecation"`, which doesn't cover
+removal warnings.
+
+- **Expected:** generated code compiles without warnings under javac's
+  defaults, as the DSL's other generated code does.
+- **Actual:** `warning: [removal] ThreadDeath in java.lang has been deprecated
+  and marked for removal`, once per root without tag instrumentation (the
+  handler loop of `handleException`) and twice with it (also
+  `resolveThrowable`). With `-Xlint:-removal`, javac prints a note instead
+  (`... uses or overrides a deprecated API that is marked for removal`).
+- **Cause** (from the processor's sources jar): `BytecodeNodeElement.createHandleException`
+  writes `throwable instanceof ThreadDeath` whatever the root's
+  configuration, and `createIsUnwindException` and (with tag
+  instrumentation) the generated `resolveThrowable` do too. `FixWarningsVisitor`
+  adds `"deprecation"` to the class's `@SuppressWarnings` when it sees a
+  deprecated element, but never `"removal"` for one deprecated for removal.
+- **Our workaround:** the libraries with a Bytecode DSL root (`//src/runtime`,
+  and the tests' `UpstreamRoot`) compile with `-Xlint:-removal -XDsuppressNotes`
+  (`BYTECODE_ROOT_JAVACOPTS`); every other library keeps removal warnings
+  as errors. A generated class can't carry a `@SuppressWarnings` of ours, and
+  the processor has no option for it.
+
+### Issue text
+
+````markdown
+**Title:** Bytecode DSL: generated roots use `java.lang.ThreadDeath` without suppressing `removal` warnings
+
+**Version:** Truffle 25.5.5.0.3 (GraalVM CE 25.5.5.0.3, JDK 25.0.5.0.3)
+
+Compiling any `@GenerateBytecode` root with javac's default lint settings warns on the
+generated code, because it tests `throwable instanceof java.lang.ThreadDeath` (deprecated for
+removal since JDK 20). A build with `-Werror` fails; one with `-Xlint:-removal` prints a note per
+generated root.
+
+Reproducer (compile with `truffle-api` on the class path and `truffle-dsl-processor` on the
+processor path):
+
+```java
+package repro;
+
+import com.oracle.truffle.api.TruffleLanguage;
+import com.oracle.truffle.api.bytecode.BytecodeRootNode;
+import com.oracle.truffle.api.bytecode.GenerateBytecode;
+import com.oracle.truffle.api.bytecode.Operation;
+import com.oracle.truffle.api.dsl.Specialization;
+import com.oracle.truffle.api.frame.FrameDescriptor;
+import com.oracle.truffle.api.nodes.RootNode;
+
+@GenerateBytecode(languageClass = MinRoot.Lang.class)
+public abstract class MinRoot extends RootNode implements BytecodeRootNode {
+
+    protected MinRoot(Lang language, FrameDescriptor frameDescriptor) {
+        super(language, frameDescriptor);
+    }
+
+    public abstract static class Lang extends TruffleLanguage<Object> {
+    }
+
+    @Operation
+    public static final class Identity {
+        @Specialization
+        static Object doObject(Object value) {
+            return value;
+        }
+    }
+}
+```
+
+```
+$ javac -proc:full -processorpath truffle-dsl-processor-25.5.5.0.3.jar -cp truffle-api-25.5.5.0.3.jar:... -d out -s out repro/MinRoot.java
+out/repro/MinRootGen.java:2119: warning: [removal] ThreadDeath in java.lang has been deprecated and marked for removal
+                if (throwable instanceof java.lang.ThreadDeath) {
+                                                  ^
+1 warning
+```
+
+The generated class is annotated `@SuppressWarnings({"javadoc", "serial", "unused", "deprecation",
+"static-method"})`; `"deprecation"` doesn't cover removal warnings. The reference comes from
+`BytecodeNodeElement.createHandleException` (unconditionally), `createIsUnwindException`, and, with
+`enableTagInstrumentation = true`, the generated `resolveThrowable`. `FixWarningsVisitor` adds
+`"deprecation"` when it sees a deprecated element; adding `"removal"` too when the element is
+deprecated for removal would fix it.
 ````

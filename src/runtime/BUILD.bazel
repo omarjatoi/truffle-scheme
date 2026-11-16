@@ -10,6 +10,7 @@ scheme_java_library(
         "scheme/runtime/printer/*.java",
         "scheme/runtime/value/*.java",
     ]),
+    bytecode_root = True,
     resource_strip_prefix = "src/runtime",
     resources = glob(["META-INF/**"]),
     truffle_dsl = True,
