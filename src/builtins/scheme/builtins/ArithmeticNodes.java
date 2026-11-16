@@ -83,7 +83,7 @@ final class ArithmeticNodes {
 
         @Specialization
         static int doDouble(double a, double b) {
-            return Double.compare(a, b);
+            return Arithmetic.compareDoubles(a, b);
         }
 
         @Fallback
