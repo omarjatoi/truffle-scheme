@@ -1,37 +1,31 @@
-# CI, uploaded by the pipeline's settings (`buildkite-agent pipeline upload`), for every commit.
-# Every step runs on Buildkite's hosted linux-small agents (2 vCPUs, the default queue):
-# hooks/pre-command installs Nix, and the commands run in its dev shell, as AGENTS.md "Commands"
-# does. Main requires the build's status, `buildkite/truffle-scheme`, which `checks` and `tests`
-# fail; each also posts its own, `buildkite/truffle-scheme/<key>`. The conformance tests are among
-# `tests` (a test per suite section and mode); their table is the `conformance` annotation.
+# CI, uploaded by the pipeline's settings (`buildkite-agent pipeline upload`), for every commit,
+# on Buildkite's hosted linux-small agents (2 vCPUs, the default queue). hooks/pre-command installs
+# Nix, loads the CI dev shell (flake.nix .#ci: just Bazel) and writes Bazel's CI settings and the
+# BuildBuddy key (the cluster secret BUILDBUDDY_API_KEY) to the agent's ~/.bazelrc, so the steps
+# are plain `bazel` commands. Actions and tests run on BuildBuddy's executors (.bazelrc
+# --config=remote, the default); the `buildbuddy` annotation links this commit's invocations.
 #
-# Actions and tests run on BuildBuddy's executors, with its cache (.bazelrc --config=remote, the
-# default), with the API key from the cluster secret BUILDBUDDY_API_KEY; the `buildbuddy` annotation
-# links each step's invocation.
+# Main requires the build's status, `buildkite/truffle-scheme`, which `checks` and `tests` fail;
+# each also posts its own, `buildkite/truffle-scheme/<key>`. One bazel command per step: the
+# parallelism is Bazel's, on the executors.
 
 secrets:
   - BUILDBUDDY_API_KEY
 
-# Bazel's repository cache (the downloads: GraalVM, Maven jars, Python), kept between builds.
+# Bazel's repository cache (the downloads: GraalVM, Maven jars, Python) and bazelisk's Bazel,
+# kept between builds.
 cache:
   name: bazel
   paths:
     - /root/.cache/bazel-repository-cache
+    - /root/.cache/bazelisk
 
 steps:
   - label: ":bazel: Checks"
     key: checks
-    command:
-      - 'printf -- "- checks: https://app.buildbuddy.io/invocation/%s\n" "$$BUILDKITE_JOB_ID" | buildkite-agent annotate --context buildbuddy --append'
-      - nix develop --command bazel test --config=ci --remote_header=x-buildbuddy-api-key=$$BUILDBUDDY_API_KEY --invocation_id=$$BUILDKITE_JOB_ID --build_tests_only --test_tag_filters=lint //...
+    command: bazel test --build_tests_only --test_tag_filters=lint //...
 
   - label: ":bazel: Tests"
     key: tests
     timeout_in_minutes: 75
-    command:
-      - 'printf -- "- tests: https://app.buildbuddy.io/invocation/%s\n" "$$BUILDKITE_JOB_ID" | buildkite-agent annotate --context buildbuddy --append'
-      - nix develop --command bazel test --config=ci --remote_header=x-buildbuddy-api-key=$$BUILDBUDDY_API_KEY --invocation_id=$$BUILDKITE_JOB_ID --test_tag_filters=-lint //... || status=$$?
-      - nix develop --command bazel run --config=ci --remote_header=x-buildbuddy-api-key=$$BUILDBUDDY_API_KEY //:r7rs -- conformance-report --markdown "$$PWD/conformance.md"
-      - buildkite-agent annotate --context conformance < conformance.md
-      - nix develop --command bazel run --config=ci --remote_header=x-buildbuddy-api-key=$$BUILDBUDDY_API_KEY //:r7rs -- readme || status=$$?
-      - exit $${status:-0}
+    command: bazel test --test_tag_filters=-lint //...

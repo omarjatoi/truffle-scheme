@@ -99,9 +99,9 @@ bazel run //:r7rs -- status               # regenerate the status block in docs/
 bazel run //:r7rs -- conformance-report   # the conformance tests' last results, a table per suite
 bazel run //:r7rs -- diff path/to/file.scm   # run under chibi and under us; compare stdout + exit status
 bazel run //:r7rs -- format               # format Java code (GraalVM's Eclipse formatter settings)
-bazel run //:r7rs -- readme               # run docs/usage.md's and docs/embedding.md's commands, check their samples
-bazel run //:r7rs -- native-image         # the native-image launcher, native/scheme (design.md D17; minutes, ~3 GB)
-bazel run //:r7rs -- test --native native/scheme   # both conformance suites through it
+bazel test //tests:readme                 # docs/usage.md's and docs/embedding.md's commands as written, and their samples
+bazel build //:scheme-native              # the native launcher, bazel-bin/scheme-native (design.md D17; a minute, ~3 GB)
+bazel test //tests:readme_native //tests:conformance_native   # its docs, and both conformance suites through it
 bazel run //:r7rs -- benchmark ecraven:fib         # one benchmark program, JIT (bench/README.md: options, failures)
 bazel run //:r7rs -- benchmark larceny:* --mode=*  # every program of a set, JIT and interpreter
 bazel run //:r7rs -- bench-check          # benchmark subset vs bench/thresholds.json, fails on a regression
@@ -115,23 +115,24 @@ A failing test's output is printed; every test's is in
 case is picked up by itself; a new source directory needs a `BUILD.bazel`
 like its neighbours'.
 
-Before opening a PR: `bazel test //...`; if you changed docs/usage.md,
-docs/embedding.md or what they run, also `bazel run //:r7rs -- readme`. If
+Before opening a PR: `bazel test //...`. If
 you touched `src/runtime` or any Bytecode DSL operation, also run `bazel run
 //:r7rs -- test --compile`. If the change may affect performance, run
 `bazel run //:r7rs -- bench-check`. A PR that changes performance on purpose
 commits new thresholds and says why (bench/README.md "Thresholds"); never
 raise one by hand. If it changes the native-image configuration, run `bazel
-run //:r7rs -- readme --native`.
+test //tests:readme_native //tests:conformance_native`.
 
 CI runs on Buildkite (`.buildkite/pipeline.yml`), for every commit, and only
-what runs on every commit: `checks` (the lint tests) and `tests` (every other
-test, the conformance tests among them, and the readme check); its
-`conformance` annotation is their table. The required
-check is the build, `buildkite/truffle-scheme`; which steps can fail it is
-set in `.buildkite/pipeline.yml`. Its actions and tests run on BuildBuddy's
-executors, like everyone's; the `buildbuddy` annotation links each step's
-results.
+what runs on every commit, one `bazel` command per step: `checks` (the lint
+tests) and `tests` (every other test, the conformance tests and the docs'
+commands among them). The required check is the build,
+`buildkite/truffle-scheme`; which steps can fail it is set in
+`.buildkite/pipeline.yml`. Its hook loads `nix develop .#ci` (just `bazel`)
+and writes the agent's `~/.bazelrc` (`--config=ci`, the BuildBuddy key).
+Actions and tests run on BuildBuddy's executors, like everyone's; the
+`buildbuddy` annotation links the commit's invocations, where each test's
+result is.
 Benchmarks, the threshold check and the native image are local commands.
 
 ## Rules (each one is enforced by `bazel test //...`)

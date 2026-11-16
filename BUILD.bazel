@@ -1,10 +1,11 @@
 load("@rules_python//python:defs.bzl", "py_binary")
-load("//bazel:java_module.bzl", "java_module_jar", "module_dir", "prelude_image", "scheme_runtime")
+load("//bazel:java_module.bzl", "java_module_jar", "module_dir", "native_image", "prelude_image", "scheme_runtime")
 
 package(default_visibility = ["//visibility:public"])
 
 exports_files([
     "docs/plan.md",
+    "docs/usage.md",
     "maven_install.json",
 ])
 
@@ -105,6 +106,34 @@ py_binary(
 module_dir(
     name = "scheme_jars",
     module = ":launcher_module",
+)
+
+# docs/usage.md and docs/embedding.md, and the files their commands use (tests:readme).
+filegroup(
+    name = "docs",
+    srcs = [
+        "docs/embedding.md",
+        "docs/usage.md",
+    ] + glob(["docs/examples/**"]),
+    visibility = ["//tests:__pkg__"],
+)
+
+# `bazel-bin/scheme-native`: the launcher as a native executable (design.md D17, docs/usage.md),
+# built only when named: a minute and a few GB. The native-image build gets a large executor. On
+# x86-64 Linux the baseline CPU target keeps the JDK's libsimdsort (and its static libm) out of it.
+native_image(
+    name = "scheme-native",
+    exec_properties = {
+        "EstimatedCPU": "8",
+        "EstimatedMemory": "12GB",
+    },
+    main = "scheme.launcher/scheme.launcher.SchemeMain",
+    module = ":launcher_module",
+    options = select({
+        "//bazel:linux_x86_64": ["-march=compatibility"],
+        "//conditions:default": [],
+    }),
+    tags = ["manual"],
 )
 
 # `bazel run //:r7rs -- <command>`: the repository's commands (tests/harness/main.py, AGENTS.md).
