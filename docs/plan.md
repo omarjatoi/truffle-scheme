@@ -670,7 +670,7 @@ that edit the same files.
     inspector protocol against a Scheme program (breakpoint, step, locals) and
     check the sampler's output, starting from #76's dependency-free clients.
   - **Done when** the smoke tests run in CI on every PR.
-- [ ] **M6-04 · Spilled frames in stack traces and tools** *(needs M5-10)*
+- [x] **M6-04 · Spilled frames in stack traces and tools** *(needs M5-10)*
   - Frames resumed from heap segments (the depth spill, M2-05, and resumed
     continuations) appear in guest stack traces, in the debugger's stack and
     in the sampler's call tree, instead of being charged to `<prompt>`.

@@ -1,10 +1,14 @@
 package scheme.runtime;
 
 import java.util.Arrays;
+import java.util.List;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.RootCallTarget;
+import com.oracle.truffle.api.TruffleStackTraceElement;
+import com.oracle.truffle.api.frame.Frame;
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.nodes.RootNode;
 
 import scheme.runtime.value.MultipleValues;
@@ -51,7 +55,7 @@ public final class EscapeRootNode extends RootNode {
     private final RootCallTarget procedure;
 
     EscapeRootNode(SchemeLanguage language) {
-        super(language);
+        super(language, PromptDriver.frameDescriptor());
         this.driver = new PromptDriver();
         this.procedure = new Procedure(language).getCallTarget();
     }
@@ -76,7 +80,7 @@ public final class EscapeRootNode extends RootNode {
                 }
                 return e.value;
             }
-            return driver.run(target, first, null, context);
+            return driver.run(frame, target, first, null, context);
         } finally {
             context.callDepth--;
         }
@@ -95,6 +99,21 @@ public final class EscapeRootNode extends RootNode {
     /** The values an escape procedure called with {@code arguments} (procedure first) passes on. */
     static Object values(Object[] arguments) {
         return arguments.length == 2 ? arguments[1] : new MultipleValues(Arrays.copyOfRange(arguments, 1, arguments.length));
+    }
+
+    /** The frames pending in this prompt, on the heap (plan.md M6-04): tools show them after it. */
+    @Override
+    protected List<TruffleStackTraceElement> findAsynchronousFrames(Frame frame) {
+        return PromptDriver.pendingFrames(frame);
+    }
+
+    /**
+     * No instrumentable node: so a debugger lists this frame (it skips a frame whose call node isn't
+     * in instrumented code), and finds the frames pending in it (plan.md M6-04).
+     */
+    @Override
+    protected Node findInstrumentableCallNode(Node callNode, Frame frame, int bytecodeIndex) {
+        return null;
     }
 
     @Override

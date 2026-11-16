@@ -9,7 +9,8 @@ tests/tools/:
 - `dap`: the Debug Adapter Protocol (`--dap`): a line breakpoint, the stack, a local by name,
   step over, continue to the next hit, then run to the end.
 - `inspect`: the Chrome DevTools Protocol over a websocket (`--inspect`): the same session.
-- `cpusampler`: the CPU sampler's histogram and call tree name the program's procedures.
+- `cpusampler`: the CPU sampler's histogram and call tree name the program's procedures, and its
+  samples of a recursion deeper than the spill depth have every frame (M6-04).
 - `memtracer`: the memory tracer runs and writes its histogram.
 
 The DAP and CDP clients are dependency-free (the standard library only), ported from the
@@ -44,6 +45,9 @@ _BREAK_LINE = 3
 _DEBUG_OUTPUT = '30\n'
 # tests/tools/profileme.scm: fib, called from the loop in run-fib.
 _PROFILE_PROGRAM = 'profileme.scm'
+# tests/tools/spillme.scm: spin, at the bottom of a recursion 500 deep, most of it on the heap.
+_SPILL_PROGRAM = 'spillme.scm'
+_SPILL_DEPTH = 500
 
 
 class SmokeFailure(Exception):
@@ -422,11 +426,11 @@ def _inspect(workdir, port, command):
 # The profilers
 # ---------------------------------------------------------------------------
 
-def _profile(workdir, command, options, expected):
+def _profile(workdir, command, options, expected, program=_PROFILE_PROGRAM):
     """Runs the profile program with these options, given the output file's path; checks that the
     tool's output (the file if it wrote one, else stdout) matches each of `expected`."""
     output = join(workdir, 'profile.txt')
-    with _Launcher(command(options(output) + [join(workdir, _PROFILE_PROGRAM)]), workdir) as launcher:
+    with _Launcher(command(options(output) + [join(workdir, program)]), workdir) as launcher:
         status = launcher.wait()
         _check(status == 0, f'the program failed: exit {status}\n{launcher.describe()}')
         if os.path.exists(output):
@@ -451,6 +455,24 @@ def _cpusampler(workdir, commands):
     _profile(workdir, command, lambda out: ['--cpusampler=calltree', '--cpusampler.Period=1ms', '--cpusampler.OutputFile=' + out],
              [r'^Sampling Call Tree\.', r'^  <program> +\|\|', r'^   loop +\|\|.*profileme\.scm~12-15:', r'^    fib +\|\|.*profileme\.scm~2-5:'])
     mx.log('  cpusampler: call tree has <program> > loop > fib')
+    # Past the spill depth, frames wait on the heap, not the Java stack; the prompt reports them as
+    # its asynchronous stack, which the sampler splices in after it (design.md "Spilled frames in
+    # tools"). The deepest sampled path must have every frame of down.
+    tree = json.loads(_profile(workdir, command, lambda out: ['--cpusampler', '--cpusampler.Output=json', '--cpusampler.Period=1ms', '--cpusampler.OutputFile=' + out],
+                               [r'"samples"'], program=_SPILL_PROGRAM))
+    deepest = []
+    for thread in tree['contexts'][0]['profile']:
+        work = [(root, []) for root in thread['samples']]
+        while work:
+            node, path = work.pop()
+            path = path + [node['root_name']]
+            if node['self_hit_count'] > 0 and len(path) > len(deepest):
+                deepest = path
+            work.extend((child, path) for child in node['children'])
+    frames = deepest.count('down')
+    _check(frames == _SPILL_DEPTH and deepest[-1] == 'spin',
+           f'cpusampler: the deepest sample has {frames} frames of down, not {_SPILL_DEPTH}: {deepest[:5]} ... {deepest[-5:]}')
+    mx.log(f'  cpusampler: samples at the bottom of a recursion {_SPILL_DEPTH} deep have all {frames} frames')
 
 
 def _memtracer(workdir, commands):
@@ -523,7 +545,7 @@ def run(names, programs_dir, commands):
         start = time.time()
         with tempfile.TemporaryDirectory(prefix='r7rs-tools-') as workdir:
             workdir = os.path.realpath(workdir)
-            for program in (_DEBUG_PROGRAM, _PROFILE_PROGRAM):
+            for program in (_DEBUG_PROGRAM, _PROFILE_PROGRAM, _SPILL_PROGRAM):
                 with open(join(programs_dir, program), encoding='utf-8') as src, open(join(workdir, program), 'w', encoding='utf-8') as dst:
                     dst.write(src.read())
             try:

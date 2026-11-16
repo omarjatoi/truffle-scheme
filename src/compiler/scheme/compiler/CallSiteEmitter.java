@@ -12,7 +12,8 @@ import scheme.runtime.SchemeRootNodeGen;
  *
  * <pre>
  * result = Call(procedure, arguments...)      ; calls, then runs the trampoline
- * IsCapture(result) ? SuspendFrame(result)     ; a continuation is being captured: suspend this frame
+ * IsCapture(result) ? Resumed(SuspendFrame(result))  ; a continuation is being captured: suspend this
+ *                                                    ; frame; resumed, the value (or an error unwinding)
  *                   : result
  * </pre>
  *
@@ -45,9 +46,11 @@ final class CallSiteEmitter {
             b.beginIsCapture();
             b.emitLoadLocal(result[0]);
             b.endIsCapture();
+            b.beginResumed();
             b.beginSuspendFrame();
             b.emitLoadLocal(result[0]);
             b.endSuspendFrame();
+            b.endResumed();
             b.emitLoadLocal(result[0]);
             b.endConditional();
             b.endBlock();

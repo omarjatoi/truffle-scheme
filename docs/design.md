@@ -84,6 +84,37 @@ full R7RS-small conformance comes first.
   like any other, so `k` works from re-entered copies too.
   `unwindExceptions` isn't needed: guard is prompt-based (D4), so there are
   no guest exception handlers for an escape to bypass.
+- **Spilled frames in tools (M6-04).** Pending segments are frames waiting
+  for a value on the heap: past the spill depth, or in a resumed
+  continuation. Only the running segment's frames are on the Java stack, so
+  Truffle's stack walks see a few frames and then the prompt. Two mechanisms
+  put the others back:
+  - *Uncaught errors unwind through them.* When a non-raisable error leaves a
+    prompt driver with pending segments, the driver resumes each one, from a
+    copy, with the error as its value. The `Resumed` operation, which follows
+    every `SuspendFrame`, throws it from the call site. The error leaves
+    through each frame's call target, so its guest stack trace has every
+    frame, in order, with its call's line. Each frame is called with the next
+    one's bytecode as its location, since a trace element's location is the
+    node that called the frame inside it. A hidden internal root goes first,
+    so the first pending frame gets a location too.
+  - *Prompts report them as their asynchronous stack.* A driver keeps its
+    pending list in a slot of its root's frame whenever it calls out, and the
+    prompt roots override `RootNode.findAsynchronousFrames`. Each element is
+    the procedure's root, the segment's frame and its resume location, so a
+    debugger shows the name, the line and the variables
+    (`SuspendedEvent.getAsynchronousStacks()`). The CPU sampler splices the
+    same elements after the prompt in each sample (its `GatherAsyncStackTrace`
+    option is on by default; `mx r7rs-tools` checks it on `tests/tools/spillme.scm`). Prompt roots report no instrumentable call node,
+    so the debugger lists them: it skips frames whose call node isn't
+    instrumented code, and it looks for asynchronous stacks only on frames it
+    lists.
+  - Both stop after 10,000 pending frames, as a JVM limits trace depth. Tools
+    only pay when they ask. On the normal path the costs are the slot write
+    (virtual in compiled code) and `Resumed`'s type check on each resume.
+  - *Not done:* making `getStackFrames()` itself include them. Truffle builds
+    it from a walk of the Java stack, and the spill exists precisely so that
+    those frames aren't there.
 
 > **Spike results (M0, Truffle 25.5): go.**
 > - **M0-02 (#7):** a capture across 3 frames, resumed 2 and 3 times from
@@ -459,7 +490,8 @@ Each entry: the decision, why, and what was rejected.
   `enableTagInstrumentation`, so the debugger (DAP), the Chrome inspector and
   other instruments work on Scheme code, breakpoints and stepping included.
   Instrumentation is off until a tool attaches, so it costs nothing
-  otherwise.
+  otherwise. Frames on the heap reach error traces, the debugger and the
+  sampler too: see "Spilled frames in tools" above.
 - Why: Truffle already does this well; positions and tags are data we have
   (syntax objects) handed to machinery we don't have to write.
 - **The standard libraries are cached per JVM (M5-03).** After the second

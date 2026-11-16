@@ -1,17 +1,26 @@
 package scheme.runtime;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.RootCallTarget;
 import com.oracle.truffle.api.Truffle;
+import com.oracle.truffle.api.TruffleStackTraceElement;
+import com.oracle.truffle.api.bytecode.BytecodeLocation;
 import com.oracle.truffle.api.bytecode.ContinuationRootNode;
 import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.GenerateInline;
 import com.oracle.truffle.api.dsl.Specialization;
+import com.oracle.truffle.api.frame.Frame;
 import com.oracle.truffle.api.frame.FrameDescriptor;
 import com.oracle.truffle.api.frame.FrameSlotKind;
 import com.oracle.truffle.api.frame.MaterializedFrame;
+import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.DirectCallNode;
 import com.oracle.truffle.api.nodes.IndirectCallNode;
 import com.oracle.truffle.api.nodes.Node;
+import com.oracle.truffle.api.nodes.RootNode;
 
 import scheme.runtime.printer.Printer;
 import scheme.runtime.value.SClosure;
@@ -33,8 +42,25 @@ import scheme.runtime.value.SClosure;
  *
  * Everything is flat: re-entry costs O(1) Java stack depth, and finding a prompt costs the distance
  * to it. Installing a prompt is just a call, so {@code guard} (M3) doesn't capture on entry.
+ *
+ * <p>The pending segments are frames that wait for a value on the heap instead of the Java stack
+ * (plan.md M6-04, design.md "Spilled frames in tools"). Tools see them all the same: the driver
+ * keeps them in its root's frame ({@link #PENDING_SLOT}) whenever it calls out, and its root reports
+ * them as its asynchronous stack ({@link #pendingFrames}), which the debugger and the CPU sampler
+ * show after the frames on the Java stack. An uncaught error that leaves the driver unwinds through
+ * them first ({@link #unwind}), so its guest stack trace has every frame.
  */
 final class PromptDriver extends Node {
+
+    /** The slot of the prompt root's frame that holds the pending segments while the driver calls. */
+    static final int PENDING_SLOT = 0;
+
+    /**
+     * At most this many pending frames are unwound through or reported to tools, innermost first,
+     * like a JVM's limit on stack trace depth: the frames of a recursion a million deep are all on the
+     * heap, but a stack trace that long helps no one.
+     */
+    static final int MAX_TRACED_FRAMES = 10_000;
 
     /** An error to raise for the innermost pending frame. */
     private record PendingRaise(Object condition) {
@@ -43,15 +69,26 @@ final class PromptDriver extends Node {
     /** Performs the calls and tail calls the driver makes, through an inline cache (plan.md M5-10). */
     @Child private Trampoline calls = Trampoline.create();
     @Child private ResumeNode resumeNode = PromptDriverFactory.ResumeNodeGen.create();
+    /** Created the first time an uncaught error unwinds (see {@link #unwind}). */
+    private RootCallTarget unwindTarget;
 
     PromptDriver() {
+    }
+
+    /** The frame descriptor of a root with a prompt driver: it has the {@link #PENDING_SLOT}. */
+    static FrameDescriptor frameDescriptor() {
+        FrameDescriptor.Builder builder = FrameDescriptor.newBuilder(1);
+        int slot = builder.addSlot(FrameSlotKind.Object, "pending", null);
+        assert slot == PENDING_SLOT;
+        return builder.build();
     }
 
     /**
      * Continues a prompt with {@code tag}: {@code first} is what its body produced, and
      * {@code initialPending} the segments still to resume. Returns the prompt's value.
+     * {@code frame} is the prompt root's: the driver keeps the pending segments in it for tools.
      */
-    Object run(Object tag, Object first, SegmentList initialPending, SchemeContext context) {
+    Object run(VirtualFrame frame, Object tag, Object first, SegmentList initialPending, SchemeContext context) {
         DynEnv promptEnv = context.getDynamicEnv();
         SegmentList pending = initialPending;
         Object value = first;
@@ -59,12 +96,16 @@ final class PromptDriver extends Node {
             try {
                 if (value instanceof PendingRaise r) {
                     try {
+                        frame.setObject(PENDING_SLOT, pending);
                         value = callWithProcedure(context.raise, new Object[]{null, r.condition()});
                     } catch (SchemeError e) {
                         // raise itself failed: the frame it was raising for is unwound too, and
                         // the error goes on to the one after it (the SchemeError catch below).
-                        // Handled here, so a jump or escape out of raise leaves nothing behind.
-                        pending = pending.tail;
+                        // Handled here, so a jump or escape out of raise leaves nothing behind. An
+                        // error that leaves the driver instead unwinds through that frame too.
+                        if (e.isRaisable() && context.raise instanceof SClosure) {
+                            pending = pending.tail;
+                        }
                         throw e;
                     }
                     continue;
@@ -95,6 +136,7 @@ final class PromptDriver extends Node {
                             }
                             pending = capture.segmentsBefore(pending);
                             Object[] arguments = (Object[]) capture.value;
+                            frame.setObject(PENDING_SLOT, pending);
                             value = callWithProcedure(arguments[0], arguments);
                             continue;
                         }
@@ -105,6 +147,7 @@ final class PromptDriver extends Node {
                             }
                             Continuation k = new Continuation(capture.segmentsBefore(pending), capture.dynEnv, false);
                             pending = k.segments;
+                            frame.setObject(PENDING_SLOT, pending);
                             value = receive(context, capture.receiver, k, capture.dynEnv, capture.dynEnv);
                             continue;
                         }
@@ -114,10 +157,12 @@ final class PromptDriver extends Node {
                             if (split != null) {
                                 // A prompt flattened into this driver's pending segments.
                                 pending = split.after();
+                                frame.setObject(PENDING_SLOT, pending);
                                 value = receive(context, capture.receiver, new Continuation(split.before(), capture.dynEnv, true), capture.dynEnv, split.marker().dynEnv());
                             } else if (Capture.sameTag(tag, capture.tag)) {
                                 // This prompt: abort to it.
                                 pending = null;
+                                frame.setObject(PENDING_SLOT, pending);
                                 value = receive(context, capture.receiver, new Continuation(all, capture.dynEnv, true), capture.dynEnv, promptEnv);
                             } else if (tag == Capture.ROOT_TAG) {
                                 throw noPrompt(capture.tag);
@@ -152,10 +197,12 @@ final class PromptDriver extends Node {
                         if (tail.arguments.length == 2 && tail.procedure instanceof SClosure c && c.callTarget.getRootNode() instanceof EscapeRootNode callEC) {
                             // %call/ec in that prompt's tail position has the same continuation, so it
                             // runs in that prompt, in constant space (R7RS §3.5).
+                            frame.setObject(PENDING_SLOT, pending);
                             value = callWithProcedure(tail.arguments[1], new Object[]{null, callEC.continuation(target, context)});
                             continue;
                         }
                     }
+                    frame.setObject(PENDING_SLOT, pending);
                     value = callWithProcedure(tail.procedure, tail.arguments);
                 } else if (pending == null) {
                     return value;
@@ -163,6 +210,7 @@ final class PromptDriver extends Node {
                     Object head = pending.head;
                     pending = pending.tail;
                     if (head instanceof Capture.Segment segment) {
+                        frame.setObject(PENDING_SLOT, pending);
                         if (SchemeRootNode.TORTURE) {
                             // Rule 3: resuming must never change the segment. Resume one copy, then
                             // check the original against a second, untouched copy.
@@ -186,7 +234,7 @@ final class PromptDriver extends Node {
                     pending = pending.tail;
                 }
                 if (!e.isRaisable() || !(context.raise instanceof SClosure) || pending == null) {
-                    throw e;
+                    throw unwind(e, pending);
                 }
                 value = new PendingRaise(e.getErrorObject());
             } catch (EscapeException e) {
@@ -228,6 +276,113 @@ final class PromptDriver extends Node {
             throw new IllegalStateException("the prelude has not installed %receive");
         }
         return receive;
+    }
+
+    /**
+     * An error leaves this prompt with {@code pending} frames still waiting for a value. Unsegmented,
+     * it would have left through each of them, and so it does here: each frame, resumed from a copy
+     * with the error as its value, throws it from its call site ({@code Resumed}). The error's guest
+     * stack trace then has every frame, in order (plan.md M6-04). Returns the error.
+     *
+     * <p>A frame's location in a guest stack trace is the node through which it called the frame
+     * inside it, so each frame is called with the next one's bytecode as its location, and the last
+     * with this driver, the prompt's location. The frame inside the first pending one was called by
+     * this driver, though: so the error first passes through a hidden root ({@link UnwindRootNode})
+     * called with the first pending frame's bytecode as its location. A loop: Java stack depth stays
+     * constant (AGENTS.md rule 4).
+     */
+    @TruffleBoundary
+    private SchemeError unwind(SchemeError error, SegmentList pending) {
+        List<Capture.Segment> frames = new ArrayList<>();
+        for (SegmentList l = pending; l != null && frames.size() < MAX_TRACED_FRAMES; l = l.tail) {
+            if (l.head instanceof Capture.Segment segment) {
+                frames.add(segment);
+            }
+        }
+        if (frames.isEmpty()) {
+            return error;
+        }
+        if (unwindTarget == null) {
+            unwindTarget = new UnwindRootNode(getRootNode().getLanguage(SchemeLanguage.class)).getCallTarget();
+        }
+        rethrown(error, unwindTarget, location(frames.get(0)), error);
+        for (int i = 0; i < frames.size(); i++) {
+            Capture.Segment segment = frames.get(i);
+            Node location = i + 1 < frames.size() ? location(frames.get(i + 1)) : this;
+            rethrown(error, segment.root().getCallTarget(), location, copy(segment.frame()), error);
+        }
+        return error;
+    }
+
+    /** Calls {@code target}, which throws {@code error} (any other exception goes on). */
+    private static void rethrown(SchemeError error, RootCallTarget target, Node location, Object... arguments) {
+        try {
+            target.call(location, arguments);
+        } catch (SchemeError e) {
+            if (e != error) {
+                throw e;
+            }
+            return;
+        }
+        throw new IllegalStateException("an unwound frame returned instead of throwing its error");
+    }
+
+    /** The bytecode a suspended frame resumes in: a location in it names the frame's call site. */
+    private static Node location(Capture.Segment segment) {
+        return segment.root().getLocation().getBytecodeNode();
+    }
+
+    /**
+     * The frames pending in the frame of a prompt's root ({@link #PENDING_SLOT}), innermost first, as
+     * its asynchronous stack: what {@code RootNode.findAsynchronousFrames} returns. Each element is
+     * the suspended procedure's frame at its call site, so tools show its name, location and
+     * variables. A flattened prompt is not a frame of its own. At most {@link #MAX_TRACED_FRAMES}.
+     * Only tools call it, on a slow path (it can't be a boundary: it takes a frame).
+     */
+    static List<TruffleStackTraceElement> pendingFrames(Frame frame) {
+        if (!(frame.getValue(PENDING_SLOT) instanceof SegmentList pending)) {
+            return null;
+        }
+        List<TruffleStackTraceElement> elements = new ArrayList<>();
+        for (SegmentList l = pending; l != null && elements.size() < MAX_TRACED_FRAMES; l = l.tail) {
+            if (l.head instanceof Capture.Segment segment) {
+                BytecodeLocation location = segment.root().getLocation();
+                RootNode procedure = (RootNode) segment.root().getSourceRootNode();
+                elements.add(TruffleStackTraceElement.create(location.getBytecodeNode(), procedure.getCallTarget(), segment.frame(), location.getBytecodeIndex()));
+            }
+        }
+        return elements;
+    }
+
+    /**
+     * Throws its argument, an error: the hidden frame an unwinding error passes through first, so
+     * that the first pending frame gets its location (see {@link #unwind}).
+     */
+    static final class UnwindRootNode extends RootNode {
+
+        UnwindRootNode(SchemeLanguage language) {
+            super(language);
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            throw (SchemeError) frame.getArguments()[0];
+        }
+
+        @Override
+        public boolean isInternal() {
+            return true;
+        }
+
+        @Override
+        public String getName() {
+            return "<unwind>";
+        }
+
+        @Override
+        public String toString() {
+            return "<unwind>";
+        }
     }
 
     Object callThunk(Object procedure) {
