@@ -26,9 +26,8 @@ test --sandbox_default_allow_network=false
 # --- Caching ---
 # Downloads (GraalVM, Maven jars, Python) land in Bazel's repository cache, which every
 # checkout and worktree on a machine shares by default.
-# CI (`--config=ci`): a disk cache, which the agents' cache volume keeps (.buildkite/pipeline.yml).
-common:ci --disk_cache=~/.cache/bazel-disk-cache
-common:ci --experimental_disk_cache_gc_max_size=3G
+# CI (`--config=ci`): the repository cache, which the agents' cache volume keeps
+# (.buildkite/pipeline.yml); actions and tests are cached in BuildBuddy (below).
 common:ci --repository_cache=~/.cache/bazel-repository-cache
 common:ci --color=yes
 common:ci --curses=no
@@ -36,12 +35,17 @@ common:ci --show_progress_rate_limit=30
 common:ci --announce_rc
 # CI's agents have 4 GB: two test JVMs at a time (each conformance test runs two) get OOM-killed.
 test:ci --local_test_jobs=1
-# Remote cache (BuildBuddy or any REAPI cache), when it exists: `--config=remote` plus
-# `--remote_header=x-buildbuddy-api-key=...` in user.bazelrc or the CI secret.
-common:remote --remote_cache=grpcs://remote.buildbuddy.io
-common:remote --remote_timeout=3600
-common:remote --bes_results_url=https://app.buildbuddy.io/invocation/
-common:remote --bes_backend=grpcs://remote.buildbuddy.io
+# BuildBuddy (`--config=buildbuddy`): a remote cache shared by CI and local builds, and each
+# invocation's results at app.buildbuddy.io. It needs an API key: CI passes the
+# BUILDBUDDY_API_KEY secret; locally, put `common:buildbuddy
+# --remote_header=x-buildbuddy-api-key=<key>` in ~/.bazelrc or user.bazelrc.
+common:buildbuddy --remote_cache=grpcs://remote.buildbuddy.io
+common:buildbuddy --bes_backend=grpcs://remote.buildbuddy.io
+common:buildbuddy --bes_results_url=https://app.buildbuddy.io/invocation/
+common:buildbuddy --remote_timeout=10m
+common:buildbuddy --remote_cache_compression
+# Download only what the command needs at the end (a test's results, a run's runfiles).
+common:buildbuddy --remote_download_toplevel
 
 # Per-user settings (a remote cache key, a local disk cache), not checked in.
 try-import %workspace%/user.bazelrc

@@ -1,7 +1,7 @@
 package scheme.compiler;
 
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -33,9 +33,10 @@ public final class SyntacticEnvironment {
     record Entry(ScopeSet scopes, Object binding) {
     }
 
-    private final Map<SSymbol, List<Entry>> entries = new HashMap<>();
+    // Insertion order, so the prelude image written from them is the same on every build (it caches).
+    private final Map<SSymbol, List<Entry>> entries = new LinkedHashMap<>();
     /** Each library's and the interaction environment's top-level scope, and its namespace. */
-    private final Map<Scope, GlobalEnvironment> namespaces = new HashMap<>();
+    private final Map<Scope, GlobalEnvironment> namespaces = new LinkedHashMap<>();
 
     /** The interaction environment's namespace, the one where core forms are found by name (D15). */
     private GlobalEnvironment interaction;
