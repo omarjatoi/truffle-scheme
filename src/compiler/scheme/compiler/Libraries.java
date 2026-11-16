@@ -284,7 +284,9 @@ final class Libraries {
                     throw expander.syntaxError("invalid library declaration in " + key, declaration1);
             }
         }
-        Ast.Lambda program = expander.expandProgram(body);
+        // Not closed for the escape analysis (M5-04): a macro the library exports can assign its
+        // globals from another unit.
+        Ast.Lambda program = expander.expandProgram(body, false);
         if (declaration.form() instanceof Syntax s && s.source != null) {
             program.source = s.source;
         }

@@ -6,6 +6,7 @@ import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.source.Source;
@@ -114,8 +115,14 @@ public final class Expander {
      */
     @TruffleBoundary
     public static String show(SymbolTable symbols, GlobalEnvironment globals, SyntacticEnvironment top, String program) {
+        return show(symbols, globals, top, program, false);
+    }
+
+    /** {@link #show(SymbolTable, GlobalEnvironment, SyntacticEnvironment, String)}, as a closed unit or not (M5-04, {@link EscapeAnalysis}). */
+    @TruffleBoundary
+    public static String show(SymbolTable symbols, GlobalEnvironment globals, SyntacticEnvironment top, String program, boolean closed) {
         List<Object> forms = readForms(Source.newBuilder(SchemeLanguage.ID, program, "show.scm").build(), symbols, false);
-        return AstPrinter.print(new Expander(symbols, globals, top, null, null, null).expandProgram(forms).body);
+        return AstPrinter.print(new Expander(symbols, globals, top, null, null, null).expandProgram(forms, closed).body);
     }
 
     // ------------------------------------------------------------------------------------------
@@ -445,10 +452,20 @@ public final class Expander {
         return null;
     }
 
-    /** Expands a program or library body, adding this unit's top-level scope to its forms. */
-    Lambda expandProgram(List<Object> forms) {
+    /**
+     * Expands a program or library body, adding this unit's top-level scope to its forms.
+     * {@code closed}: no other unit can assign this unit's globals ({@link EscapeAnalysis}).
+     */
+    Lambda expandProgram(List<Object> forms, boolean closed) {
         Lambda program = new Lambda(null, true);
-        return (Lambda) run(new ProgramFrame(topScope == null ? forms : addScope(forms, topScope), program));
+        return analyzed((Lambda) run(new ProgramFrame(topScope == null ? forms : addScope(forms, topScope), program)), closed);
+    }
+
+    /** Turns the unit's escape-only call/cc calls into %call/ec calls (M5-04). */
+    private Lambda analyzed(Lambda unit, boolean closed) {
+        Set<GlobalCell> callCC = Set.of(primitive("call/cc"), primitive("call-with-current-continuation"));
+        EscapeAnalysis.rewrite(unit, closed, callCC, primitive("%call/ec"));
+        return unit;
     }
 
     /** Whether program text starts with an import declaration, which makes it a program (R7RS §5.1, design.md D15). */
@@ -473,7 +490,8 @@ public final class Expander {
             importAll(scoped.get(start));
             start++;
         }
-        return (Lambda) run(new ProgramFrame(scoped.subList(start, scoped.size()), new Lambda(null, true)));
+        // Closed: nothing outside an isolated program can name its globals (D15).
+        return analyzed((Lambda) run(new ProgramFrame(scoped.subList(start, scoped.size()), new Lambda(null, true))), true);
     }
 
     /**
@@ -485,7 +503,7 @@ public final class Expander {
         immutableTop = !mutable;
         Lambda thunk = new Lambda(null, false);
         thunk.name = "eval";
-        return (Lambda) run(new ProgramFrame(List.of(Syntax.addScope(datum, topScope)), thunk));
+        return analyzed((Lambda) run(new ProgramFrame(List.of(Syntax.addScope(datum, topScope)), thunk)), false);
     }
 
     /**
@@ -497,7 +515,7 @@ public final class Expander {
         immutableTop = !mutable;
         Lambda thunk = new Lambda(null, false);
         thunk.name = "load";
-        return (Lambda) run(new ProgramFrame(addScope(forms, topScope), thunk));
+        return analyzed((Lambda) run(new ProgramFrame(addScope(forms, topScope), thunk)), false);
     }
 
     // ------------------------------------------------------------------------------------------

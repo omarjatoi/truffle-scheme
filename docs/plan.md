@@ -559,7 +559,7 @@ M5-01 benchmarks and M5-02's report.
     `unittest-compile`'s wall time, before and after.
   - **Done when** context creation is measurably faster and every suite still
     passes in every mode.
-- [ ] **M5-04 · Escape-only `call/cc`** *(needs M5-01)*
+- [x] **M5-04 · Escape-only `call/cc`** *(needs M5-01)*
   - The fast path from design.md "Continuations": when the compiler proves a
     `call/cc`'s continuation is only called directly in its body, compile it to
     an escape (`unwindExceptions`) instead of a capture.

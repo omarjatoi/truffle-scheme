@@ -74,6 +74,14 @@
       (begin (%rewind (%current-dynamic-env) (%continuation-dynamic-env k))
              (%apply-continuation k values))))
 
+;; Invoking an escape-only continuation (%call/ec, M5-04) from another dynamic environment than its
+;; call/cc's: rewind to that environment first, then invoke it again, which then escapes at once.
+(define (%escape k env values)
+  (%rewind (%current-dynamic-env) env)
+  (apply k values))
+
+(%set-escape! %escape)
+
 ;; call-with-values calls the producer in a non-tail position, so it lives here (D5); apply makes
 ;; the call to the consumer a tail call.
 (define (call-with-values producer consumer)

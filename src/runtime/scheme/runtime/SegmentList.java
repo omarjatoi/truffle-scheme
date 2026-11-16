@@ -34,6 +34,17 @@ public final class SegmentList {
         return result;
     }
 
+    /** The cell of the nearest prompt marker whose tag is {@code tag} (identity), or null if there is none. */
+    @TruffleBoundary
+    static SegmentList markerOf(SegmentList list, Object tag) {
+        for (SegmentList l = list; l != null; l = l.tail) {
+            if (l.head instanceof Capture.PromptMarker marker && marker.tag() == tag) {
+                return l;
+            }
+        }
+        return null;
+    }
+
     /** The result of splitting a list at the nearest prompt marker with a tag. */
     record Split(SegmentList before, Capture.PromptMarker marker, SegmentList after) {
     }

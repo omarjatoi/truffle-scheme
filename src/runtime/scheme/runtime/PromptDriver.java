@@ -26,7 +26,9 @@ import scheme.runtime.value.SClosure;
  * <li>a {@link TailCall}: perform it;</li>
  * <li>a {@link Capture}: complete it here, or, if it is for another prompt, pass it on outward with
  * this prompt's pending segments and itself (as a marker) added;</li>
- * <li>an {@link InvokeContinuation} (full continuation): only the root prompt handles it.</li>
+ * <li>an {@link InvokeContinuation} (full continuation): only the root prompt handles it;</li>
+ * <li>an {@link EscapeException} (M5-04): the {@code %call/ec} prompt it is for returns its value;
+ * a driver holding that prompt's marker drops the pending segments up to it.</li>
  * </ul>
  *
  * Everything is flat: re-entry costs O(1) Java stack depth, and finding a prompt costs the distance
@@ -122,6 +124,33 @@ final class PromptDriver extends Node {
                         }
                     }
                 } else if (value instanceof TailCall tail) {
+                    // The escape prompt (M5-04) whose return this tail call's continuation is, if
+                    // any: this one with nothing pending, or one flattened next in line.
+                    EscapeRootNode.Target target = null;
+                    if (pending == null) {
+                        if (tag instanceof EscapeRootNode.Target t) {
+                            target = t;
+                        }
+                    } else if (pending.head instanceof Capture.PromptMarker marker && marker.tag() instanceof EscapeRootNode.Target t) {
+                        target = t;
+                    }
+                    if (target != null) {
+                        if (EscapeRootNode.escapesTo(tail.procedure, target, context)) {
+                            // k, tail-called in its own prompt's tail position: no need to throw.
+                            value = EscapeRootNode.values(tail.arguments);
+                            if (pending == null) {
+                                return value;
+                            }
+                            pending = pending.tail;
+                            continue;
+                        }
+                        if (tail.arguments.length == 2 && tail.procedure instanceof SClosure c && c.callTarget.getRootNode() instanceof EscapeRootNode callEC) {
+                            // %call/ec in that prompt's tail position has the same continuation, so it
+                            // runs in that prompt, in constant space (R7RS §3.5).
+                            value = callWithProcedure(tail.arguments[1], new Object[]{null, callEC.continuation(target, context)});
+                            continue;
+                        }
+                    }
                     value = callWithProcedure(tail.procedure, tail.arguments);
                 } else if (pending == null) {
                     return value;
@@ -158,6 +187,20 @@ final class PromptDriver extends Node {
                     throw e;
                 }
                 value = new PendingRaise(e.getErrorObject());
+            } catch (EscapeException e) {
+                raising = false;
+                if (e.target == tag) {
+                    return e.value;
+                }
+                SegmentList marker = SegmentList.markerOf(pending, e.target);
+                if (marker == null) {
+                    if (tag == Capture.ROOT_TAG) {
+                        throw escapedTooFar();
+                    }
+                    throw e;
+                }
+                pending = marker.tail;
+                value = e.value;
             } catch (InvokeContinuation e) {
                 if (tag != Capture.ROOT_TAG) {
                     throw e;
@@ -194,7 +237,7 @@ final class PromptDriver extends Node {
     }
 
     /** Index 0 of {@code arguments} is (or is set to) the procedure. */
-    private Object callWithProcedure(Object procedure, Object[] arguments) {
+    Object callWithProcedure(Object procedure, Object[] arguments) {
         if (!(procedure instanceof SClosure closure)) {
             throw notAProcedure(procedure);
         }
@@ -225,6 +268,12 @@ final class PromptDriver extends Node {
             // An internal error, never a Scheme error (design.md D8): a resume mutated its segment.
             throw new IllegalStateException("torture: resuming a continuation segment changed its frame (AGENTS.md rule 3)");
         }
+    }
+
+    /** An escape-only continuation invoked outside its extent: the compiler's proof was wrong (M5-04). */
+    @TruffleBoundary
+    private static IllegalStateException escapedTooFar() {
+        return new IllegalStateException("an escape-only continuation was invoked outside its call/cc's extent");
     }
 
     @TruffleBoundary

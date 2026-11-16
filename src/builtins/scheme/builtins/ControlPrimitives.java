@@ -63,6 +63,7 @@ final class ControlPrimitives {
                         new PrimitiveSpec("%continuation-dynamic-env", 1, 1, () -> new ContinuationOps(ContinuationOps.DYNAMIC_ENV)),
                         new PrimitiveSpec("%error", 1, -1, ErrorPrimitive::new),
                         new PrimitiveSpec("%set-receive!", 1, 1, SetReceive::new),
+                        new PrimitiveSpec("%set-escape!", 1, 1, SetEscape::new),
                         new PrimitiveSpec("%current-dynamic-env", 0, 0, () -> new DynamicEnv(DynamicEnv.CURRENT)),
                         new PrimitiveSpec("%set-dynamic-env!", 1, 1, () -> new DynamicEnv(DynamicEnv.SET)),
                         new PrimitiveSpec("%make-dynamic-env", 3, 3, () -> new DynamicEnv(DynamicEnv.MAKE)),
@@ -313,6 +314,15 @@ final class ControlPrimitives {
         @Override
         public Object execute(Object[] args) {
             SchemeContext.get(this).receive = args[0];
+            return SConstant.UNSPECIFIED;
+        }
+    }
+
+    /** Installs the prelude's %escape (control.scm), which escape-only continuations tail-call to rewind first (M5-04). */
+    static final class SetEscape extends PrimitiveNode {
+        @Override
+        public Object execute(Object[] args) {
+            SchemeContext.get(this).escape = args[0];
             return SConstant.UNSPECIFIED;
         }
     }
