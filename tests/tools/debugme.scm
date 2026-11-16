@@ -1,0 +1,11 @@
+(import (scheme base) (scheme write))
+(define (square x)
+  (let ((y (* x x)))
+    y))
+(define (sum-squares n)
+  (let loop ((i 0) (acc 0))
+    (if (= i n)
+        acc
+        (loop (+ i 1) (+ acc (square i))))))
+(display (sum-squares 5))
+(newline)
