@@ -270,19 +270,20 @@ tests do; `--help:tools` lists every tool option.
 
 ## Native image
 
-`bazel run //:r7rs -- native-image` builds the launcher as a native
-executable with the dev shell's GraalVM `native-image` (design.md D17):
+`bazel build //:scheme-native` builds the launcher as a native executable,
+with the pinned GraalVM's `native-image` and the host's C compiler (design.md
+D17). It's built only when named:
 
 <!-- readme: run native -->
 ```sh
-bazel run //:r7rs -- native-image --output native/scheme
+bazel build //:scheme-native
 ```
 
 The executable keeps the Graal JIT, and starts in milliseconds:
 
 <!-- readme: run native -->
 ```sh
-native/scheme docs/examples/hello.scm
+bazel-bin/scheme-native docs/examples/hello.scm
 ```
 
 <!-- readme: output -->
@@ -303,8 +304,9 @@ the `java` command `bazel-bin/scheme` runs):
 The build takes 50 to 90 s and about 3 GB of memory on that machine, and the
 executable is 47 MB. It has no tools (they need the JVM launcher), and it runs
 on the platform that built it. CI doesn't build it: a change to its
-configuration is checked locally, by the `readme` command's `--native` option,
-which runs this section's commands.
+configuration is checked by the tests `//tests:readme_native` (this section's
+commands) and `//tests:conformance_native` (both conformance suites through
+the executable), which are run only when named.
 
 ## Performance
 

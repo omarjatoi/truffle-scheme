@@ -2,4 +2,3 @@
 .claude
 .direnv
 bench/.cache
-native

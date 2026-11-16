@@ -849,9 +849,11 @@ Each entry: the decision, why, and what was rejected.
 - The Chrome inspector, DAP and profiler tools ship as a separate optional
   distribution, and CI runs a smoke test of each against a Scheme program
   (D13's tags and source sections are what they consume).
-- **Native image (M6-06).** `bazel run //:r7rs -- native-image` builds `scheme` as a
-  native executable with the dev shell's GraalVM CE `native-image`, from the
-  launcher's module path without the tools. Truffle's runtime on that path
+- **Native image (M6-06).** `bazel build //:scheme-native` builds `scheme` as
+  a native executable with the pinned GraalVM CE's `native-image` and the
+  target's C toolchain (`native_image` in `bazel/java_module.bzl`: on the
+  executors for a Linux target, here for this machine), from the launcher's
+  module path without the tools. Truffle's runtime on that path
   makes native-image add Truffle's runtime compilation, so the executable
   has the Graal JIT. The `SCHEME` jar carries its own configuration
   (`src/runtime/META-INF/native-image/org.r7rs/scheme`), so any embedder's
@@ -890,11 +892,12 @@ Each entry: the decision, why, and what was rejected.
     JVM (`--engine.TraceCompilation` shows the tier-1 compilations), and
     the first `fib` iteration (17.8 s against the JVM's 13.6 s) is the
     only one that is slower.
-  - `bazel run //:r7rs -- test --native` runs each conformance section as a process of
-    the native launcher, as `ConformanceRunner` runs it, and passes what the
-    JVM does: chibi's suite 1225/1225 and Larceny's 2162/2166, interpreted
-    and with `--compile`. `bazel run //:r7rs -- status --check --native` fails if the
-    native launcher passes anything other than the status block.
+  - `bazel run //:r7rs -- test --native FILE` runs each conformance section as
+    a process of the native launcher, as `ConformanceRunner` runs it, and
+    passes what the JVM does: chibi's suite 1225/1225 and Larceny's
+    2162/2166, interpreted and with `--compile`. The test
+    `//tests:conformance_native` fails if it passes anything other than the
+    status block.
   - **`--end-status=<n>` (M7-06).** A program that ends exits with 0 by
     default, like one that calls `(exit 0)`, so a process's status alone
     can't tell them apart, and Larceny's two exit-0 sections pass their exit
@@ -908,9 +911,10 @@ Each entry: the decision, why, and what was rejected.
     system that the program exited normally"*), not what a program that
     ends does, so the default (0, as chibi-scheme) and the option are ours
     to choose.
-  - CI doesn't build it (D11): the build takes minutes and gigabytes. A PR
-    that changes the native-image configuration runs `bazel run //:r7rs --
-    readme --native` and that check locally.
+  - CI doesn't build it (D11): the build takes a minute and gigabytes. The
+    target and its tests are `manual`; a PR that changes the native-image
+    configuration runs `//tests:readme_native` and
+    `//tests:conformance_native`.
   - On x86-64 Linux the image targets the baseline CPU
     (`-march=compatibility`): with the default target (AVX2) the image
     uses the JDK's `libsimdsort`, whose libm dependency nixpkgs'

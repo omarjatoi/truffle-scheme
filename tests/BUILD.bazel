@@ -167,6 +167,64 @@ conformance_tests(
     },
 )
 
+# The native launcher (//:scheme-native, design.md D17), only when named: it takes a minute and a
+# few GB to build. `conformance_native`: both suites through it pass what the status block says.
+harness_test(
+    name = "conformance_native",
+    args = [
+        "conformance-native",
+        "$(rlocationpath //:scheme-native)",
+    ],
+    data = [
+        ":chibi_suite",
+        ":larceny_suite",
+        "//:scheme-native",
+    ],
+    size = "large",
+    tags = [
+        "cpu:4",
+        "manual",
+    ],
+)
+
+# --- The docs' commands (docs/usage.md, docs/embedding.md: tests/harness/readme.py) -----------
+
+_README_ARGS = [
+    "--runtime=$(rlocationpath //:launcher_runtime)",
+    "--usage=$(rlocationpath //:docs/usage.md)",
+    "--scheme=$(rlocationpath //:scheme)",
+    "--jars $(rlocationpaths //:scheme_jars)",
+]
+
+_README_DATA = [
+    "scheme/test/EmbeddingGuideTest.java",
+    "//:docs",
+    "//:docs/usage.md",
+    "//:launcher_runtime",
+    "//:scheme",
+    "//:scheme_jars",
+]
+
+# Every block but the native ones: commands run as written, outputs and files as shown.
+harness_test(
+    name = "readme",
+    args = ["readme"] + _README_ARGS,
+    data = _README_DATA,
+    size = "large",
+    tags = [
+        "cpu:2",
+        "requires-network",  # the debugger blocks listen on localhost
+    ],
+)
+
+# The native-image blocks, against //:scheme-native.
+harness_test(
+    name = "readme_native",
+    args = ["readme"] + _README_ARGS + ["--native=$(rlocationpath //:scheme-native)"],
+    data = _README_DATA + ["//:scheme-native"],
+    tags = ["manual"],
+)
+
 # --- GraalVM's tools (tests/tools) -------------------------------------------------------------
 
 # `tools_<test>`: --help lists the tools only with them; DAP and the Chrome inspector stop at a

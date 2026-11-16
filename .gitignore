@@ -18,5 +18,3 @@ result-*
 graal_dumps/
 # downloads of the benchmark report: other implementations' preludes and libraries (bench/README.md)
 bench/.cache/
-# the native launcher, where docs/usage.md's native-image command puts it
-/native/
