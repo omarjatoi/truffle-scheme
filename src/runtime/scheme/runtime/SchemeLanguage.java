@@ -10,6 +10,7 @@ import org.graalvm.options.OptionStability;
 import com.oracle.truffle.api.CallTarget;
 import com.oracle.truffle.api.Option;
 import com.oracle.truffle.api.TruffleLanguage;
+import com.oracle.truffle.api.debug.DebuggerTags;
 import com.oracle.truffle.api.instrumentation.ProvidedTags;
 import com.oracle.truffle.api.instrumentation.StandardTags;
 import com.oracle.truffle.api.nodes.Node;
@@ -17,7 +18,10 @@ import com.oracle.truffle.api.source.Source;
 
 import scheme.runtime.value.SClosure;
 
-@ProvidedTags({StandardTags.RootTag.class, StandardTags.RootBodyTag.class, StandardTags.StatementTag.class, StandardTags.CallTag.class, StandardTags.ExpressionTag.class})
+// DebuggerTags.AlwaysHalt: every debugger session (DAP, the Chrome inspector) installs an AlwaysHalt
+// breakpoint, and the Bytecode DSL rejects a tag the language doesn't provide. No node carries it.
+@ProvidedTags({DebuggerTags.AlwaysHalt.class, StandardTags.RootTag.class, StandardTags.RootBodyTag.class, StandardTags.StatementTag.class, StandardTags.CallTag.class,
+                StandardTags.ExpressionTag.class})
 @TruffleLanguage.Registration(id = SchemeLanguage.ID, name = "R7RS Scheme", defaultMimeType = SchemeLanguage.MIME_TYPE, characterMimeTypes = SchemeLanguage.MIME_TYPE, contextPolicy = TruffleLanguage.ContextPolicy.EXCLUSIVE)
 public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
 
