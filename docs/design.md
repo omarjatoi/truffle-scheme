@@ -1,7 +1,7 @@
 # Design
 
 R7RS-small on GraalVM Truffle, built on the Bytecode DSL. Target: GraalVM CE
-25.5 (Truffle 25.5.5.0.3), from nixpkgs (D11).
+25.5 (Truffle 25.5.5.0.3), pinned by Bazel (D11).
 Hard requirement: full R7RS-small conformance, including re-entrant multi-shot
 continuations and proper tail calls.
 
@@ -115,7 +115,7 @@ full R7RS-small conformance comes first.
     debugger shows the name, the line and the variables
     (`SuspendedEvent.getAsynchronousStacks()`). The CPU sampler splices the
     same elements after the prompt in each sample (its `GatherAsyncStackTrace`
-    option is on by default; `mx r7rs-tools` checks it on `tests/tools/spillme.scm`). Prompt roots report no instrumentable call node,
+    option is on by default; `//tests:tools_cpusampler` checks it on `tests/tools/spillme.scm`). Prompt roots report no instrumentable call node,
     so the debugger lists them: it skips frames whose call node isn't
     instrumented code, and it looks for asynchronous stacks only on frames it
     lists.
@@ -512,36 +512,50 @@ Each entry: the decision, why, and what was rejected.
 
 ### D11. Build and tooling
 
-- **Released GraalVM, from Nix.** The JDK is GraalVM CE 25.5 from nixpkgs.
-  `flake.nix` puts it on `JAVA_HOME`, and its built-in Graal compiler is the
-  JIT. Truffle comes from Maven Central as mx libraries in `mx.r7rs/suite.py`
-  (`truffle-api`, `truffle-runtime`, `truffle-compiler`,
-  `truffle-dsl-processor`, `polyglot` and their SDK dependencies), at
-  **exactly** the GraalVM version (25.5.5.0.3). `mx_r7rs.py` refuses to run if
-  the two differ.
-- **Upgrading** is a human-made change. Bump nixpkgs in `flake.lock` and the
-  Truffle library version and digests in `suite.py` together.
-- **mx** is still the build tool, the same one GraalPy and TruffleRuby use.
-  One toolchain covers building, the annotation processor
-  (`TRUFFLE_DSL_PROCESSOR`), `mx unittest`, `mx checks` and `mx tests` (CI and the pre-PR
-  check), and `mx benchmark` for M5. Compiled graphs are dumped with
-  `-Djdk.graal.Dump` on the GraalVM JDK and viewed in a separately installed
-  IGV.
-- Nix (`flake.nix`) provides the whole dev shell: GraalVM, `mx` (copied out
-  of the store into a writable cache dir, because mx writes into its own
-  checkout), Python, `gh` and chibi-scheme. There's nothing to fetch by hand.
-  `nix develop .#bench` adds the other R7RS implementations (Chez, Racket,
-  Chicken, Guile, Gauche) for M5-02's comparative report
-  (`mx r7rs-bench-report`); they're kept out of the default shell so CI jobs
-  don't download them.
-- *Rejected:* importing the `truffle` suite from a pinned graal master commit
-  with a matching labsjdk (the original D11). It gets Bytecode DSL changes
-  before release, but needs a ~1.5 GB graal checkout plus a labsjdk whose
-  JVMCI version must track the graal commit, and nixpkgs can't provide that
-  JDK. Revisit only if we need an unreleased Truffle fix. Also rejected:
-  Bazel (too much build machinery for a project this size); Maven or Gradle
-  (no gate, IGV or benchmark integration); Buck2 (thinner open-source JVM
-  support).
+- **Bazel builds and tests everything** (`MODULE.bazel`, Bazel 8 with
+  bzlmod, `.bazelversion`). Each build step and test is cached on its
+  inputs, locally and in CI (a remote cache such as BuildBuddy is
+  `--config=remote`), so a change reruns only what depends on it.
+  `bazel test //...` is the whole pre-PR check; the repository's other
+  commands are `bazel run //:r7rs -- <command>` (`tests/harness/main.py`).
+- **Released GraalVM, pinned by Bazel.** The JDK that compiles, runs the
+  tools and runs the tests is GraalVM CE 25.5, downloaded at a pinned sha256
+  (`bazel/graalvm.bzl`; the archives nixpkgs ships), and its Graal compiler
+  is the JIT. Truffle comes from Maven Central (`rules_jvm_external`, locked
+  in `maven_install.json`) at **exactly** that version (25.5.5.0.3): one
+  `TRUFFLE_VERSION` in `MODULE.bazel` picks both, and `//tests:versions`
+  checks the JDK's `release` file against the lock file.
+- **Upgrading** is a human-made change: add the release to
+  `bazel/graalvm.bzl`, bump `TRUFFLE_VERSION`, `bazel run @jvm//:pin`, and
+  bump nixpkgs in `flake.lock` (the dev shell's JDK) together.
+- **Modules.** `java_module_jar` (`bazel/java_module.bzl`) builds the
+  `scheme`, `scheme.launcher` and `scheme.test` modules, and everything runs
+  with Truffle on the module path, as embedders run it.
+- **Nix** (`flake.nix`) provides the dev shell: `bazel` (bazelisk), Python,
+  `gh`, chibi-scheme (the differential tests take it from the shell) and a
+  GraalVM JDK for running and embedding outside Bazel. `nix develop .#bench`
+  adds the other R7RS implementations for the comparative benchmark report.
+- **Measured** when Bazel replaced mx (same commit; Apple M3 Max, 16 cores,
+  shared with other builds at load 15–25; GitHub's `ubuntu-26.04` runners):
+
+  | | mx | Bazel |
+  |---|---:|---:|
+  | Local, from clean (downloads cached) | 7.2 min | 5.7 min (110 s build + 234 s tests) |
+  | Local, again with no change | 6.7 min | 1 s |
+  | Local, after a code change in `src/builtins` | 6.7 min | 4.3 min (178 of 202 tests rerun) |
+  | Local, after editing `docs/plan.md` or one `tests/diff` program | 6.7 min | 1 s (1 or 3 tests rerun) |
+  | CI, no cache | 4.9 min on 7 runners (17 runner-min) | 10.3 min on 2 runners (13.7 runner-min) |
+  | CI, cache from an earlier run of the same change | same | 1.7 min (all cached) |
+
+- *Rejected:* mx, GraalVM's build tool, which this project used until the
+  measurements above: it reran every check and test on every run and
+  needed CI sharding to stay fast. The Nix GraalVM as Bazel's JDK: a local
+  path can't run on remote executors, and the pinned download is the same
+  file. Importing the `truffle` suite from a pinned graal master commit with
+  a matching labsjdk: a ~1.5 GB graal checkout plus a labsjdk whose JVMCI
+  version must track the graal commit; revisit only if we need an unreleased
+  Truffle fix. Maven or Gradle (no test caching across machines); Buck2
+  (thinner open-source JVM support).
 
 ### D12. Continuation strategy
 
@@ -637,12 +651,11 @@ Each entry: the decision, why, and what was rejected.
   image is bytes (numbers, characters, strings, symbols, pairs, vectors with
   their storage, syntax objects, source sections); a new kind of constant
   needs a record kind and a new format number (`PreludeImage.FORMAT`).
-  - **Built at build time (M7-05).** `mx build` runs a context of the
-    language's classes (project `scheme.prelude.image`,
-    `mx_r7rs.PreludeImageProject`), which writes the image as it initializes
-    (`-Dscheme.preludeImage.write`), into the `SCHEME` jar beside the prelude
-    (`scheme/prelude/prelude.image`). mx builds it again whenever a project
-    it is made from or a prelude file changes. So the first context of a
+  - **Built at build time (M7-05).** The build runs a context of the
+    language's classes (`prelude_image` in `bazel/java_module.bzl`), which
+    writes the image as it initializes (`-Dscheme.preludeImage.write`), into
+    `scheme.jar` beside the prelude (`scheme/prelude/prelude.image`). Bazel
+    builds it again whenever a class or prelude file it is made from changes. So the first context of a
     process restores too.
   - **Staleness.** The image records the text of every prelude file the
     standard libraries read (and the ones they looked for and didn't find),
@@ -653,8 +666,8 @@ Each entry: the decision, why, and what was rejected.
     otherwise it logs why (`--log.scheme.preludeImage.level=FINE`) and
     expands. The comparison costs one read of the prelude files, which the
     prelude's `Source`s are then made from. Changes to the compiler itself
-    are mx's to catch: the image is rebuilt with every build of the classes
-    it depends on.
+    are the build's to catch: the image is rebuilt with every build of the
+    classes it depends on.
   - **Per JVM, as a fallback (M5-03).** Without a usable build-time image,
     the second context of a JVM that instantiates the libraries the normal
     way builds an image in memory, and later contexts restore from it. The
@@ -692,7 +705,7 @@ Each entry: the decision, why, and what was rejected.
   prelude files instead of their text (needs a digest provider at startup
   for no saving: the files are read either way); checking the compiler's
   class files at run time (reading them costs more than the image saves,
-  and mx already rebuilds the image with them).
+  and the build already rebuilds the image with them).
 - *Rejected:* hand-rolled position tracking in our own frames or exceptions
   (duplicates Truffle and doesn't reach tools).
 
@@ -782,7 +795,7 @@ Each entry: the decision, why, and what was rejected.
 - The Chrome inspector, DAP and profiler tools ship as a separate optional
   distribution, and CI runs a smoke test of each against a Scheme program
   (D13's tags and source sections are what they consume).
-- **Native image (M6-06).** `mx r7rs-native-image` builds `scheme` as a
+- **Native image (M6-06).** `bazel run //:r7rs -- native-image` builds `scheme` as a
   native executable with the dev shell's GraalVM CE `native-image`, from the
   launcher's module path without the tools. Truffle's runtime on that path
   makes native-image add Truffle's runtime compilation, so the executable
@@ -806,7 +819,7 @@ Each entry: the decision, why, and what was rejected.
     in the image), a root's `getName`, and string concatenation outside a
     `@TruffleBoundary` all failed the first build.
   - Numbers on an Apple M3 Max (16 cores, macOS), median of 10 runs; the
-    JVM launcher is the `java` command `mx scheme` runs, without mx (M6-06;
+    JVM launcher is the `java` command `bazel-bin/scheme` runs (M6-06;
     since M7-05 the first context restores the prelude image, which D13
     measures against expanding):
 
@@ -823,10 +836,10 @@ Each entry: the decision, why, and what was rejected.
     JVM (`--engine.TraceCompilation` shows the tier-1 compilations), and
     the first `fib` iteration (17.8 s against the JVM's 13.6 s) is the
     only one that is slower.
-  - `mx r7rs-test --native` runs each conformance section as a process of
+  - `bazel run //:r7rs -- test --native` runs each conformance section as a process of
     the native launcher, as `ConformanceRunner` runs it, and passes what the
     JVM does: chibi's suite 1225/1225 and Larceny's 2162/2166, interpreted
-    and with `--compile`. `mx r7rs-status --check --native` fails if the
+    and with `--compile`. `bazel run //:r7rs -- status --check --native` fails if the
     native launcher passes anything other than the status block.
   - **`--end-status=<n>` (M7-06).** A program that ends exits with 0 by
     default, like one that calls `(exit 0)`, so a process's status alone
@@ -854,7 +867,7 @@ Each entry: the decision, why, and what was rejected.
     nixpkgs' own native-image check builds with, and makes the CI artifact
     run on any x86-64 machine.
   - Limits: the tools (inspector, DAP, profilers) are only on the JVM
-    launcher (`mx scheme`); the executable is for the platform that built
+    launcher (`bazel-bin/scheme`); the executable is for the platform that built
     it; and there is no auxiliary engine cache or pre-initialized context in
     the image (each context still restores the prelude image and runs the
     library bodies).

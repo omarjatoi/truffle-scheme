@@ -1,0 +1,114 @@
+load("@rules_python//python:defs.bzl", "py_binary")
+load("//bazel:java_module.bzl", "java_module_jar", "module_dir", "prelude_image", "scheme_runtime")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "docs/plan.md",
+    "maven_install.json",
+])
+
+# The Truffle and GraalVM SDK modules the scheme modules require.
+_SDK_MODULES = [
+    "org.graalvm.collections",
+    "org.graalvm.jniutils",
+    "org.graalvm.nativebridge",
+    "org.graalvm.nativeimage",
+    "org.graalvm.polyglot",
+    "org.graalvm.truffle",
+    "org.graalvm.word",
+]
+
+# The standard libraries expanded and compiled at build time (design.md D13), in scheme.jar beside
+# the prelude. The language ignores an image whose prelude files differ from the ones it bundles.
+prelude_image(
+    name = "prelude",
+    libs = [
+        "//src/builtins",
+        "//src/compiler",
+        "//src/launcher",
+        "//src/prelude",
+    ],
+)
+
+# scheme.jar: the language as one module. The front end and the primitives are services, so the
+# runtime (which holds the language class) needn't depend on them (scheme.runtime.SchemeCompiler).
+java_module_jar(
+    name = "scheme_module",
+    exports = [
+        "scheme.compiler",
+        "scheme.reader",
+        "scheme.runtime",
+        "scheme.runtime.printer",
+        "scheme.runtime.value",
+    ],
+    libs = [
+        "//src/builtins",
+        "//src/compiler",
+        "//src/prelude",
+        "//src/reader",
+        "//src/runtime",
+    ],
+    module_name = "scheme",
+    requires = _SDK_MODULES,
+    resources = {":prelude": "scheme/prelude/prelude.image"},
+    uses = [
+        "scheme.runtime.BuiltinLibrary",
+        "scheme.runtime.SchemeCompiler",
+    ],
+    deps = ["//bazel:truffle_modules"],
+)
+
+# scheme.launcher.jar: the `scheme` launcher (on GraalVM's launcher framework) and the conformance
+# runner, with the optimizing runtime.
+java_module_jar(
+    name = "launcher_module",
+    exports = ["scheme.launcher"],
+    libs = ["//src/launcher"],
+    module_name = "scheme.launcher",
+    requires = _SDK_MODULES + [
+        "org.graalvm.launcher",
+        "org.graalvm.shadowed.jline",
+        "org.graalvm.truffle.compiler",
+        "org.graalvm.truffle.runtime",
+        "scheme",
+    ],
+    deps = [
+        ":scheme_module",
+        "//bazel:launcher_modules",
+        "//bazel:truffle_modules",
+    ],
+)
+
+# The launcher's module path, as the tests and the commands run it.
+scheme_runtime(
+    name = "launcher_runtime",
+    module = ":launcher_module",
+)
+
+# The same with GraalVM's tools (--inspect, --dap, --cpusampler, --memtracer).
+scheme_runtime(
+    name = "scheme_runtime",
+    extra = ["//bazel:tools_modules"],
+    module = ":launcher_module",
+)
+
+# `bazel-bin/scheme [option...] [-I dir]... [file.scm [arg...]]` (docs/usage.md).
+py_binary(
+    name = "scheme",
+    srcs = ["//tests/harness:scheme.py"],
+    data = [":scheme_runtime"],
+    deps = ["//tests/harness"],
+)
+
+# `bazel-bin/scheme_jars/`: the language, the launcher and Truffle's jars, for `java -p` (docs/embedding.md).
+module_dir(
+    name = "scheme_jars",
+    module = ":launcher_module",
+)
+
+# `bazel run //:r7rs -- <command>`: the repository's commands (tests/harness/main.py, AGENTS.md).
+alias(
+    name = "r7rs",
+    actual = "//tests/harness:r7rs",
+)

@@ -7,20 +7,19 @@ and Scheme; this guide shows it from the Java side.
 
 Every Java sample below is a region of
 [`tests/scheme/test/EmbeddingGuideTest.java`](../tests/scheme/test/EmbeddingGuideTest.java),
-which the unit tests run, and CI's `readme` test step fails if a sample here
+which the unit tests run, and CI's readme check fails if a sample here
 and its region differ. [`EmbeddingTest.java`](../tests/scheme/test/EmbeddingTest.java)
 covers the same API in more depth.
 
 ## The jars
 
-Nothing is published to Maven: build the language (`mx build`, as in the
-README's quick start) and put its jar (`scheme.jar`, the `SCHEME`
-distribution) and Truffle's jars on the module path.
-`mx classpath SCHEME TRUFFLE_RUNTIME` prints that path. Truffle's jars are
+Nothing is published to Maven: `bazel build //:scheme_jars` puts the
+language's jar (`scheme.jar`), the launcher's, and Truffle's jars in
+`bazel-bin/scheme_jars/`, a directory for the module path. Truffle's jars are
 Maven Central's, at exactly the dev shell's GraalVM version, 25.5.5.0.3
 (design.md D11): `org.graalvm.polyglot:polyglot`, `org.graalvm.truffle`'s
 `truffle-api`, `truffle-runtime` and `truffle-compiler`, and the
-`org.graalvm.sdk` jars they use (`mx.r7rs/suite.py` lists each with its
+`org.graalvm.sdk` jars they use (`maven_install.json` locks each with its
 digest). `truffle-runtime` is Truffle's optimizing runtime: without it the
 engine only interprets, and says so on stderr. The JIT is the Graal compiler
 of the GraalVM JDK the program runs on.
@@ -46,8 +45,8 @@ public class Hello {
 
 <!-- readme: run -->
 ```sh
-MP=$(mx classpath SCHEME TRUFFLE_RUNTIME)
-java -p "$MP" --add-modules ALL-MODULE-PATH --enable-native-access=org.graalvm.truffle --sun-misc-unsafe-memory-access=allow docs/examples/Hello.java
+bazel build //:scheme_jars
+java -p bazel-bin/scheme_jars --add-modules ALL-MODULE-PATH --enable-native-access=org.graalvm.truffle --sun-misc-unsafe-memory-access=allow docs/examples/Hello.java
 ```
 
 <!-- readme: output -->
@@ -58,7 +57,7 @@ Hello, Java!
 
 `--add-modules ALL-MODULE-PATH` resolves the language's module (`scheme`),
 which nothing `requires`: the polyglot API finds it as a service. The two other
-flags are the ones `mx` passes to the JVMs it runs Scheme in: Truffle uses
+flags are the ones the launcher's JVM runs with (tests/harness/harness.py): Truffle uses
 restricted native access and `sun.misc.Unsafe` on JDK 25.
 
 ## Contexts and evaluation

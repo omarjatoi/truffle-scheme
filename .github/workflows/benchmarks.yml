@@ -1,7 +1,7 @@
 name: Benchmark report
 
 # The comparative report (plan.md M5-02, bench/README.md): ecraven's R7RS benchmarks on us and on
-# Chez, Racket, Chicken, Guile, Gauche and chibi, as `mx r7rs-bench-report` runs them. Too slow
+# Chez, Racket, Chicken, Guile, Gauche and chibi, as `bazel run //:r7rs -- bench-report` runs them. Too slow
 # for every PR: by hand (Actions > Benchmark report > Run workflow, or `gh workflow run
 # benchmarks.yml`), weekly, and on PRs that change this file. The report (Markdown and JSON) is
 # the run's artifact and its summary. A shared CI runner is noisy: the committed
@@ -46,23 +46,27 @@ jobs:
       - uses: DeterminateSystems/determinate-nix-action@v3
       - uses: actions/cache@v6
         with:
-          path: ~/.mx/cache
-          key: mx-cache-${{ runner.os }}-${{ hashFiles('mx.r7rs/suite.py', 'flake.lock') }}
-          restore-keys: mx-cache-${{ runner.os }}-
+          path: |
+            ~/.cache/bazel-disk-cache
+            ~/.cache/bazel-repository-cache
+          key: bazel-${{ runner.os }}-benchmarks-${{ github.sha }}
+          restore-keys: |
+            bazel-${{ runner.os }}-benchmarks-
+            bazel-${{ runner.os }}-
       - name: Dev shell with the other implementations
         run: nix develop .#bench --command sh -c 'java -version && scheme --version && gosh -V | head -1 && csc -version | head -1 && guile --version | head -1 && racket --version && chibi-scheme -V'
-      - name: mx build
-        run: nix develop .#bench --command mx build
-      - name: mx r7rs-bench-report
+      - name: Build
+        run: nix develop .#bench --command bazel build --config=ci //:r7rs
+      - name: bench-report
         run: |
           case "$BENCHMARKS" in
             all) selection= ;;
             "") selection="--benchmarks $DEFAULT_BENCHMARKS" ;;
             *) selection="--benchmarks $BENCHMARKS" ;;
           esac
-          nix develop .#bench --command mx r7rs-bench-report $selection --scale "$SCALE" \
+          nix develop .#bench --command bazel run --config=ci //:r7rs -- bench-report $selection --scale "$SCALE" \
             --note "GitHub Actions runner ($(nproc) vCPUs, shared): expect noise; run $GITHUB_RUN_ID." \
-            --output report/benchmarks.md --json report/benchmarks.json
+            --output "$PWD/report/benchmarks.md" --json "$PWD/report/benchmarks.json"
           cat report/benchmarks.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}

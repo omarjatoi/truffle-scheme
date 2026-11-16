@@ -24,7 +24,7 @@ import org.junit.Test;
  * (scheme.runtime).
  *
  * <p>The reproducer can't be part of the build, so this test runs javac, with the DSL processor
- * mx gives the tests ({@code -Dr7rs.truffle.dslProcessor}), on {@link #SOURCE}: once as it is,
+ * the test runner gives the tests ({@code -Dr7rs.truffle.dslProcessor}), on {@link #SOURCE}: once as it is,
  * which fails, and once without the annotation, which compiles.
  *
  * <p>Inverted, like every test in this package: it passes while the bug is there. When a Truffle
@@ -34,8 +34,8 @@ import org.junit.Test;
 public class UpstreamReportPolymorphismTest {
 
     /**
-     * The reproducer, as in docs/upstream.md. (Its package line is outside the text block: mx
-     * canonicalizeprojects takes a line that starts with {@code package} for this file's package.)
+     * The reproducer, as in docs/upstream.md. (Its package line is outside the text block, so that
+     * tools reading this file's package don't take it for this file's.)
      */
     static final String SOURCE = "package repro;\n\n" + """
                     import com.oracle.truffle.api.TruffleLanguage;
@@ -98,7 +98,7 @@ public class UpstreamReportPolymorphismTest {
     /** Compiles {@code source} as repro/PolyRoot.java with the Truffle DSL processor. */
     private static Result javac(String source) throws IOException, InterruptedException {
         String processor = System.getProperty("r7rs.truffle.dslProcessor");
-        assertNotNull("mx sets -Dr7rs.truffle.dslProcessor (mx_r7rs.py, _R7RSUnittestConfig)", processor);
+        assertNotNull("the test runner sets -Dr7rs.truffle.dslProcessor (tests/harness/main.py)", processor);
         // Truffle's jars are on the test JVM's module path; javac only needs them as a class path.
         String classPath = String.join(File.pathSeparator, Stream.of(System.getProperty("jdk.module.path"), System.getProperty("java.class.path")) //
                         .filter(p -> p != null && !p.isEmpty()).toList());

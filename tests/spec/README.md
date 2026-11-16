@@ -2,7 +2,7 @@
 
 The cases AGENTS.md's rules 3–5 are checked against: tail calls in constant
 space (`tail-*`), continuations (`cont-*`), and depth without Java recursion
-(`deep-*`). `mx r7rs-spec` runs them (also as `mx tests spec`). Read-only for
+(`deep-*`). `bazel test //tests:spec` runs them, a test per case. Read-only for
 agents once written: if a case looks wrong, say why in the PR and stop
 (AGENTS.md "Never").
 
@@ -24,8 +24,8 @@ stderr is not compared.
 
 Programs are written in R7RS, not in this implementation's core forms. A case
 that needs something a later task brings is listed with that task in
-`mx.r7rs/mx_r7rs.py` (`_SPEC_PENDING`) and reported as SKIPPED with the task's
-name until that task lands and removes the entry.
+`SPEC_PENDING` (tests/BUILD.bazel), which leaves it out, until that task lands
+and removes the entry.
 
 ## Cases
 

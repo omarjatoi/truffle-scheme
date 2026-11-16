@@ -1,0 +1,179 @@
+load("//bazel:java.bzl", "scheme_java_library")
+load("//bazel:java_module.bzl", "java_module_jar", "scheme_runtime")
+load("//tests/harness:defs.bzl", "conformance_tests", "diff_tests", "harness_test", "space_test", "spec_tests", "tools_tests", "unit_tests")
+
+# Everything under tests/ but the harness is described here: tests/r7rs/ and tests/r7rs-larceny/ are
+# read-only vendored suites (AGENTS.md "Never"), so they get no BUILD files of their own.
+
+package(default_visibility = ["//visibility:public"])
+
+# --- JUnit (tests/scheme/test) -----------------------------------------------------------------
+
+scheme_java_library(
+    name = "scheme_test_lib",
+    srcs = glob(["scheme/test/**/*.java"]),
+    # The vendored suite's files that SuiteReadSyntaxTest and SyntaxRulesTest read as resources.
+    resource_strip_prefix = "tests",
+    resources = glob(["r7rs/**"]),
+    spotbugs = False,
+    # Test instruments (ToolsTest, ResultProbe) need their generated registrations.
+    truffle_dsl = True,
+    deps = [
+        "//src/compiler",
+        "//src/launcher",
+        "//src/reader",
+        "//src/runtime",
+        "@jvm//:junit_junit",
+        "@jvm//:org_graalvm_polyglot_polyglot",
+        "@jvm//:org_graalvm_truffle_truffle_api",
+    ],
+)
+
+# scheme.test.jar, which exports and opens its packages to JUnit.
+java_module_jar(
+    name = "test_module",
+    exports = [
+        "scheme.test to junit",
+        "scheme.test.upstream to junit",
+    ],
+    libs = [":scheme_test_lib"],
+    module_name = "scheme.test",
+    opens = [
+        "scheme.test to junit",
+        "scheme.test.upstream to junit",
+    ],
+    requires = [
+        "junit",
+        "org.graalvm.polyglot",
+        "org.graalvm.truffle",
+        "scheme",
+        "scheme.launcher",
+    ],
+    deps = [
+        "//:launcher_module",
+        "@jvm//:junit_junit",
+    ],
+)
+
+scheme_runtime(
+    name = "junit_runtime",
+    module = ":test_module",
+)
+
+# `unit_<mode>_<Class>` for every *Test.java, in the modes jit (the Graal JIT in the background),
+# compile (compile immediately, failures are errors) and torture; `unit_<mode>` and `unit` group them.
+unit_tests(
+    name = "unit",
+    srcs = glob(["scheme/test/**/*Test.java"]),
+    runtime = ":junit_runtime",
+)
+
+# --- Programs ----------------------------------------------------------------------------------
+
+# tests/diff: `diff_<program>` and `diff_torture_<program>`, against chibi-scheme.
+diff_tests(
+    name = "diff",
+    srcs = glob(["diff/*.scm"]),
+    chibi = "@chibi//:chibi-scheme",
+    runtime = "//:launcher_runtime",
+)
+
+# tests/spec cases that need something a later task brings: {case: task}. Remove an entry when its
+# task lands (tests/spec/README.md); never add back a case that has passed.
+SPEC_PENDING = {}
+
+# tests/spec: `spec_<case>`, each with the JVM limits in its header.
+spec_tests(
+    name = "spec",
+    srcs = [f for f in glob(["spec/*.scm"]) if f.removeprefix("spec/").removesuffix(".scm") not in SPEC_PENDING],
+    runtime = "//:launcher_runtime",
+)
+
+# M1-06: a 10M-iteration tail loop under a stack and heap too small for anything that grows.
+space_test(
+    name = "space_loop_10m",
+    src = "diff/loop-10m.scm",
+    expect = "10000000",
+    limits = "-Xss256k -Xmx64m",
+    runtime = "//:launcher_runtime",
+)
+
+# M2-05: 1M-deep non-tail recursion under a 256k Java stack (chibi runs out of stack on it).
+space_test(
+    name = "space_deep_recursion_1m",
+    src = "space/deep-recursion-1m.scm",
+    expect = "1000000",
+    limits = "-Xss256k -Xmx512m",
+    runtime = "//:launcher_runtime",
+)
+
+test_suite(
+    name = "space",
+    tests = [
+        ":space_deep_recursion_1m",
+        ":space_loop_10m",
+    ],
+)
+
+# --- Conformance -------------------------------------------------------------------------------
+
+filegroup(
+    name = "chibi_suite",
+    srcs = glob(["r7rs/**"]) + glob(["lib/**"]),
+)
+
+filegroup(
+    name = "larceny_suite",
+    srcs = glob(["r7rs-larceny/**"]) + glob(["lib/**"]),
+)
+
+# `conformance_results_<suite>` (cached build actions), `conformance_status` (docs/plan.md's status
+# block is current) and `conformance_torture_<suite>` (no section passes less under torture).
+conformance_tests(
+    name = "conformance",
+    module = "//:launcher_module",
+    plan = "//:docs/plan.md",
+    runtime = "//:launcher_runtime",
+    suites = {
+        "chibi": ":chibi_suite",
+        "larceny": ":larceny_suite",
+    },
+)
+
+# --- GraalVM's tools (tests/tools) -------------------------------------------------------------
+
+# `tools_<test>`: --help lists the tools only with them; DAP and the Chrome inspector stop at a
+# breakpoint, show the stack and locals, step and continue; the CPU sampler and memory tracer run.
+tools_tests(
+    name = "tools",
+    programs = glob(["tools/*.scm"]),
+    runtime = "//:launcher_runtime",
+    tools_runtime = "//:scheme_runtime",
+)
+
+# --- Checks ------------------------------------------------------------------------------------
+
+# AGENTS.md rule 1: Java builtins never call Scheme.
+harness_test(
+    name = "rules",
+    args = ["rules", "$(rlocationpaths //src/builtins:srcs)"],
+    data = ["//src/builtins:srcs"],
+    size = "small",
+    tags = ["lint"],
+)
+
+# design.md D11: the test JDK is the GraalVM release of the Truffle libraries.
+harness_test(
+    name = "versions",
+    args = [
+        "versions",
+        "--runtime=$(rlocationpath //:launcher_runtime)",
+        "--lock=$(rlocationpath //:maven_install.json)",
+    ],
+    data = [
+        "//:launcher_runtime",
+        "//:maven_install.json",
+    ],
+    size = "small",
+    tags = ["lint"],
+)

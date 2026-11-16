@@ -1,6 +1,6 @@
 """Runs the commands of docs/usage.md and docs/embedding.md, and checks their samples (plan.md M6-07).
 
-`mx r7rs-readme` (and `mx tests readme`) reads the documents' fenced blocks. Every block has a
+`bazel run //:r7rs -- readme` (CI's Tests job) reads the documents' fenced blocks. Every block has a
 marker, an HTML comment on the line before its opening fence (blank lines in between are allowed),
 that says how CI checks it; a block without one fails the step:
 
@@ -9,14 +9,14 @@ that says how CI checks it; a block without one fails the step:
 - `<!-- readme: run server -->`: the block starts a server (`--inspect`, `--dap`). It runs until
   its output (stdout and stderr) matches the block's `output` block, then it is killed.
 - `<!-- readme: run native -->`: the block needs GraalVM's native-image, which takes minutes and
-  gigabytes, so `mx r7rs-readme --native` runs it instead, in the native launcher's workflow
+  gigabytes, so `bazel run //:r7rs -- readme --native` runs it instead, in the native launcher's workflow
   (.github/workflows/native.yml), and this step checks that the workflow does.
 - `<!-- readme: output -->` after a run block: what the block prints on stdout (on stdout and
   stderr for a server). `...` matches any text, newlines included; trailing spaces don't count.
 - `<!-- readme: file PATH -->` or `<!-- readme: file PATH#NAME -->`: the block is the file's text,
   or the region of it between `// readme-snippet: NAME` and `// readme-snippet-end`, dedented.
 
-Inline code in the documents that starts like a command (`mx `, `nix `, `java `) must be part of
+Inline code in the documents that starts like a command (`bazel `, `bazel-bin/scheme `, `nix `, `java `) must be part of
 one of their run blocks, so prose can't mention a command that CI doesn't run.
 """
 
@@ -29,13 +29,13 @@ import textwrap
 import time
 from os.path import join
 
-import mx
+from harness import fail, log  # noqa: F401
 
 DOCUMENTS = [join('docs', 'usage.md'), join('docs', 'embedding.md')]
 NATIVE_WORKFLOW = join('.github', 'workflows', 'native.yml')
-NATIVE_COMMAND = 'mx r7rs-readme --native'
+NATIVE_COMMAND = '//:r7rs -- readme --native'
 
-# Seconds a block may take: a run block of mx commands, the native-image build, a server's banner.
+# Seconds a block may take: a run block of Bazel commands, the native-image build, a server's banner.
 _RUN_TIMEOUT = 900
 _NATIVE_TIMEOUT = 2400
 _SERVER_TIMEOUT = 180
@@ -43,7 +43,7 @@ _SERVER_TIMEOUT = 180
 _FENCE = re.compile(r'^(```+)\s*([\w+-]*)\s*$')
 _MARKER = re.compile(r'^<!--\s*readme:\s*(.*?)\s*-->$')
 _INLINE_CODE = re.compile(r'(?<!`)`([^`\n]+)`(?!`)')
-_COMMAND_PREFIXES = ('mx ', 'nix ', 'java ')
+_COMMAND_PREFIXES = ('bazel ', 'bazel-bin/scheme ', 'nix ', 'java ')
 _SNIPPET_BEGIN = re.compile(r'^\s*// readme-snippet: (\S+)\s*$')
 _SNIPPET_END = re.compile(r'^\s*// readme-snippet-end\s*$')
 
@@ -80,7 +80,7 @@ def _parse(root, document):
             while end < len(lines) and lines[end].strip() != fence.group(1):
                 end += 1
             if end == len(lines):
-                mx.abort(f'{document}:{start + 1}: unclosed code block')
+                fail(f'{document}:{start + 1}: unclosed code block')
             blocks.append(Block(document, start + 1, fence.group(2), '\n'.join(lines[start + 1:end]) + '\n', marker))
             marker = None
             i = end + 1
@@ -245,7 +245,7 @@ def run(root, native=False):
                 continue
             problem = _check_file(block, root)
         elif ('native' in words) != native:
-            mx.logv(f'  {block.where()}: skipped (' + ('a native block' if not native else 'not a native block') + ')')
+            log(f'  {block.where()}: skipped (' + ('a native block' if not native else 'not a native block') + ')')
             continue
         elif 'server' in words:
             problem = _run_server(block, root)
@@ -254,7 +254,7 @@ def run(root, native=False):
         summary = block.text.strip().split('\n')[0] if words[0] == 'run' else ' '.join(words)
         if problem:
             problems.append(f'{block.where()}: {problem}')
-            mx.log(f'FAIL    {block.where()}: {summary}')
+            log(f'FAIL    {block.where()}: {summary}')
         else:
-            mx.log(f'ok      {block.where()}: {summary} ({time.time() - start:.1f}s)')
+            log(f'ok      {block.where()}: {summary} ({time.time() - start:.1f}s)')
     return problems

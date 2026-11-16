@@ -322,7 +322,7 @@ vector strategies, M5-07 `equal?`.
   box-unbox sequences".
 - **Risk.** Frames copied on resume (D2, `PromptDriver.copy`) now hold
   primitive slots with tags. `Frame.copyTo` copies both, and torture mode
-  resumes every segment twice from copies, so run `mx r7rs-test --torture`
+  resumes every segment twice from copies, so run `bazel run //:r7rs -- test --torture`
   and the M0-02 tests under BE before merging. D1's `eq?` on fixnums is
   already by value.
 - **Effort.** Enabling it is S. It pays off once arithmetic and predicates
@@ -419,9 +419,9 @@ performance. Don't add `injectBranchProbability` without evidence.
 
 ## 5. Tooling
 
-The `scheme` launcher (`mx scheme`, D17, M6-01) takes engine and compiler
-options directly: `mx scheme --experimental-options --engine.TraceCompilation file.scm`.
-The mx commands that run `SchemeMain` themselves (`r7rs-diff`, benchmarks) take
+The `scheme` launcher (`bazel-bin/scheme`, D17, M6-01) takes engine and compiler
+options directly: `bazel-bin/scheme --experimental-options --engine.TraceCompilation file.scm`.
+The commands that run `SchemeMain` themselves (`r7rs-diff`, benchmarks) take
 them as JVM flags: pass `-Dpolyglot.engine.AllowExperimentalOptions=true` to the
 JVM, then any engine or compiler option as `-Dpolyglot.<option>=…`:
 
@@ -438,7 +438,7 @@ JVM, then any engine or compiler option as `-Dpolyglot.<option>=…`:
 | Interpreter instruction mix | `engine.BytecodeHistogram=true` (25.1; the place to look before BE or quickening) |
 | Hot guest procedures | `--cpusampler --cpusampler.Delay=<ms> --cpusampler.ShowTiers=true` (needs the tools on the module path, D17) |
 | Compiled graphs | `-Djdk.graal.Dump=Truffle:1` (`:2` for every phase), then open `graal_dumps/` in IGV and look at "After TruffleTier" |
-| Interpreter only | `engine.Compilation=false` (what `mx r7rs-test` uses) |
+| Interpreter only | `engine.Compilation=false` (what `bazel run //:r7rs -- test` uses) |
 
 Host-level profilers (JFR, async-profiler) are useful for interpreter
 time. Marr's VTune study shows how much of a Truffle bytecode interpreter's
@@ -446,7 +446,7 @@ time goes to dispatch plumbing rather than instruction semantics.
 
 ## 6. Hill-climbing method
 
-1. **Baseline first.** Take M5-01's `mx benchmark` JSON on `main` (JIT and
+1. **Baseline first.** Take M5-01's `benchmark --json` output on `main` (JIT and
    interpreter-only), on a quiet machine. Record the GraalVM version and
    the JVM flags.
 2. **A working subset.** Pick 10–15 programs from the two suites, one or
@@ -474,8 +474,8 @@ time goes to dispatch plumbing rather than instruction semantics.
 5. **Explain every win.** Check `TraceCompilation` (fewer deopts, smaller
    code), `TraceInlining` (the expected callee now `Inlined`) or IGV.
    Then the next change builds on a mechanism, not on luck.
-6. **Semantics gate.** Run `mx checks && mx tests` plus
-   `mx r7rs-test --compile` and `--torture` for anything in `src/runtime`
+6. **Semantics gate.** Run `bazel test //...` plus
+   `bazel run //:r7rs -- test --compile` and `--torture` for anything in `src/runtime`
    or a DSL operation (AGENTS.md). Items 2, 3, 4 and 9 change the call
    path and need torture runs in particular.
 7. **Ratchet.** M5-08 turns the final numbers into CI thresholds.

@@ -1,0 +1,80 @@
+load("@rules_java//java:defs.bzl", "java_binary", "java_library", "java_plugin")
+
+package(default_visibility = ["//visibility:public"])
+
+# The Truffle DSL annotation processor: one java_plugin per processor in its META-INF/services.
+# Only the projects that need generated code run it (scheme_java_library's truffle_dsl), so edits
+# elsewhere don't re-run it.
+_TRUFFLE_PROCESSORS = [
+    "TruffleProcessor",
+    "verify.VerifyTruffleProcessor",
+    "LanguageRegistrationProcessor",
+    "InstrumentRegistrationProcessor",
+    "OptionalResourceRegistrationProcessor",
+    "InstrumentableProcessor",
+    "verify.VerifyCompilationFinalProcessor",
+    "OptionProcessor",
+]
+
+[
+    java_plugin(
+        name = "truffle_dsl_" + p.rsplit(".", 1)[-1],
+        generates_api = True,
+        processor_class = "com.oracle.truffle.dsl.processor." + p,
+        visibility = ["//visibility:private"],
+        deps = ["@jvm//:org_graalvm_truffle_truffle_dsl_processor"],
+    )
+    for p in _TRUFFLE_PROCESSORS
+]
+
+java_library(
+    name = "truffle_dsl_processor",
+    exported_plugins = [":truffle_dsl_" + p.rsplit(".", 1)[-1] for p in _TRUFFLE_PROCESSORS],
+)
+
+# Truffle and the GraalVM SDK, separate modules on the module path. truffle-runtime is the
+# optimizing runtime: without it Truffle only interprets (RuntimeTest checks it is there).
+java_library(
+    name = "truffle_modules",
+    runtime_deps = [
+        "@jvm//:org_graalvm_polyglot_polyglot",
+        "@jvm//:org_graalvm_sdk_collections",
+        "@jvm//:org_graalvm_sdk_jniutils",
+        "@jvm//:org_graalvm_sdk_nativebridge",
+        "@jvm//:org_graalvm_sdk_nativeimage",
+        "@jvm//:org_graalvm_sdk_word",
+        "@jvm//:org_graalvm_truffle_truffle_api",
+        "@jvm//:org_graalvm_truffle_truffle_compiler",
+        "@jvm//:org_graalvm_truffle_truffle_runtime",
+    ],
+)
+
+# GraalVM's launcher framework and the shadowed JLine it requires (scheme.launcher).
+java_library(
+    name = "launcher_modules",
+    runtime_deps = [
+        "@jvm//:org_graalvm_sdk_launcher_common",
+        "@jvm//:org_graalvm_shadowed_jline",
+    ],
+)
+
+# GraalVM's tools: the Chrome inspector, the debug adapter, the CPU sampler and memory tracer. Nothing
+# requires them; //:scheme and the tools tests put them on the module path.
+java_library(
+    name = "tools_modules",
+    runtime_deps = [
+        "@jvm//:org_graalvm_shadowed_json",
+        "@jvm//:org_graalvm_tools_chromeinspector_tool",
+        "@jvm//:org_graalvm_tools_dap_tool",
+        "@jvm//:org_graalvm_tools_profiler_tool",
+    ],
+)
+
+# Builds a module's jar (java_module.bzl).
+java_binary(
+    name = "module_jar",
+    srcs = ["ModuleJar.java"],
+    javacopts = ["-Xlint:all", "-Werror"],
+    main_class = "ModuleJar",
+    visibility = ["//visibility:private"],
+)

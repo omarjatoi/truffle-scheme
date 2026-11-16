@@ -1,10 +1,10 @@
 """Smoke tests for GraalVM's tools against the `scheme` launcher (plan.md M6-03, design.md D17).
 
-`mx r7rs-tools` (and `mx tests tools`) starts the launcher in a child JVM with the optional tools
-distribution (SCHEME_TOOLS) on its module path, and drives each tool against a program in
+`bazel test //tests:tools` (and `bazel run //:r7rs -- tools NAME`) starts the launcher in a child JVM with the optional tools
+(//bazel:tools_modules) on its module path, and drives each tool against a program in
 tests/tools/:
 
-- `help`: the tools show in `--help` with SCHEME_TOOLS, and not without it (the language and the
+- `help`: the tools show in `--help` with the tools jars, and not without it (the language and the
   launcher don't depend on the tools).
 - `dap`: the Debug Adapter Protocol (`--dap`): a line breakpoint, the stack, a local by name,
   step over, continue to the next hit, then run to the end.
@@ -16,7 +16,7 @@ tests/tools/:
 - `terminal`: the REPL on a pseudo-terminal (M7-07): line editing, the history and its file, the
   continuation prompt, Ctrl-C, and `read-line` reading what is typed next. It runs the launcher
   without the tools, and runs `SCHEME_NATIVE_LAUNCHER` the same way if that variable names an
-  executable (the native launcher, `mx r7rs-native-image`).
+  executable (the native launcher, `bazel run //:r7rs -- native-image`).
 
 The DAP and CDP clients are dependency-free (the standard library only), ported from the
 exploration in #76. Every wait has a timeout, and the child JVM is killed whatever happens, so a
@@ -40,7 +40,7 @@ import time
 import urllib.request
 from os.path import join
 
-import mx
+from harness import fail, log
 
 # Seconds to wait for a tool's server to accept a connection, for one protocol message, and for the
 # program to finish. CI runners are slow; a healthy run takes a few seconds per test.
@@ -88,7 +88,7 @@ class _Launcher:
         self.process = None
 
     def __enter__(self):
-        mx.logv('r7rs-tools: ' + ' '.join(self.command))
+        log('tools: ' + ' '.join(self.command))
         with open(self.out_path, 'wb') as out, open(self.err_path, 'wb') as err:
             self.process = subprocess.Popen(self.command, cwd=self.workdir, stdin=subprocess.DEVNULL, stdout=out, stderr=err)
         return self
@@ -178,7 +178,6 @@ class _DapClient:
                 length = int(line.split(b':')[1])
         _check(length is not None, 'DAP: a message without Content-Length')
         message = json.loads(self.file.read(length))
-        mx.logvv('DAP <- ' + json.dumps(message)[:300])
         if message.get('type') == 'event' and message.get('event') == 'output':
             self.output.append(message.get('body', {}).get('output', ''))
         return message
@@ -229,7 +228,7 @@ def _dap_stopped(client, path, expected_x):
     loop = client.variables(frames[names.index('loop', 1)]['id'])
     _check(loop.get('i') == expected_x and loop.get('n') == '5' and 'acc' in loop,
            f'DAP: expected i = {expected_x}, acc and the captured n = 5 in loop, got {loop}')
-    mx.log(f'  dap: stopped at the breakpoint in square, stack {names}, x = {variables["x"]}, loop\'s n = {loop["n"]}')
+    log(f'  dap: stopped at the breakpoint in square, stack {names}, x = {variables["x"]}, loop\'s n = {loop["n"]}')
     return thread, top
 
 
@@ -258,7 +257,7 @@ def _dap(workdir, port, command):
             # A runtime marker (a tail call request) never shows as a foreign object (plan.md M6-05).
             _check(not any('scheme.runtime.' in str(v) for v in stepped.values()), f'DAP: a runtime object leaked into the variables: {stepped}')
             local = {k: v for k, v in stepped.items() if not v.startswith('#<procedure')}
-            mx.log(f'  dap: stepped over to {top["name"]} {top["line"]}:{top["column"]}, variables {local}')
+            log(f'  dap: stepped over to {top["name"]} {top["line"]}:{top["column"]}, variables {local}')
 
             # Continue: the next hit is square(1). Then clear the breakpoint and run to the end.
             client.request('continue', threadId=thread)
@@ -266,7 +265,7 @@ def _dap(workdir, port, command):
             client.request('setBreakpoints', source={'path': path}, breakpoints=[])
             client.request('continue', threadId=thread)
             event = client.wait_event('terminated', 'exited')
-            mx.log(f'  dap: continued to the end ({event["event"]})')
+            log(f'  dap: continued to the end ({event["event"]})')
         finally:
             client.close()
         status = launcher.wait()
@@ -339,7 +338,6 @@ class _CdpClient:
             payload += data
             if b1 & 0x80:
                 message = json.loads(payload)
-                mx.logvv('CDP <- ' + json.dumps(message)[:300])
                 return message
 
     def call(self, method, **params):
@@ -384,7 +382,7 @@ def _cdp_paused(client, path, expected_x):
     _check('loop' in names[1:], f'CDP: square\'s caller loop is not on the stack: {names}')
     variables = client.scope_variables(top)
     _check(str(variables.get('x')) == expected_x, f'CDP: expected x = {expected_x} in square, got {variables}')
-    mx.log(f'  inspect: paused at the breakpoint in square ({paused["reason"]}), stack {names}, x = {variables["x"]}')
+    log(f'  inspect: paused at the breakpoint in square ({paused["reason"]}), stack {names}, x = {variables["x"]}')
     return top
 
 
@@ -419,7 +417,7 @@ def _inspect(workdir, port, command):
             _check(top['functionName'] == 'square' and (location['lineNumber'], location.get('columnNumber', 0)) !=
                    (first['location']['lineNumber'], first['location'].get('columnNumber', 0)),
                    f'CDP: after stepping over, expected a later statement of square, got {top["functionName"]} at {location}')
-            mx.log(f'  inspect: stepped over to {top["functionName"]} {location["lineNumber"] + 1}:{location.get("columnNumber", 0) + 1}')
+            log(f'  inspect: stepped over to {top["functionName"]} {location["lineNumber"] + 1}:{location.get("columnNumber", 0) + 1}')
 
             # Resume: the next hit is square(1). Then remove the breakpoint and run to the end.
             client.call('Debugger.resume')
@@ -436,7 +434,7 @@ def _inspect(workdir, port, command):
         # The inspector writes its banner (the websocket URL) to stdout before the program runs.
         _check(status == 0 and launcher.stdout().endswith('\n' + _DEBUG_OUTPUT) and 'Debugger listening on ws://127.0.0.1:' in launcher.stdout(),
                f'CDP: the program should print {_DEBUG_OUTPUT!r} and exit 0; exit {status}\n{launcher.describe()}')
-        mx.log('  inspect: resumed to the end')
+        log('  inspect: resumed to the end')
 
 
 # ---------------------------------------------------------------------------
@@ -468,10 +466,10 @@ def _cpusampler(workdir, commands):
                          [r'^Sampling Histogram\.', r'^ fib +\|\|.*\|\| \S*profileme\.scm~2-5:', r'^ loop +\|\|.*profileme\.scm~12-15:'])
     samples = re.search(r'Recorded (\d+) samples', histogram)
     _check(samples and int(samples.group(1)) > 0, f'cpusampler: no samples\n{histogram[:2000]}')
-    mx.log(f'  cpusampler: histogram names fib and loop ({samples.group(1)} samples)')
+    log(f'  cpusampler: histogram names fib and loop ({samples.group(1)} samples)')
     _profile(workdir, command, lambda out: ['--cpusampler=calltree', '--cpusampler.Period=1ms', '--cpusampler.OutputFile=' + out],
              [r'^Sampling Call Tree\.', r'^  <program> +\|\|', r'^   loop +\|\|.*profileme\.scm~12-15:', r'^    fib +\|\|.*profileme\.scm~2-5:'])
-    mx.log('  cpusampler: call tree has <program> > loop > fib')
+    log('  cpusampler: call tree has <program> > loop > fib')
     # Past the spill depth, frames wait on the heap, not the Java stack; the prompt reports them as
     # its asynchronous stack, which the sampler splices in after it (design.md "Spilled frames in
     # tools"). Every sample in spin must have every frame of down (n = 500 down to 1), and no sample
@@ -495,7 +493,7 @@ def _cpusampler(workdir, commands):
                        f'cpusampler: a sample has {frames} frames of down, more than the {_SPILL_DEPTH + 1} there are: {path[:5]} ... {path[-5:]}')
             work.extend((child, path) for child in node['children'])
     _check(in_spin > 0, 'cpusampler: no sample in spin')
-    mx.log(f'  cpusampler: all {in_spin} samples at the bottom of a recursion {_SPILL_DEPTH} deep have all {_SPILL_DEPTH} frames')
+    log(f'  cpusampler: all {in_spin} samples at the bottom of a recursion {_SPILL_DEPTH} deep have all {_SPILL_DEPTH} frames')
 
 
 def _memtracer(workdir, commands):
@@ -508,7 +506,7 @@ def _memtracer(workdir, commands):
                           r'^ make-table +\| +10 .*\| \S*profileme\.scm~6-10:'])
     total = int(re.search(r'Recorded a total of (\d+) allocations', histogram).group(1))
     _check(total >= 2010, f'memtracer: only {total} allocations\n{histogram[:2000]}')
-    mx.log(f'  memtracer: {total} allocations, 2000 of them in make-table\'s loop')
+    log(f'  memtracer: {total} allocations, 2000 of them in make-table\'s loop')
 
 
 # ---------------------------------------------------------------------------
@@ -631,7 +629,7 @@ def _terminal_session(workdir, command, label):
         saved = f.read()
     _check('(* x x)' in saved and '(+ 1 2)' in saved and 'typed text' not in saved,
            f'terminal ({label}): the history file should have the REPL\'s lines and not what read-line read:\n{saved}')
-    mx.log(f'  terminal ({label}): editing, history, continuation prompt, Ctrl-C, read-line, Ctrl-D')
+    log(f'  terminal ({label}): editing, history, continuation prompt, Ctrl-C, read-line, Ctrl-D')
 
 
 def _terminal(workdir, commands):
@@ -660,8 +658,8 @@ def _help(workdir, commands):
         launcher.wait()
         bare = launcher.stdout()
     present = [t for t in tools if re.search(r'^\s+' + re.escape(t) + r'\b', bare, re.MULTILINE)]
-    _check(not present, f'without SCHEME_TOOLS, --help:tools should list no tool options, but lists {present}')
-    mx.log('  help: the Tools table and --help:tools list inspect, dap, cpusampler and memtracer; without SCHEME_TOOLS, none')
+    _check(not present, f'without the tools jars, --help:tools should list no tool options, but lists {present}')
+    log('  help: the Tools table and --help:tools list inspect, dap, cpusampler and memtracer; without the tools jars, none')
 
 
 def _with_free_port(test, attempts=3):
@@ -672,14 +670,14 @@ def _with_free_port(test, attempts=3):
                 return test(workdir, _free_port(), commands.tools)
             except SmokeFailure as failure:
                 if attempt + 1 < attempts and 'Address already in use' in str(failure):
-                    mx.log(f'  port taken, retrying: {failure}')
+                    log(f'  port taken, retrying: {failure}')
                     continue
                 raise
     return run
 
 
 SMOKE_TESTS = {
-    'help': ('--help lists the tools only with SCHEME_TOOLS', _help),
+    'help': ('--help lists the tools only with the tools jars', _help),
     'dap': ('DAP: breakpoint, stack, locals, step over, continue', _with_free_port(_dap)),
     'inspect': ('Chrome inspector: breakpoint, call frames, scope variables, step over, resume', _with_free_port(_inspect)),
     'cpusampler': ('CPU sampler: histogram and call tree name the procedures', _cpusampler),
@@ -689,7 +687,7 @@ SMOKE_TESTS = {
 
 
 Commands = collections.namedtuple('Commands', ['tools', 'bare'])
-Commands.__doc__ = """`tools(args)` is the java command line that runs the launcher with SCHEME_TOOLS on its
+Commands.__doc__ = """`tools(args)` is the java command line that runs the launcher with the tools jars on its
 module path, `bare(args)` the one without it."""
 
 
@@ -697,7 +695,7 @@ def run(names, programs_dir, commands):
     """Runs the named smoke tests (all if none) with these Commands. Returns the names that failed."""
     unknown = [n for n in names if n not in SMOKE_TESTS]
     if unknown:
-        mx.abort(f'mx r7rs-tools: unknown test(s) {unknown}; tests: ' + ' '.join(SMOKE_TESTS))
+        fail(f'tools: unknown test(s) {unknown}; tests: ' + ' '.join(SMOKE_TESTS))
     failed = []
     for name in names or list(SMOKE_TESTS):
         description, test = SMOKE_TESTS[name]
@@ -709,8 +707,8 @@ def run(names, programs_dir, commands):
                     dst.write(src.read())
             try:
                 test(workdir, commands)
-                mx.log(f'PASS    {name}: {description} ({time.time() - start:.1f}s)')
+                log(f'PASS    {name}: {description} ({time.time() - start:.1f}s)')
             except (SmokeFailure, OSError, ValueError, KeyError, IndexError) as e:
                 failed.append(name)
-                mx.log(f'FAIL    {name}: {description} ({time.time() - start:.1f}s)\n  {type(e).__name__}: {e}')
+                log(f'FAIL    {name}: {description} ({time.time() - start:.1f}s)\n  {type(e).__name__}: {e}')
     return failed

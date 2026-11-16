@@ -1,5 +1,5 @@
 ;; Records (R7RS §5.5) on the Static Object Model (plan.md M7-04): semantics, and a record-heavy
-;; workload (a binary search tree and a queue of records) that `mx benchmark`-style timing uses.
+;; workload (a binary search tree and a queue of records) that benchmark-style timing uses.
 (import (scheme base) (scheme write))
 
 (define (show x) (write x) (newline))

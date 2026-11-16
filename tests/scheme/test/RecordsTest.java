@@ -25,7 +25,7 @@ import scheme.runtime.value.SRecord;
  * M7-04: records (R7RS §5.5) on Truffle's Static Object Model (design.md D1). Each evaluation of a
  * {@code define-record-type} makes a new type; its records are static objects; its constructor,
  * predicate, accessors and modifiers are primitives made for it, which call sites run in place.
- * Under {@code mx tests torture} these run with a capture and resume at every non-tail call.
+ * Under {@code //tests:unit_torture} these run with a capture and resume at every non-tail call.
  */
 public class RecordsTest {
 

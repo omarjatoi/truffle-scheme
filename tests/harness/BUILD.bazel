@@ -1,0 +1,53 @@
+load("@rules_python//python:defs.bzl", "py_binary", "py_library")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "main.py",
+    "scheme.py",
+])
+
+py_library(
+    name = "harness",
+    srcs = [
+        "bench.py",
+        "harness.py",
+        "readme.py",
+        "tools.py",
+        "vendor.py",
+    ],
+    imports = ["."],
+)
+
+# The conformance suites' build action (defs.bzl: conformance_results).
+py_binary(
+    name = "action",
+    srcs = ["main.py"],
+    main = "main.py",
+    deps = [":harness"],
+)
+
+# `bazel run //:r7rs -- <command>` (main.py).
+py_binary(
+    name = "r7rs",
+    srcs = ["main.py"],
+    args = [
+        "--runtime=$(rlocationpath //:launcher_runtime)",
+        "--tools-runtime=$(rlocationpath //:scheme_runtime)",
+        "--chibi=$(rlocationpath @chibi//:chibi-scheme)",
+        "--formatter=$(rlocationpath //bazel/lint:eclipse_format)",
+        "--prefs=$(rlocationpath //bazel/lint:org.eclipse.jdt.core.prefs)",
+        "--results=$(rlocationpath //tests:conformance_results_chibi.md),$(rlocationpath //tests:conformance_results_larceny.md)",
+    ],
+    data = [
+        "//:launcher_runtime",
+        "//:scheme_runtime",
+        "//bazel/lint:eclipse_format",
+        "//bazel/lint:org.eclipse.jdt.core.prefs",
+        "//tests:conformance_results_chibi.md",
+        "//tests:conformance_results_larceny.md",
+        "@chibi//:chibi-scheme",
+    ],
+    main = "main.py",
+    deps = [":harness"],
+)

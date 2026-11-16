@@ -41,7 +41,7 @@ import org.graalvm.polyglot.io.IOAccess;
  * {@code --help}, {@code --version}, {@code --engine.*}, {@code --log.*} and the other standard
  * options, and the tools' options when they are on the module path.
  *
- * <p>{@code mx r7rs-diff} compares a program's stdout and exit status with chibi-scheme's (design.md
+ * <p>The differential tests compare a program's stdout and exit status with chibi-scheme's (design.md
  * D8), so the exit statuses follow chibi-scheme's:
  *
  * <ul>

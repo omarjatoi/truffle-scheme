@@ -1,8 +1,8 @@
 name: Native launcher
 
 # The native-image `scheme` launcher (plan.md M6-06, design.md D17): build it with the dev shell's
-# GraalVM CE native-image, time its startup, and check that it passes both conformance suites as
-# the JVM launcher does (the status block in docs/plan.md). The build takes minutes and a few GB, so
+# GraalVM CE native-image (the release Bazel pins), time its startup, and check that it passes both
+# conformance suites as the JVM launcher does (the status block in docs/plan.md). The build takes minutes and a few GB, so
 # it isn't part of the required Checks and Tests: it runs by hand (Actions > Native launcher > Run
 # workflow, or `gh workflow run native.yml`), weekly, and on PRs that change this file or the
 # language's native-image configuration. The executable is the run's artifact.
@@ -16,7 +16,8 @@ on:
       - src/runtime/META-INF/native-image/**
       # Read and checked at image build time (design.md D17, M7-05).
       - src/compiler/scheme/compiler/PreludeImage.java
-      - mx.r7rs/mx_r7rs_readme.py
+      - tests/harness/readme.py
+      - bazel/graalvm.bzl
       - docs/usage.md
       - src/launcher/scheme/launcher/TerminalInput.java
 
@@ -37,17 +38,21 @@ jobs:
       - uses: DeterminateSystems/determinate-nix-action@v3
       - uses: actions/cache@v6
         with:
-          path: ~/.mx/cache
-          key: mx-cache-${{ runner.os }}-${{ hashFiles('mx.r7rs/suite.py', 'flake.lock') }}
-          restore-keys: mx-cache-${{ runner.os }}-
+          path: |
+            ~/.cache/bazel-disk-cache
+            ~/.cache/bazel-repository-cache
+          key: bazel-${{ runner.os }}-native-${{ github.sha }}
+          restore-keys: |
+            bazel-${{ runner.os }}-native-
+            bazel-${{ runner.os }}-
       - name: Dev shell
-        run: nix develop --command sh -c 'java -version && native-image --version && mx --version'
-      - name: mx build
-        run: nix develop --command mx build
-      # docs/usage.md's native-image blocks (M6-07): `mx r7rs-native-image --output native/scheme`, then
+        run: nix develop --command bazel --version
+      - name: Build
+        run: nix develop --command bazel build --config=ci //:r7rs
+      # docs/usage.md's native-image blocks (M6-07): `bazel run //:r7rs -- native-image --output native/scheme`, then
       # a program run with native/scheme, checked against the README's output block.
-      - name: mx r7rs-native-image (docs/usage.md's native-image commands)
-        run: nix develop --command mx r7rs-readme --native
+      - name: native-image (docs/usage.md's native-image commands)
+        run: nix develop --command bazel run --config=ci //:r7rs -- readme --native
       - name: Startup
         run: |
           printf '(import (scheme base) (scheme write))\n(display "hello")\n(newline)\n' > hello.scm
@@ -70,11 +75,11 @@ jobs:
           EOF
       # The REPL on a pseudo-terminal (M7-07): JLine's line editing and history, on the JVM and natively.
       - name: REPL on a terminal
-        run: SCHEME_NATIVE_LAUNCHER="$PWD/native/scheme" nix develop --command mx r7rs-tools terminal
+        run: SCHEME_NATIVE_LAUNCHER="$PWD/native/scheme" nix develop --command bazel run --config=ci //:r7rs -- tools terminal
       - name: Conformance through the native launcher
-        run: nix develop --command mx r7rs-test --native native/scheme --markdown "$GITHUB_STEP_SUMMARY"
+        run: nix develop --command bazel run --config=ci //:r7rs -- test --native native/scheme --markdown "$GITHUB_STEP_SUMMARY"
       - name: Passes what the status block says
-        run: nix develop --command mx r7rs-status --check --native native/scheme
+        run: nix develop --command bazel run --config=ci //:r7rs -- status --check --native native/scheme
       - uses: actions/upload-artifact@v7
         with:
           name: scheme-native-linux-amd64

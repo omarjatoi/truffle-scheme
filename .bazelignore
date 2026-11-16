@@ -1,0 +1,5 @@
+# Directories Bazel must not look into for packages: local state.
+.claude
+.direnv
+bench/.cache
+native

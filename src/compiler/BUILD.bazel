@@ -1,0 +1,16 @@
+load("//bazel:java.bzl", "scheme_java_library")
+
+# The compiler project. The expander and the Bytecode DSL code generator, registered as the
+# scheme.runtime.SchemeCompiler service (META-INF/services).
+scheme_java_library(
+    name = "compiler",
+    srcs = glob(["**/*.java"]),
+    resource_strip_prefix = "src/compiler",
+    resources = glob(["META-INF/**"]),
+    visibility = ["//visibility:public"],
+    deps = [
+        "//src/reader",
+        "//src/runtime",
+        "@jvm//:org_graalvm_truffle_truffle_api",
+    ],
+)

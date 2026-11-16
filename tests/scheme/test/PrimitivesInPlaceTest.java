@@ -19,7 +19,7 @@ import org.junit.Test;
  * a non-tail call site the {@code Call} operation runs a node of its own for the primitive; in tail
  * position the primitive runs in the calling frame instead of going back to the caller's
  * trampoline. Errors are still raised where they were before (design.md D8). Under
- * {@code mx tests torture} these run with a capture and resume at every non-tail call.
+ * {@code //tests:unit_torture} these run with a capture and resume at every non-tail call.
  */
 public class PrimitivesInPlaceTest {
 

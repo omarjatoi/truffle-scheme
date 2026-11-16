@@ -72,8 +72,8 @@ import scheme.runtime.value.SVector;
  * the image can be written to a file; only the prelude's {@link Source}s are objects, made once per
  * image from the bundled resources and shared by the contexts that restore from it.
  *
- * <p>The image comes from the build (M7-05): {@code mx build} runs a context that writes it
- * ({@code -Dscheme.preludeImage.write}) into the SCHEME jar, beside the prelude, as
+ * <p>The image comes from the build (M7-05): the build runs a context that writes it
+ * ({@code -Dscheme.preludeImage.write}) into scheme.jar, beside the prelude, as
  * {@value #RESOURCE}. It records the text of every prelude file the standard libraries read, and
  * the primitives and core forms they were expanded with; an image whose files, primitives or core
  * forms differ from the running implementation's is stale and isn't used, nor is one whose checksum

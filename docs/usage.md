@@ -3,8 +3,8 @@
 How to build and run this R7RS-small Scheme: the `scheme` launcher and REPL,
 GraalVM's debugger and profilers, the native-image launcher, and how it
 compares with other implementations. Embedding it in Java is
-[embedding.md](embedding.md). Every command here is run by CI (the tests'
-`readme` step), which compares its output with the block after it.
+[embedding.md](embedding.md). Every command here is run by CI (the readme
+check in the Tests job), which compares its output with the block after it.
 
 ## Status
 
@@ -29,24 +29,26 @@ continuation at every non-tail call; `tests/spec/` holds those cases.
 
 ## Quick start
 
-Everything comes from the Nix dev shell: GraalVM CE 25.5 as the JDK, `mx`
-(GraalVM's build tool), Python and chibi-scheme (design.md D11). You need Nix
-with flakes; from a checkout of this repository:
+The Nix dev shell provides Bazel, a GraalVM CE 25.5 JDK, Python and
+chibi-scheme; Bazel downloads the same GraalVM release and the Maven jars it
+builds with (design.md D11). You need Nix with flakes; from a checkout of this
+repository:
 
 <!-- readme: run -->
 ```sh
 nix develop
-mx build
+bazel build //:scheme
 ```
 
 The commands below run inside that shell, from the repository's root.
+`bazel-bin/scheme` is the launcher.
 
 ### Run a program
 
 <!-- readme: run -->
 ```sh
-mx scheme docs/examples/hello.scm
-mx scheme docs/examples/hello.scm Ada "and Grace"
+bazel-bin/scheme docs/examples/hello.scm
+bazel-bin/scheme docs/examples/hello.scm Ada "and Grace"
 ```
 
 <!-- readme: output -->
@@ -76,7 +78,7 @@ finds `examples/greet.sld`:
 
 <!-- readme: run -->
 ```sh
-mx scheme -I docs/examples/lib docs/examples/greet.scm || echo "exit status $?"
+bazel-bin/scheme -I docs/examples/lib docs/examples/greet.scm || echo "exit status $?"
 ```
 
 <!-- readme: output -->
@@ -110,7 +112,7 @@ goes to stderr), 66 if the file can't be read and 64 for a malformed `-I`.
 
 ### The REPL
 
-With no file, `mx scheme` starts a REPL in the interaction environment, which
+With no file, `bazel-bin/scheme` starts a REPL in the interaction environment, which
 imports every standard library. It reads until an input is complete, so a
 definition can span lines, and writes the values of each form of an input
 with `write`, one per line, as each form completes (a line can hold several).
@@ -126,8 +128,8 @@ input typed so far. Its standard input can be a file:
 
 <!-- readme: run -->
 ```sh
-mx scheme
-mx scheme < docs/examples/session.scm
+bazel-bin/scheme
+bazel-bin/scheme < docs/examples/session.scm
 ```
 
 <!-- readme: output -->
@@ -163,9 +165,9 @@ compiler and logging options such as `--engine.TraceCompilation`.
 
 <!-- readme: run -->
 ```sh
-mx scheme --version
-mx scheme --help
-mx scheme --help:tools
+bazel-bin/scheme --version
+bazel-bin/scheme --help
+bazel-bin/scheme --help:tools
 ```
 
 <!-- readme: output -->
@@ -175,13 +177,14 @@ Usage: scheme [option...] [-I dir]... [file.scm [arg...]]
 ...
 ```
 
-`mx scheme` runs the launcher in a JVM with the tools below on its module
-path. Without mx, the same launcher without the tools is:
+`bazel-bin/scheme` runs the launcher in a JVM with the tools below on its
+module path. Without them, it is a `java` command on the jars that
+`bazel build //:scheme_jars` puts in `bazel-bin/scheme_jars/`:
 
 <!-- readme: run -->
 ```sh
-MP=$(mx classpath SCHEME_LAUNCHER)
-java -p "$MP" --enable-native-access=org.graalvm.truffle,org.graalvm.shadowed.jline --sun-misc-unsafe-memory-access=allow -m scheme.launcher/scheme.launcher.SchemeMain docs/examples/hello.scm
+bazel build //:scheme_jars
+java -p bazel-bin/scheme_jars --enable-native-access=org.graalvm.truffle,org.graalvm.shadowed.jline --sun-misc-unsafe-memory-access=allow -m scheme.launcher/scheme.launcher.SchemeMain docs/examples/hello.scm
 ```
 
 <!-- readme: output -->
@@ -195,15 +198,15 @@ GraalVM's tools work on Scheme programs: breakpoints, stepping, the stack
 (including frames that deep recursion has spilled to the heap), Scheme's
 variables in each frame's scope, and evaluating an expression in a paused
 frame (in a program's frame, with the program's own imports and
-definitions). They ship as an optional distribution, `SCHEME_TOOLS`, which
-`mx scheme` puts on the module path. CI drives each of them against a Scheme
-program on every pull request (`mx.r7rs/mx_r7rs_tools.py`).
+definitions). Their jars are optional (`//bazel:tools_modules`), and
+`bazel-bin/scheme` puts them on the module path. CI drives each of them
+against a Scheme program on every pull request (`tests/harness/tools.py`).
 
 The CPU sampler prints where the time went when the program ends:
 
 <!-- readme: run -->
 ```sh
-mx scheme --cpusampler docs/examples/fib.scm
+bazel-bin/scheme --cpusampler docs/examples/fib.scm
 ```
 
 <!-- readme: output -->
@@ -223,7 +226,7 @@ vectors, strings, closures, records, bignums, ...):
 
 <!-- readme: run -->
 ```sh
-mx scheme --experimental-options --memtracer docs/examples/fib.scm
+bazel-bin/scheme --experimental-options --memtracer docs/examples/fib.scm
 ```
 
 <!-- readme: output -->
@@ -238,7 +241,7 @@ program's first line. Open the `devtools://` URL it prints in Chrome
 
 <!-- readme: run server -->
 ```sh
-mx scheme --inspect --inspect.WaitAttached docs/examples/fib.scm
+bazel-bin/scheme --inspect --inspect.WaitAttached docs/examples/fib.scm
 ```
 
 <!-- readme: output -->
@@ -254,7 +257,7 @@ editor's DAP client to it
 
 <!-- readme: run server -->
 ```sh
-mx scheme --dap docs/examples/fib.scm
+bazel-bin/scheme --dap docs/examples/fib.scm
 ```
 
 <!-- readme: output -->
@@ -267,12 +270,12 @@ tests do; `--help:tools` lists every tool option.
 
 ## Native image
 
-`mx r7rs-native-image` builds the launcher as a native executable with the
-dev shell's GraalVM `native-image` (design.md D17):
+`bazel run //:r7rs -- native-image` builds the launcher as a native
+executable with the dev shell's GraalVM `native-image` (design.md D17):
 
 <!-- readme: run native -->
 ```sh
-mx r7rs-native-image --output native/scheme
+bazel run //:r7rs -- native-image --output native/scheme
 ```
 
 The executable keeps the Graal JIT, and starts in milliseconds:
@@ -288,7 +291,7 @@ Hello, world! Arguments: ()
 ```
 
 On an Apple M3 Max (median of 10 runs, from design.md D17; the JVM column is
-the `java` command `mx scheme` runs, without mx):
+the `java` command `bazel-bin/scheme` runs):
 
 | | Native | JVM |
 |---|---:|---:|

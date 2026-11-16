@@ -1,7 +1,7 @@
 # Benchmarks
 
 The two standard R7RS benchmark sets, vendored read-only, and run by
-`mx benchmark` (plan.md M5-01, design.md D11):
+`bazel run //:r7rs -- benchmark` (plan.md M5-01):
 
 - `r7rs-ecraven/`: ecraven's r7rs-benchmarks, 57 programs, the set behind
   the published comparison at https://ecraven.github.io/r7rs-benchmarks/.
@@ -13,19 +13,18 @@ The two standard R7RS benchmark sets, vendored read-only, and run by
 
 Each directory's README gives its upstream, commit, authors, license and the
 command that re-vendors it. `postlude.scm` (ours) and the driver in
-`mx.r7rs/mx_r7rs.py` (`_R7RSBenchmarkSuite`) run them.
+`tests/harness/bench.py` run them.
 
 ## Running
 
 ```
-mx build
-mx benchmark r7rs-ecraven:fib                    # one program, with the JIT
-mx benchmark r7rs-ecraven:*                      # every program, each in a JVM of its own
-mx benchmark r7rs-larceny:* -- --mode=interpreter
-mx benchmark 'r7rs-ecraven:*[fib,tak]' --results-file results.json -- --mode=* --iterations=10 --warmup=5
+bazel run //:r7rs -- benchmark ecraven:fib       # one program, with the JIT
+bazel run //:r7rs -- benchmark 'ecraven:*'       # every program, each in a JVM of its own
+bazel run //:r7rs -- benchmark 'larceny:*' --mode=interpreter
+bazel run //:r7rs -- benchmark ecraven:fib,tak --json results.json --mode='*' --iterations=10 --warmup=5
 ```
 
-Options, after `--` (anything else there is a JVM argument):
+Options (anything else is a JVM argument):
 
 | Option | Default | |
 |---|---|---|
@@ -69,17 +68,13 @@ The postlude wraps it so the one JVM calls it `--iterations` times. So:
 - the iterations after `--warmup` measure the code once the JIT has compiled
   it.
 
-Datapoints, in `mx benchmark`'s JSON (`--results-file`, default
-`bench-results.json`), each with `host-vm-config` set to the mode:
-
-- `warmup`: every iteration's time (ms), with `metric.iteration`;
-- `time`: the same, for the iterations after the warmup;
-- `rss`, `max-rss`: the JVM's resident set size, sampled every 0.1 s by
-  `mx benchmark`'s default tracker (`rsspercentiles`): peak memory.
+It prints every iteration's time (ms) and the mean after the warmup; with
+`--json FILE`, it also writes them, per program and mode (`times_ms`,
+`warmup`). The comparative report below measures peak memory.
 
 A benchmark fails when the JVM exits nonzero, prints `ERROR:` (a failed
 check, or an uncaught Scheme error), or prints fewer `Elapsed time` lines than
-iterations. `mx benchmark` then names it and exits 1, after running the rest.
+iterations. The command then names it and exits 1, after running the rest.
 
 ## Comparative report
 
@@ -91,9 +86,9 @@ both. One command runs everything and writes the page and its data
 (`docs/benchmarks.json`):
 
 ```
-nix develop .#bench --command mx r7rs-bench-report --note "quiet machine"
-nix develop .#bench --command mx r7rs-bench-report --benchmarks fib,tak --scale 0.1   # a quick look
-mx r7rs-bench-report --render-only        # rewrite the page from the JSON
+nix develop .#bench --command bazel run //:r7rs -- bench-report --note "quiet machine"
+nix develop .#bench --command bazel run //:r7rs -- bench-report --benchmarks fib,tak --scale 0.1   # a quick look
+bazel run //:r7rs -- bench-report --render-only   # rewrite the page from the JSON
 ```
 
 Each other implementation runs as upstream's `bench` script runs it: the
@@ -139,17 +134,18 @@ attaches the page and JSON to the run as the `benchmark-report` artifact.
 
 ## Thresholds
 
-`mx r7rs-bench-check` (plan.md M5-08) runs a subset of ecraven's set and fails if one of them
+`bazel run //:r7rs -- bench-check` (plan.md M5-08) runs a subset of ecraven's set and fails if one of them
 is slower than its threshold in `thresholds.json`. CI runs it on every PR, as the `Tests
-(benchmarks)` job, one of the jobs the required `Tests` check needs; `mx tests bench` runs it too.
+(benchmarks)` job, one of the jobs the required `Tests` check needs. It is not a `bazel test`:
+its JVMs run one after another, with the machine to themselves.
 
 ```
-mx r7rs-bench-check                       # every benchmark of the subset: a table, and exit 1 past a threshold
-mx r7rs-bench-check fib deriv startup     # just those
-mx r7rs-bench-check --measure --json m.json   # measure only
+bazel run //:r7rs -- bench-check                   # every benchmark of the subset: a table, and exit 1 past a threshold
+bazel run //:r7rs -- bench-check fib deriv startup # just those
+bazel run //:r7rs -- bench-check --measure --json m.json   # measure only
 ```
 
-The subset (`_CHECK_CASES` in `mx.r7rs/mx_r7rs.py`) has two to four programs per kind of work:
+The subset (`_CHECK_CASES` in `tests/harness/bench.py`) has two to four programs per kind of work:
 arithmetic (`fib`, `tak`, `fibfp`, `sum`), tail calls (`takl`, `cpstak`), higher-order code
 (`mazefun`, `deriv`, `peval`, `browse`), continuations (`ctak`, `fibc`), vectors (`fft`, `pnpoly`,
 `triangl`, `puzzle`, `quicksort`), strings, reading and `equal?` (`string`, `parsing`, `equal`),
@@ -185,7 +181,7 @@ thresholds follow, and the check fails past either:
   threshold is the largest of 1.25 times the runs' median, their median plus 4 standard
   deviations, and 1.15 times the largest; 1.2 to 1.4 for most benchmarks, so a slowdown
   of one benchmark by a third is caught. A run needs at least 10 benchmarks for a machine factor, so
-  `mx r7rs-bench-check fib` checks only the first threshold.
+  `bench-check fib` checks only the first threshold.
 
 So a slowdown of a few benchmarks is caught from about a third, but one of everything alike
 raises the machine factor, which a slower runner would explain too, and is caught only past the
@@ -194,7 +190,7 @@ of them on a slow one.
 
 The thresholds apply on the platform they were measured on (`linux-x86_64`, recorded in the
 file). Elsewhere, such as on an arm64 Mac, where some benchmarks run relatively faster than
-others in a way no machine factor takes out, `mx r7rs-bench-check` (and `mx tests bench`) still
+others in a way no machine factor takes out, `bench-check` still
 runs everything and prints the table, but only warns about benchmarks past their thresholds; it
 fails for a program that fails, a benchmark without a threshold, or a changed workload.
 `--enforce` makes it fail past a threshold anyway.
@@ -207,7 +203,7 @@ different mix of compiled and not yet compiled code (plan.md M7-01; with
 `--engine.BackgroundCompilation=false` the same JVMs agree within a few percent). M7-01 cut the
 compilation work, which made `deriv`'s steady state agree within 10% across JVMs of one runner
 (its adjusted threshold, 1.4, comes from the CPU types, which slow it unevenly) and moved
-`mazefun`'s JVMs mostly to the fast mode; `peval` and `parsing` are still bimodal. Small slowdowns are for `mx benchmark` and the comparative report, A/B on one
+`mazefun`'s JVMs mostly to the fast mode; `peval` and `parsing` are still bimodal. Small slowdowns are for `benchmark` and the comparative report, A/B on one
 machine. `thresholds.json` records each benchmark's runs, baseline, standard deviation, thresholds
 and the workload it was measured on (a changed workload fails the check until it is measured
 again), and where, when and at which commit the runs were made.
@@ -224,19 +220,19 @@ gh run download <run> -n thresholds          # writes bench/thresholds.json (and
 ```
 
 The `Benchmark thresholds` workflow (`.github/workflows/bench-thresholds.yml`) measures the subset
-(or the benchmarks named) on eight fresh runners, runs `mx r7rs-bench-check --update --from` on
+(or the benchmarks named) on eight fresh runners, runs `bench-check --update --from` on
 the eight measurement files, and attaches the new `thresholds.json` to the run; its summary shows
 the diff. `--update --from` takes any measurement files, so the `bench-check-<attempt>` artifacts
 that CI's `Tests (benchmarks)` job uploads on every run, passing or not, work too.
-`mx r7rs-bench-check --update` without `--from` measures here instead (`--runs`, default 3), which
+`bench-check --update` without `--from` measures here instead (`--runs`, default 3), which
 is only right for a machine that runs the check itself.
 
 ## Failures
 
 Programs that don't run or don't pass their own check. A row is either out of
 scope, or can't run yet and is to be fixed by a conformance PR (plan.md
-M5-01). `mx benchmark` still runs them: a listed program that fails is logged
-and produces no datapoints, and one that passes fails the run until its row is
+M5-01). `benchmark` still runs them: a listed program that fails is logged
+and gives no times, and one that passes fails the run until its row is
 removed. Each row: the set, the program, why.
 
 Every R7RS-small program of both sets runs and passes its check; the rows
