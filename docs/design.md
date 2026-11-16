@@ -1,7 +1,7 @@
 # Design
 
 R7RS-small on GraalVM Truffle, built on the Bytecode DSL. Target: GraalVM CE
-25.5 (Truffle 25.5.5.0.3), from nixpkgs (D11).
+25.5 (Truffle 25.5.5.0.3), pinned by Bazel (D11).
 Hard requirement: full R7RS-small conformance, including re-entrant multi-shot
 continuations and proper tail calls.
 
@@ -380,36 +380,76 @@ Each entry: the decision, why, and what was rejected.
 
 ### D11. Build and tooling
 
-- **Released GraalVM, from Nix.** The JDK is GraalVM CE 25.5 from nixpkgs.
-  `flake.nix` puts it on `JAVA_HOME`, and its built-in Graal compiler is the
-  JIT. Truffle comes from Maven Central as mx libraries in `mx.r7rs/suite.py`
-  (`truffle-api`, `truffle-runtime`, `truffle-compiler`,
-  `truffle-dsl-processor`, `polyglot` and their SDK dependencies), at
-  **exactly** the GraalVM version (25.5.5.0.3). `mx_r7rs.py` refuses to run if
-  the two differ.
-- **Upgrading** is a human-made change. Bump nixpkgs in `flake.lock` and the
-  Truffle library version and digests in `suite.py` together.
-- **mx** is still the build tool, the same one GraalPy and TruffleRuby use.
-  One toolchain covers building, the annotation processor
-  (`TRUFFLE_DSL_PROCESSOR`), `mx unittest`, `mx checks` and `mx tests` (CI and the pre-PR
-  check), and `mx benchmark` for M5. Compiled graphs are dumped with
-  `-Djdk.graal.Dump` on the GraalVM JDK and viewed in a separately installed
-  IGV.
-- Nix (`flake.nix`) provides the whole dev shell: GraalVM, `mx` (copied out
-  of the store into a writable cache dir, because mx writes into its own
-  checkout), Python, `gh` and chibi-scheme. There's nothing to fetch by hand.
-  `nix develop .#bench` adds the other R7RS implementations (Chez, Racket,
-  Chicken, Guile, Gauche) for M5-02's comparative report
-  (`mx r7rs-bench-report`); they're kept out of the default shell so CI jobs
-  don't download them.
-- *Rejected:* importing the `truffle` suite from a pinned graal master commit
-  with a matching labsjdk (the original D11). It gets Bytecode DSL changes
-  before release, but needs a ~1.5 GB graal checkout plus a labsjdk whose
-  JVMCI version must track the graal commit, and nixpkgs can't provide that
-  JDK. Revisit only if we need an unreleased Truffle fix. Also rejected:
-  Bazel (too much build machinery for a project this size); Maven or Gradle
-  (no gate, IGV or benchmark integration); Buck2 (thinner open-source JVM
-  support).
+- **Bazel builds and tests everything** (`MODULE.bazel`, Bazel 8 with
+  bzlmod, pinned in `.bazelversion`). Every build step and test is an action
+  with declared inputs, so its result is cached on those inputs: locally, in
+  CI's disk cache, and later in a shared remote cache (BuildBuddy). A change
+  reruns only the tests that depend on it; `mx checks && mx tests` reran
+  everything every time.
+- **Released GraalVM, pinned by Bazel.** The JDK that compiles, runs the
+  build's tools and runs the tests is GraalVM CE 25.5, downloaded by Bazel at
+  a pinned sha256 (`bazel/graalvm.bzl`; the same archives nixpkgs ships). Its
+  built-in Graal compiler is the JIT the tests use. Truffle comes from Maven
+  Central (`rules_jvm_external`, locked in `maven_install.json`):
+  `truffle-api`, `truffle-runtime`, `truffle-compiler`,
+  `truffle-dsl-processor`, `polyglot` and their SDK dependencies, at
+  **exactly** the GraalVM version (25.5.5.0.3). One `TRUFFLE_VERSION` in
+  `MODULE.bazel` picks both; the build fails on a version that has no pinned
+  GraalVM release, and `//bazel/r7rs:versions_test` checks the test JDK's
+  `release` file against the lock file and `mx.r7rs/suite.py`.
+- **Upgrading** is a human-made change. Add the GraalVM release to
+  `bazel/graalvm.bzl`, bump `TRUFFLE_VERSION` and run `bazel run @jvm//:pin`,
+  and bump nixpkgs in `flake.lock` and the Truffle libraries in `suite.py`
+  (mx's side) together.
+- **The language runs as modules**, as embedders run it. `java_module_jar`
+  (`bazel/java_module.bzl`) builds the `scheme`, `scheme.launcher` and
+  `scheme.test` modules mx's distributions defined, and the tests run them
+  with Truffle on the module path.
+- **Tests** are small Python drivers (`bazel/r7rs/`) ported from
+  `mx_r7rs.py`: a test per JUnit class and mode, per `tests/diff` program,
+  per `tests/spec` case. The conformance suites run as cached build actions,
+  so the status-block check costs nothing when only `docs/plan.md` changed.
+  `mx checks`' static checks (`bazel/lint/`) are tests tagged `lint`: the
+  Eclipse formatter, Checkstyle, ECJ and SpotBugs, at mx's versions and
+  settings, plus javac with `-Werror` in the build itself.
+- **Nix** (`flake.nix`) provides the dev shell: `bazel` (bazelisk),
+  chibi-scheme (the differential tests take it from the shell), Python,
+  `gh`, and mx with the GraalVM it runs on. `nix develop .#bench` adds the
+  other R7RS implementations (Chez, Racket, Chicken, Guile, Gauche) for
+  M5-02's comparative report (`mx r7rs-bench-report`); they're kept out of
+  the default shell so CI jobs don't download them.
+- **mx** stays for what Bazel doesn't do yet: `mx benchmark` and
+  `mx r7rs-bench-report` (M5), `mx r7rs-test`'s per-section tables, and
+  ad-hoc runs (`mx scheme`). It builds the same sources at the same Truffle
+  version, until it's removed.
+- **Measured** (same commit; Apple M3 Max, 16 cores, shared with other
+  builds at load 15–25; GitHub's `ubuntu-26.04` runners):
+
+  | | mx | Bazel |
+  |---|---:|---:|
+  | Local, from clean (downloads cached) | 7.2 min | 5.7 min (110 s build + 234 s tests) |
+  | Local, again with no change | 6.7 min | 1 s |
+  | Local, after a code change in `src/builtins` | 6.7 min | 4.3 min (178 of 202 tests rerun) |
+  | Local, after editing `docs/plan.md` or one `tests/diff` program | 6.7 min | 1 s (1 or 3 tests rerun) |
+  | CI, no cache | 4.9 min on 7 runners (17 runner-min) | 10.3 min on 2 runners (13.7 runner-min) |
+  | CI, cache from an earlier run of the same change | same | 1.7 min (all cached; Nix shell, Bazel startup and fetching) |
+
+  Bazel's cold run is a single 4-core runner for all tests, where mx's CI
+  spreads them over six. A PR's CI restores `main`'s cache, so it reruns
+  only what the PR changed; a remote cache shared by every branch and
+  machine (BuildBuddy) is the next step.
+- *Rejected:* staying on mx alone: it has no test caching, so every run
+  costs the full suite, and CI needs sharding to stay fast. The Nix GraalVM
+  as Bazel's JDK (`local_java_repository` on `JAVA_HOME`): a local path can't
+  run on remote executors, and the pinned download is the same file. Importing
+  the `truffle` suite from a pinned graal master commit with a matching
+  labsjdk (the original D11): a ~1.5 GB graal checkout plus a labsjdk whose
+  JVMCI version must track the graal commit; revisit only if we need an
+  unreleased Truffle fix. Maven or Gradle (no hermetic test caching across
+  machines). Buck2 (thinner open-source JVM support). Bazel was rejected
+  here before as "too much build machinery for a project this size". Since
+  then mx's CI has grown to seven jobs that rerun every test on every push,
+  and the machinery turned out to be about 2,000 lines under `bazel/`.
 
 ### D12. Continuation strategy
 
