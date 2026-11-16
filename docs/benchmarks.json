@@ -1,0 +1,5095 @@
+{
+ "generated": "2026-11-16 05:34 UTC",
+ "command": "mx r7rs-bench-report --scale 0.1 --jit-iterations 3 --interpreter-timeout 60 --note 'Noisy numbers: a shared 16-core machine, with other agents building and running benchmarks throughout (load average 10 to 20). Regenerate on a quiet machine, with the programs'\"'\"' own counts, before relying on differences under 2x.'",
+ "host": "Darwin 27.0.0 (arm64), Apple M3 Max, 16 CPUs, 128 GB of memory",
+ "note": "Noisy numbers: a shared 16-core machine, with other agents building and running benchmarks throughout (load average 10 to 20). Regenerate on a quiet machine, with the programs' own counts, before relying on differences under 2x.",
+ "commit": "7eb37798fc2d",
+ "ecraven_commit": "85f6acdc4cc4e2b857f307ba56bd0ba931dcccd1",
+ "scale": 0.1,
+ "interpreter_scale": 0.1,
+ "jit_iterations": 3,
+ "timeout": 300,
+ "interpreter_timeout": 60,
+ "implementations": {
+  "jit": {
+   "title": "Ours, JIT",
+   "notes": [
+    "`bench/postlude.scm` as the postlude"
+   ],
+   "version": "truffle-scheme 7eb37798fc2d, GraalVM 25.5.5.0.3",
+   "command": "java (Graal JIT, background compilation) -m scheme.launcher/scheme.launcher.SchemeMain {src} < {input}"
+  },
+  "interpreter": {
+   "title": "Ours, interpreter",
+   "notes": [
+    "`bench/postlude.scm` as the postlude"
+   ],
+   "version": "truffle-scheme 7eb37798fc2d, GraalVM 25.5.5.0.3",
+   "command": "java -Dpolyglot.engine.AllowExperimentalOptions=true -Dpolyglot.engine.Compilation=false -m scheme.launcher/scheme.launcher.SchemeMain {src} < {input}"
+  },
+  "chez": {
+   "title": "Chez",
+   "notes": [
+    "`Chez-postlude.scm`",
+    "ecraven/chez-scheme-libraries, patched: base.sls: vector-append vector-copy!"
+   ],
+   "command": "scheme --optimize-level 2 --compile-imported-libraries --libdirs {chezlibs} --program {src} < {input}",
+   "version": "chez-10.4.1+r7rs"
+  },
+  "racket": {
+   "title": "Racket",
+   "notes": [
+    "`Racket-prelude.scm`",
+    "the r7rs package (lexi-lambda/racket-r7rs, r7rs-lib)"
+   ],
+   "command": "raco make {src} && racket {src} < {input}",
+   "version": "racket-9.3/r7rs+chez"
+  },
+  "chicken": {
+   "title": "Chicken",
+   "notes": [
+    "`Chicken-prelude.scm`"
+   ],
+   "command": "csc -R r7rs -X r7rs -block -O3 -C -O3 -d0 {src} -o {exe} && {exe} < {input}",
+   "version": "chicken-5.4.0"
+  },
+  "guile": {
+   "title": "Guile",
+   "notes": [
+    "`Guile-prelude.scm`"
+   ],
+   "command": "guild compile -O3 {src} && guile {src} < {input}",
+   "version": "guile-3.0.11"
+  },
+  "gauche": {
+   "title": "Gauche",
+   "notes": [
+    "`Gauche-postlude.scm`",
+    "SLIB 3b7"
+   ],
+   "command": "gosh -r7 -b {src} < {input}",
+   "version": "gauche-0.9.15"
+  },
+  "chibi": {
+   "title": "Chibi",
+   "notes": [
+    "`Chibi-prelude.scm` and `Chibi-postlude.scm`"
+   ],
+   "command": "chibi-scheme -m scheme.load -e (load \"{src}\") < {input}",
+   "version": "chibi-0.12.0"
+  }
+ },
+ "programs": {
+  "browse": {
+   "count": 200,
+   "program_count": 2000,
+   "results": {
+    "jit": {
+     "status": "ok",
+     "times": [
+      3.106969292,
+      2.512008,
+      1.873918709
+     ],
+     "rss_mb": 1776.6,
+     "version": "truffle-scheme-jit",
+     "count": 200,
+     "seconds": 3.106969292,
+     "steady_seconds": 1.873918709
+    },
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      2.693201417
+     ],
+     "rss_mb": 1364.7,
+     "version": "truffle-scheme-interpreter",
+     "count": 20,
+     "seconds": 26.932014170000002
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.080218
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 200,
+     "seconds": 0.08021799999999998
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.184
+     ],
+     "rss_mb": 150.2,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 200,
+     "seconds": 0.184
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      0.464
+     ],
+     "rss_mb": 17.4,
+     "version": "chicken-5.4.0",
+     "count": 200,
+     "seconds": 0.4640000000000001
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      0.228813
+     ],
+     "rss_mb": 120.9,
+     "version": "guile-3.0.11",
+     "count": 200,
+     "seconds": 0.228813
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      1.171499292
+     ],
+     "rss_mb": 44.4,
+     "version": "gauche-0.9.15",
+     "count": 200,
+     "seconds": 1.171499292
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      160.653
+     ],
+     "rss_mb": 17.0,
+     "version": "chibi-0.12.0",
+     "count": 200,
+     "seconds": 160.653
+    }
+   }
+  },
+  "deriv": {
+   "count": 1000000,
+   "program_count": 10000000,
+   "results": {
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      2.462381209
+     ],
+     "rss_mb": 1490.3,
+     "version": "truffle-scheme-interpreter",
+     "count": 100000,
+     "seconds": 24.62381209
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.07207
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 1000000,
+     "seconds": 0.07207
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.103
+     ],
+     "rss_mb": 150.2,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 1000000,
+     "seconds": 0.103
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      0.228
+     ],
+     "rss_mb": 19.4,
+     "version": "chicken-5.4.0",
+     "count": 1000000,
+     "seconds": 0.228
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      0.356535
+     ],
+     "rss_mb": 120.8,
+     "version": "guile-3.0.11",
+     "count": 1000000,
+     "seconds": 0.356535
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      1.524198958
+     ],
+     "rss_mb": 44.3,
+     "version": "gauche-0.9.15",
+     "count": 1000000,
+     "seconds": 1.524198958
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      4.956
+     ],
+     "rss_mb": 9.0,
+     "version": "chibi-0.12.0",
+     "count": 1000000,
+     "seconds": 4.956
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      1.123518834,
+      0.734337583,
+      0.705575416
+     ],
+     "rss_mb": 1704.1,
+     "version": "truffle-scheme-jit",
+     "count": 1000000,
+     "seconds": 1.123518834,
+     "steady_seconds": 0.705575416
+    }
+   }
+  },
+  "destruc": {
+   "count": 400,
+   "program_count": 4000,
+   "results": {
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.129825
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 400,
+     "seconds": 0.129825
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.196
+     ],
+     "rss_mb": 150.2,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 400,
+     "seconds": 0.196
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      0.551
+     ],
+     "rss_mb": 23.6,
+     "version": "chicken-5.4.0",
+     "count": 400,
+     "seconds": 0.551
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      0.181526
+     ],
+     "rss_mb": 121.0,
+     "version": "guile-3.0.11",
+     "count": 400,
+     "seconds": 0.181526
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      1.373895041
+     ],
+     "rss_mb": 44.2,
+     "version": "gauche-0.9.15",
+     "count": 400,
+     "seconds": 1.373895041
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      4.839
+     ],
+     "rss_mb": 9.0,
+     "version": "chibi-0.12.0",
+     "count": 400,
+     "seconds": 4.839
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      1.7569885,
+      1.523606,
+      1.571937584
+     ],
+     "rss_mb": 1616.7,
+     "version": "truffle-scheme-jit",
+     "count": 400,
+     "seconds": 1.7569884999999998,
+     "steady_seconds": 1.523606
+    },
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      5.6330765
+     ],
+     "rss_mb": 1448.7,
+     "version": "truffle-scheme-interpreter",
+     "count": 40,
+     "seconds": 56.330765
+    }
+   }
+  },
+  "diviter": {
+   "count": 100000,
+   "program_count": 1000000,
+   "results": {
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.165
+     ],
+     "rss_mb": 150.2,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 100000,
+     "seconds": 0.165
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      0.145
+     ],
+     "rss_mb": 22.1,
+     "version": "chicken-5.4.0",
+     "count": 100000,
+     "seconds": 0.145
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      0.204358
+     ],
+     "rss_mb": 120.6,
+     "version": "guile-3.0.11",
+     "count": 100000,
+     "seconds": 0.20435800000000004
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      1.024274167
+     ],
+     "rss_mb": 44.4,
+     "version": "gauche-0.9.15",
+     "count": 100000,
+     "seconds": 1.024274167
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      2.961
+     ],
+     "rss_mb": 9.0,
+     "version": "chibi-0.12.0",
+     "count": 100000,
+     "seconds": 2.961
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      1.154646375,
+      0.958544875,
+      0.936267125
+     ],
+     "rss_mb": 1596.1,
+     "version": "truffle-scheme-jit",
+     "count": 100000,
+     "seconds": 1.154646375,
+     "steady_seconds": 0.936267125
+    },
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      2.930544542
+     ],
+     "rss_mb": 1368.4,
+     "version": "truffle-scheme-interpreter",
+     "count": 10000,
+     "seconds": 29.305445419999998
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.124346
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 100000,
+     "seconds": 0.124346
+    }
+   }
+  },
+  "divrec": {
+   "count": 100000,
+   "program_count": 1000000,
+   "results": {
+    "chicken": {
+     "status": "ok",
+     "times": [
+      0.388
+     ],
+     "rss_mb": 23.7,
+     "version": "chicken-5.4.0",
+     "count": 100000,
+     "seconds": 0.388
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      0.586451
+     ],
+     "rss_mb": 120.4,
+     "version": "guile-3.0.11",
+     "count": 100000,
+     "seconds": 0.586451
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      1.231464708
+     ],
+     "rss_mb": 44.4,
+     "version": "gauche-0.9.15",
+     "count": 100000,
+     "seconds": 1.231464708
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      2.93
+     ],
+     "rss_mb": 9.0,
+     "version": "chibi-0.12.0",
+     "count": 100000,
+     "seconds": 2.93
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      5.68447875,
+      5.466753542,
+      5.21484775
+     ],
+     "rss_mb": 1608.5,
+     "version": "truffle-scheme-jit",
+     "count": 100000,
+     "seconds": 5.68447875,
+     "steady_seconds": 5.21484775
+    },
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      3.580304792
+     ],
+     "rss_mb": 1409.4,
+     "version": "truffle-scheme-interpreter",
+     "count": 10000,
+     "seconds": 35.80304792
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.147092
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 100000,
+     "seconds": 0.147092
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.257
+     ],
+     "rss_mb": 150.3,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 100000,
+     "seconds": 0.257
+    }
+   }
+  },
+  "puzzle": {
+   "count": 100,
+   "program_count": 1000,
+   "results": {
+    "guile": {
+     "status": "ok",
+     "times": [
+      0.488518
+     ],
+     "rss_mb": 120.6,
+     "version": "guile-3.0.11",
+     "count": 100,
+     "seconds": 0.48851799999999995
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      2.050741875
+     ],
+     "rss_mb": 44.2,
+     "version": "gauche-0.9.15",
+     "count": 100,
+     "seconds": 2.050741875
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      14.574
+     ],
+     "rss_mb": 9.0,
+     "version": "chibi-0.12.0",
+     "count": 100,
+     "seconds": 14.574000000000002
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      2.650949208,
+      2.351703333,
+      10.832129042
+     ],
+     "rss_mb": 1625.4,
+     "version": "truffle-scheme-jit",
+     "count": 100,
+     "seconds": 2.650949208,
+     "steady_seconds": 2.351703333
+    },
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      5.282016625
+     ],
+     "rss_mb": 1366.8,
+     "version": "truffle-scheme-interpreter",
+     "count": 10,
+     "seconds": 52.82016625
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.186078
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 100,
+     "seconds": 0.18607800000000002
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.375
+     ],
+     "rss_mb": 150.2,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 100,
+     "seconds": 0.375
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      1.013
+     ],
+     "rss_mb": 23.7,
+     "version": "chicken-5.4.0",
+     "count": 100,
+     "seconds": 1.013
+    }
+   }
+  },
+  "triangl": {
+   "count": 5,
+   "program_count": 50,
+   "results": {
+    "gauche": {
+     "status": "ok",
+     "times": [
+      1.398409458
+     ],
+     "rss_mb": 34.2,
+     "version": "gauche-0.9.15",
+     "count": 5,
+     "seconds": 1.398409458
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      5.934
+     ],
+     "rss_mb": 9.0,
+     "version": "chibi-0.12.0",
+     "count": 5,
+     "seconds": 5.934
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      1.888064834,
+      1.069481167,
+      1.197371083
+     ],
+     "rss_mb": 1630.7,
+     "version": "truffle-scheme-jit",
+     "count": 5,
+     "seconds": 1.8880648340000001,
+     "steady_seconds": 1.069481167
+    },
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      6.716164333
+     ],
+     "rss_mb": 1468.5,
+     "version": "truffle-scheme-interpreter",
+     "count": 1,
+     "seconds": 33.580821665
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.147527
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 5,
+     "seconds": 0.147527
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.164
+     ],
+     "rss_mb": 150.2,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 5,
+     "seconds": 0.164
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      0.79
+     ],
+     "rss_mb": 21.6,
+     "version": "chicken-5.4.0",
+     "count": 5,
+     "seconds": 0.79
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      0.335971
+     ],
+     "rss_mb": 14.9,
+     "version": "guile-3.0.11",
+     "count": 5,
+     "seconds": 0.335971
+    }
+   }
+  },
+  "tak": {
+   "count": 1,
+   "program_count": 1,
+   "results": {
+    "chibi": {
+     "status": "ok",
+     "times": [
+      34.086
+     ],
+     "rss_mb": 9.0,
+     "version": "chibi-0.12.0",
+     "count": 1,
+     "seconds": 34.086
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      8.202274833,
+      7.838094875,
+      7.715406834
+     ],
+     "rss_mb": 1523.6,
+     "version": "truffle-scheme-jit",
+     "count": 1,
+     "seconds": 8.202274833,
+     "steady_seconds": 7.715406834
+    },
+    "interpreter": {
+     "status": "timeout",
+     "times": [],
+     "rss_mb": 1522.6,
+     "detail": "Running tak:40:20:11:1",
+     "count": 1
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      1.2152
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 1,
+     "seconds": 1.2152
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      1.313
+     ],
+     "rss_mb": 150.3,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 1,
+     "seconds": 1.313
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      6.319
+     ],
+     "rss_mb": 23.5,
+     "version": "chicken-5.4.0",
+     "count": 1,
+     "seconds": 6.319
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      2.187398
+     ],
+     "rss_mb": 13.9,
+     "version": "guile-3.0.11",
+     "count": 1,
+     "seconds": 2.187398
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      11.561011416
+     ],
+     "rss_mb": 33.1,
+     "version": "gauche-0.9.15",
+     "count": 1,
+     "seconds": 11.561011416
+    }
+   }
+  },
+  "takl": {
+   "count": 1,
+   "program_count": 1,
+   "results": {
+    "jit": {
+     "status": "ok",
+     "times": [
+      49.178083417,
+      48.697335125,
+      48.3271035
+     ],
+     "rss_mb": 1697.6,
+     "version": "truffle-scheme-jit",
+     "count": 1,
+     "seconds": 49.178083417,
+     "steady_seconds": 48.3271035
+    },
+    "interpreter": {
+     "status": "timeout",
+     "times": [],
+     "rss_mb": 1525.3,
+     "detail": "Running takl:40:20:12:1",
+     "count": 1
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      1.714541
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 1,
+     "seconds": 1.714541
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      2.626
+     ],
+     "rss_mb": 150.2,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 1,
+     "seconds": 2.626
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      4.756
+     ],
+     "rss_mb": 5.9,
+     "version": "chicken-5.4.0",
+     "count": 1,
+     "seconds": 4.756
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      3.246356
+     ],
+     "rss_mb": 14.6,
+     "version": "guile-3.0.11",
+     "count": 1,
+     "seconds": 3.246356
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      47.67705425
+     ],
+     "rss_mb": 33.2,
+     "version": "gauche-0.9.15",
+     "count": 1,
+     "seconds": 47.67705425
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      253.764
+     ],
+     "rss_mb": 9.0,
+     "version": "chibi-0.12.0",
+     "count": 1,
+     "seconds": 253.764
+    }
+   }
+  },
+  "ntakl": {
+   "count": 1,
+   "program_count": 1,
+   "results": {
+    "interpreter": {
+     "status": "timeout",
+     "times": [],
+     "rss_mb": 1524.4,
+     "detail": "Running ntakl:40:20:12:1",
+     "count": 1
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      1.785949
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 1,
+     "seconds": 1.785949
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      2.611
+     ],
+     "rss_mb": 150.3,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 1,
+     "seconds": 2.611
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      5.133
+     ],
+     "rss_mb": 5.9,
+     "version": "chicken-5.4.0",
+     "count": 1,
+     "seconds": 5.133
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      4.026273
+     ],
+     "rss_mb": 14.6,
+     "version": "guile-3.0.11",
+     "count": 1,
+     "seconds": 4.026273
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      43.015170458
+     ],
+     "rss_mb": 33.2,
+     "version": "gauche-0.9.15",
+     "count": 1,
+     "seconds": 43.015170458
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      74.887
+     ],
+     "rss_mb": 9.0,
+     "version": "chibi-0.12.0",
+     "count": 1,
+     "seconds": 74.887
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      10.797445,
+      10.552598459,
+      10.497598458
+     ],
+     "rss_mb": 1647.8,
+     "version": "truffle-scheme-jit",
+     "count": 1,
+     "seconds": 10.797445,
+     "steady_seconds": 10.497598458
+    }
+   }
+  },
+  "cpstak": {
+   "count": 1,
+   "program_count": 1,
+   "results": {
+    "chez": {
+     "status": "ok",
+     "times": [
+      1.697266
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 1,
+     "seconds": 1.697266
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      2.098
+     ],
+     "rss_mb": 150.2,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 1,
+     "seconds": 2.098
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      6.789
+     ],
+     "rss_mb": 23.6,
+     "version": "chicken-5.4.0",
+     "count": 1,
+     "seconds": 6.789
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      8.388106
+     ],
+     "rss_mb": 120.3,
+     "version": "guile-3.0.11",
+     "count": 1,
+     "seconds": 8.388106
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      46.654031625
+     ],
+     "rss_mb": 44.4,
+     "version": "gauche-0.9.15",
+     "count": 1,
+     "seconds": 46.654031625
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      127.575
+     ],
+     "rss_mb": 9.0,
+     "version": "chibi-0.12.0",
+     "count": 1,
+     "seconds": 127.575
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      16.678068833,
+      16.527867667,
+      16.70090025
+     ],
+     "rss_mb": 1680.4,
+     "version": "truffle-scheme-jit",
+     "count": 1,
+     "seconds": 16.678068833,
+     "steady_seconds": 16.527867667
+    },
+    "interpreter": {
+     "status": "timeout",
+     "times": [],
+     "rss_mb": 1524.4,
+     "detail": "Running cpstak:40:20:11:1",
+     "count": 1
+    }
+   }
+  },
+  "ctak": {
+   "count": 1,
+   "program_count": 1,
+   "results": {
+    "racket": {
+     "status": "ok",
+     "times": [
+      1.283
+     ],
+     "rss_mb": 150.2,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 1,
+     "seconds": 1.283
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      1.291
+     ],
+     "rss_mb": 23.6,
+     "version": "chicken-5.4.0",
+     "count": 1,
+     "seconds": 1.291
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      48.110373
+     ],
+     "rss_mb": 120.4,
+     "version": "guile-3.0.11",
+     "count": 1,
+     "seconds": 48.110373
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      9.609078375
+     ],
+     "rss_mb": 44.4,
+     "version": "gauche-0.9.15",
+     "count": 1,
+     "seconds": 9.609078375
+    },
+    "chibi": {
+     "status": "timeout",
+     "times": [],
+     "rss_mb": 9.0,
+     "detail": "Running ctak:32:16:8:1",
+     "count": 1
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      19.794859084,
+      17.261297041,
+      16.852929208
+     ],
+     "rss_mb": 1654.7,
+     "version": "truffle-scheme-jit",
+     "count": 1,
+     "seconds": 19.794859084,
+     "steady_seconds": 16.852929208
+    },
+    "interpreter": {
+     "status": "timeout",
+     "times": [],
+     "rss_mb": 1530.9,
+     "detail": "Running ctak:32:16:8:1",
+     "count": 1
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.422161
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 1,
+     "seconds": 0.422161
+    }
+   }
+  },
+  "fib": {
+   "count": 1,
+   "program_count": 5,
+   "results": {
+    "chicken": {
+     "status": "ok",
+     "times": [
+      3.107
+     ],
+     "rss_mb": 23.5,
+     "version": "chicken-5.4.0",
+     "count": 1,
+     "seconds": 3.107
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      0.936752
+     ],
+     "rss_mb": 13.9,
+     "version": "guile-3.0.11",
+     "count": 1,
+     "seconds": 0.936752
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      4.827540584
+     ],
+     "rss_mb": 33.1,
+     "version": "gauche-0.9.15",
+     "count": 1,
+     "seconds": 4.827540584
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      8.706
+     ],
+     "rss_mb": 9.0,
+     "version": "chibi-0.12.0",
+     "count": 1,
+     "seconds": 8.706
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      10.0994605,
+      10.143681625,
+      10.14212525
+     ],
+     "rss_mb": 1641.6,
+     "version": "truffle-scheme-jit",
+     "count": 1,
+     "seconds": 10.0994605,
+     "steady_seconds": 10.14212525
+    },
+    "interpreter": {
+     "status": "timeout",
+     "times": [],
+     "rss_mb": 1518.8,
+     "detail": "Running fib:40:1",
+     "count": 1
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.476021
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 1,
+     "seconds": 0.476021
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.659
+     ],
+     "rss_mb": 150.2,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 1,
+     "seconds": 0.659
+    }
+   }
+  },
+  "fibc": {
+   "count": 1,
+   "program_count": 10,
+   "results": {
+    "guile": {
+     "status": "ok",
+     "times": [
+      2.431989
+     ],
+     "rss_mb": 120.4,
+     "version": "guile-3.0.11",
+     "count": 1,
+     "seconds": 2.431989
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      0.946720541
+     ],
+     "rss_mb": 44.2,
+     "version": "gauche-0.9.15",
+     "count": 1,
+     "seconds": 0.946720541
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      12.688
+     ],
+     "rss_mb": 9.0,
+     "version": "chibi-0.12.0",
+     "count": 1,
+     "seconds": 12.688
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      1.846986125,
+      1.5242285,
+      1.475657625
+     ],
+     "rss_mb": 1692.9,
+     "version": "truffle-scheme-jit",
+     "count": 1,
+     "seconds": 1.846986125,
+     "steady_seconds": 1.475657625
+    },
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      19.605437292
+     ],
+     "rss_mb": 1421.9,
+     "version": "truffle-scheme-interpreter",
+     "count": 1,
+     "seconds": 19.605437292
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.031861
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 1,
+     "seconds": 0.031861
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.103
+     ],
+     "rss_mb": 150.3,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 1,
+     "seconds": 0.103
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      0.129
+     ],
+     "rss_mb": 12.7,
+     "version": "chicken-5.4.0",
+     "count": 1,
+     "seconds": 0.129
+    }
+   }
+  },
+  "fibfp": {
+   "count": 1,
+   "program_count": 10,
+   "results": {
+    "gauche": {
+     "status": "ok",
+     "times": [
+      0.622141958
+     ],
+     "rss_mb": 34.5,
+     "version": "gauche-0.9.15",
+     "count": 1,
+     "seconds": 0.622141958
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      2.141
+     ],
+     "rss_mb": 9.0,
+     "version": "chibi-0.12.0",
+     "count": 1,
+     "seconds": 2.141
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      0.725906958,
+      0.455819958,
+      0.455814583
+     ],
+     "rss_mb": 1628.5,
+     "version": "truffle-scheme-jit",
+     "count": 1,
+     "seconds": 0.725906958,
+     "steady_seconds": 0.455814583
+    },
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      10.136488084
+     ],
+     "rss_mb": 1515.3,
+     "version": "truffle-scheme-interpreter",
+     "count": 1,
+     "seconds": 10.136488084
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.144176
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 1,
+     "seconds": 0.144176
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.169
+     ],
+     "rss_mb": 150.2,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 1,
+     "seconds": 0.169
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      0.335
+     ],
+     "rss_mb": 18.1,
+     "version": "chicken-5.4.0",
+     "count": 1,
+     "seconds": 0.335
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      0.637006
+     ],
+     "rss_mb": 120.5,
+     "version": "guile-3.0.11",
+     "count": 1,
+     "seconds": 0.637006
+    }
+   }
+  },
+  "sum": {
+   "count": 20000,
+   "program_count": 200000,
+   "results": {
+    "chibi": {
+     "status": "ok",
+     "times": [
+      5.211
+     ],
+     "rss_mb": 9.0,
+     "version": "chibi-0.12.0",
+     "count": 20000,
+     "seconds": 5.211
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      1.767444709,
+      1.386598833,
+      1.367154458
+     ],
+     "rss_mb": 1645.7,
+     "version": "truffle-scheme-jit",
+     "count": 20000,
+     "seconds": 1.767444709,
+     "steady_seconds": 1.367154458
+    },
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      6.164040833
+     ],
+     "rss_mb": 1366.3,
+     "version": "truffle-scheme-interpreter",
+     "count": 2000,
+     "seconds": 61.64040833
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.195263
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 20000,
+     "seconds": 0.195263
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.223
+     ],
+     "rss_mb": 150.2,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 20000,
+     "seconds": 0.223
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      1.59
+     ],
+     "rss_mb": 8.6,
+     "version": "chicken-5.4.0",
+     "count": 20000,
+     "seconds": 1.59
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      0.389141
+     ],
+     "rss_mb": 14.6,
+     "version": "guile-3.0.11",
+     "count": 20000,
+     "seconds": 0.389141
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      2.169753417
+     ],
+     "rss_mb": 38.8,
+     "version": "gauche-0.9.15",
+     "count": 20000,
+     "seconds": 2.169753417
+    }
+   }
+  },
+  "sumfp": {
+   "count": 50,
+   "program_count": 500,
+   "results": {
+    "jit": {
+     "status": "ok",
+     "times": [
+      0.832858709,
+      0.372591333,
+      0.371439667
+     ],
+     "rss_mb": 1558.7,
+     "version": "truffle-scheme-jit",
+     "count": 50,
+     "seconds": 0.832858709,
+     "steady_seconds": 0.371439667
+    },
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      1.730733333
+     ],
+     "rss_mb": 1228.4,
+     "version": "truffle-scheme-interpreter",
+     "count": 5,
+     "seconds": 17.30733333
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.221368
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 50,
+     "seconds": 0.221368
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.239
+     ],
+     "rss_mb": 150.2,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 50,
+     "seconds": 0.239
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      0.509
+     ],
+     "rss_mb": 7.2,
+     "version": "chicken-5.4.0",
+     "count": 50,
+     "seconds": 0.509
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      1.206061
+     ],
+     "rss_mb": 120.7,
+     "version": "guile-3.0.11",
+     "count": 50,
+     "seconds": 1.206061
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      0.855928459
+     ],
+     "rss_mb": 33.8,
+     "version": "gauche-0.9.15",
+     "count": 50,
+     "seconds": 0.855928459
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      4.035
+     ],
+     "rss_mb": 9.0,
+     "version": "chibi-0.12.0",
+     "count": 50,
+     "seconds": 4.035
+    }
+   }
+  },
+  "fft": {
+   "count": 10,
+   "program_count": 100,
+   "results": {
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      1.141518291
+     ],
+     "rss_mb": 1291.1,
+     "version": "truffle-scheme-interpreter",
+     "count": 1,
+     "seconds": 11.415182909999999
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.149574
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 10,
+     "seconds": 0.149574
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.168
+     ],
+     "rss_mb": 150.2,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 10,
+     "seconds": 0.168
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      0.263
+     ],
+     "rss_mb": 26.0,
+     "version": "chicken-5.4.0",
+     "count": 10,
+     "seconds": 0.263
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      0.246683
+     ],
+     "rss_mb": 120.3,
+     "version": "guile-3.0.11",
+     "count": 10,
+     "seconds": 0.24668300000000004
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      0.62050275
+     ],
+     "rss_mb": 44.2,
+     "version": "gauche-0.9.15",
+     "count": 10,
+     "seconds": 0.62050275
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      3.313
+     ],
+     "rss_mb": 33.1,
+     "version": "chibi-0.12.0",
+     "count": 10,
+     "seconds": 3.313
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      1.369056292,
+      0.806192292,
+      0.925058416
+     ],
+     "rss_mb": 1619.5,
+     "version": "truffle-scheme-jit",
+     "count": 10,
+     "seconds": 1.369056292,
+     "steady_seconds": 0.806192292
+    }
+   }
+  },
+  "mbrot": {
+   "count": 100,
+   "program_count": 1000,
+   "results": {
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.615833
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 100,
+     "seconds": 0.615833
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.404
+     ],
+     "rss_mb": 150.3,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 100,
+     "seconds": 0.4040000000000001
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      0.548
+     ],
+     "rss_mb": 19.4,
+     "version": "chicken-5.4.0",
+     "count": 100,
+     "seconds": 0.548
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      1.172596
+     ],
+     "rss_mb": 121.0,
+     "version": "guile-3.0.11",
+     "count": 100,
+     "seconds": 1.172596
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      1.360599583
+     ],
+     "rss_mb": 44.3,
+     "version": "gauche-0.9.15",
+     "count": 100,
+     "seconds": 1.360599583
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      9.716
+     ],
+     "rss_mb": 9.0,
+     "version": "chibi-0.12.0",
+     "count": 100,
+     "seconds": 9.716
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      1.691328167,
+      1.402012583,
+      1.401428292
+     ],
+     "rss_mb": 1680.0,
+     "version": "truffle-scheme-jit",
+     "count": 100,
+     "seconds": 1.691328167,
+     "steady_seconds": 1.401428292
+    },
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      2.418549083
+     ],
+     "rss_mb": 1358.8,
+     "version": "truffle-scheme-interpreter",
+     "count": 10,
+     "seconds": 24.18549083
+    }
+   }
+  },
+  "mbrotZ": {
+   "count": 100,
+   "program_count": 1000,
+   "results": {
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.32
+     ],
+     "rss_mb": 150.2,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 100,
+     "seconds": 0.32
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      1.096
+     ],
+     "rss_mb": 21.1,
+     "version": "chicken-5.4.0",
+     "count": 100,
+     "seconds": 1.096
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      1.186993
+     ],
+     "rss_mb": 121.0,
+     "version": "guile-3.0.11",
+     "count": 100,
+     "seconds": 1.186993
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      1.904506125
+     ],
+     "rss_mb": 44.5,
+     "version": "gauche-0.9.15",
+     "count": 100,
+     "seconds": 1.9045061250000002
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      20.746
+     ],
+     "rss_mb": 9.0,
+     "version": "chibi-0.12.0",
+     "count": 100,
+     "seconds": 20.746
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      2.708931209,
+      2.548054458,
+      2.609811916
+     ],
+     "rss_mb": 1648.6,
+     "version": "truffle-scheme-jit",
+     "count": 100,
+     "seconds": 2.7089312090000006,
+     "steady_seconds": 2.548054458
+    },
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      3.300876458
+     ],
+     "rss_mb": 1365.8,
+     "version": "truffle-scheme-interpreter",
+     "count": 10,
+     "seconds": 33.00876458
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.294912
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 100,
+     "seconds": 0.294912
+    }
+   }
+  },
+  "nucleic": {
+   "count": 5,
+   "program_count": 50,
+   "results": {
+    "chicken": {
+     "status": "ok",
+     "times": [
+      0.214
+     ],
+     "rss_mb": 24.5,
+     "version": "chicken-5.4.0",
+     "count": 5,
+     "seconds": 0.21400000000000002
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      0.318545
+     ],
+     "rss_mb": 120.8,
+     "version": "guile-3.0.11",
+     "count": 5,
+     "seconds": 0.318545
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      0.974342083
+     ],
+     "rss_mb": 44.5,
+     "version": "gauche-0.9.15",
+     "count": 5,
+     "seconds": 0.974342083
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      4.082
+     ],
+     "rss_mb": 9.0,
+     "version": "chibi-0.12.0",
+     "count": 5,
+     "seconds": 4.082
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      2.567671917,
+      2.173308833,
+      1.135069292
+     ],
+     "rss_mb": 2035.2,
+     "version": "truffle-scheme-jit",
+     "count": 5,
+     "seconds": 2.567671917,
+     "steady_seconds": 1.135069292
+    },
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      2.387902667
+     ],
+     "rss_mb": 1375.4,
+     "version": "truffle-scheme-interpreter",
+     "count": 1,
+     "seconds": 11.939513335000001
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.117719
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 5,
+     "seconds": 0.11771899999999999
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.138
+     ],
+     "rss_mb": 150.0,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 5,
+     "seconds": 0.138
+    }
+   }
+  },
+  "pi": {
+   "count": 10,
+   "program_count": 100,
+   "results": {
+    "guile": {
+     "status": "ok",
+     "times": [
+      0.005705
+     ],
+     "rss_mb": 22.8,
+     "version": "guile-3.0.11",
+     "count": 10,
+     "seconds": 0.005705
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      0.211719583
+     ],
+     "rss_mb": 44.2,
+     "version": "gauche-0.9.15",
+     "count": 10,
+     "seconds": 0.211719583
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      106.347
+     ],
+     "rss_mb": 9.0,
+     "version": "chibi-0.12.0",
+     "count": 10,
+     "seconds": 106.34700000000001
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      0.233575333,
+      0.071198833,
+      0.03985525
+     ],
+     "rss_mb": 644.4,
+     "version": "truffle-scheme-jit",
+     "count": 10,
+     "seconds": 0.23357533300000002,
+     "steady_seconds": 0.03985525
+    },
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      0.046681958
+     ],
+     "rss_mb": 353.4,
+     "version": "truffle-scheme-interpreter",
+     "count": 1,
+     "seconds": 0.46681958
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.028999
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 10,
+     "seconds": 0.028999000000000004
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.04
+     ],
+     "rss_mb": 150.3,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 10,
+     "seconds": 0.04
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      0.036
+     ],
+     "rss_mb": 8.0,
+     "version": "chicken-5.4.0",
+     "count": 10,
+     "seconds": 0.036
+    }
+   }
+  },
+  "pnpoly": {
+   "count": 100000,
+   "program_count": 1000000,
+   "results": {
+    "gauche": {
+     "status": "ok",
+     "times": [
+      1.317037625
+     ],
+     "rss_mb": 44.3,
+     "version": "gauche-0.9.15",
+     "count": 100000,
+     "seconds": 1.3170376250000002
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      12.901
+     ],
+     "rss_mb": 9.0,
+     "version": "chibi-0.12.0",
+     "count": 100000,
+     "seconds": 12.901
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      3.48713325,
+      3.330763833,
+      3.273921083
+     ],
+     "rss_mb": 1733.2,
+     "version": "truffle-scheme-jit",
+     "count": 100000,
+     "seconds": 3.4871332500000003,
+     "steady_seconds": 3.273921083
+    },
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      3.149170167
+     ],
+     "rss_mb": 1409.3,
+     "version": "truffle-scheme-interpreter",
+     "count": 10000,
+     "seconds": 31.491701669999998
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.305226
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 100000,
+     "seconds": 0.305226
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.395
+     ],
+     "rss_mb": 150.2,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 100000,
+     "seconds": 0.395
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      0.852
+     ],
+     "rss_mb": 23.6,
+     "version": "chicken-5.4.0",
+     "count": 100000,
+     "seconds": 0.852
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      0.890933
+     ],
+     "rss_mb": 121.0,
+     "version": "guile-3.0.11",
+     "count": 100000,
+     "seconds": 0.890933
+    }
+   }
+  },
+  "ray": {
+   "count": 5,
+   "program_count": 50,
+   "results": {
+    "chibi": {
+     "status": "ok",
+     "times": [
+      11.547
+     ],
+     "rss_mb": 9.0,
+     "version": "chibi-0.12.0",
+     "count": 5,
+     "seconds": 11.547
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      3.114862417,
+      2.514047334,
+      2.619773208
+     ],
+     "rss_mb": 1667.6,
+     "version": "truffle-scheme-jit",
+     "count": 5,
+     "seconds": 3.114862417,
+     "steady_seconds": 2.514047334
+    },
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      3.516378708
+     ],
+     "rss_mb": 1370.9,
+     "version": "truffle-scheme-interpreter",
+     "count": 1,
+     "seconds": 17.58189354
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.151808
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 5,
+     "seconds": 0.151808
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.427
+     ],
+     "rss_mb": 150.2,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 5,
+     "seconds": 0.42699999999999994
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      0.756
+     ],
+     "rss_mb": 16.4,
+     "version": "chicken-5.4.0",
+     "count": 5,
+     "seconds": 0.756
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      1.419456
+     ],
+     "rss_mb": 120.6,
+     "version": "guile-3.0.11",
+     "count": 5,
+     "seconds": 1.419456
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      4.121455417
+     ],
+     "rss_mb": 44.2,
+     "version": "gauche-0.9.15",
+     "count": 5,
+     "seconds": 4.121455417
+    }
+   }
+  },
+  "simplex": {
+   "count": 100000,
+   "program_count": 1000000,
+   "results": {
+    "jit": {
+     "status": "ok",
+     "times": [
+      5.246430917,
+      2.859630959,
+      2.46509025
+     ],
+     "rss_mb": 1712.2,
+     "version": "truffle-scheme-jit",
+     "count": 100000,
+     "seconds": 5.246430917,
+     "steady_seconds": 2.46509025
+    },
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      2.48082775
+     ],
+     "rss_mb": 1442.4,
+     "version": "truffle-scheme-interpreter",
+     "count": 10000,
+     "seconds": 24.8082775
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.135223
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 100000,
+     "seconds": 0.135223
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.158
+     ],
+     "rss_mb": 149.8,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 100000,
+     "seconds": 0.158
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      0.478
+     ],
+     "rss_mb": 19.8,
+     "version": "chicken-5.4.0",
+     "count": 100000,
+     "seconds": 0.478
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      0.321407
+     ],
+     "rss_mb": 120.8,
+     "version": "guile-3.0.11",
+     "count": 100000,
+     "seconds": 0.321407
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      2.000579625
+     ],
+     "rss_mb": 44.4,
+     "version": "gauche-0.9.15",
+     "count": 100000,
+     "seconds": 2.000579625
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      9.575
+     ],
+     "rss_mb": 17.0,
+     "version": "chibi-0.12.0",
+     "count": 100000,
+     "seconds": 9.575
+    }
+   }
+  },
+  "ack": {
+   "count": 1,
+   "program_count": 2,
+   "results": {
+    "interpreter": {
+     "status": "timeout",
+     "times": [],
+     "rss_mb": 1541.8,
+     "detail": "Running ack:3:12:1",
+     "count": 1
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.950754
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 1,
+     "seconds": 0.950754
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      1.148
+     ],
+     "rss_mb": 150.2,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 1,
+     "seconds": 1.148
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      19.101
+     ],
+     "rss_mb": 23.6,
+     "version": "chicken-5.4.0",
+     "count": 1,
+     "seconds": 19.101
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      2.898258
+     ],
+     "rss_mb": 15.8,
+     "version": "guile-3.0.11",
+     "count": 1,
+     "seconds": 2.898258
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      23.856177
+     ],
+     "rss_mb": 51.1,
+     "version": "gauche-0.9.15",
+     "count": 1,
+     "seconds": 23.856177
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      20.263
+     ],
+     "rss_mb": 12.5,
+     "version": "chibi-0.12.0",
+     "count": 1,
+     "seconds": 20.263
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      43.203538291,
+      43.280793,
+      43.240803792
+     ],
+     "rss_mb": 2968.4,
+     "version": "truffle-scheme-jit",
+     "count": 1,
+     "seconds": 43.203538291,
+     "steady_seconds": 43.240803792
+    }
+   }
+  },
+  "array1": {
+   "count": 50,
+   "program_count": 500,
+   "results": {
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.262757
+     ],
+     "rss_mb": 128.6,
+     "version": "chez-10.4.1+r7rs",
+     "count": 50,
+     "seconds": 0.262757
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.314
+     ],
+     "rss_mb": 240.2,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 50,
+     "seconds": 0.314
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      0.624
+     ],
+     "rss_mb": 30.4,
+     "version": "chicken-5.4.0",
+     "count": 50,
+     "seconds": 0.624
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      0.332156
+     ],
+     "rss_mb": 110.8,
+     "version": "guile-3.0.11",
+     "count": 50,
+     "seconds": 0.332156
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      1.541318584
+     ],
+     "rss_mb": 83.5,
+     "version": "gauche-0.9.15",
+     "count": 50,
+     "seconds": 1.5413185839999999
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      3.587
+     ],
+     "rss_mb": 39.6,
+     "version": "chibi-0.12.0",
+     "count": 50,
+     "seconds": 3.5870000000000006
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      1.749979125,
+      0.886122,
+      0.846202833
+     ],
+     "rss_mb": 2023.9,
+     "version": "truffle-scheme-jit",
+     "count": 50,
+     "seconds": 1.749979125,
+     "steady_seconds": 0.846202833
+    },
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      3.529461917
+     ],
+     "rss_mb": 1486.1,
+     "version": "truffle-scheme-interpreter",
+     "count": 5,
+     "seconds": 35.29461917
+    }
+   }
+  },
+  "string": {
+   "count": 10,
+   "program_count": 100,
+   "results": {
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.1
+     ],
+     "rss_mb": 162.8,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 10,
+     "seconds": 0.1
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      0.018
+     ],
+     "rss_mb": 17.2,
+     "version": "chicken-5.4.0",
+     "count": 10,
+     "seconds": 0.018
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      0.010303
+     ],
+     "rss_mb": 112.9,
+     "version": "guile-3.0.11",
+     "count": 10,
+     "seconds": 0.010303
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      0.046467042
+     ],
+     "rss_mb": 44.4,
+     "version": "gauche-0.9.15",
+     "count": 10,
+     "seconds": 0.046467042
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      0.335
+     ],
+     "rss_mb": 16.8,
+     "version": "chibi-0.12.0",
+     "count": 10,
+     "seconds": 0.335
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      0.138662084,
+      0.068223209,
+      0.066925
+     ],
+     "rss_mb": 1332.2,
+     "version": "truffle-scheme-jit",
+     "count": 10,
+     "seconds": 0.138662084,
+     "steady_seconds": 0.066925
+    },
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      0.034739
+     ],
+     "rss_mb": 366.4,
+     "version": "truffle-scheme-interpreter",
+     "count": 1,
+     "seconds": 0.34739
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.06544
+     ],
+     "rss_mb": 53.5,
+     "version": "chez-10.4.1+r7rs",
+     "count": 10,
+     "seconds": 0.06544
+    }
+   }
+  },
+  "sum1": {
+   "count": 2,
+   "program_count": 25,
+   "results": {
+    "chicken": {
+     "status": "ok",
+     "times": [
+      0.243
+     ],
+     "rss_mb": 16.6,
+     "version": "chicken-5.4.0",
+     "count": 2,
+     "seconds": 0.243
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      0.272675
+     ],
+     "rss_mb": 24.0,
+     "version": "guile-3.0.11",
+     "count": 2,
+     "seconds": 0.272675
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      0.060449333
+     ],
+     "rss_mb": 44.2,
+     "version": "gauche-0.9.15",
+     "count": 2,
+     "seconds": 0.060449333
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      3.747
+     ],
+     "rss_mb": 9.0,
+     "version": "chibi-0.12.0",
+     "count": 2,
+     "seconds": 3.747
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      0.18305225,
+      0.069066917,
+      0.06726275
+     ],
+     "rss_mb": 922.3,
+     "version": "truffle-scheme-jit",
+     "count": 2,
+     "seconds": 0.18305225,
+     "steady_seconds": 0.06726275
+    },
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      0.162480125
+     ],
+     "rss_mb": 512.6,
+     "version": "truffle-scheme-interpreter",
+     "count": 1,
+     "seconds": 0.32496025
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.044589
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 2,
+     "seconds": 0.044589
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.693
+     ],
+     "rss_mb": 150.1,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 2,
+     "seconds": 0.693
+    }
+   }
+  },
+  "cat": {
+   "count": 5,
+   "program_count": 50,
+   "results": {
+    "guile": {
+     "status": "ok",
+     "times": [
+      0.999131
+     ],
+     "rss_mb": 14.0,
+     "version": "guile-3.0.11",
+     "count": 5,
+     "seconds": 0.999131
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      0.827937708
+     ],
+     "rss_mb": 33.3,
+     "version": "gauche-0.9.15",
+     "count": 5,
+     "seconds": 0.827937708
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      3.298
+     ],
+     "rss_mb": 9.0,
+     "version": "chibi-0.12.0",
+     "count": 5,
+     "seconds": 3.2980000000000005
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      2.069265708,
+      1.796546833,
+      1.755853917
+     ],
+     "rss_mb": 1683.5,
+     "version": "truffle-scheme-jit",
+     "count": 5,
+     "seconds": 2.069265708,
+     "steady_seconds": 1.755853917
+    },
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      5.711403125
+     ],
+     "rss_mb": 1370.3,
+     "version": "truffle-scheme-interpreter",
+     "count": 1,
+     "seconds": 28.557015625000002
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.146473
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 5,
+     "seconds": 0.146473
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.367
+     ],
+     "rss_mb": 150.2,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 5,
+     "seconds": 0.367
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      0.819
+     ],
+     "rss_mb": 8.1,
+     "version": "chicken-5.4.0",
+     "count": 5,
+     "seconds": 0.819
+    }
+   }
+  },
+  "tail": {
+   "count": 5,
+   "program_count": 50,
+   "results": {
+    "gauche": {
+     "status": "ok",
+     "times": [
+      0.326078083
+     ],
+     "rss_mb": 52.4,
+     "version": "gauche-0.9.15",
+     "count": 5,
+     "seconds": 0.326078083
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      0.444
+     ],
+     "rss_mb": 17.8,
+     "version": "chibi-0.12.0",
+     "count": 5,
+     "seconds": 0.44400000000000006
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      0.514820666,
+      0.242695875,
+      0.220858958
+     ],
+     "rss_mb": 1441.4,
+     "version": "truffle-scheme-jit",
+     "count": 5,
+     "seconds": 0.514820666,
+     "steady_seconds": 0.220858958
+    },
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      0.209493459
+     ],
+     "rss_mb": 510.3,
+     "version": "truffle-scheme-interpreter",
+     "count": 1,
+     "seconds": 1.047467295
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.154731
+     ],
+     "rss_mb": 69.9,
+     "version": "chez-10.4.1+r7rs",
+     "count": 5,
+     "seconds": 0.154731
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.187
+     ],
+     "rss_mb": 159.7,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 5,
+     "seconds": 0.187
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      0.089
+     ],
+     "rss_mb": 46.5,
+     "version": "chicken-5.4.0",
+     "count": 5,
+     "seconds": 0.089
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      0.418312
+     ],
+     "rss_mb": 120.4,
+     "version": "guile-3.0.11",
+     "count": 5,
+     "seconds": 0.4183120000000001
+    }
+   }
+  },
+  "wc": {
+   "count": 5,
+   "program_count": 50,
+   "results": {
+    "chibi": {
+     "status": "ok",
+     "times": [
+      20.693
+     ],
+     "rss_mb": 9.0,
+     "version": "chibi-0.12.0",
+     "count": 5,
+     "seconds": 20.693
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      1.554000958,
+      1.225401541,
+      1.205486041
+     ],
+     "rss_mb": 1684.8,
+     "version": "truffle-scheme-jit",
+     "count": 5,
+     "seconds": 1.554000958,
+     "steady_seconds": 1.205486041
+    },
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      4.776806625
+     ],
+     "rss_mb": 1359.7,
+     "version": "truffle-scheme-interpreter",
+     "count": 1,
+     "seconds": 23.884033125
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.08533
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 5,
+     "seconds": 0.08533
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.223
+     ],
+     "rss_mb": 150.2,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 5,
+     "seconds": 0.223
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      0.897
+     ],
+     "rss_mb": 10.2,
+     "version": "chicken-5.4.0",
+     "count": 5,
+     "seconds": 0.897
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      0.510068
+     ],
+     "rss_mb": 14.0,
+     "version": "guile-3.0.11",
+     "count": 5,
+     "seconds": 0.510068
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      1.142017292
+     ],
+     "rss_mb": 33.2,
+     "version": "gauche-0.9.15",
+     "count": 5,
+     "seconds": 1.142017292
+    }
+   }
+  },
+  "read1": {
+   "count": 250,
+   "program_count": 2500,
+   "results": {
+    "jit": {
+     "status": "ok",
+     "times": [
+      0.213815583,
+      0.142818166,
+      0.093540208
+     ],
+     "rss_mb": 832.6,
+     "version": "truffle-scheme-jit",
+     "count": 250,
+     "seconds": 0.213815583,
+     "steady_seconds": 0.093540208
+    },
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      0.041834375
+     ],
+     "rss_mb": 385.0,
+     "version": "truffle-scheme-interpreter",
+     "count": 25,
+     "seconds": 0.41834375
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.046289
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 250,
+     "seconds": 0.046289
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      1.171
+     ],
+     "rss_mb": 150.2,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 250,
+     "seconds": 1.171
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      0.608
+     ],
+     "rss_mb": 24.0,
+     "version": "chicken-5.4.0",
+     "count": 250,
+     "seconds": 0.608
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      0.418225
+     ],
+     "rss_mb": 21.7,
+     "version": "guile-3.0.11",
+     "count": 250,
+     "seconds": 0.418225
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      0.141129959
+     ],
+     "rss_mb": 44.2,
+     "version": "gauche-0.9.15",
+     "count": 250,
+     "seconds": 0.14112995899999997
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      11.064
+     ],
+     "rss_mb": 9.0,
+     "version": "chibi-0.12.0",
+     "count": 250,
+     "seconds": 11.064
+    }
+   }
+  },
+  "compiler": {
+   "count": 200,
+   "program_count": 2000,
+   "results": {
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      2.042969208
+     ],
+     "rss_mb": 1379.7,
+     "version": "truffle-scheme-interpreter",
+     "count": 20,
+     "seconds": 20.429692080000002
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.093564
+     ],
+     "rss_mb": 183.2,
+     "version": "chez-10.4.1+r7rs",
+     "count": 200,
+     "seconds": 0.093564
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.151
+     ],
+     "rss_mb": 151.2,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 200,
+     "seconds": 0.151
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      0.238
+     ],
+     "rss_mb": 26.3,
+     "version": "chicken-5.4.0",
+     "count": 200,
+     "seconds": 0.23799999999999996
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      0.195278
+     ],
+     "rss_mb": 125.2,
+     "version": "guile-3.0.11",
+     "count": 200,
+     "seconds": 0.19527799999999998
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      1.568922041
+     ],
+     "rss_mb": 51.2,
+     "version": "gauche-0.9.15",
+     "count": 200,
+     "seconds": 1.5689220409999998
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      5.442
+     ],
+     "rss_mb": 33.1,
+     "version": "chibi-0.12.0",
+     "count": 200,
+     "seconds": 5.442
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      3.445821375,
+      2.12280325,
+      1.835885417
+     ],
+     "rss_mb": 1747.3,
+     "version": "truffle-scheme-jit",
+     "count": 200,
+     "seconds": 3.445821375,
+     "steady_seconds": 1.835885417
+    }
+   }
+  },
+  "conform": {
+   "count": 50,
+   "program_count": 500,
+   "results": {
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.116336
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 50,
+     "seconds": 0.116336
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.265
+     ],
+     "rss_mb": 150.2,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 50,
+     "seconds": 0.265
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      0.519
+     ],
+     "rss_mb": 23.8,
+     "version": "chicken-5.4.0",
+     "count": 50,
+     "seconds": 0.519
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      0.366968
+     ],
+     "rss_mb": 121.2,
+     "version": "guile-3.0.11",
+     "count": 50,
+     "seconds": 0.366968
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      2.403275667
+     ],
+     "rss_mb": 44.4,
+     "version": "gauche-0.9.15",
+     "count": 50,
+     "seconds": 2.403275667
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      7.322
+     ],
+     "rss_mb": 9.0,
+     "version": "chibi-0.12.0",
+     "count": 50,
+     "seconds": 7.322
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      2.874813667,
+      2.424734875,
+      2.384045041
+     ],
+     "rss_mb": 1679.4,
+     "version": "truffle-scheme-jit",
+     "count": 50,
+     "seconds": 2.874813667,
+     "steady_seconds": 2.384045041
+    },
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      4.971816041
+     ],
+     "rss_mb": 1395.7,
+     "version": "truffle-scheme-interpreter",
+     "count": 5,
+     "seconds": 49.71816041
+    }
+   }
+  },
+  "dynamic": {
+   "count": 50,
+   "program_count": 500,
+   "results": {
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.832
+     ],
+     "rss_mb": 150.1,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 50,
+     "seconds": 0.8320000000000001
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      0.62
+     ],
+     "rss_mb": 28.0,
+     "version": "chicken-5.4.0",
+     "count": 50,
+     "seconds": 0.62
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      0.396699
+     ],
+     "rss_mb": 31.0,
+     "version": "guile-3.0.11",
+     "count": 50,
+     "seconds": 0.3966990000000001
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      1.072855083
+     ],
+     "rss_mb": 51.4,
+     "version": "gauche-0.9.15",
+     "count": 50,
+     "seconds": 1.072855083
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      12.259
+     ],
+     "rss_mb": 17.0,
+     "version": "chibi-0.12.0",
+     "count": 50,
+     "seconds": 12.259
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      2.670533625,
+      1.466102958,
+      1.368908083
+     ],
+     "rss_mb": 1864.9,
+     "version": "truffle-scheme-jit",
+     "count": 50,
+     "seconds": 2.670533625,
+     "steady_seconds": 1.368908083
+    },
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      2.777064542
+     ],
+     "rss_mb": 1385.9,
+     "version": "truffle-scheme-interpreter",
+     "count": 5,
+     "seconds": 27.77064542
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.112239
+     ],
+     "rss_mb": 63.7,
+     "version": "chez-10.4.1+r7rs",
+     "count": 50,
+     "seconds": 0.112239
+    }
+   }
+  },
+  "earley": {
+   "count": 1,
+   "program_count": 1,
+   "results": {
+    "chicken": {
+     "status": "ok",
+     "times": [
+      5.761
+     ],
+     "rss_mb": 4563.8,
+     "version": "chicken-5.4.0",
+     "count": 1,
+     "seconds": 5.761
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      4.086457
+     ],
+     "rss_mb": 1099.4,
+     "version": "guile-3.0.11",
+     "count": 1,
+     "seconds": 4.086457
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      6.772286209
+     ],
+     "rss_mb": 1031.7,
+     "version": "gauche-0.9.15",
+     "count": 1,
+     "seconds": 6.772286209
+    },
+    "chibi": {
+     "status": "timeout",
+     "times": [],
+     "rss_mb": 264.1,
+     "detail": "Running earley:1",
+     "count": 1
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      12.892022084,
+      11.537372625,
+      11.671312583
+     ],
+     "rss_mb": 23976.5,
+     "version": "truffle-scheme-jit",
+     "count": 1,
+     "seconds": 12.892022084,
+     "steady_seconds": 11.537372625
+    },
+    "interpreter": {
+     "status": "timeout",
+     "times": [],
+     "rss_mb": 13455.2,
+     "detail": "Running earley:1",
+     "count": 1
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      1.92911
+     ],
+     "rss_mb": 1196.2,
+     "version": "chez-10.4.1+r7rs",
+     "count": 1,
+     "seconds": 1.92911
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      6.038
+     ],
+     "rss_mb": 2028.6,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 1,
+     "seconds": 6.038
+    }
+   }
+  },
+  "graphs": {
+   "count": 1,
+   "program_count": 3,
+   "results": {
+    "guile": {
+     "status": "ok",
+     "times": [
+      2.411951
+     ],
+     "rss_mb": 128.2,
+     "version": "guile-3.0.11",
+     "count": 1,
+     "seconds": 2.411951
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      30.5258115
+     ],
+     "rss_mb": 98.5,
+     "version": "gauche-0.9.15",
+     "count": 1,
+     "seconds": 30.5258115
+    },
+    "chibi": {
+     "status": "timeout",
+     "times": [],
+     "rss_mb": 36.7,
+     "detail": "Running graphs:7:1",
+     "count": 1
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      21.68845075,
+      12.436080875,
+      11.9084445
+     ],
+     "rss_mb": 7283.7,
+     "version": "truffle-scheme-jit",
+     "count": 1,
+     "seconds": 21.68845075,
+     "steady_seconds": 11.9084445
+    },
+    "interpreter": {
+     "status": "timeout",
+     "times": [],
+     "rss_mb": 1360.7,
+     "detail": "Running graphs:7:1",
+     "count": 1
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.388695
+     ],
+     "rss_mb": 57.1,
+     "version": "chez-10.4.1+r7rs",
+     "count": 1,
+     "seconds": 0.388695
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.527
+     ],
+     "rss_mb": 150.3,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 1,
+     "seconds": 0.527
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      1.475
+     ],
+     "rss_mb": 120.7,
+     "version": "chicken-5.4.0",
+     "count": 1,
+     "seconds": 1.475
+    }
+   }
+  },
+  "lattice": {
+   "count": 1,
+   "program_count": 10,
+   "results": {
+    "gauche": {
+     "status": "ok",
+     "times": [
+      3.321855041
+     ],
+     "rss_mb": 44.2,
+     "version": "gauche-0.9.15",
+     "count": 1,
+     "seconds": 3.321855041
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      59.31
+     ],
+     "rss_mb": 9.0,
+     "version": "chibi-0.12.0",
+     "count": 1,
+     "seconds": 59.31
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      8.88905925,
+      8.779371292,
+      8.782376458
+     ],
+     "rss_mb": 1609.8,
+     "version": "truffle-scheme-jit",
+     "count": 1,
+     "seconds": 8.88905925,
+     "steady_seconds": 8.779371292
+    },
+    "interpreter": {
+     "status": "timeout",
+     "times": [],
+     "rss_mb": 1471.7,
+     "detail": "Running lattice:44:1",
+     "count": 1
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.206836
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 1,
+     "seconds": 0.206836
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.254
+     ],
+     "rss_mb": 150.2,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 1,
+     "seconds": 0.254
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      0.818
+     ],
+     "rss_mb": 23.5,
+     "version": "chicken-5.4.0",
+     "count": 1,
+     "seconds": 0.818
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      0.608643
+     ],
+     "rss_mb": 120.3,
+     "version": "guile-3.0.11",
+     "count": 1,
+     "seconds": 0.608643
+    }
+   }
+  },
+  "matrix": {
+   "count": 250,
+   "program_count": 2500,
+   "results": {
+    "chibi": {
+     "status": "ok",
+     "times": [
+      10.8
+     ],
+     "rss_mb": 9.0,
+     "version": "chibi-0.12.0",
+     "count": 250,
+     "seconds": 10.8
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      2.465137166,
+      2.081456584,
+      2.068176958
+     ],
+     "rss_mb": 1593.3,
+     "version": "truffle-scheme-jit",
+     "count": 250,
+     "seconds": 2.465137166,
+     "steady_seconds": 2.068176958
+    },
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      2.86703925
+     ],
+     "rss_mb": 1438.3,
+     "version": "truffle-scheme-interpreter",
+     "count": 25,
+     "seconds": 28.6703925
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.06515
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 250,
+     "seconds": 0.06515
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.094
+     ],
+     "rss_mb": 150.2,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 250,
+     "seconds": 0.094
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      0.334
+     ],
+     "rss_mb": 17.8,
+     "version": "chicken-5.4.0",
+     "count": 250,
+     "seconds": 0.334
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      0.239732
+     ],
+     "rss_mb": 121.1,
+     "version": "guile-3.0.11",
+     "count": 250,
+     "seconds": 0.239732
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      1.745522542
+     ],
+     "rss_mb": 44.4,
+     "version": "gauche-0.9.15",
+     "count": 250,
+     "seconds": 1.745522542
+    }
+   }
+  },
+  "maze": {
+   "count": 1000,
+   "program_count": 10000,
+   "results": {
+    "jit": {
+     "status": "ok",
+     "times": [
+      1.745803708,
+      1.176895209,
+      1.181898125
+     ],
+     "rss_mb": 2237.2,
+     "version": "truffle-scheme-jit",
+     "count": 1000,
+     "seconds": 1.745803708,
+     "steady_seconds": 1.176895209
+    },
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      1.618487209
+     ],
+     "rss_mb": 1366.3,
+     "version": "truffle-scheme-interpreter",
+     "count": 100,
+     "seconds": 16.18487209
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.053391
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 1000,
+     "seconds": 0.053391
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.061
+     ],
+     "rss_mb": 150.0,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 1000,
+     "seconds": 0.061
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      0.264
+     ],
+     "rss_mb": 23.7,
+     "version": "chicken-5.4.0",
+     "count": 1000,
+     "seconds": 0.264
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      0.138353
+     ],
+     "rss_mb": 84.8,
+     "version": "guile-3.0.11",
+     "count": 1000,
+     "seconds": 0.138353
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      1.0736355
+     ],
+     "rss_mb": 44.2,
+     "version": "gauche-0.9.15",
+     "count": 1000,
+     "seconds": 1.0736355
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      4.258
+     ],
+     "rss_mb": 9.0,
+     "version": "chibi-0.12.0",
+     "count": 1000,
+     "seconds": 4.258
+    }
+   }
+  },
+  "mazefun": {
+   "count": 1000,
+   "program_count": 10000,
+   "results": {
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      3.540439459
+     ],
+     "rss_mb": 1392.9,
+     "version": "truffle-scheme-interpreter",
+     "count": 100,
+     "seconds": 35.404394589999995
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.118527
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 1000,
+     "seconds": 0.118527
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.179
+     ],
+     "rss_mb": 150.2,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 1000,
+     "seconds": 0.179
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      0.632
+     ],
+     "rss_mb": 23.6,
+     "version": "chicken-5.4.0",
+     "count": 1000,
+     "seconds": 0.632
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      0.303778
+     ],
+     "rss_mb": 121.0,
+     "version": "guile-3.0.11",
+     "count": 1000,
+     "seconds": 0.303778
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      1.966088459
+     ],
+     "rss_mb": 39.4,
+     "version": "gauche-0.9.15",
+     "count": 1000,
+     "seconds": 1.966088459
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      5.485
+     ],
+     "rss_mb": 9.0,
+     "version": "chibi-0.12.0",
+     "count": 1000,
+     "seconds": 5.485
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      1.831496333,
+      1.452172792,
+      1.476020625
+     ],
+     "rss_mb": 1671.6,
+     "version": "truffle-scheme-jit",
+     "count": 1000,
+     "seconds": 1.831496333,
+     "steady_seconds": 1.452172792
+    }
+   }
+  },
+  "nqueens": {
+   "count": 1,
+   "program_count": 10,
+   "results": {
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.323885
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 1,
+     "seconds": 0.323885
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.369
+     ],
+     "rss_mb": 150.1,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 1,
+     "seconds": 0.369
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      1.393
+     ],
+     "rss_mb": 23.5,
+     "version": "chicken-5.4.0",
+     "count": 1,
+     "seconds": 1.393
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      0.547948
+     ],
+     "rss_mb": 120.3,
+     "version": "guile-3.0.11",
+     "count": 1,
+     "seconds": 0.547948
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      3.823401709
+     ],
+     "rss_mb": 44.4,
+     "version": "gauche-0.9.15",
+     "count": 1,
+     "seconds": 3.823401709
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      8.546
+     ],
+     "rss_mb": 9.0,
+     "version": "chibi-0.12.0",
+     "count": 1,
+     "seconds": 8.546
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      3.322019459,
+      2.72185425,
+      2.747003208
+     ],
+     "rss_mb": 1693.5,
+     "version": "truffle-scheme-jit",
+     "count": 1,
+     "seconds": 3.322019459,
+     "steady_seconds": 2.72185425
+    },
+    "interpreter": {
+     "status": "timeout",
+     "times": [],
+     "rss_mb": 1361.0,
+     "detail": "Running nqueens:13:1",
+     "count": 1
+    }
+   }
+  },
+  "paraffins": {
+   "count": 1,
+   "program_count": 10,
+   "results": {
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.599
+     ],
+     "rss_mb": 716.7,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 1,
+     "seconds": 0.599
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      1.107
+     ],
+     "rss_mb": 1930.4,
+     "version": "chicken-5.4.0",
+     "count": 1,
+     "seconds": 1.107
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      0.619844
+     ],
+     "rss_mb": 399.2,
+     "version": "guile-3.0.11",
+     "count": 1,
+     "seconds": 0.619844
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      1.38733375
+     ],
+     "rss_mb": 553.3,
+     "version": "gauche-0.9.15",
+     "count": 1,
+     "seconds": 1.38733375
+    },
+    "chibi": {
+     "status": "timeout",
+     "times": [],
+     "rss_mb": 632.5,
+     "detail": "Running paraffins:23:1",
+     "count": 1
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      3.729285166,
+      3.003952459,
+      3.31520575
+     ],
+     "rss_mb": 6148.3,
+     "version": "truffle-scheme-jit",
+     "count": 1,
+     "seconds": 3.729285166,
+     "steady_seconds": 3.003952459
+    },
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      16.940328875
+     ],
+     "rss_mb": 4536.9,
+     "version": "truffle-scheme-interpreter",
+     "count": 1,
+     "seconds": 16.940328875
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.469169
+     ],
+     "rss_mb": 436.5,
+     "version": "chez-10.4.1+r7rs",
+     "count": 1,
+     "seconds": 0.469169
+    }
+   }
+  },
+  "parsing": {
+   "count": 250,
+   "program_count": 2500,
+   "results": {
+    "chicken": {
+     "status": "ok",
+     "times": [
+      0.936
+     ],
+     "rss_mb": 24.4,
+     "version": "chicken-5.4.0",
+     "count": 250,
+     "seconds": 0.936
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      0.789784
+     ],
+     "rss_mb": 69.6,
+     "version": "guile-3.0.11",
+     "count": 250,
+     "seconds": 0.789784
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      17.077349542
+     ],
+     "rss_mb": 44.4,
+     "version": "gauche-0.9.15",
+     "count": 250,
+     "seconds": 17.077349542
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      148.902
+     ],
+     "rss_mb": 9.0,
+     "version": "chibi-0.12.0",
+     "count": 250,
+     "seconds": 148.902
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      2.195615166,
+      1.536883417,
+      1.502001791
+     ],
+     "rss_mb": 1717.9,
+     "version": "truffle-scheme-jit",
+     "count": 250,
+     "seconds": 2.195615166,
+     "steady_seconds": 1.502001791
+    },
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      5.419829
+     ],
+     "rss_mb": 1364.3,
+     "version": "truffle-scheme-interpreter",
+     "count": 25,
+     "seconds": 54.19829
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.211596
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 250,
+     "seconds": 0.211596
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.171
+     ],
+     "rss_mb": 150.2,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 250,
+     "seconds": 0.171
+    }
+   }
+  },
+  "peval": {
+   "count": 200,
+   "program_count": 2000,
+   "results": {
+    "guile": {
+     "status": "ok",
+     "times": [
+      0.364546
+     ],
+     "rss_mb": 121.2,
+     "version": "guile-3.0.11",
+     "count": 200,
+     "seconds": 0.364546
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      2.677483417
+     ],
+     "rss_mb": 44.4,
+     "version": "gauche-0.9.15",
+     "count": 200,
+     "seconds": 2.6774834169999995
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      9.562
+     ],
+     "rss_mb": 9.0,
+     "version": "chibi-0.12.0",
+     "count": 200,
+     "seconds": 9.562
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      3.159270208,
+      2.514526375,
+      2.499512833
+     ],
+     "rss_mb": 1652.4,
+     "version": "truffle-scheme-jit",
+     "count": 200,
+     "seconds": 3.1592702080000006,
+     "steady_seconds": 2.499512833
+    },
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      4.091888625
+     ],
+     "rss_mb": 1388.4,
+     "version": "truffle-scheme-interpreter",
+     "count": 20,
+     "seconds": 40.91888625
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.11214
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 200,
+     "seconds": 0.11214
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.158
+     ],
+     "rss_mb": 150.0,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 200,
+     "seconds": 0.158
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      0.497
+     ],
+     "rss_mb": 23.7,
+     "version": "chicken-5.4.0",
+     "count": 200,
+     "seconds": 0.49700000000000005
+    }
+   }
+  },
+  "primes": {
+   "count": 1000,
+   "program_count": 10000,
+   "results": {
+    "gauche": {
+     "status": "ok",
+     "times": [
+      0.684888375
+     ],
+     "rss_mb": 44.3,
+     "version": "gauche-0.9.15",
+     "count": 1000,
+     "seconds": 0.684888375
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      1.122
+     ],
+     "rss_mb": 9.3,
+     "version": "chibi-0.12.0",
+     "count": 1000,
+     "seconds": 1.122
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      2.919810875,
+      2.103324292,
+      1.845261833
+     ],
+     "rss_mb": 2052.9,
+     "version": "truffle-scheme-jit",
+     "count": 1000,
+     "seconds": 2.919810875,
+     "steady_seconds": 1.845261833
+    },
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      1.453454375
+     ],
+     "rss_mb": 1506.1,
+     "version": "truffle-scheme-interpreter",
+     "count": 100,
+     "seconds": 14.534543750000001
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.047861
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 1000,
+     "seconds": 0.047861
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.069
+     ],
+     "rss_mb": 150.3,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 1000,
+     "seconds": 0.069
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      0.299
+     ],
+     "rss_mb": 23.6,
+     "version": "chicken-5.4.0",
+     "count": 1000,
+     "seconds": 0.299
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      0.17494
+     ],
+     "rss_mb": 120.8,
+     "version": "guile-3.0.11",
+     "count": 1000,
+     "seconds": 0.17494000000000004
+    }
+   }
+  },
+  "quicksort": {
+   "count": 250,
+   "program_count": 2500,
+   "results": {
+    "chibi": {
+     "status": "ok",
+     "times": [
+      13.509
+     ],
+     "rss_mb": 9.2,
+     "version": "chibi-0.12.0",
+     "count": 250,
+     "seconds": 13.509
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      3.894128666,
+      3.568551084,
+      3.442040541
+     ],
+     "rss_mb": 1594.8,
+     "version": "truffle-scheme-jit",
+     "count": 250,
+     "seconds": 3.894128666,
+     "steady_seconds": 3.442040541
+    },
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      4.666928416
+     ],
+     "rss_mb": 1363.0,
+     "version": "truffle-scheme-interpreter",
+     "count": 25,
+     "seconds": 46.66928416
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.221042
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 250,
+     "seconds": 0.221042
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.678
+     ],
+     "rss_mb": 150.2,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 250,
+     "seconds": 0.678
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      0.787
+     ],
+     "rss_mb": 22.8,
+     "version": "chicken-5.4.0",
+     "count": 250,
+     "seconds": 0.787
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      0.444996
+     ],
+     "rss_mb": 37.4,
+     "version": "guile-3.0.11",
+     "count": 250,
+     "seconds": 0.444996
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      2.3480485
+     ],
+     "rss_mb": 44.2,
+     "version": "gauche-0.9.15",
+     "count": 250,
+     "seconds": 2.3480485
+    }
+   }
+  },
+  "scheme": {
+   "count": 10000,
+   "program_count": 100000,
+   "results": {
+    "jit": {
+     "status": "ok",
+     "times": [
+      2.37083225,
+      2.15055275,
+      2.072729041
+     ],
+     "rss_mb": 1719.0,
+     "version": "truffle-scheme-jit",
+     "count": 10000,
+     "seconds": 2.37083225,
+     "steady_seconds": 2.072729041
+    },
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      5.394532708
+     ],
+     "rss_mb": 1366.1,
+     "version": "truffle-scheme-interpreter",
+     "count": 1000,
+     "seconds": 53.94532708
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.980592
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 10000,
+     "seconds": 0.980592
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      1.153
+     ],
+     "rss_mb": 150.1,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 10000,
+     "seconds": 1.153
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      0.682
+     ],
+     "rss_mb": 24.5,
+     "version": "chicken-5.4.0",
+     "count": 10000,
+     "seconds": 0.682
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      0.521636
+     ],
+     "rss_mb": 121.7,
+     "version": "guile-3.0.11",
+     "count": 10000,
+     "seconds": 0.521636
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      1.638962959
+     ],
+     "rss_mb": 44.3,
+     "version": "gauche-0.9.15",
+     "count": 10000,
+     "seconds": 1.638962959
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      6.081
+     ],
+     "rss_mb": 9.0,
+     "version": "chibi-0.12.0",
+     "count": 10000,
+     "seconds": 6.081
+    }
+   }
+  },
+  "slatex": {
+   "count": 50,
+   "program_count": 500,
+   "results": {
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      0.821295417
+     ],
+     "rss_mb": 1116.4,
+     "version": "truffle-scheme-interpreter",
+     "count": 5,
+     "seconds": 8.21295417
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.549393
+     ],
+     "rss_mb": 76.1,
+     "version": "chez-10.4.1+r7rs",
+     "count": 50,
+     "seconds": 0.549393
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      1.077
+     ],
+     "rss_mb": 150.0,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 50,
+     "seconds": 1.077
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      0.739
+     ],
+     "rss_mb": 11.0,
+     "version": "chicken-5.4.0",
+     "count": 50,
+     "seconds": 0.7390000000000001
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      1.002252
+     ],
+     "rss_mb": 82.4,
+     "version": "guile-3.0.11",
+     "count": 50,
+     "seconds": 1.002252
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      1.155499375
+     ],
+     "rss_mb": 44.3,
+     "version": "gauche-0.9.15",
+     "count": 50,
+     "seconds": 1.155499375
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      6.786
+     ],
+     "rss_mb": 10.0,
+     "version": "chibi-0.12.0",
+     "count": 50,
+     "seconds": 6.785999999999999
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      1.745336916,
+      1.276140625,
+      1.019004667
+     ],
+     "rss_mb": 2072.0,
+     "version": "truffle-scheme-jit",
+     "count": 50,
+     "seconds": 1.745336916,
+     "steady_seconds": 1.019004667
+    }
+   }
+  },
+  "chudnovsky": {
+   "count": 100,
+   "program_count": 1000,
+   "results": {
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.012175
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 100,
+     "seconds": 0.012175
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.017
+     ],
+     "rss_mb": 150.0,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 100,
+     "seconds": 0.017
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      0.017
+     ],
+     "rss_mb": 7.4,
+     "version": "chicken-5.4.0",
+     "count": 100,
+     "seconds": 0.017
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      0.00751
+     ],
+     "rss_mb": 26.5,
+     "version": "guile-3.0.11",
+     "count": 100,
+     "seconds": 0.00751
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      0.058503458
+     ],
+     "rss_mb": 44.2,
+     "version": "gauche-0.9.15",
+     "count": 100,
+     "seconds": 0.058503458
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      11.737
+     ],
+     "rss_mb": 9.0,
+     "version": "chibi-0.12.0",
+     "count": 100,
+     "seconds": 11.737
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      0.19653675,
+      0.08867475,
+      0.040166084
+     ],
+     "rss_mb": 876.7,
+     "version": "truffle-scheme-jit",
+     "count": 100,
+     "seconds": 0.19653675,
+     "steady_seconds": 0.040166084
+    },
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      0.082560542
+     ],
+     "rss_mb": 393.3,
+     "version": "truffle-scheme-interpreter",
+     "count": 10,
+     "seconds": 0.8256054199999999
+    }
+   }
+  },
+  "nboyer": {
+   "count": 1,
+   "program_count": 1,
+   "results": {
+    "racket": {
+     "status": "ok",
+     "times": [
+      2.906
+     ],
+     "rss_mb": 696.5,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 1,
+     "seconds": 2.906
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      4.866
+     ],
+     "rss_mb": 1535.9,
+     "version": "chicken-5.4.0",
+     "count": 1,
+     "seconds": 4.866
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      1.656929
+     ],
+     "rss_mb": 372.1,
+     "version": "guile-3.0.11",
+     "count": 1,
+     "seconds": 1.656929
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      7.234268833
+     ],
+     "rss_mb": 400.2,
+     "version": "gauche-0.9.15",
+     "count": 1,
+     "seconds": 7.234268833
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      20.31
+     ],
+     "rss_mb": 1025.2,
+     "version": "chibi-0.12.0",
+     "count": 1,
+     "seconds": 20.31
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      14.776263167,
+      12.580308166,
+      12.780292083
+     ],
+     "rss_mb": 12817.0,
+     "version": "truffle-scheme-jit",
+     "count": 1,
+     "seconds": 14.776263167,
+     "steady_seconds": 12.580308166
+    },
+    "interpreter": {
+     "status": "timeout",
+     "times": [],
+     "rss_mb": 2339.9,
+     "detail": "Running nboyer:5:1",
+     "count": 1
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      1.988683
+     ],
+     "rss_mb": 471.2,
+     "version": "chez-10.4.1+r7rs",
+     "count": 1,
+     "seconds": 1.988683
+    }
+   }
+  },
+  "sboyer": {
+   "count": 1,
+   "program_count": 1,
+   "results": {
+    "chicken": {
+     "status": "ok",
+     "times": [
+      3.048
+     ],
+     "rss_mb": 504.2,
+     "version": "chicken-5.4.0",
+     "count": 1,
+     "seconds": 3.048
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      1.671006
+     ],
+     "rss_mb": 129.0,
+     "version": "guile-3.0.11",
+     "count": 1,
+     "seconds": 1.671006
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      8.72438575
+     ],
+     "rss_mb": 152.1,
+     "version": "gauche-0.9.15",
+     "count": 1,
+     "seconds": 8.72438575
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      20.503
+     ],
+     "rss_mb": 257.1,
+     "version": "chibi-0.12.0",
+     "count": 1,
+     "seconds": 20.503
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      11.2636805,
+      12.142826667,
+      10.394955625
+     ],
+     "rss_mb": 7671.9,
+     "version": "truffle-scheme-jit",
+     "count": 1,
+     "seconds": 11.2636805,
+     "steady_seconds": 10.394955625
+    },
+    "interpreter": {
+     "status": "timeout",
+     "times": [],
+     "rss_mb": 1399.3,
+     "detail": "Running sboyer:5:1",
+     "count": 1
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.517926
+     ],
+     "rss_mb": 143.6,
+     "version": "chez-10.4.1+r7rs",
+     "count": 1,
+     "seconds": 0.517926
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.796
+     ],
+     "rss_mb": 293.3,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 1,
+     "seconds": 0.796
+    }
+   }
+  },
+  "gcbench": {
+   "count": 1,
+   "program_count": 1,
+   "results": {
+    "guile": {
+     "status": "ok",
+     "times": [
+      0.851961
+     ],
+     "rss_mb": 188.8,
+     "version": "guile-3.0.11",
+     "count": 1,
+     "seconds": 0.851961
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      11.89876
+     ],
+     "rss_mb": 208.2,
+     "version": "gauche-0.9.15",
+     "count": 1,
+     "seconds": 11.89876
+    },
+    "chibi": {
+     "status": "timeout",
+     "times": [],
+     "rss_mb": 129.1,
+     "detail": "The garbage collector should touch about 128 megabytes of heap storage.\nThe use of more or less memory will skew the results.\nRunning gcbench:20:1",
+     "count": 1
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      10.007148083,
+      9.419255291,
+      9.797415958
+     ],
+     "rss_mb": 4368.3,
+     "version": "truffle-scheme-jit",
+     "count": 1,
+     "seconds": 10.007148083,
+     "steady_seconds": 9.419255291
+    },
+    "interpreter": {
+     "status": "timeout",
+     "times": [],
+     "rss_mb": 2493.9,
+     "detail": "GCBench: Top down construction\nGCBench: Bottom up construction\nCreating 128 trees of depth 14\nGCBench: Top down construction\nGCBench: Bottom up construction\nCreating 32 trees of depth 16\nGCBench: Top down construction\nGCBench: Bottom up construction",
+     "count": 1
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.407224
+     ],
+     "rss_mb": 178.0,
+     "version": "chez-10.4.1+r7rs",
+     "count": 1,
+     "seconds": 0.407224
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.906
+     ],
+     "rss_mb": 313.5,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 1,
+     "seconds": 0.906
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      2.639
+     ],
+     "rss_mb": 771.5,
+     "version": "chicken-5.4.0",
+     "count": 1,
+     "seconds": 2.639
+    }
+   }
+  },
+  "mperm": {
+   "count": 2,
+   "program_count": 20,
+   "results": {
+    "gauche": {
+     "status": "ok",
+     "times": [
+      2.099992334
+     ],
+     "rss_mb": 538.7,
+     "version": "gauche-0.9.15",
+     "count": 2,
+     "seconds": 2.099992334
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      16.718
+     ],
+     "rss_mb": 1699.2,
+     "version": "chibi-0.12.0",
+     "count": 2,
+     "seconds": 16.718
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      4.400714334,
+      3.415543292,
+      3.813906208
+     ],
+     "rss_mb": 12593.0,
+     "version": "truffle-scheme-jit",
+     "count": 2,
+     "seconds": 4.400714334,
+     "steady_seconds": 3.415543292
+    },
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      34.166516917
+     ],
+     "rss_mb": 13248.4,
+     "version": "truffle-scheme-interpreter",
+     "count": 1,
+     "seconds": 68.333033834
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.540306
+     ],
+     "rss_mb": 821.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 2,
+     "seconds": 0.540306
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      1.77
+     ],
+     "rss_mb": 1356.3,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 2,
+     "seconds": 1.77
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      1.398
+     ],
+     "rss_mb": 2922.7,
+     "version": "chicken-5.4.0",
+     "count": 2,
+     "seconds": 1.398
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      1.159238
+     ],
+     "rss_mb": 547.9,
+     "version": "guile-3.0.11",
+     "count": 2,
+     "seconds": 1.159238
+    }
+   }
+  },
+  "equal": {
+   "count": 10,
+   "program_count": 100,
+   "results": {
+    "chibi": {
+     "status": "ok",
+     "times": [
+      22.567
+     ],
+     "rss_mb": 262.1,
+     "version": "chibi-0.12.0",
+     "count": 10,
+     "seconds": 22.567
+    },
+    "jit": {
+     "status": "ok",
+     "times": [
+      0.838886,
+      0.580304958,
+      0.531522375
+     ],
+     "rss_mb": 1553.7,
+     "version": "truffle-scheme-jit",
+     "count": 10,
+     "seconds": 0.8388860000000001,
+     "steady_seconds": 0.531522375
+    },
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      0.907469833
+     ],
+     "rss_mb": 1187.5,
+     "version": "truffle-scheme-interpreter",
+     "count": 1,
+     "seconds": 9.07469833
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.372111
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 10,
+     "seconds": 0.372111
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      1.319
+     ],
+     "rss_mb": 158.0,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 10,
+     "seconds": 1.319
+    },
+    "chicken": {
+     "status": "timeout",
+     "times": [],
+     "rss_mb": 7.1,
+     "detail": "Running equal:10:100:8:1000:2000:5000",
+     "count": 10
+    },
+    "guile": {
+     "status": "timeout",
+     "times": [],
+     "rss_mb": 14.0,
+     "detail": "Running equal:10:100:8:1000:2000:5000",
+     "count": 10
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      7.177240583
+     ],
+     "rss_mb": 60.1,
+     "version": "gauche-0.9.15",
+     "count": 10,
+     "seconds": 7.177240583
+    }
+   }
+  },
+  "bv2string": {
+   "count": 10,
+   "program_count": 100,
+   "results": {
+    "jit": {
+     "status": "ok",
+     "times": [
+      0.970061167,
+      0.575505417,
+      0.517452708
+     ],
+     "rss_mb": 2025.5,
+     "version": "truffle-scheme-jit",
+     "count": 10,
+     "seconds": 0.9700611670000001,
+     "steady_seconds": 0.517452708
+    },
+    "interpreter": {
+     "status": "ok",
+     "times": [
+      0.744875417
+     ],
+     "rss_mb": 1169.3,
+     "version": "truffle-scheme-interpreter",
+     "count": 1,
+     "seconds": 7.448754170000001
+    },
+    "chez": {
+     "status": "ok",
+     "times": [
+      0.050208
+     ],
+     "rss_mb": 50.4,
+     "version": "chez-10.4.1+r7rs",
+     "count": 10,
+     "seconds": 0.05020800000000001
+    },
+    "racket": {
+     "status": "ok",
+     "times": [
+      0.076
+     ],
+     "rss_mb": 149.8,
+     "version": "racket-9.3/r7rs+chez",
+     "count": 10,
+     "seconds": 0.076
+    },
+    "chicken": {
+     "status": "ok",
+     "times": [
+      0.231
+     ],
+     "rss_mb": 12.5,
+     "version": "chicken-5.4.0",
+     "count": 10,
+     "seconds": 0.231
+    },
+    "guile": {
+     "status": "ok",
+     "times": [
+      0.094478
+     ],
+     "rss_mb": 34.8,
+     "version": "guile-3.0.11",
+     "count": 10,
+     "seconds": 0.094478
+    },
+    "gauche": {
+     "status": "ok",
+     "times": [
+      0.56344425
+     ],
+     "rss_mb": 44.2,
+     "version": "gauche-0.9.15",
+     "count": 10,
+     "seconds": 0.56344425
+    },
+    "chibi": {
+     "status": "ok",
+     "times": [
+      0.547
+     ],
+     "rss_mb": 9.0,
+     "version": "chibi-0.12.0",
+     "count": 10,
+     "seconds": 0.547
+    }
+   }
+  }
+ },
+ "minutes": 104.5
+}

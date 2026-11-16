@@ -1,0 +1,72 @@
+name: Benchmark report
+
+# The comparative report (plan.md M5-02, bench/README.md): ecraven's R7RS benchmarks on us and on
+# Chez, Racket, Chicken, Guile, Gauche and chibi, as `mx r7rs-bench-report` runs them. Too slow
+# for every PR: by hand (Actions > Benchmark report > Run workflow, or `gh workflow run
+# benchmarks.yml`), weekly, and on PRs that change this file. The report (Markdown and JSON) is
+# the run's artifact and its summary. A shared CI runner is noisy: the committed
+# docs/benchmarks.md comes from a dedicated machine.
+on:
+  workflow_dispatch:
+    inputs:
+      benchmarks:
+        description: "Programs (comma-separated; empty: the default subset; 'all': every program)"
+        required: false
+        default: ""
+      scale:
+        description: "Count scale (1: each program's own count, as in ecraven's tables)"
+        required: false
+        default: "0.1"
+  schedule:
+    - cron: "17 4 * * 1"   # Mondays 04:17 UTC
+  pull_request:
+    paths:
+      - .github/workflows/benchmarks.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benchmarks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  report:
+    name: Benchmark report
+    runs-on: ubuntu-26.04
+    timeout-minutes: 240
+    env:
+      # A small subset, one or two per group of the bench script, that finishes in well under an
+      # hour at a tenth of the counts.
+      DEFAULT_BENCHMARKS: fib,tak,deriv,destruc,nqueens,earley,fibfp,sum,string,mazefun,primes,gcbench
+      BENCHMARKS: ${{ github.event.inputs.benchmarks }}
+      SCALE: ${{ github.event.inputs.scale || '0.1' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: DeterminateSystems/determinate-nix-action@v3
+      - uses: actions/cache@v6
+        with:
+          path: ~/.mx/cache
+          key: mx-cache-${{ runner.os }}-${{ hashFiles('mx.r7rs/suite.py', 'flake.lock') }}
+          restore-keys: mx-cache-${{ runner.os }}-
+      - name: Dev shell with the other implementations
+        run: nix develop .#bench --command sh -c 'java -version && scheme --version && gosh -V | head -1 && csc -version | head -1 && guile --version | head -1 && racket --version && chibi-scheme -V'
+      - name: mx build
+        run: nix develop .#bench --command mx build
+      - name: mx r7rs-bench-report
+        run: |
+          case "$BENCHMARKS" in
+            all) selection= ;;
+            "") selection="--benchmarks $DEFAULT_BENCHMARKS" ;;
+            *) selection="--benchmarks $BENCHMARKS" ;;
+          esac
+          nix develop .#bench --command mx r7rs-bench-report $selection --scale "$SCALE" \
+            --note "GitHub Actions runner ($(nproc) vCPUs, shared): expect noise; run $GITHUB_RUN_ID." \
+            --output report/benchmarks.md --json report/benchmarks.json
+          cat report/benchmarks.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: benchmark-report
+          path: report/
+          if-no-files-found: error

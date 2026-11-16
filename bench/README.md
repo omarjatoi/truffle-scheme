@@ -81,6 +81,62 @@ A benchmark fails when the JVM exits nonzero, prints `ERROR:` (a failed
 check, or an uncaught Scheme error), or prints fewer `Elapsed time` lines than
 iterations. `mx benchmark` then names it and exits 1, after running the rest.
 
+## Comparative report
+
+`docs/benchmarks.md` (plan.md M5-02) compares us with the other R7RS
+implementations nixpkgs has, on ecraven's set, the way his published tables
+do. `nix develop .#bench` is the default shell plus Chez Scheme (with
+chez-srfi), Racket, Chicken (with the r7rs egg), Guile and Gauche; chibi is in
+both. One command runs everything and writes the page and its data
+(`docs/benchmarks.json`):
+
+```
+nix develop .#bench --command mx r7rs-bench-report --note "quiet machine"
+nix develop .#bench --command mx r7rs-bench-report --benchmarks fib,tak --scale 0.1   # a quick look
+mx r7rs-bench-report --render-only        # rewrite the page from the JSON
+```
+
+Each other implementation runs as upstream's `bench` script runs it: the
+program is `cat <Impl>-prelude.scm <program>.scm common.scm
+<Impl>-postlude.scm common-postlude.scm`, compiled with the script's
+`<impl>_comp` command and run with its `<impl>_exec` command (the report lists
+them), with the `.input` file on standard input, in a fresh process. The
+number is the one the harness prints, as in ecraven's tables: startup and
+compilation excluded. We don't vendor the preludes and postludes or
+anything else the other implementations need (`r7rs-ecraven/README.md`); the
+command downloads them, pinned, into `bench/.cache/` (gitignored):
+
+- the preludes and postludes, from ecraven's repository at the commit in
+  `r7rs-ecraven/benchmarks.tsv`;
+- for Chez, ecraven's R7RS libraries for Chez Scheme
+  (`ecraven/chez-scheme-libraries`, which his script names with `--libdirs`).
+  They predate Chez 10, which added `vector-copy!` and `vector-append` to
+  `(chezscheme)`, so each library is patched to leave out of its
+  `(chezscheme)` import what it defines itself;
+- for Gauche, SLIB, which its postlude imports;
+- for Racket, the `r7rs` package, which its prelude's `#lang r7rs` needs.
+
+Options: `--benchmarks` and `--implementations` choose rows and columns;
+`--scale F` runs every program `F` times its count on every implementation
+(the Count column says so); our interpreter runs `--interpreter-scale` (0.1)
+times that again, its time scaled back up and marked; our JIT's JVM runs the
+harness `--jit-iterations` (3) times, the first being the comparable number
+and the best of the rest the steady state; `--timeout` (300 s, ecraven's
+`CPU_LIMIT`) kills a run, and `--interpreter-timeout` our interpreter's (ten
+programs have a count of 1, which no scale reduces). Implementations take
+turns per program, in a rotating order, so a machine whose load changes during
+the run affects them evenly.
+
+How long it takes: the committed report (`--scale 0.1 --interpreter-timeout
+60`, every program) took 105 minutes on a loaded 16-core machine, most of it
+chibi's and our interpreter's timeouts and the programs whose count is 1; CI's
+twelve programs at the same scale take about 25 minutes. With the programs'
+own counts, expect several hours.
+
+CI runs it on a subset at a tenth of the counts, weekly and by hand
+(`.github/workflows/benchmarks.yml`, `gh workflow run benchmarks.yml`), and
+attaches the page and JSON to the run as the `benchmark-report` artifact.
+
 ## Failures
 
 Programs that don't run or don't pass their own check. A row is either out of

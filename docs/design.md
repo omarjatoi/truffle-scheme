@@ -29,6 +29,14 @@ full R7RS-small conformance comes first.
   argument copy; its errors are raised in the calling frame (D8). Only the
   primitives that transfer control (`apply`, `call/cc`, `eval`, `load`, and
   the continuation internals) are still called.
+- **Inline caches for tail calls, and splitting (M5-10).** Each non-tail call
+  site (and each prompt) has a trampoline node of its own, `Trampoline`, with
+  a 4-entry `DirectCallNode` cache keyed on the tail-called procedure's call
+  target, so a procedure reached by a tail call can be inlined into the site
+  and its `TailCall` scalar-replaced. A call site that has seen a second
+  procedure reports polymorphism, so Truffle splits the procedure it is in
+  per caller (25.5's Bytecode DSL can't compile `@ReportPolymorphism` on an
+  operation, so the cache initializers report).
 - Self tail calls in named `let` and `do` compile to loops (back-edges, OSR).
 
 ### Continuations: a segmented stack
@@ -158,7 +166,11 @@ Each entry: the decision, why, and what was rejected.
 ### D2. Closures: flat closures with assignment conversion
 
 - The compiler computes each lambda's free variables and copies their values
-  into `SClosure.captured`.
+  into `SClosure.captured`. The array is never written once the closure
+  exists, so it is `@CompilationFinal(dimensions = 1)` (M5-10): a closure
+  that is a compilation constant has constant captured values. Anything that
+  patches a captured slot after creation (Fixing Letrec, say) must do it
+  before the closure can be called or reached by other code.
 - **Any variable that is the target of `set!` lives in a heap `Box`.** The
   frame holds the box, never the value. `letrec*` and internal `define`
   variables are boxed when a closure captures them. "Fixing Letrec" (avoiding
@@ -327,6 +339,10 @@ Each entry: the decision, why, and what was rejected.
 - Nix (`flake.nix`) provides the whole dev shell: GraalVM, `mx` (copied out
   of the store into a writable cache dir, because mx writes into its own
   checkout), Python, `gh` and chibi-scheme. There's nothing to fetch by hand.
+  `nix develop .#bench` adds the other R7RS implementations (Chez, Racket,
+  Chicken, Guile, Gauche) for M5-02's comparative report
+  (`mx r7rs-bench-report`); they're kept out of the default shell so CI jobs
+  don't download them.
 - *Rejected:* importing the `truffle` suite from a pinned graal master commit
   with a matching labsjdk (the original D11). It gets Bytecode DSL changes
   before release, but needs a ~1.5 GB graal checkout plus a labsjdk whose
