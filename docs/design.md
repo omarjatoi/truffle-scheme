@@ -492,8 +492,33 @@ Each entry: the decision, why, and what was rejected.
   Instrumentation is off until a tool attaches, so it costs nothing
   otherwise. Frames on the heap reach error traces, the debugger and the
   sampler too: see "Spilled frames in tools" above.
+- **Scopes, names and evaluation in a frame (M6-05).** A frame's scope
+  (`tagTreeNodeLibrary`, `FrameScope`) shows the variables Scheme code there
+  can refer to: the locals live at that bytecode index (a let's and a
+  letrec*'s locals are scoped to their block, so an inner binding hides an
+  outer one), the running closure's captured variables (their names are
+  root fields, `capturedNames`), and a fixed letrec* variable's own closure.
+  A `Box` shows its contents. Compiler temporaries and the variables of a
+  macro's template (bound by an identifier with an introduction scope, which
+  no code the user wrote can refer to) are unnamed locals, so they don't
+  show. Only boxed variables are writable, from the scope or by `set!` in
+  evaluated code: every other variable is immutable as Scheme sees it, and
+  its frame slot or captured value is a copy that closures and continuation
+  segments (immutable, AGENTS.md rule 3) share. `DebugStackFrame.eval`
+  compiles the code (`parse(InlineParsingRequest)`) as a body whose
+  parameters are the frame's variables, in the interaction environment, and
+  passes a boxed variable as its Box. A procedure's frames are named by its
+  binding (`define`, `let`, `letrec*`, `set!`, through a let body, as a
+  record accessor is), else by its location, `<lambda@file.scm:3:5>`;
+  `write` still shows only binding names. A `TailCall` (what a procedure
+  ending in a tail call returns, so a debugger's return value after stepping
+  out of it) shows as the call it stands for, `#<tail call (g 2)>`.
 - Why: Truffle already does this well; positions and tags are data we have
   (syntax objects) handed to machinery we don't have to write.
+- *Rejected:* the Bytecode DSL's default scope (raw slots: temporaries as
+  `local3`, boxes as objects, no captured variables, and every slot
+  writable, including a heap segment's); a parent scope with the globals
+  (the debugger already shows the top scope, thousands of names, by itself).
 - **The standard libraries are cached per JVM (M5-03).** After the second
   context of a JVM has instantiated them the normal way, it saves a
   `PreludeImage`: the library bodies serialized with the Bytecode DSL

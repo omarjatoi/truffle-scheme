@@ -216,7 +216,11 @@ def _dap_stopped(client, path, expected_x):
     _check('loop' in names[1:], f'DAP: square\'s caller loop is not on the stack: {names}')
     variables = client.variables(top['id'])
     _check(variables.get('x') == expected_x, f'DAP: expected x = {expected_x} in square, got {variables}')
-    mx.log(f'  dap: stopped at the breakpoint in square, stack {names}, x = {variables["x"]}')
+    # The caller loop (sum-squares's named let) has its parameters and the captured n (plan.md M6-05).
+    loop = client.variables(frames[names.index('loop', 1)]['id'])
+    _check(loop.get('i') == expected_x and loop.get('n') == '5' and 'acc' in loop,
+           f'DAP: expected i = {expected_x}, acc and the captured n = 5 in loop, got {loop}')
+    mx.log(f'  dap: stopped at the breakpoint in square, stack {names}, x = {variables["x"]}, loop\'s n = {loop["n"]}')
     return thread, top
 
 
@@ -241,7 +245,11 @@ def _dap(workdir, port, command):
             top = client.request('stackTrace', threadId=event['body']['threadId'])['stackFrames'][0]
             _check(top['name'] == 'square' and (top['line'], top['column']) != (first['line'], first['column']),
                    f'DAP: after stepping over, expected a later statement of square, got {top["name"]} at {top["line"]}:{top["column"]}')
-            mx.log(f'  dap: stepped over to {top["name"]} {top["line"]}:{top["column"]}, variables {client.variables(top["id"])}')
+            stepped = client.variables(top['id'])
+            # A runtime marker (a tail call request) never shows as a foreign object (plan.md M6-05).
+            _check(not any('scheme.runtime.' in str(v) for v in stepped.values()), f'DAP: a runtime object leaked into the variables: {stepped}')
+            local = {k: v for k, v in stepped.items() if not v.startswith('#<procedure')}
+            mx.log(f'  dap: stepped over to {top["name"]} {top["line"]}:{top["column"]}, variables {local}')
 
             # Continue: the next hit is square(1). Then clear the breakpoint and run to the end.
             client.request('continue', threadId=thread)

@@ -56,6 +56,15 @@ public interface SchemeCompiler {
     SClosure compileLoad(SchemeLanguage language, SchemeContext context, Source source, SEnvironment environment);
 
     /**
+     * Code a debugger evaluates in a suspended frame (plan.md M6-05): the source's forms, as a body,
+     * compiled into a procedure whose parameters are the frame's variables by name, in the
+     * interaction environment (design.md D15). A variable with {@code boxed} set is passed as its Box
+     * and used as the procedure's own; {@code set!} of any other is a syntax error, since it would
+     * change only a copy.
+     */
+    SClosure compileInFrame(SchemeLanguage language, SchemeContext context, Source source, String[] names, boolean[] boxed);
+
+    /**
      * The names of the interaction environment's bound variables, imported or defined (not syntactic
      * keywords): the top scope's members (design.md D10).
      */

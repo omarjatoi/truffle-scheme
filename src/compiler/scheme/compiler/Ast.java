@@ -35,6 +35,13 @@ final class Ast {
         boolean fixed;
         /** For a fixed variable: the lambda it is bound to, in whose root it is the running closure. */
         Lambda self;
+        /** Bound by an identifier a macro introduced: no code the user wrote can refer to it. */
+        boolean introduced;
+        /**
+         * A parameter of an expression evaluated in a debugger's frame whose variable there is boxed
+         * (plan.md M6-05): its argument is that Box itself, so {@code set!} writes the frame's variable.
+         */
+        boolean preboxed;
 
         Var(SSymbol name, Lambda owner, boolean letrec) {
             this.name = name;
@@ -43,7 +50,15 @@ final class Ast {
         }
 
         boolean boxed() {
-            return assigned || (letrec && captured && !fixed);
+            return preboxed || assigned || (letrec && captured && !fixed);
+        }
+
+        /**
+         * Whether tools show the variable (plan.md M6-05): not one a macro introduced, nor one of the
+         * runtime's internals ({@code %}-prefixed, like a body's anonymous bindings, design.md D14).
+         */
+        boolean visible() {
+            return !introduced && !name.toString().startsWith("%");
         }
     }
 
@@ -171,6 +186,8 @@ final class Ast {
         final Map<Var, Integer> free = new LinkedHashMap<>();
         Expr body;
         String name;
+        /** The fixed letrec* variable bound to this lambda, if any ({@link Closures}). */
+        Var self;
 
         Lambda(Lambda parent, boolean program) {
             this.parent = parent;

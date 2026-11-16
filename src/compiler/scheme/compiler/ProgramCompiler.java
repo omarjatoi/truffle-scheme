@@ -187,6 +187,19 @@ public final class ProgramCompiler implements SchemeCompiler {
         return new SClosure(generate(language, thunk), NO_CAPTURES);
     }
 
+    @Override
+    @TruffleBoundary
+    public SClosure compileInFrame(SchemeLanguage language, SchemeContext context, Source source, String[] names, boolean[] boxed) {
+        CompilerState state = (CompilerState) context.compilerState;
+        Expander expander = new Expander(context.symbols, state.interaction, state.top, state.interactionScope, state.libraries, new SourceDir.Files(context.getEnv(), null));
+        List<SSymbol> symbols = new ArrayList<>(names.length);
+        for (String name : names) {
+            symbols.add(context.symbols.intern(name));
+        }
+        Ast.Lambda procedure = expander.expandInFrame(Expander.readForms(source, context.symbols, false), symbols, boxed);
+        return new SClosure(generate(language, procedure), NO_CAPTURES);
+    }
+
     /**
      * A syntax error at run time, from {@code eval}, {@code load} or {@code environment}, is an
      * error object that Scheme handlers see (R7RS §6.12), not a parse error of the program (design.md

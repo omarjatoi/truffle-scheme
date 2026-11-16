@@ -202,9 +202,12 @@ final class CodeGenerator {
                 b.beginSourceSection(section.getCharIndex(), section.getCharLength());
                 st.source = section.getSource();
             }
-            for (Var v : fn.owned) {
-                // Named, so the debugger shows Scheme variables by name; temporaries stay unnamed.
-                st.locals.put(v, b.createLocal(v.name.toString(), null));
+            // The parameters' locals are the root's; a let's or letrec*'s are its block's.
+            for (Var v : fn.params) {
+                createLocal(st, v);
+            }
+            if (fn.rest != null) {
+                createLocal(st, fn.rest);
             }
             if (!fn.program) {
                 int n = fn.params.size();
@@ -248,15 +251,74 @@ final class CodeGenerator {
             }
             SchemeRootNode root = b.endRoot();
             root.setName(fn.program ? "<program>" : fn.name);
+            root.setVariableNames(capturedNames(fn), fn.self != null && fn.self.visible() ? fn.self.name.toString() : null);
             holder.root = root;
         });
         push(seq);
     }
 
-    /** Initializes a variable owned by the current lambda: in a fresh box if it is boxed. */
+    /**
+     * A local for a variable owned by the current root, scoped to the block being built (design.md
+     * D2). Named if tools show it ({@link Var#visible}), so that the debugger's scope has it; a
+     * temporary or a macro's own variable stays unnamed (plan.md M6-05).
+     */
+    private void createLocal(State st, Var v) {
+        st.locals.put(v, b.createLocal(v.visible() ? v.name.toString() : null, null));
+    }
+
+    /** The names of the lambda's captured variables by slot, null for one tools don't show; or null. */
+    private static String[] capturedNames(Lambda fn) {
+        String[] names = new String[fn.free.size()];
+        boolean any = false;
+        for (Map.Entry<Var, Integer> e : fn.free.entrySet()) {
+            if (e.getKey().visible()) {
+                names[e.getValue()] = e.getKey().name.toString();
+                any = true;
+            }
+        }
+        return any ? names : null;
+    }
+
+    /**
+     * Names the lambdas that the value of {@code e}, bound to a variable of this name, can be
+     * (plan.md M6-05): {@code e} itself, or the value of a let's, letrec*'s or sequence's body, or of
+     * either branch of an if. A lambda the expander already named (a definition's) keeps its name.
+     */
+    private static void nameValue(Expr e, String name) {
+        Deque<Expr> todo = new ArrayDeque<>();
+        todo.push(e);
+        while (!todo.isEmpty()) {
+            Expr x = todo.pop();
+            if (x instanceof Lambda fn) {
+                if (fn.name == null && !fn.program) {
+                    fn.name = name;
+                }
+            } else if (x instanceof Ast.Let l) {
+                todo.push(l.body);
+            } else if (x instanceof Ast.Letrec l) {
+                todo.push(l.body);
+            } else if (x instanceof Ast.Seq s && !s.body.isEmpty()) {
+                todo.push(s.body.get(s.body.size() - 1));
+            } else if (x instanceof Ast.If i) {
+                todo.push(i.consequent);
+                todo.push(i.alternative);
+            }
+        }
+    }
+
+    private static void nameValue(Expr e, Var v) {
+        if (v.visible()) {
+            nameValue(e, v.name.toString());
+        }
+    }
+
+    /**
+     * Initializes a variable owned by the current lambda: in a fresh box if it is boxed, unless its
+     * value is a box already (a debugger frame's variable, {@link Var#preboxed}).
+     */
     private void store(Var v, Runnable value) {
         b.beginStoreLocal(state().locals.get(v));
-        if (v.boxed()) {
+        if (v.boxed() && !v.preboxed) {
             b.beginMakeBox();
             value.run();
             b.endMakeBox();
@@ -321,6 +383,7 @@ final class CodeGenerator {
         } else if (e instanceof Ast.GlobalRef g) {
             return leaf(() -> b.emitGlobalRef(g.cell), ctx);
         } else if (e instanceof Ast.LocalSet s) {
+            nameValue(s.value, s.var);
             return valued(List.of(() -> {
                 b.beginBlock();
                 b.beginBoxSet();
@@ -331,6 +394,7 @@ final class CodeGenerator {
                 b.endBlock();
             }), ctx);
         } else if (e instanceof Ast.GlobalSet s) {
+            nameValue(s.value, s.cell.name.toString());
             return valued(List.of(() -> {
                 b.beginBlock();
                 if (s.define) {
@@ -374,11 +438,13 @@ final class CodeGenerator {
             seq.add(() -> {
                 b.beginBlock();
                 for (Var v : l.vars) {
+                    createLocal(state(), v);
                     store(v, () -> b.emitLoadConstant(SConstant.UNSPECIFIED));
                 }
             });
             for (int k = 0; k < l.vars.size(); k++) {
                 Var v = l.vars.get(k);
+                nameValue(l.inits.get(k), v);
                 if (v.boxed()) {
                     seq.add(() -> {
                         b.beginBoxSet();
@@ -441,8 +507,10 @@ final class CodeGenerator {
         seq.add(b::beginBlock);
         for (int k = 0; k < n; k++) {
             Var v = l.vars.get(k);
+            nameValue(l.inits.get(k), v);
             boolean boxNow = v.boxed() && k == n - 1;
             seq.add(() -> {
+                createLocal(state(), v);
                 b.beginStoreLocal(state().locals.get(v));
                 if (boxNow) {
                     b.beginMakeBox();

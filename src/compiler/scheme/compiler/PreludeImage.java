@@ -161,7 +161,7 @@ final class PreludeImage {
 
     private static boolean isShared(Object o) {
         return o instanceof Long || o instanceof Double || o instanceof Boolean || o instanceof SChar || o instanceof SConstant || o instanceof SBigInteger || o instanceof SRational ||
-                        o instanceof SComplex || o instanceof String || o instanceof Source || o instanceof SourceSection;
+                        o instanceof SComplex || o instanceof String || o instanceof String[] || o instanceof Source || o instanceof SourceSection;
     }
 
     private static void writeString(DataOutput out, String s) throws IOException {
@@ -277,6 +277,7 @@ final class PreludeImage {
             imageOut.writeInt(scopes.size());
             for (Scope scope : scopes) {
                 imageOut.writeInt(rank.get(scope));
+                imageOut.writeBoolean(scope.isIntroduction());
             }
             imageOut.writeInt(scopeSets.size());
             for (ScopeSet set : scopeSets) {
@@ -531,12 +532,14 @@ final class PreludeImage {
         Restored read(Function<CompilerState, Libraries> makeLibraries) throws IOException {
             DataInputStream in = new DataInputStream(new ByteArrayInputStream(state));
             int[] ranks = new int[in.readInt()];
+            boolean[] introductionByRank = new boolean[ranks.length];
             for (int i = 0; i < ranks.length; i++) {
                 ranks[i] = in.readInt();
+                introductionByRank[ranks[i]] = in.readBoolean();
             }
             Scope[] byRank = new Scope[ranks.length];
             for (int i = 0; i < byRank.length; i++) {
-                byRank[i] = new Scope();
+                byRank[i] = introductionByRank[i] ? Scope.introduction() : new Scope();
             }
             scopes = new Scope[ranks.length];
             for (int i = 0; i < ranks.length; i++) {

@@ -6,7 +6,10 @@ import java.util.List;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.bytecode.ContinuationRootNode;
 import com.oracle.truffle.api.frame.MaterializedFrame;
+import com.oracle.truffle.api.interop.InteropLibrary;
 import com.oracle.truffle.api.interop.TruffleObject;
+import com.oracle.truffle.api.library.ExportLibrary;
+import com.oracle.truffle.api.library.ExportMessage;
 
 /**
  * A control request travelling up the stack (design.md "Continuations", D4). Every non-tail call
@@ -26,8 +29,27 @@ import com.oracle.truffle.api.interop.TruffleObject;
  * <li>{@link Kind#TORTURE}: torture mode (M2-06). A call returned {@link #value} normally; capture
  * up to the root prompt anyway, which resumes every frame from a copy with that value.</li>
  * </ul>
+ *
+ * <p>A procedure whose frame suspends returns it, so tools may see it as a return value; they show
+ * it as {@code #<capture>}, not as a foreign object (plan.md M6-05).
  */
+@ExportLibrary(InteropLibrary.class)
 public final class Capture implements TruffleObject {
+
+    @ExportMessage
+    boolean hasLanguageId() {
+        return true;
+    }
+
+    @ExportMessage
+    String getLanguageId() {
+        return SchemeLanguage.ID;
+    }
+
+    @ExportMessage
+    Object toDisplayString(@SuppressWarnings("unused") boolean allowSideEffects) {
+        return "#<capture>";
+    }
 
     public enum Kind {
         FULL,
