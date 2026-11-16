@@ -12,6 +12,7 @@ import com.oracle.truffle.api.staticobject.StaticProperty;
 import scheme.runtime.Capture;
 import scheme.runtime.Continuation;
 import scheme.runtime.DynEnv;
+import scheme.runtime.Intrinsics;
 import scheme.runtime.InvokeContinuation;
 import scheme.runtime.PrimitiveNode;
 import scheme.runtime.PrimitiveRootNode;
@@ -99,20 +100,9 @@ final class ControlPrimitives {
             return eq(args[1], args[2]);
         }
 
+        /** The {@code Eq} operation's (plan.md M7-03), which compares numbers by value (design.md D1). */
         static boolean eq(Object a, Object b) {
-            if (a == b) {
-                return true;
-            }
-            if (a instanceof Long x && b instanceof Long y) {
-                return x.longValue() == y.longValue();
-            }
-            if (a instanceof SChar x && b instanceof SChar y) {
-                return x.codePoint == y.codePoint;
-            }
-            if (a instanceof Boolean x && b instanceof Boolean y) {
-                return x.booleanValue() == y.booleanValue();
-            }
-            return false;
+            return Intrinsics.eq(a, b);
         }
     }
 

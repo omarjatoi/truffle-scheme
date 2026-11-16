@@ -728,7 +728,7 @@ deferral that was never scheduled. Each task comes from a PR's follow-ups
   - **Done when** `TraceSplitting` shows `map` and `for-each` split per call
     site, the interpreter benchmarks improve, and torture, the spec cases and
     both suites still pass.
-- [ ] **M7-03 · Typed fast paths for hot primitives** *(needs M7-02)*
+- [x] **M7-03 · Typed fast paths for hot primitives** *(needs M7-02)*
   - DSL nodes with typed specializations and fixed-arity fast paths for the
     hottest primitives (`car`, `cdr`, `cons`, `+`, `-`, `<`, `=`, `eq?`,
     `vector-ref`, …) instead of the generic `invoke(Object[])` loops (M5-09),

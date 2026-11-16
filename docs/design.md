@@ -29,6 +29,50 @@ full R7RS-small conformance comes first.
   argument copy; its errors are raised in the calling frame (D8). Only the
   primitives that transfer control (`apply`, `call/cc`, `eval`, `load`, and
   the continuation internals) are still called.
+- **The hottest primitives are operations of their own (M7-03).** A call of
+  `car`, `cdr`, `cons`, `null?`, `pair?`, `eq?`, `not`, `+`, `-`, `*`, `/`,
+  `quotient`, `remainder`, `modulo`, `=`, `<`, `>`, `<=`, `>=`, `zero?`,
+  `vector-ref`, `vector-set!` or `vector-length` with the number of arguments
+  the operation takes (two for the arithmetic and the comparisons) compiles
+  to a Bytecode DSL operation
+  (`Intrinsics`) that takes the arguments as operands: no argument array, no
+  `Call`, no capture check after it. Its specializations return `long`,
+  `double` or `boolean`, and the root has the DSL's boxing elimination for
+  those types, so a fixnum or flonum stays unboxed from one operation to the
+  next, in locals (a loop's variables), and out of a `long[]` or `double[]`
+  vector (M5-06); an `if` whose test is a predicate's operation branches on
+  its boolean without `Truthy`. A case a fast path doesn't take (a bignum or
+  rational, mixed exactness, an overflow after the first, a store that
+  generalizes a vector, an error) goes to the primitive's own node, as a call
+  runs it in place, so the primitive alone defines the semantics.
+  - Only a call of the primitive's own variable is compiled this way: one of
+    the primitives' cells (`GlobalCell.isFixed`), which every library and
+    program that uses `car` imports. Its value can't change: assigning an
+    imported variable is a syntax error, and a definition makes a new
+    variable (D7, D15), so `(define (car x) ...)` in a program or at the REPL
+    binds a variable of its own, which is called. So the operations need no
+    guard and no way back to a call; defining or assigning a fixed cell is an
+    internal error. A variable of the program's that holds a primitive
+    (`(define first car)`) is called, and its primitive run in place.
+  - An error is raised in the operation's frame (D8): its generic path stores
+    the bytecode index, so the frame's location is the expression, and calls
+    `raise` as a call site would. `raise` never returns (§6.11), so when it
+    comes back with a capture (a handler invoked or captured a continuation,
+    torture, a spill), the frame can't and needn't suspend in the middle of an
+    expression: the operation throws `AbandonedFrame` and the root returns
+    the capture (`interceptControlFlowException`), with no segment of the
+    frame, which nothing could resume. In tail position the error leaves the
+    frame for the call site that called it, as from a primitive a tail call
+    runs in place (M5-09).
+  - *Rejected:* guarding each operation on the cell's assumption with a
+    generic call to fall back to, which needs the arguments twice (evaluated
+    into locals, or the code emitted twice) and a branch per call; keeping the
+    `CallSite` capture check after each operation, which loses boxing
+    elimination at every one and costs three instructions (on `fib` and `tak`
+    in the interpreter, both measured 13-38% slower than a bare operation);
+    a `TryCatch` around each root's body whose handler raises the error, since
+    every exception that passes through is then rethrown from the handler,
+    whose index becomes the frame's location in the stack trace.
 - **Inline caches for tail calls, and splitting (M5-10).** Each non-tail call
   site (and each prompt) has a trampoline node of its own, `Trampoline`, with
   a 4-entry `DirectCallNode` cache keyed on the tail-called procedure's call
@@ -207,8 +251,10 @@ Each entry: the decision, why, and what was rejected.
 | multiple values | a single value is returned as itself; zero or 2+ values are a `MultipleValues` (`Object[]`) |
 | record | `SRecord { SRecordType }`, a static object of Truffle's Static Object Model whose fields are its record fields (M7-04) |
 
-- `eq?` compares `long` and `SChar` by value and everything else by identity,
-  so boxing never leaks into results.
+- `eq?` compares `long`, `double` (as `eqv?` does), `SChar` and `boolean` by
+  value and everything else by identity, so boxing never leaks into results: a
+  flonum in a local or in a `double[]` vector is unboxed (M5-06, M7-03), and
+  boxed anew each time it is read as an object.
 - **Full numeric tower.** Exact and inexact integers, rationals, reals and
   complex numbers, with `(scheme complex)` and `(scheme inexact)`.
   - **Canonical forms.** Every arithmetic result is normalized: a big result
