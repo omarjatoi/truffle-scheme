@@ -128,7 +128,8 @@ filegroup(
 
 # `conformance_results_<suite>`: the suite run interpreted only, as a cached build action (its
 # status block part and pass counts). `conformance_status`: docs/plan.md's status block is
-# current. `conformance_torture_<suite>`: no section passes less under torture.
+# current. `conformance_torture_<suite>`: no section passes less under torture. The results are
+# inputs of the status test, so `bazel build //...` runs the suites too (once; then cached).
 conformance_tests(
     name = "conformance",
     module = "//:scheme_launcher",

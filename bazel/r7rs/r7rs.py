@@ -104,7 +104,7 @@ class Runtime:
     def run(self, jvm_args, main, args, cwd=None, env=None):
         """Runs java; returns (exit status, stdout, stderr)."""
         p = subprocess.run(self.command(jvm_args, main) + list(args), cwd=cwd, env=env,
-                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors='replace')
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='replace')
         return p.returncode, p.stdout, p.stderr
 
 
@@ -114,7 +114,7 @@ def run_ours(runtime, file, mode_args, jvm_args=()):
 
 
 def run_chibi(chibi, file):
-    p = subprocess.run([chibi, file], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors='replace')
+    p = subprocess.run([chibi, file], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='replace')
     return p.returncode, p.stdout, p.stderr
 
 
