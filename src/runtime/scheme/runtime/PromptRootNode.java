@@ -4,6 +4,7 @@ import com.oracle.truffle.api.CallTarget;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.DirectCallNode;
 import com.oracle.truffle.api.nodes.RootNode;
+import com.oracle.truffle.api.source.SourceSection;
 
 /**
  * The root prompt around a program (design.md D6): runs the program and drives its continuation
@@ -20,6 +21,12 @@ public final class PromptRootNode extends RootNode {
         super(language);
         this.body = DirectCallNode.create(body);
         this.driver = new PromptDriver();
+    }
+
+    /** The program's own source section (design.md D13), so the prompt's frame has a location too. */
+    @Override
+    public SourceSection getSourceSection() {
+        return ((com.oracle.truffle.api.RootCallTarget) body.getCallTarget()).getRootNode().getSourceSection();
     }
 
     @Override

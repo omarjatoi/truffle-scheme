@@ -5,6 +5,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import com.oracle.truffle.api.source.SourceSection;
+
 import scheme.runtime.GlobalCell;
 import scheme.runtime.value.SSymbol;
 
@@ -34,6 +36,8 @@ final class Ast {
     }
 
     abstract static class Expr {
+        /** Where the form this came from is in the program text (design.md D13), or null. */
+        SourceSection source;
     }
 
     static final class Const extends Expr {

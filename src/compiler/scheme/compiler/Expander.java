@@ -9,6 +9,7 @@ import java.util.Map;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.source.Source;
+import com.oracle.truffle.api.source.SourceSection;
 
 import scheme.compiler.Ast.Expr;
 import scheme.compiler.Ast.Lambda;
@@ -218,7 +219,7 @@ public final class Expander {
     @TruffleBoundary
     private SchemeError syntax(String message, Object form) {
         Syntax at = form instanceof Syntax s && s.source != null ? s : current;
-        String line = at == null ? "" : " (line " + at.source.getStartLine() + ")";
+        String line = at == null ? "" : " (" + at.source.getSource().getName() + ", line " + at.source.getStartLine() + ", column " + at.source.getStartColumn() + ")";
         return new SchemeError("syntax error: " + message + ": " + Printer.print(Syntax.toDatum(form), Printer.Mode.WRITE) + line);
     }
 
@@ -325,6 +326,9 @@ public final class Expander {
     }
 
     private abstract static class Frame {
+        /** The source of the form this frame expands, for its result (design.md D13). */
+        SourceSection source;
+
         /** An {@link Expand}, a {@link Frame} to run, or {@link #DONE}. */
         abstract Object next();
 
@@ -347,6 +351,9 @@ public final class Expander {
             if (step == DONE) {
                 stack.pop();
                 Expr e = frame.finish();
+                if (e.source == null) {
+                    e.source = frame.source;
+                }
                 if (stack.isEmpty()) {
                     return e;
                 }
@@ -354,14 +361,34 @@ public final class Expander {
             } else if (step instanceof Frame f) {
                 stack.push(f);
             } else {
-                Object result = expand((Expand) step);
+                Expand expand = (Expand) step;
+                SourceSection source = sourceOf(expand.form());
+                Object result = expand(expand);
                 if (result instanceof Frame f) {
+                    if (f.source == null) {
+                        f.source = source;
+                    }
                     stack.push(f);
                 } else {
-                    delivered = (Expr) result;
+                    Expr e = (Expr) result;
+                    if (e.source == null) {
+                        e.source = source;
+                    }
+                    delivered = e;
                 }
             }
         }
+    }
+
+    /** The source section of a form to expand, if it has one. */
+    private static SourceSection sourceOf(Object form) {
+        if (form instanceof Syntax s) {
+            return s.source;
+        }
+        if (form instanceof LambdaSpec spec && spec.form() instanceof Syntax s) {
+            return s.source;
+        }
+        return null;
     }
 
     /** Expands a program or library body, adding this unit's top-level scope to its forms. */

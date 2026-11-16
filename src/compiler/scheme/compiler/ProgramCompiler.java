@@ -46,12 +46,17 @@ public final class ProgramCompiler implements SchemeCompiler {
         }
         SourceDir dir = new SourceDir.Files(context.getEnv(), null).dirOf(source);
         Expander expander = new Expander(context.symbols, state.interaction, state.top, state.interactionScope, state.libraries, dir);
-        return generate(language, expander.expandProgram(forms));
+        Ast.Lambda program = expander.expandProgram(forms);
+        if (source.hasCharacters() && source.getLength() > 0) {
+            program.source = source.createSection(0, source.getLength());
+        }
+        return generate(language, program);
     }
 
     private static CallTarget generate(SchemeLanguage language, Ast.Lambda program) {
         SchemeRootNode[] root = new SchemeRootNode[1];
-        SchemeRootNodeGen.create(language, BytecodeConfig.DEFAULT, b -> root[0] = new CodeGenerator(b).generate(program));
+        // With source information, so guest stack traces and tools see file, line and column (D13).
+        SchemeRootNodeGen.create(language, BytecodeConfig.WITH_SOURCE, b -> root[0] = new CodeGenerator(b).generate(program));
         return root[0].getCallTarget();
     }
 }
