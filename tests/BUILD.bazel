@@ -91,6 +91,7 @@ unit_tests(
         "UpstreamAsyncStacksTest": "upstream",
         "UpstreamInterruptTest": "upstream",
         "UpstreamNestedRootSourceTest": "upstream",
+        "UpstreamPreinitializationDeadlockTest": "upstream",
         "UpstreamReportPolymorphismTest": "upstream",
         "ValuesTest": "core",
     },

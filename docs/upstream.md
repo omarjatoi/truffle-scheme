@@ -5,7 +5,7 @@ reproducer that doesn't use Scheme. Filing them at
 <https://github.com/oracle/graal/issues> is a human's call: nothing here has
 been filed. Each section has the issue text, ready to paste.
 
-All five are in Truffle 25.5.5.0.3 (Maven Central), on GraalVM CE 25.5.5.0.3
+All six are in Truffle 25.5.5.0.3 (Maven Central), on GraalVM CE 25.5.5.0.3
 (JDK 25.0.5.0.3, `nix develop`).
 
 ## The reproducers are inverted tests
@@ -16,7 +16,7 @@ the bug is there**. It runs with every other unit test in `bazel test //...`, an
 alone with:
 
 ```
-bazel test //tests:unit_jit_UpstreamAsyncStacksTest //tests:unit_jit_UpstreamNestedRootSourceTest //tests:unit_jit_UpstreamReportPolymorphismTest //tests:unit_jit_UpstreamInterruptTest
+bazel test //tests:unit_jit_UpstreamAsyncStacksTest //tests:unit_jit_UpstreamNestedRootSourceTest //tests:unit_jit_UpstreamReportPolymorphismTest //tests:unit_jit_UpstreamInterruptTest //tests:unit_jit_UpstreamPreinitializationDeadlockTest
 ```
 
 When a Truffle upgrade fixes a bug, its test fails. Then remove the
@@ -35,6 +35,7 @@ instrumentation and one trivial operation (the DSL warns if a root has none).
 | [ReportPolymorphism on an operation](#reportpolymorphism-on-an-operation) | `UpstreamReportPolymorphismTest` | `SchemeRootNode.Call`'s cache initializer `Trampoline.megamorphic` (`src/runtime/scheme/runtime/`) |
 | [ThreadDeath in generated roots](#threaddeath-in-generated-roots) | none (a compiler warning, not behavior) | `BYTECODE_ROOT_JAVACOPTS` (`bazel/java.bzl`) |
 | [Interrupting a Bytecode DSL root as it returns](#interrupting-a-bytecode-dsl-root-as-it-returns) | `UpstreamInterruptTest` | `InterruptTest`'s static initializer (`tests/scheme/test/`) |
+| [Context pre-initialization with synchronous compilation](#context-pre-initialization-with-synchronous-compilation) | `UpstreamPreinitializationDeadlockTest` | `ContextPreinitializationTest`'s child JVMs (`tests/scheme/test/`) |
 
 ## Nested root source sections
 
@@ -547,4 +548,122 @@ try (Context context = Context.create("upstream-repro")) {
 
 The assertion in the generated `findBytecodeIndex` could accept the root itself (the frame
 holds the bytecode index), or the poll could pass a location the root's bytecode node owns.
+````
+
+## Context pre-initialization with synchronous compilation
+
+**Found in** M8-07 (#135). **Test:** `UpstreamPreinitializationDeadlockTest`.
+
+On HotSpot, Truffle pre-initializes a context in the first use of the
+polyglot API when the system property
+`polyglot.image-build-time.PreinitializeContexts` is set, as native-image
+does at build time: `Engine$ImplHolder`'s class initializer calls
+`PolyglotImpl.preInitializeEngine`. With
+`-Dpolyglot.engine.BackgroundCompilation=false` (part of our compile mode;
+`CompileImmediately` isn't needed), that process deadlocks.
+
+- **Expected:** the process runs as it does with background compilation (the
+  test's control case): the first context is the pre-initialized one,
+  patched, and its program prints 42.
+- **Actual:** `Context.create` never returns. The test gives the child JVM
+  20 seconds, then has it dump its threads, and kills it:
+  - `main` is in `Engine$ImplHolder.<clinit>` →
+    `PolyglotEngineImpl.preInitialize` → `addContext` →
+    `ensureRuntimeInitialized`, where
+    `HotSpotTruffleRuntime.ensureInitialized` waits for the runtime's first
+    compilation (`OptimizedTruffleRuntime.finishCompilation` →
+    `CompilationTask.awaitCompletion`).
+  - `TruffleCompilerThread-<n>` hasn't started that compilation: its
+    thread factory calls `EngineAccessor$EngineImpl.createPolyglotThreadScope`
+    → `PolyglotImpl.findInstance` → `Engine.getImpl`, which waits for
+    `Engine$ImplHolder`'s class initialization (jstack: "waiting on the Class
+    initialization monitor for org.graalvm.polyglot.Engine$ImplHolder").
+- **Cause:** the compiler thread needs `Engine$ImplHolder` initialized before
+  it can compile anything, and the class initializer waits for a compilation
+  when compilation is synchronous. It happens before any language is
+  involved: the property's value doesn't matter (an empty value or an
+  unknown language hangs the same way), and on every run, since the compiler
+  thread is always created inside the class initializer.
+- **Our workaround:** in tests only. `ContextPreinitializationTest` runs each
+  check in a child JVM that sets the property and doesn't take the test JVM's
+  engine options, so its compile-mode run doesn't hang. Native-image doesn't
+  compile at build time, so `//:scheme-native`'s pre-initialized context is
+  unaffected. An embedder that sets the property on HotSpot with
+  `BackgroundCompilation=false` hangs.
+
+### Issue text
+
+````markdown
+**Title:** HotSpot: context pre-initialization deadlocks with `engine.BackgroundCompilation=false`
+
+**Version:** Truffle 25.5.5.0.3 (GraalVM CE 25.5.5.0.3, JDK 25.0.5.0.3), on Linux x86_64 and macOS aarch64
+
+On HotSpot, setting `polyglot.image-build-time.PreinitializeContexts` makes the first use of the
+polyglot API pre-initialize a context (`Engine$ImplHolder.<clinit>` →
+`PolyglotImpl.preInitializeEngine`). With `-Dpolyglot.engine.BackgroundCompilation=false` too, it
+deadlocks, every time, before any language code runs:
+
+```java
+public static void main(String[] args) {
+    try (Context context = Context.create()) { // never returns
+        System.out.println("created");
+    }
+}
+```
+
+```
+java -Dpolyglot.image-build-time.PreinitializeContexts= -Dpolyglot.engine.BackgroundCompilation=false \
+    --module-path <polyglot, truffle-api, truffle-runtime, truffle-compiler, ...> --add-modules ALL-MODULE-PATH Main
+```
+
+(The property's value doesn't matter: naming a language that supports pre-initialization hangs the
+same way. Without `BackgroundCompilation=false` it prints `created`.)
+
+The main thread waits for the runtime's first compilation inside `Engine$ImplHolder`'s class
+initializer:
+
+```
+"main" WAITING (parking)
+    at java.util.concurrent.FutureTask.get(FutureTask.java:192)
+    at com.oracle.truffle.runtime.CompilationTask.awaitCompletion(CompilationTask.java:197)
+    at com.oracle.truffle.runtime.OptimizedTruffleRuntime.uninterruptibleWaitForCompilation(OptimizedTruffleRuntime.java:871)
+    at com.oracle.truffle.runtime.OptimizedTruffleRuntime.finishCompilation(OptimizedTruffleRuntime.java:847)
+    at com.oracle.truffle.runtime.OptimizedCallTarget.maybeWaitForTask(OptimizedCallTarget.java:1036)
+    at com.oracle.truffle.runtime.hotspot.HotSpotTruffleRuntime.ensureInitialized(HotSpotTruffleRuntime.java:281)
+    at com.oracle.truffle.runtime.hotspot.HotSpotTruffleRuntime.createOptimizedCallTarget(HotSpotTruffleRuntime.java:364)
+    at com.oracle.truffle.runtime.OptimizedRuntimeSupport.newCallTarget(OptimizedRuntimeSupport.java:88)
+    at com.oracle.truffle.api.nodes.RootNode.initializeTarget(RootNode.java:463)
+    at com.oracle.truffle.api.nodes.RootNode.getCallTarget(RootNode.java:451)
+    at com.oracle.truffle.polyglot.PolyglotEngineImpl.ensureRuntimeInitialized(PolyglotEngineImpl.java:531)
+    at com.oracle.truffle.polyglot.PolyglotEngineImpl.addContext(PolyglotEngineImpl.java:1176)
+    at com.oracle.truffle.polyglot.PolyglotContextImpl.preinitialize(PolyglotContextImpl.java:3898)
+    at com.oracle.truffle.polyglot.PolyglotEngineImpl.preInitialize(PolyglotEngineImpl.java:1681)
+    at com.oracle.truffle.polyglot.PolyglotImpl.preInitializeEngine(PolyglotImpl.java:781)
+    at org.graalvm.polyglot.Engine$ImplHolder.debugContextPreInitialization(Engine.java:205)
+    at org.graalvm.polyglot.Engine$ImplHolder.<clinit>(Engine.java:210)
+    at org.graalvm.polyglot.Engine.getImpl(Engine.java:573)
+    at org.graalvm.polyglot.Engine$Builder.build(Engine.java:1027)
+    at org.graalvm.polyglot.Context$Builder.build(Context.java:2262)
+    at org.graalvm.polyglot.Context.create(Context.java:1055)
+```
+
+and the compiler thread that should run that compilation waits for the same class initialization
+before it starts:
+
+```
+"TruffleCompilerThread-36" RUNNABLE
+    at org.graalvm.polyglot.Engine.getImpl(Engine.java:573)
+    - waiting on the Class initialization monitor for org.graalvm.polyglot.Engine$ImplHolder
+    at java.lang.reflect.Method.invoke(Method.java:565)
+    at com.oracle.truffle.polyglot.PolyglotImpl.findImpl(PolyglotImpl.java:166)
+    at com.oracle.truffle.polyglot.PolyglotImpl.findInstance(PolyglotImpl.java:177)
+    at com.oracle.truffle.polyglot.EngineAccessor$EngineImpl.createPolyglotThreadScope(EngineAccessor.java:2144)
+    at com.oracle.truffle.runtime.BackgroundCompileQueue$TruffleCompilerThreadFactory$1.run(BackgroundCompileQueue.java:443)
+```
+
+Native-image doesn't compile at image build time, so this only affects the HotSpot path, which is
+the one for testing a language's `patchContext` on the JVM. Possible fixes: don't wait for the
+runtime's initial compilation (or compile it in the calling thread) during pre-initialization, or
+have `createPolyglotThreadScope` find the polyglot implementation without going through
+`Engine.getImpl`.
 ````

@@ -25,6 +25,15 @@ public final class UpstreamLanguage extends TruffleLanguage<Object> {
         return new Object();
     }
 
+    /**
+     * Accepts any pre-initialized context (UpstreamPreinitializationDeadlockTest's control case):
+     * there is nothing in it to rebind.
+     */
+    @Override
+    protected boolean patchContext(Object context, Env newEnv) {
+        return true;
+    }
+
     @Override
     protected CallTarget parse(ParsingRequest request) {
         Source source = request.getSource();
