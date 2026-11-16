@@ -118,12 +118,36 @@ public final class ProgramCompiler implements SchemeCompiler {
         return new SClosure(generate(language, thunk), NO_CAPTURES);
     }
 
+    @Override
+    @TruffleBoundary
+    public SClosure compileLoad(SchemeLanguage language, SchemeContext context, Source source, SEnvironment environment) {
+        CompilerState state = (CompilerState) context.compilerState;
+        CompilerState.Environment env = (CompilerState.Environment) environment.state;
+        // Files the loaded file includes are relative to it, as for a program.
+        SourceDir dir = new SourceDir.Files(context.getEnv(), null).dirOf(source);
+        Expander expander = new Expander(context.symbols, env.namespace(), state.top, env.scope(), state.libraries, dir);
+        Ast.Lambda thunk;
+        try {
+            thunk = expander.expandLoad(Expander.readForms(source, context.symbols, false), env.mutable());
+        } catch (SchemeError e) {
+            throw raisable(e);
+        }
+        if (source.hasCharacters() && source.getLength() > 0) {
+            thunk.source = source.createSection(0, source.getLength());
+        }
+        return new SClosure(generate(language, thunk), NO_CAPTURES);
+    }
+
     /**
-     * A syntax error at run time, from {@code eval} or {@code environment}, is an error object that
-     * Scheme handlers see (R7RS §6.12), not a parse error of the program (design.md D13).
+     * A syntax error at run time, from {@code eval}, {@code load} or {@code environment}, is an
+     * error object that Scheme handlers see (R7RS §6.12), not a parse error of the program (design.md
+     * D13). One from {@code syntax-error} keeps its message and irritants.
      */
     private static SchemeError raisable(SchemeError e) {
-        return e.isSyntaxError() ? new SchemeError(e.getMessage()) : e;
+        if (!e.isSyntaxError()) {
+            return e;
+        }
+        return e.getErrorObject() != null ? new SchemeError(e.getErrorObject()) : new SchemeError(e.getMessage());
     }
 
     private static RootCallTarget generate(SchemeLanguage language, Ast.Lambda program) {
