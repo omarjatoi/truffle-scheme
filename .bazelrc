@@ -47,5 +47,25 @@ common:buildbuddy --remote_cache_compression
 # Download only what the command needs at the end (a test's results, a run's runfiles).
 common:buildbuddy --remote_download_toplevel
 
+# Remote execution (`--config=remote`) on BuildBuddy's Linux x86_64 executors
+# (toolchains_buildbuddy's Ubuntu 22.04 image, MODULE.bazel), with BuildBuddy's cache. Tests run there by default, from any machine;
+# builds and `bazel run` stay on this machine, whose binaries a Mac can run (CI, on Linux, passes
+# --config=remote for everything).
+common:remote --config=buildbuddy
+common:remote --remote_executor=grpcs://remote.buildbuddy.io
+common:remote --host_platform=@toolchains_buildbuddy//platforms:linux_x86_64
+common:remote --platforms=@toolchains_buildbuddy//platforms:linux_x86_64
+common:remote --extra_toolchains=@toolchains_buildbuddy//toolchains/cc:ubuntu_gcc_x86_64
+common:remote --jobs=50
+test --config=remote
+# Offline, or to run tests here (`--config=local`): no remote execution, cache or results upload,
+# and a locally executed result is never written to the shared cache.
+common:local --remote_executor=
+common:local --remote_cache=
+common:local --bes_backend=
+common:local --noremote_upload_local_results
+common:local --host_platform=@bazel_tools//tools:host_platform
+common:local --platforms=@bazel_tools//tools:host_platform
+
 # Per-user settings (a remote cache key, a local disk cache), not checked in.
 try-import %workspace%/user.bazelrc

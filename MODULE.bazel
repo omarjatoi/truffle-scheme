@@ -10,6 +10,7 @@ TRUFFLE_VERSION = "25.5.5.0.3"
 
 bazel_dep(name = "platforms", version = "1.1.0")
 bazel_dep(name = "rules_java", version = "9.9.0")
+bazel_dep(name = "toolchains_buildbuddy", version = "0.0.4")
 bazel_dep(name = "rules_jvm_external", version = "7.2")
 bazel_dep(name = "rules_python", version = "2.5.1")
 
@@ -25,6 +26,13 @@ register_toolchains(
     "@graalvm//:all",
     "//bazel/toolchains:all",
 )
+
+# --- Remote execution (.bazelrc --config=remote): BuildBuddy's Linux x86_64 executors -------------
+# The platform @toolchains_buildbuddy//platforms:linux_x86_64 runs actions in this image (its C
+# toolchain builds chibi-scheme and zlib); everything else comes from Bazel.
+
+buildbuddy = use_extension("@toolchains_buildbuddy//:extensions.bzl", "buildbuddy")
+buildbuddy.platform(buildbuddy_container_image = "UBUNTU22_04_IMAGE")
 
 # --- Maven: Truffle, the launcher framework and the tools at TRUFFLE_VERSION, and JUnit ---------
 
