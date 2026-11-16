@@ -86,6 +86,7 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
                     throw new IllegalStateException("primitive " + spec.name() + " is registered twice");
                 }
                 cell.define(procedure);
+                cell.fix();
             }
         }
         compiler().initializeContext(this, context);

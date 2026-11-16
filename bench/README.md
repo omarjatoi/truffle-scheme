@@ -166,33 +166,34 @@ number. Two thresholds follow, and the check fails past either:
 - The threshold on the time: the baseline is the median of the runs, and the threshold the
   largest of 1.4 times the baseline, the baseline plus 4 standard deviations of the runs, and 1.2
   times the slowest run. On one quiet machine the runs agree within a few percent, so it is 1.4
-  times the baseline for all but `cpstak` (1.6) and `fib-interpreter`: it catches a slowdown of
-  everything, such as a lost inlining.
+  times the baseline for every benchmark: it catches a slowdown of everything, such as a lost
+  inlining.
 - The machine-adjusted threshold: a run's machine factor is the median, over its benchmarks, of
   time / baseline (so a few regressed benchmarks don't move it), and a benchmark's adjusted ratio
   its time / baseline / that factor, which takes out load that slows a whole run. The threshold is
   the largest of 1.25 times the runs' median, their median plus 4 standard deviations, and 1.15
-  times the largest: 1.23 to 1.29 for most benchmarks, so a slowdown of one benchmark by about a
-  quarter is caught. A run needs at least 10 benchmarks for a machine factor, so `bench-check fib`
+  times the largest: 1.25 to 1.3, so a slowdown of one benchmark by about a quarter is caught. A run needs at least 10 benchmarks for a machine factor, so `bench-check fib`
   checks only the first threshold.
 
 So a slowdown of a few benchmarks is caught from about a quarter, but one of everything alike
 raises the machine factor, which load would explain too, and is caught only past 1.4 times.
 
 The machine is shared with other builds, so measure and check while it is quiet: in a run made at
-a load average of 22 on its 16 cores, most benchmarks took 2 to 4 times as long. The committed runs
-had a load of 3 to 8; three runs above 10 were left out (the file's note says so).
+a load average of 22 on its 16 cores, most benchmarks took 2 to 4 times as long. Runs with a
+1-minute load above 10 at their start or end are left out; the committed runs (M7-03) had a load of
+3 to 8, so none was (the file's note says so).
 
 The thresholds apply on the platform they were measured on (`darwin-arm64`, recorded in the
 file). Elsewhere, such as on Linux, `bench-check` still runs everything and prints the table, but
 only warns about benchmarks past their thresholds; it fails for a program that fails, a benchmark
 without a threshold, or a changed workload. `--enforce` makes it fail past a threshold anyway.
 
-`cpstak` has wider thresholds (adjusted 1.57) because two of the nine runs measured it about 1.3
-times slower: how far background compilation has got when the measured iterations start varies
-between JVMs, as for `peval` and `parsing` on GitHub's 4-CPU runners before (plan.md M7-01; with
-`--engine.BackgroundCompilation=false` the same JVMs agree within a few percent). Small slowdowns
-are for `benchmark` and the comparative report, A/B on one machine. `thresholds.json` records each
+A benchmark whose runs disagree gets wider thresholds: before M7-03, two of the nine runs measured
+`cpstak` about 1.3 times slower (adjusted threshold 1.57), since how far background compilation has
+got when the measured iterations start varies between JVMs, as for `peval` and `parsing` on GitHub's
+4-CPU runners before (plan.md M7-01; with `--engine.BackgroundCompilation=false` the same JVMs agree
+within a few percent); the M7-03 runs agreed. Small slowdowns are for `benchmark` and the
+comparative report, A/B on one machine. `thresholds.json` records each
 benchmark's runs, baseline, standard deviation, thresholds
 and the workload it was measured on (a changed workload fails the check until it is measured
 again), and where, when and at which commit the runs were made.

@@ -3,11 +3,13 @@ package scheme.runtime;
 import com.oracle.truffle.api.Assumption;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.RootCallTarget;
+import com.oracle.truffle.api.bytecode.BytecodeNode;
 import com.oracle.truffle.api.bytecode.BytecodeRootNode;
 import com.oracle.truffle.api.bytecode.ConstantOperand;
 import com.oracle.truffle.api.bytecode.ContinuationRootNode;
 import com.oracle.truffle.api.bytecode.GenerateBytecode;
 import com.oracle.truffle.api.bytecode.Operation;
+import com.oracle.truffle.api.bytecode.OperationProxy;
 import com.oracle.truffle.api.bytecode.ShortCircuitOperation;
 import com.oracle.truffle.api.bytecode.ShortCircuitOperation.Operator;
 import com.oracle.truffle.api.bytecode.StoreBytecodeIndex;
@@ -21,6 +23,7 @@ import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.frame.FrameDescriptor;
 import com.oracle.truffle.api.frame.MaterializedFrame;
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.ControlFlowException;
 import com.oracle.truffle.api.nodes.DirectCallNode;
 import com.oracle.truffle.api.nodes.IndirectCallNode;
 import com.oracle.truffle.api.nodes.Node;
@@ -39,9 +42,30 @@ import scheme.runtime.value.SPair;
  * <p>The compiler (scheme.compiler) emits these operations. Every non-tail call site comes from its
  * CallSiteEmitter (AGENTS.md rule 2): {@code CallSite(Call(...), Resumed(SuspendFrame()))}, the
  * call's value or, for a capture, the value the suspended frame is resumed with.
+ *
+ * <p>A call of one of the hottest primitives is an operation of its own instead ({@link Intrinsics},
+ * plan.md M7-03), and boxing elimination keeps fixnums, flonums and booleans unboxed between
+ * operations and in locals.
  */
 @GenerateBytecode(languageClass = SchemeLanguage.class, storeBytecodeIndexInFrame = true, enableTagInstrumentation = true, enableSerialization = true, //
-                tagTreeNodeLibrary = SchemeTagTreeNodeExports.class)
+                boxingEliminationTypes = {long.class, double.class, boolean.class}, tagTreeNodeLibrary = SchemeTagTreeNodeExports.class)
+@OperationProxy(value = Intrinsics.Car.class, name = "Car")
+@OperationProxy(value = Intrinsics.Cdr.class, name = "Cdr")
+@OperationProxy(value = Intrinsics.Cons.class, name = "Cons")
+@OperationProxy(value = Intrinsics.IsNull.class, name = "IsNull")
+@OperationProxy(value = Intrinsics.IsPair.class, name = "IsPair")
+@OperationProxy(value = Intrinsics.Eq.class, name = "Eq")
+@OperationProxy(value = Intrinsics.Not.class, name = "Not")
+@OperationProxy(value = Intrinsics.Add.class, name = "Add")
+@OperationProxy(value = Intrinsics.Sub.class, name = "Sub")
+@OperationProxy(value = Intrinsics.Mul.class, name = "Mul")
+@OperationProxy(value = Intrinsics.Div.class, name = "Div")
+@OperationProxy(value = Intrinsics.IntegerDivide.class, name = "IntegerDivide")
+@OperationProxy(value = Intrinsics.Compare.class, name = "Compare")
+@OperationProxy(value = Intrinsics.IsZero.class, name = "IsZero")
+@OperationProxy(value = Intrinsics.VectorRef.class, name = "VectorRef")
+@OperationProxy(value = Intrinsics.VectorSet.class, name = "VectorSet")
+@OperationProxy(value = Intrinsics.VectorLength.class, name = "VectorLength")
 @ShortCircuitOperation(name = "CallSite", operator = Operator.OR_RETURN_VALUE, booleanConverter = SchemeRootNode.IsValue.class, //
                 javadoc = "A non-tail call site (CallSiteEmitter): Call's value, unless it is a Capture; then the frame suspends.")
 public abstract class SchemeRootNode extends RootNode implements BytecodeRootNode {
@@ -72,6 +96,20 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
 
     public void setName(String name) {
         this.name = name;
+    }
+
+    /**
+     * An {@link Intrinsics} operation raised an error in this frame, and {@code raise} came back with
+     * a capture ({@link AbandonedFrame}): the root returns the capture, as a call site that suspends
+     * would, but without a segment of this frame, which nothing can resume. Any other control-flow
+     * exception (an escape, a continuation's invocation) goes on.
+     */
+    @Override
+    public Object interceptControlFlowException(ControlFlowException ex, VirtualFrame frame, BytecodeNode bytecodeNode, int bci) throws Throwable {
+        if (ex instanceof AbandonedFrame abandoned) {
+            return abandoned.capture;
+        }
+        throw ex;
     }
 
     /** See {@link #topLevel}. */
