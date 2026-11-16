@@ -7,7 +7,9 @@ The two standard R7RS benchmark sets, vendored read-only, and run by
   the published comparison at https://ecraven.github.io/r7rs-benchmarks/.
 - `r7rs-larceny/`: Larceny's `test/Benchmarking/R7RS`, which ecraven's set
   was taken from: the same programs with Larceny's inputs, plus 16 for the
-  R7RS Red Edition libraries, 73 in all.
+  R7RS Red Edition libraries, 73 in all. The Red Edition programs are out of
+  scope (our target is R7RS-small, as for the conformance suites) and stay
+  listed under Failures.
 
 Each directory's README gives its upstream, commit, authors, license and the
 command that re-vendors it. `postlude.scm` (ours) and the driver in
@@ -44,7 +46,7 @@ one run within an hour in the interpreter (so use `--timeout` there).
 
 ## What a run does and measures
 
-A program is built the way each set's `bench` script builds it, with
+A program is built the way each set's upstream `bench` script builds it, with
 `postlude.scm` in the place of an implementation's postlude:
 
 - ecraven: `<program>.scm`, `common.scm`, the postlude,
@@ -81,26 +83,30 @@ iterations. `mx benchmark` then names it and exits 1, after running the rest.
 
 ## Failures
 
-Programs that don't run or don't pass their own check yet, each to be fixed by
-a conformance PR (plan.md M5-01). `mx benchmark` still runs them: a listed
-program that fails is logged and produces no datapoints, and one that passes
-fails the run until its row is removed. Each row: the set, the program, why.
+Programs that don't run or don't pass their own check. A row is either out of
+scope, or can't run yet and is to be fixed by a conformance PR (plan.md
+M5-01). `mx benchmark` still runs them: a listed program that fails is logged
+and produces no datapoints, and one that passes fails the run until its row is
+removed. Each row: the set, the program, why.
+
+Every R7RS-small program of both sets runs and passes its check; the rows
+below are Larceny's 16 Red Edition programs, out of scope.
 
 | Set | Program | Reason |
 |---|---|---|
-| `larceny` | `dderiv` | imports `(scheme hash-table)`, `(scheme comparator)`: R7RS Red Edition (R7RS-large) libraries, which we don't provide (R7RS-small only) |
-| `larceny` | `bibfreq` | imports `(scheme list)`, `(scheme sort)`, `(scheme hash-table)`, `(scheme comparator)`: R7RS Red Edition (R7RS-large) libraries, which we don't provide (R7RS-small only) |
-| `larceny` | `bibfreq2` | imports `(scheme list)`, `(scheme sort)`, `(scheme hash-table)`, `(scheme comparator)`: R7RS Red Edition (R7RS-large) libraries, which we don't provide (R7RS-small only) |
-| `larceny` | `hashtable0` | imports `(scheme hash-table)`, `(scheme comparator)`: R7RS Red Edition (R7RS-large) libraries, which we don't provide (R7RS-small only) |
-| `larceny` | `listsort` | imports `(scheme sort)`: R7RS Red Edition (R7RS-large) library, which we don't provide (R7RS-small only) |
-| `larceny` | `vecsort` | imports `(scheme sort)`: R7RS Red Edition (R7RS-large) library, which we don't provide (R7RS-small only) |
-| `larceny` | `list` | imports `(scheme list)`: R7RS Red Edition (R7RS-large) library, which we don't provide (R7RS-small only) |
-| `larceny` | `ilist` | imports `(scheme ilist)`: R7RS Red Edition (R7RS-large) library, which we don't provide (R7RS-small only) |
-| `larceny` | `rlist` | imports `(scheme rlist)`: R7RS Red Edition (R7RS-large) library, which we don't provide (R7RS-small only) |
-| `larceny` | `vector` | imports `(scheme vector)`: R7RS Red Edition (R7RS-large) library, which we don't provide (R7RS-small only) |
-| `larceny` | `set` | imports `(scheme set)`, `(scheme list)`, `(scheme sort)`, `(scheme comparator)`: R7RS Red Edition (R7RS-large) libraries, which we don't provide (R7RS-small only) |
-| `larceny` | `charset` | imports `(scheme charset)`, `(scheme sort)`: R7RS Red Edition (R7RS-large) libraries, which we don't provide (R7RS-small only) |
-| `larceny` | `stream` | imports `(scheme stream)`: R7RS Red Edition (R7RS-large) library, which we don't provide (R7RS-small only) |
-| `larceny` | `lseq` | imports `(scheme generator)`, `(scheme lseq)`: R7RS Red Edition (R7RS-large) libraries, which we don't provide (R7RS-small only) |
-| `larceny` | `generator` | imports `(scheme generator)`: R7RS Red Edition (R7RS-large) library, which we don't provide (R7RS-small only) |
-| `larceny` | `text` | imports `(scheme text)`: R7RS Red Edition (R7RS-large) library, which we don't provide (R7RS-small only) |
+| `larceny` | `dderiv` | out of scope: R7RS-large (Red Edition): imports `(scheme hash-table)`, `(scheme comparator)` |
+| `larceny` | `bibfreq` | out of scope: R7RS-large (Red Edition): imports `(scheme list)`, `(scheme sort)`, `(scheme hash-table)`, `(scheme comparator)` |
+| `larceny` | `bibfreq2` | out of scope: R7RS-large (Red Edition): imports `(scheme list)`, `(scheme sort)`, `(scheme hash-table)`, `(scheme comparator)` |
+| `larceny` | `hashtable0` | out of scope: R7RS-large (Red Edition): imports `(scheme hash-table)`, `(scheme comparator)` |
+| `larceny` | `listsort` | out of scope: R7RS-large (Red Edition): imports `(scheme sort)` |
+| `larceny` | `vecsort` | out of scope: R7RS-large (Red Edition): imports `(scheme sort)` |
+| `larceny` | `list` | out of scope: R7RS-large (Red Edition): imports `(scheme list)` |
+| `larceny` | `ilist` | out of scope: R7RS-large (Red Edition): imports `(scheme ilist)` |
+| `larceny` | `rlist` | out of scope: R7RS-large (Red Edition): imports `(scheme rlist)` |
+| `larceny` | `vector` | out of scope: R7RS-large (Red Edition): imports `(scheme vector)` |
+| `larceny` | `set` | out of scope: R7RS-large (Red Edition): imports `(scheme set)`, `(scheme list)`, `(scheme sort)`, `(scheme comparator)` |
+| `larceny` | `charset` | out of scope: R7RS-large (Red Edition): imports `(scheme charset)`, `(scheme sort)` |
+| `larceny` | `stream` | out of scope: R7RS-large (Red Edition): imports `(scheme stream)` |
+| `larceny` | `lseq` | out of scope: R7RS-large (Red Edition): imports `(scheme generator)`, `(scheme lseq)` |
+| `larceny` | `generator` | out of scope: R7RS-large (Red Edition): imports `(scheme generator)` |
+| `larceny` | `text` | out of scope: R7RS-large (Red Edition): imports `(scheme text)` |

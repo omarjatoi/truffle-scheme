@@ -969,13 +969,15 @@ class _BenchmarkSet:
     inputs/<program>.input and the shared src/common.scm harness, run the way upstream's `bench`
     script runs them (bench/README.md)."""
 
-    def __init__(self, name, url, upstream_dir, copied, extra):
+    def __init__(self, name, url, upstream_dir, copied, extra, programs_only=False):
         self.name = name
         self.dir = join(_BENCH_DIR, 'r7rs-' + name)
         self.url = url
         self.upstream_dir = upstream_dir  # in the upstream repository
         self.copied = copied  # files and directories of upstream_dir that are vendored
         self.extra = extra  # {vendored name: path in the upstream repository}
+        # Vendor only src/common*.scm and the set's programs from src/, not the rest of src/.
+        self.programs_only = programs_only
 
     def _tsv(self):
         with open(join(self.dir, 'benchmarks.tsv'), encoding='utf-8') as f:
@@ -1013,8 +1015,10 @@ class _BenchmarkSet:
 
 
 _BENCH_SETS = [
-    _BenchmarkSet('ecraven', 'https://github.com/ecraven/r7rs-benchmarks', '',
-                  ['README.org', 'bench', 'src', 'inputs'], {}),
+    # Only what Larceny's permission covers (bench/r7rs-ecraven/README.md): the programs, the shared
+    # harness and the inputs; not ecraven's own bench script, README or per-implementation
+    # preludes and postludes.
+    _BenchmarkSet('ecraven', 'https://github.com/ecraven/r7rs-benchmarks', '', ['inputs'], {}, programs_only=True),
     _BenchmarkSet('larceny', 'https://github.com/larcenists/larceny', join('test', 'Benchmarking', 'R7RS'),
                   ['README', 'bench', 'src', 'inputs'], {'COPYRIGHT': 'COPYRIGHT'}),
 ]
@@ -1060,20 +1064,26 @@ def r7rs_vendor_benchmarks(args):
         if name != 'README.md':
             path = join(bench_set.dir, name)
             shutil.rmtree(path) if os.path.isdir(path) else os.remove(path)
-    for name in bench_set.copied:
-        source = join(upstream, name)
-        if os.path.isdir(source):
-            shutil.copytree(source, join(bench_set.dir, name))
-        else:
-            shutil.copyfile(source, join(bench_set.dir, name))
-    for name, path in bench_set.extra.items():
-        shutil.copyfile(join(parsed.source, path), join(bench_set.dir, name))
-    # The programs: the bench script's ALL_BENCHMARKS (`./bench <system> all`), grouped as it groups them.
-    with open(join(bench_set.dir, 'bench'), encoding='utf-8') as f:
+    # The programs: the upstream bench script's ALL_BENCHMARKS (`./bench <system> all`), grouped as
+    # it groups them.
+    with open(join(upstream, 'bench'), encoding='utf-8') as f:
         variables = _bench_script_variables(f.read())
     if 'ALL_BENCHMARKS' not in variables:
         mx.abort('the bench script no longer defines ALL_BENCHMARKS: update the driver')
     groups = [g for g in variables if g != 'ALL_BENCHMARKS' and (g.endswith('_BENCHMARKS') or g.startswith('RED_EDITION_'))]
+    copied = list(bench_set.copied)
+    if bench_set.programs_only:
+        os.makedirs(join(bench_set.dir, 'src'))
+        copied += [join('src', name) for name in sorted(os.listdir(join(upstream, 'src'))) if re.fullmatch(r'common.*\.scm', name)]
+        copied += [join('src', program + '.scm') for program in variables['ALL_BENCHMARKS'].split()]
+    for name in copied:
+        source = join(upstream, name)
+        if os.path.isdir(source):
+            shutil.copytree(source, join(bench_set.dir, name))
+        elif exists(source):
+            shutil.copyfile(source, join(bench_set.dir, name))
+    for name, path in bench_set.extra.items():
+        shutil.copyfile(join(parsed.source, path), join(bench_set.dir, name))
     rows = []
     for program in variables['ALL_BENCHMARKS'].split():
         group = next((g for g in groups if program in variables[g].split()), '-')
