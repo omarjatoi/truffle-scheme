@@ -21,18 +21,18 @@ edit it by hand.
 | 6.1 Equivalence Predicates | 25 | 25 |
 | 6.2 Numbers | 211 | 211 |
 | 6.3 Booleans | 10 | 18 |
-| 6.4 Lists | 39 | 65 |
-| 6.5 Symbols | 17 | 17 |
-| 6.6 Characters | 79 | 79 |
-| 6.7 Strings | 128 | 130 |
-| 6.8 Vectors | 11 | 43 |
+| 6.4 Lists | 64 | 65 |
+| 6.5 Symbols | 6 | 17 |
+| 6.6 Characters | 0 | 79 |
+| 6.7 Strings | 10 | 130 |
+| 6.8 Vectors | 43 | 43 |
 | 6.9 Bytevectors | 0 | 39 |
-| 6.10 Control Features | 23 | 34 |
-| 6.11 Exceptions | 14 | 30 |
+| 6.10 Control Features | 24 | 34 |
+| 6.11 Exceptions | 27 | 30 |
 | 6.12 Environments and evaluation | 0 | 4 |
 | 6.13 Input and output | 7 | 376 |
 | 6.14 System interface | 0 | 13 |
-| **Total** | **705** | **1225** |
+| **Total** | **568** | **1225** |
 <!-- status:end -->
 
 ---
@@ -366,7 +366,7 @@ parallel. Section counts are from the status block when M4 was drafted.
     `long`/`double` fast paths with overflow into `SBigInteger`.
   - **Done when** section 6.2 (129/211) passes in full, normally and under
     `--torture`, and `tests/diff/numbers-*.scm` programs match chibi.
-- [x] **M4-02 · Characters, strings and symbols** *(early)*
+- [ ] **M4-02 · Characters, strings and symbols** *(early)*
   - R7RS §6.5–6.7 and `(scheme char)`: every character procedure (simple case
     mapping, `digit-value`), every string procedure (`SString`'s Latin-1 and
     UTF-32 storage, full case mapping for `string-upcase` and friends,
