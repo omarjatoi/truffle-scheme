@@ -1,6 +1,9 @@
 package scheme.runtime;
 
+import com.oracle.truffle.api.interop.InteropLibrary;
 import com.oracle.truffle.api.interop.TruffleObject;
+import com.oracle.truffle.api.library.ExportLibrary;
+import com.oracle.truffle.api.library.ExportMessage;
 
 import scheme.runtime.value.SConstant;
 
@@ -9,6 +12,7 @@ import scheme.runtime.value.SConstant;
  * a per-context slot ({@link SchemeContext#getDynamicEnv()}). Every continuation captures the
  * current one (M2-02); every change of control goes through {@code rewind} (M2-04).
  */
+@ExportLibrary(InteropLibrary.class)
 public final class DynEnv implements TruffleObject {
 
     public static final DynEnv INITIAL = new DynEnv(SConstant.EMPTY_LIST, SConstant.EMPTY_LIST, SConstant.EMPTY_LIST);
@@ -24,5 +28,22 @@ public final class DynEnv implements TruffleObject {
         this.winders = winders;
         this.parameterization = parameterization;
         this.handlers = handlers;
+    }
+
+    // Interop (design.md D10).
+
+    @ExportMessage
+    boolean hasLanguageId() {
+        return true;
+    }
+
+    @ExportMessage
+    String getLanguageId() {
+        return SchemeLanguage.ID;
+    }
+
+    @ExportMessage
+    Object toDisplayString(@SuppressWarnings("unused") boolean allowSideEffects) {
+        return InteropValues.display(this);
     }
 }

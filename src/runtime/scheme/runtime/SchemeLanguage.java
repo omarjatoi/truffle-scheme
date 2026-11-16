@@ -8,7 +8,9 @@ import org.graalvm.options.OptionKey;
 import org.graalvm.options.OptionStability;
 
 import com.oracle.truffle.api.CallTarget;
+import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.Option;
+import com.oracle.truffle.api.RootCallTarget;
 import com.oracle.truffle.api.TruffleLanguage;
 import com.oracle.truffle.api.debug.DebuggerTags;
 import com.oracle.truffle.api.instrumentation.ProvidedTags;
@@ -36,6 +38,8 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
     public static final OptionKey<String> LIBRARY_PATH = new OptionKey<>("");
 
     private SchemeCompiler compiler;
+    /** What runs a procedure called through interop (design.md D10): see {@link #interopCallTarget}. */
+    @CompilationFinal private RootCallTarget interopCall;
 
     @Override
     protected SchemeContext createContext(Env env) {
@@ -58,6 +62,10 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
             }
         }
         compiler().initializeContext(this, context);
+        if (interopCall == null) {
+            // Here, never from compiled code (nodes can't be created there).
+            interopCall = new InteropCallRootNode(this).getCallTarget();
+        }
     }
 
     public static SchemeLanguage get(Node node) {
@@ -92,6 +100,30 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
     /** A program or library body with its prompt around it (design.md D6). */
     public CallTarget withPrompt(CallTarget body) {
         return new PromptRootNode(this, body).getCallTarget();
+    }
+
+    /**
+     * What runs a Scheme procedure that an embedder or another language calls through interop
+     * ({@code InteropLibrary.execute}): the procedure under a root prompt of its own (design.md D6,
+     * D10), {@link InteropCallRootNode}. Arguments: {@code [procedure, arg...]}.
+     */
+    public RootCallTarget interopCallTarget() {
+        return interopCall;
+    }
+
+    /**
+     * The top scope ({@code context.getBindings("scheme")}, and the debugger's global scope): the
+     * interaction environment's variables (design.md D10, D15).
+     */
+    @Override
+    protected Object getScope(SchemeContext context) {
+        return new TopScope(context, compiler());
+    }
+
+    /** Scheme's view of a primitive or foreign value: shown as Scheme writes it (design.md D10). */
+    @Override
+    protected Object getLanguageView(SchemeContext context, Object value) {
+        return new LanguageView(value);
     }
 
     @Override
