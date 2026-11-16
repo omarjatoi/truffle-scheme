@@ -26,7 +26,7 @@ test --sandbox_default_allow_network=false
 # --- Caching ---
 # Downloads (GraalVM, Maven jars, Python) land in Bazel's repository cache, which every
 # checkout and worktree on a machine shares by default.
-# CI: a disk cache that the workflow saves and restores (`--config=ci`).
+# CI (`--config=ci`): a disk cache, which the agents' cache volume keeps (.buildkite/pipeline.yml).
 common:ci --disk_cache=~/.cache/bazel-disk-cache
 common:ci --experimental_disk_cache_gc_max_size=3G
 common:ci --repository_cache=~/.cache/bazel-repository-cache

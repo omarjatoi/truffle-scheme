@@ -155,52 +155,45 @@ What is measured: each program runs in a JVM of its own, one after another. A JI
 runs the harness 25 times, and its number is the median of the last 10, once the program is
 compiled; an interpreter benchmark's runs it 6 times, the median of the last 4. `startup` is the
 median wall time of 9 runs of the launcher. A benchmark past its threshold runs again in a fresh
-JVM, up to twice (`--retries`), and keeps its best number, so one slow runner or one unlucky
+JVM, up to twice (`--retries`), and keeps its best number, so a moment of load or one unlucky
 compilation doesn't fail a PR; a regression has to hold over three JVMs.
 
-How thresholds are set: the baselines are measured on GitHub's `ubuntu-26.04` runners, the
-runners CI checks on, since other machines and other load give other numbers. Several runs (24
-for the committed file), each on a fresh runner, each give every benchmark a number. Two
-thresholds follow, and the check fails past either:
+How thresholds are set: the baselines are measured on the maintainer's Mac (`darwin-arm64`, an
+Apple M3 Max), the machine the check runs on, since other machines and other load give other
+numbers. Several runs (9 for the committed file), one after another, each give every benchmark a
+number. Two thresholds follow, and the check fails past either:
 
 - The threshold on the time: the baseline is the median of the runs, and the threshold the
   largest of 1.4 times the baseline, the baseline plus 4 standard deviations of the runs, and 1.2
-  times the slowest run. GitHub's runners are of several CPU types (AMD EPYC 7763, 9V45 and 9V74,
-  Intel Xeon 8370C, 8573C, 6973P and 6975P in the committed runs), and the fastest runs every
-  benchmark about 1.9 times faster than the slowest, so these come out at 1.5 to 2.7 times the
-  baseline: they catch
-  a slowdown of everything, such as a lost inlining.
+  times the slowest run. On one quiet machine the runs agree within a few percent, so it is 1.4
+  times the baseline for all but `cpstak` (1.6) and `fib-interpreter`: it catches a slowdown of
+  everything, such as a lost inlining.
 - The machine-adjusted threshold: a run's machine factor is the median, over its benchmarks, of
   time / baseline (so a few regressed benchmarks don't move it), and a benchmark's adjusted ratio
-  its time / baseline / that factor. That takes out most of the difference between runners: the
-  runs' adjusted ratios spread by 3 to 10% for most benchmarks, against 15 to 20% unadjusted. The
-  threshold is the largest of 1.25 times the runs' median, their median plus 4 standard
-  deviations, and 1.15 times the largest; 1.2 to 1.4 for most benchmarks, so a slowdown
-  of one benchmark by a third is caught. A run needs at least 10 benchmarks for a machine factor, so
-  `bench-check fib` checks only the first threshold.
+  its time / baseline / that factor, which takes out load that slows a whole run. The threshold is
+  the largest of 1.25 times the runs' median, their median plus 4 standard deviations, and 1.15
+  times the largest: 1.23 to 1.29 for most benchmarks, so a slowdown of one benchmark by about a
+  quarter is caught. A run needs at least 10 benchmarks for a machine factor, so `bench-check fib`
+  checks only the first threshold.
 
-So a slowdown of a few benchmarks is caught from about a third, but one of everything alike
-raises the machine factor, which a slower runner would explain too, and is caught only past the
-time thresholds: a uniform 2x slowdown fails about half the benchmarks on a fast runner, and all
-of them on a slow one.
+So a slowdown of a few benchmarks is caught from about a quarter, but one of everything alike
+raises the machine factor, which load would explain too, and is caught only past 1.4 times.
 
-The thresholds apply on the platform they were measured on (`linux-x86_64`, recorded in the
-file). Elsewhere, such as on an arm64 Mac, where some benchmarks run relatively faster than
-others in a way no machine factor takes out, `bench-check` still
-runs everything and prints the table, but only warns about benchmarks past their thresholds; it
-fails for a program that fails, a benchmark without a threshold, or a changed workload.
-`--enforce` makes it fail past a threshold anyway.
+The machine is shared with other builds, so measure and check while it is quiet: in a run made at
+a load average of 22 on its 16 cores, most benchmarks took 2 to 4 times as long. The committed runs
+had a load of 3 to 8; three runs above 10 were left out (the file's note says so).
 
-`peval`, `parsing` and `browse` have wide thresholds (adjusted 2.0 to 2.1), `mazefun` a wider
-one (1.6), and `tak` one of 2.6 from a single slow run: their numbers depend on how far
-background compilation has got. On CI's 4-CPU runners Truffle has two compiler threads, and these
-programs' compilations take longer than the 15 warmup iterations, so each JVM measures a
-different mix of compiled and not yet compiled code (plan.md M7-01; with
-`--engine.BackgroundCompilation=false` the same JVMs agree within a few percent). M7-01 cut the
-compilation work, which made `deriv`'s steady state agree within 10% across JVMs of one runner
-(its adjusted threshold, 1.4, comes from the CPU types, which slow it unevenly) and moved
-`mazefun`'s JVMs mostly to the fast mode; `peval` and `parsing` are still bimodal. Small slowdowns are for `benchmark` and the comparative report, A/B on one
-machine. `thresholds.json` records each benchmark's runs, baseline, standard deviation, thresholds
+The thresholds apply on the platform they were measured on (`darwin-arm64`, recorded in the
+file). Elsewhere, such as on Linux, `bench-check` still runs everything and prints the table, but
+only warns about benchmarks past their thresholds; it fails for a program that fails, a benchmark
+without a threshold, or a changed workload. `--enforce` makes it fail past a threshold anyway.
+
+`cpstak` has wider thresholds (adjusted 1.57) because two of the nine runs measured it about 1.3
+times slower: how far background compilation has got when the measured iterations start varies
+between JVMs, as for `peval` and `parsing` on GitHub's 4-CPU runners before (plan.md M7-01; with
+`--engine.BackgroundCompilation=false` the same JVMs agree within a few percent). Small slowdowns
+are for `benchmark` and the comparative report, A/B on one machine. `thresholds.json` records each
+benchmark's runs, baseline, standard deviation, thresholds
 and the workload it was measured on (a changed workload fails the check until it is measured
 again), and where, when and at which commit the runs were made.
 

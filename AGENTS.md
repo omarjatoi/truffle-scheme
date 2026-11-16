@@ -36,8 +36,8 @@ PR once it's green.
    threshold`. The title becomes the squash commit on `main`
    (`<title> (#n)`, empty body), so it describes the change rather than
    repeating the task name.
-5. **Merge** once `buildkite/truffle-scheme/checks` and
-   `buildkite/truffle-scheme/tests` are green (`gh pr checks <n> --watch`):
+5. **Merge** once the Buildkite build, `buildkite/truffle-scheme`, is
+   green (`gh pr checks <n> --watch`):
    `gh pr merge <n> --squash --delete-branch`. If a check fails, fix it on
    the branch. Never merge red.
 6. **Finish** with the PR link and one line of evidence for each "Done
@@ -114,10 +114,11 @@ raise one by hand. If it changes the native-image configuration, run `bazel
 run //:r7rs -- readme --native`.
 
 CI runs on Buildkite (`.buildkite/pipeline.yml`), for every commit, and only
-what runs on every commit: the required `checks` (the lint tests) and `tests`
-(every other test and the readme check), and non-blocking `conformance-*`
-steps (interpreter and `--compile`) whose annotations show per-section
-results. Each step reports the commit status `buildkite/truffle-scheme/<key>`.
+what runs on every commit: `checks` (the lint tests), `tests` (every other
+test and the readme check), and soft-fail `conformance-*` steps (interpreter
+and `--compile`) whose annotations show per-section results. The required
+check is the build, `buildkite/truffle-scheme`; which steps can fail it is
+set in `.buildkite/pipeline.yml`.
 Benchmarks, the threshold check and the native image are local commands.
 
 ## Rules (each one is enforced by `bazel test //...`)
@@ -151,7 +152,7 @@ Benchmarks, the threshold check and the native image are local commands.
   `tests/spec/` case in `SPEC_PENDING` (`tests/BUILD.bazel`) once it has
   passed: an entry goes away when the task it names lands, and never comes
   back.
-- Merge a PR whose `checks` or `tests` status isn't green, or bypass branch
+- Merge a PR whose Buildkite build isn't green, or bypass branch
   protection.
 - Change the GraalVM or Truffle version (`bazel/graalvm.bzl`,
   `TRUFFLE_VERSION` in `MODULE.bazel` and nixpkgs in `flake.lock` move
