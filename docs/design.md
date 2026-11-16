@@ -148,9 +148,11 @@ full R7RS-small conformance comes first.
   during a resume, the segments not yet resumed are added to the new capture.
   Re-entry therefore costs O(1) Java stack depth, and captures share segments
   that are already on the heap.
-- **Segments are immutable.** Each resume copies the frame. This is correct
-  only because of assignment conversion (D2): the frame holds no mutable
-  Scheme variables, only references to shared boxes.
+- **Segments are immutable once shared.** Each resume of a segment that a
+  continuation can reach copies the frame. This is correct only because of
+  assignment conversion (D2): the frame holds no mutable Scheme variables,
+  only references to shared boxes. A segment only its prompt driver can
+  reach is resumed in place instead (Owned segments, below).
 - **Copying a frame:**
   `Truffle.getRuntime().createMaterializedFrame(frame.getArguments().clone(), descriptor)`,
   then `frame.copyTo(0, copy, 0, descriptor.getNumberOfSlots())`. This copies
@@ -159,10 +161,49 @@ full R7RS-small conformance comes first.
   expose its frame, so it can't be used directly. The copy is passed to the
   segment's `ContinuationRootNode` call target as `(copy, value)`, through a
   `DirectCallNode` inline cache keyed on the `ContinuationRootNode`.
-- **Never resume an original frame.** Truffle documents a
+- **Never resume a shared original frame.** Truffle documents a
   `ContinuationResult` as resumable only once. In M0-02, resuming an original
-  frame a second time crashed with `FrameSlotTypeException`. Only fresh copies
-  are resumed, and that is what makes multi-shot possible.
+  frame a second time crashed with `FrameSlotTypeException`. A frame that a
+  continuation can reach is only resumed from fresh copies, and that is what
+  makes multi-shot possible.
+- **Owned segments are resumed in place, once.** The frames a stack-depth
+  spill suspends are reachable from nothing but the root prompt's pending
+  list until something captures them, and the driver resumes each of them
+  once and drops it. Such a segment is resumed from its original frame, with
+  no copy: that is the Bytecode DSL's own one-shot resume (its continuation
+  root runs on the frame it is given, and suspends that same frame again at
+  the next yield), so the frame is never resumed twice from one suspension.
+  - *Ownership.* A spill's segments share one owner token, which the root
+    prompt's driver stamps with the context's sharing epoch when it takes
+    them (`Capture.Segment`). A segment is owned while its stamp is the
+    current epoch. Every event that may let a continuation reach a segment
+    bumps the epoch, so every segment that exists then becomes shared, for
+    good: creating a `Continuation` (`call/cc`, a delimited capture, so
+    `guard` and `raise` handlers, generators, and continuations an embedder
+    re-enters through interop), and a torture-mode capture (so torture
+    checks every resume as before). A segment that a capture re-links from
+    an inner prompt's pending list into another (`Capture.addOuter`, the
+    flattening of `%call-with-prompt`, `guard` and `%call/ec` prompts) is
+    made shared too. Every other segment (from a `call/cc` or delimited
+    capture, torture, a composable continuation's frames) is shared from the
+    start. Tools only read pending frames (M6-04), and an error that unwinds
+    through pending frames resumes copies, so neither changes ownership.
+  - *Why:* a spill of a recursion deeper than the stack (`ack(3,12)`) copies
+    nearly every frame once, about 1 KB and 240 ns each (M8-01), and nothing
+    can ever see the original again. Resuming in place cut `ack(3,10)` by
+    about a third in M8-01's experiment.
+  - *Considered:* a `shared` flag on each segment, set on every segment a
+    capture can reach (a walk of the pending list at each `call/cc`: O(depth)
+    per capture, which `fibc` and generators over a deep recursion would pay
+    at every call); a walk that stops at the first shared segment, assuming
+    the owned ones are always a prefix of the pending list (false once a
+    composable continuation is reinstated, whose shared segments go in front
+    of owned ones); and a generation per prompt (prompts nest and flatten,
+    so a capture would bump every prompt it crosses). The context-wide epoch
+    is O(1) at every capture and every resume, and conservative: a capture
+    anywhere makes every existing segment shared, even one it can't reach.
+    That costs nothing where the gain is, deep recursion without
+    continuations; a program that captures pays the copy as before.
 - **Stack-depth spill.** A depth counter forces a capture past a threshold,
   then execution resumes on a fresh stack. Deep non-tail recursion never
   overflows the Java stack.
@@ -185,9 +226,10 @@ full R7RS-small conformance comes first.
     The option `scheme.SpillDepth` fixes the old count of nested calls
     instead, for tests of spilled frames.
   - *Spilling is still per frame.* A frame that doesn't fit is materialized
-    when it suspends and copied when it resumes, about 1 KB allocated and
-    240 ns per frame (`ack`, M8-01); recursion much deeper than the stack
-    pays that for nearly every frame. A capture links its segments into the
+    when it suspends, and until M8's owned segments was also copied when it
+    resumed, about 1 KB allocated and 240 ns per frame (`ack`, M8-01);
+    recursion much deeper than the stack pays the materialization for nearly
+    every frame. A capture links its segments into the
     list the driver takes as the frames suspend (no array to grow and copy).
     Making the driver's loop a Truffle `LoopNode`, so that the program's root
     prompt (which runs once, so is never compiled) is compiled on the stack,
@@ -713,6 +755,10 @@ Each entry: the decision, why, and what was rejected.
   conformant).
 - **Status: go** (M0-04). The M0 spike confirmed both open questions. See
   "Spike results" under "Continuations".
+- Segments that only a prompt driver can reach (a stack-depth spill's) are
+  resumed in place, once; any segment a continuation may reach is copied on
+  every resume ("Owned segments" under "Continuations"). Copying every
+  resume, as before, cost a spill-heavy recursion a third of its time.
 
 ### D13. Source positions, errors and tools come from Truffle
 

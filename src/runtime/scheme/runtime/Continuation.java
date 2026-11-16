@@ -11,8 +11,9 @@ import com.oracle.truffle.api.library.ExportMessage;
  * replaces the current continuation when invoked; a composable one (delimited capture, D4) ends at a
  * prompt and is pushed onto the current continuation when invoked, returning to the caller.
  *
- * <p>Segments are never resumed in place: every resume copies the frame (design.md
- * "Continuations"), so a continuation can be invoked any number of times.
+ * <p>A continuation's segments are shared: they are never resumed in place, every resume copies
+ * the frame (design.md "Continuations", AGENTS.md rule 3), so a continuation can be invoked any
+ * number of times. Making one ({@link #capture}) therefore makes every segment there is shared.
  */
 @ExportLibrary(InteropLibrary.class)
 public final class Continuation implements TruffleObject {
@@ -21,10 +22,19 @@ public final class Continuation implements TruffleObject {
     public final DynEnv dynEnv;
     public final boolean composable;
 
-    public Continuation(SegmentList segments, DynEnv dynEnv, boolean composable) {
+    private Continuation(SegmentList segments, DynEnv dynEnv, boolean composable) {
         this.segments = segments;
         this.dynEnv = dynEnv;
         this.composable = composable;
+    }
+
+    /**
+     * A continuation of {@code segments}: the only way to make one, so that no segment a driver
+     * resumes in place is ever reachable from a continuation (design.md "Owned segments").
+     */
+    static Continuation capture(SegmentList segments, DynEnv dynEnv, boolean composable, SchemeContext context) {
+        context.shareSegments();
+        return new Continuation(segments, dynEnv, composable);
     }
 
     // Interop (design.md D10).

@@ -144,9 +144,11 @@ Benchmarks, the threshold check and the native image are local commands.
    (design.md D5). Check: `//tests:rules`.
 2. **Every non-tail call site is emitted by `CallSiteEmitter`.** Never emit a
    raw call operation. Check: torture mode.
-3. **Continuation segments are immutable.** Resuming always goes through
-   `Segment.resume`, which copies the frame. Check: torture mode resumes every
-   segment twice.
+3. **Continuation segments are immutable once shared.** A segment any
+   continuation can reach is copied on every resume (`PromptDriver.resume`);
+   only a segment the driver alone owns is resumed in place, once (design.md
+   "Owned segments"). When in doubt, a segment is shared. Check: torture mode
+   resumes every shared segment twice.
 4. **No Java recursion proportional to Scheme depth.** This includes the
    reader, printer, `equal?`, and the expander: use explicit stacks. Check:
    `tests/spec/deep-*`.
@@ -192,7 +194,8 @@ Benchmarks, the threshold check and the native image are local commands.
 - Fixnum operations overflow into `SBigInteger` and never wrap. Big results
   that fit in a `long` are demoted back.
 - Variables targeted by `set!` live in a `Box`, never directly in a frame
-  slot (design.md D2). Frames are copied on continuation resume.
+  slot (design.md D2). A shared segment's frame is copied on every resume
+  (rule 3).
 - All I/O goes through `TruffleLanguage.Env` (`TruffleFile`, Env streams),
   never `java.io` or `java.nio` directly. Text operations use `Locale.ROOT`.
 - Primitive errors throw `SchemeError`, never a raw Java exception

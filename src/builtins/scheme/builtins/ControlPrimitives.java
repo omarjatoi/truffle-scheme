@@ -64,6 +64,8 @@ final class ControlPrimitives {
                         PrimitiveSpec.transfersControl("%capture-to-prompt", 2, 2, CaptureToPrompt::new),
                         new PrimitiveSpec("%torture-captures", 0, 0, TortureCaptures::new),
                         new PrimitiveSpec("%spills", 0, 0, Spills::new),
+                        new PrimitiveSpec("%in-place-resumes", 0, 0, () -> new Resumes(true)),
+                        new PrimitiveSpec("%copied-resumes", 0, 0, () -> new Resumes(false)),
                         PrimitiveSpec.transfersControl("%apply-continuation", 2, 2, () -> new ContinuationOps(ContinuationOps.APPLY)),
                         PrimitiveSpec.transfersControl("%reinstate", 2, 2, () -> new ContinuationOps(ContinuationOps.REINSTATE)),
                         new PrimitiveSpec("%continuation-composable?", 1, 1, () -> new ContinuationOps(ContinuationOps.COMPOSABLE)),
@@ -288,6 +290,25 @@ final class ControlPrimitives {
         @Override
         public Object invoke(Object[] args) {
             return SchemeContext.get(this).spills;
+        }
+    }
+
+    /**
+     * {@code (%in-place-resumes)}, {@code (%copied-resumes)}: how many segments this context's
+     * prompt drivers have resumed in place (owned) and from a copy (shared), for tests (design.md
+     * "Owned segments").
+     */
+    static final class Resumes extends PrimitiveNode {
+        private final boolean inPlace;
+
+        Resumes(boolean inPlace) {
+            this.inPlace = inPlace;
+        }
+
+        @Override
+        public Object invoke(Object[] args) {
+            SchemeContext context = SchemeContext.get(this);
+            return inPlace ? context.inPlaceResumes : context.copiedResumes;
         }
     }
 

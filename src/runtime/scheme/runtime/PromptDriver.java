@@ -30,8 +30,9 @@ import scheme.runtime.value.SClosure;
  * {@code %call-with-prompt}. It holds the prompt's pending segments and handles what comes back:
  *
  * <ul>
- * <li>a value: resume the innermost pending segment from a fresh copy of its frame, never the
- * original; a flattened prompt marker just passes the value on;</li>
+ * <li>a value: resume the innermost pending segment ({@link #resume}): from a fresh copy of its
+ * frame if it is shared, from the original, once, if this driver alone owns it (design.md "Owned
+ * segments"); a flattened prompt marker just passes the value on;</li>
  * <li>a {@link TailCall}: perform it;</li>
  * <li>a {@link Capture}: complete it here, or, if it is for another prompt, pass it on outward with
  * this prompt's pending segments and itself (as a marker) added;</li>
@@ -124,6 +125,8 @@ final class PromptDriver extends Node {
                                 return capture;
                             }
                             context.tortureCaptures++;
+                            // Torture checks every resume (rule 3): so every segment is shared.
+                            context.shareSegments();
                             pending = capture.segmentsBefore(pending);
                             value = capture.value;
                             continue;
@@ -135,6 +138,8 @@ final class PromptDriver extends Node {
                                 return capture;
                             }
                             context.spills++;
+                            // Only this driver holds the spilled frames: it resumes them in place.
+                            capture.claim(context);
                             pending = capture.segmentsBefore(pending);
                             Object[] arguments = (Object[]) capture.value;
                             frame.setObject(PENDING_SLOT, pending);
@@ -146,7 +151,7 @@ final class PromptDriver extends Node {
                                 capture.addOuter(pending, new Capture.PromptMarker(tag, promptEnv));
                                 return capture;
                             }
-                            Continuation k = new Continuation(capture.segmentsBefore(pending), capture.dynEnv, false);
+                            Continuation k = Continuation.capture(capture.segmentsBefore(pending), capture.dynEnv, false, context);
                             pending = k.segments;
                             frame.setObject(PENDING_SLOT, pending);
                             value = receive(context, capture.receiver, k, capture.dynEnv, capture.dynEnv);
@@ -169,12 +174,12 @@ final class PromptDriver extends Node {
                                 // A prompt flattened into this driver's pending segments.
                                 pending = split.after();
                                 frame.setObject(PENDING_SLOT, pending);
-                                value = receive(context, capture.receiver, new Continuation(split.before(), capture.dynEnv, true), capture.dynEnv, split.marker().dynEnv());
+                                value = receive(context, capture.receiver, Continuation.capture(split.before(), capture.dynEnv, true, context), capture.dynEnv, split.marker().dynEnv());
                             } else {
                                 // This prompt: abort to it.
                                 pending = null;
                                 frame.setObject(PENDING_SLOT, pending);
-                                value = receive(context, capture.receiver, new Continuation(all, capture.dynEnv, true), capture.dynEnv, promptEnv);
+                                value = receive(context, capture.receiver, Continuation.capture(all, capture.dynEnv, true, context), capture.dynEnv, promptEnv);
                             }
                             continue;
                         }
@@ -217,15 +222,7 @@ final class PromptDriver extends Node {
                     pending = pending.tail;
                     if (head instanceof Capture.Segment segment) {
                         frame.setObject(PENDING_SLOT, pending);
-                        if (SchemeRootNode.TORTURE) {
-                            // Rule 3: resuming must never change the segment. Resume one copy, then
-                            // check the original against a second, untouched copy.
-                            MaterializedFrame witness = copy(segment.frame());
-                            value = resumeNode.execute(segment.root(), copy(segment.frame()), value);
-                            checkUnchanged(segment.frame(), witness);
-                        } else {
-                            value = resumeNode.execute(segment.root(), copy(segment.frame()), value);
-                        }
+                        value = resume(segment, value, context);
                     }
                     // A PromptMarker: that prompt returns the value normally.
                 }
@@ -265,6 +262,31 @@ final class PromptDriver extends Node {
                 value = e.value;
             }
         }
+    }
+
+    /**
+     * Resumes a pending segment, which the driver has just taken off its list, with {@code value}
+     * (AGENTS.md rule 3, design.md "Owned segments"). A shared segment, one that a continuation may
+     * reach, is resumed from a fresh copy of its frame, so that it can be resumed again. A segment
+     * this driver alone owns (a spill's) is resumed from its original frame, as the Bytecode DSL's
+     * own one-shot resume does: nothing can reach the segment any more, so it is never resumed
+     * again, and the frame goes on to suspend into a new segment if it suspends again.
+     */
+    private Object resume(Capture.Segment segment, Object value, SchemeContext context) {
+        if (segment.isOwned(context)) {
+            context.inPlaceResumes++;
+            return resumeNode.execute(segment.root(), segment.frame(), value);
+        }
+        context.copiedResumes++;
+        if (SchemeRootNode.TORTURE) {
+            // Rule 3: resuming must never change the segment. Resume one copy, then check the
+            // original against a second, untouched copy.
+            MaterializedFrame witness = copy(segment.frame());
+            Object result = resumeNode.execute(segment.root(), copy(segment.frame()), value);
+            checkUnchanged(segment.frame(), witness);
+            return result;
+        }
+        return resumeNode.execute(segment.root(), copy(segment.frame()), value);
     }
 
     /**
@@ -477,7 +499,8 @@ final class PromptDriver extends Node {
 
     /**
      * A copy of a suspended frame (design.md "Copying a frame"): the arguments and every slot,
-     * operand stack included. The original is never resumed, so every resume is independent.
+     * operand stack included. A shared segment's original is never resumed, so every resume of it is
+     * independent.
      */
     static MaterializedFrame copy(MaterializedFrame frame) {
         FrameDescriptor descriptor = frame.getFrameDescriptor();

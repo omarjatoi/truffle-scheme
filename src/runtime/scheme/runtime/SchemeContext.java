@@ -78,6 +78,15 @@ public final class SchemeContext {
     /** Stack-depth spills completed, for tests (plan.md M8-01). */
     public long spills;
     /**
+     * The sharing epoch (design.md "Owned segments"): a spill's segments are owned, resumed in
+     * place, while their token holds the epoch this was when the root prompt took them. Bumped
+     * ({@link #shareSegments}) whenever a continuation may come to reach a segment.
+     */
+    long sharingEpoch;
+    /** Segments resumed in place (owned) and from a copy (shared), for tests. */
+    public long inPlaceResumes;
+    public long copiedResumes;
+    /**
      * The capture a non-tail call site's {@code IsValue} found, for the {@code SuspendFrame} right
      * after it (SchemeRootNode): set and cleared with no Scheme code in between.
      */
@@ -90,6 +99,14 @@ public final class SchemeContext {
     AllocationReporter allocationReporter;
     /** What the language added to {@link #allocationReporter}, removed when the context is disposed. */
     Consumer<Boolean> allocationListener;
+
+    /**
+     * Every segment that exists now is shared from here on: none of them is resumed in place again
+     * (design.md "Owned segments", AGENTS.md rule 3).
+     */
+    void shareSegments() {
+        sharingEpoch++;
+    }
 
     SchemeContext(TruffleLanguage.Env env) {
         this.env = env;
