@@ -45,8 +45,10 @@ import scheme.runtime.value.SymbolTable;
  * the use before calling its transformer and on the result after, so only what the transformer made
  * up keeps it. A macro use in a body also gets a use-site scope, which definitions in that body
  * drop from the identifiers they bind. An identifier refers to the binding of its symbol whose
- * scopes are the largest subset of its own; with none, it is a core form if its name is one, else a
- * global variable.
+ * scopes are the largest subset of its own; with none, it is a global variable of its unit, or in
+ * the interaction environment a core form if its name is one (design.md D15). A top-level
+ * definition of an identifier that a macro introduced binds a fresh cell, visible only with the
+ * identifier's scopes (D16).
  *
  * <p>No Java recursion proportional to nesting depth (AGENTS.md rule 4): a work loop drives frames,
  * one per form being expanded, and macro uses expand in a loop.
@@ -70,16 +72,21 @@ public final class Expander {
     private final SSymbol callWithPrompt;
     private final SSymbol ellipsis;
     private final SSymbol underscore;
+    /** The name of the variable an expression before a definition in a body binds (D14). */
+    private final SSymbol anonymous;
     /** The innermost syntax object with a source position seen so far, for errors. */
     private Syntax current;
     /** Whether top-level definitions and imports are errors: {@code eval} in an immutable environment. */
     private boolean immutableTop;
+    /** The scopes of an identifier written at this unit's top level, not introduced by a macro. */
+    private final ScopeSet unitScopes;
 
     Expander(SymbolTable symbols, GlobalEnvironment namespace, SyntacticEnvironment top, Scope topScope, Libraries libraries, SourceDir dir) {
         this.symbols = symbols;
         this.namespace = namespace;
         this.top = top;
         this.topScope = topScope;
+        this.unitScopes = topScope == null ? ScopeSet.EMPTY : ScopeSet.EMPTY.add(topScope);
         this.libraries = libraries;
         this.dir = dir;
         for (CoreForm form : CoreForm.values()) {
@@ -88,6 +95,7 @@ public final class Expander {
         this.callWithPrompt = symbols.intern("%call-with-prompt");
         this.ellipsis = symbols.intern("...");
         this.underscore = symbols.intern("_");
+        this.anonymous = symbols.intern("%expression");
     }
 
     /**
@@ -141,8 +149,10 @@ public final class Expander {
         if (best != null) {
             return best.binding();
         }
-        CoreForm form = core.get(name);
-        return form != null ? form : namespaceOf(id).cell(name);
+        GlobalEnvironment ns = namespaceOf(id);
+        // Core forms by name only in the interaction environment (and in show, which has no units).
+        CoreForm form = topScope == null || top.isInteraction(ns) ? core.get(name) : null;
+        return form != null ? form : ns.cell(name);
     }
 
     /** The namespace an unbound identifier's variable lives in: that of its top-level scope. */
@@ -422,6 +432,31 @@ public final class Expander {
         return (Lambda) run(new ProgramFrame(topScope == null ? forms : addScope(forms, topScope), program));
     }
 
+    /** Whether program text starts with an import declaration, which makes it a program (R7RS §5.1, design.md D15). */
+    static boolean isProgram(List<Object> forms) {
+        return !forms.isEmpty() && isImportDeclaration(forms.get(0));
+    }
+
+    /** {@code (import ...)}, recognized by name: before a program's imports, nothing is bound. */
+    private static boolean isImportDeclaration(Object form) {
+        return Syntax.e(form) instanceof SPair p && isIdentifier(p.car) && symbol(p.car).toString().equals("import");
+    }
+
+    /**
+     * Expands a program (R7RS §5.1, design.md D15) at this unit's top level, which is its own: its
+     * leading import declarations give it every binding it sees besides its own definitions.
+     */
+    Lambda expandIsolatedProgram(List<Object> forms) {
+        List<Object> scoped = addScope(forms, topScope);
+        int start = 0;
+        while (start < scoped.size() && isImportDeclaration(scoped.get(start))) {
+            enter(scoped.get(start));
+            importAll(scoped.get(start));
+            start++;
+        }
+        return (Lambda) run(new ProgramFrame(scoped.subList(start, scoped.size()), new Lambda(null, true)));
+    }
+
     /**
      * Expands {@code eval}'s datum (R7RS §6.12) at this unit's top level into a procedure of no
      * arguments whose body is in tail position, so {@code eval} can tail-call it (design.md D6). In
@@ -698,7 +733,9 @@ public final class Expander {
                 if (binding instanceof Var v) {
                     target = reference(v, lambda, f.get(1));
                 } else if (binding instanceof GlobalCell cell) {
-                    if (!namespaceOf(f.get(1)).owns(cell)) {
+                    // This unit's own variable (a fresh cell of a macro-introduced definition
+                    // included), or one of the library whose macro introduced the identifier.
+                    if (!namespace.owns(cell) && !namespaceOf(f.get(1)).owns(cell)) {
                         throw syntax("set! of an imported variable", form);
                     }
                     target = new Ast.GlobalRef(cell);
@@ -725,7 +762,7 @@ public final class Expander {
                 return prompt(f, form, lambda);
             case DEFINE:
             case DEFINE_SYNTAX:
-                throw syntax(c.keyword + " is only allowed at the top level or at the start of a body", form);
+                throw syntax(c.keyword + " is only allowed at the top level or in a body", form);
             case INCLUDE:
             case INCLUDE_CI:
             case COND_EXPAND: {
@@ -881,10 +918,11 @@ public final class Expander {
     }
 
     /**
-     * A body (R7RS §5.3.2): definitions, then at least one expression, as {@code letrec*}. Each
-     * form's head is expanded first to find the definitions, {@code begin}s splice, and
-     * {@code define-syntax} binds a macro for the rest of the body. Then the right-hand sides and
-     * expressions are expanded in order.
+     * A body (R7RS §5.3.2, design.md D14): definitions and expressions in any order, ending with an
+     * expression, as {@code letrec*} over the whole body. Each form's head is expanded first to
+     * find the definitions, {@code begin}s splice, and {@code define-syntax} binds a macro for the
+     * rest of the body. Then the right-hand sides and expressions are expanded in order. The forms
+     * run in order: an expression before a definition is an anonymous binding.
      */
     private final class BodyFrame extends Frame {
         final Lambda lambda;
@@ -906,10 +944,6 @@ public final class Expander {
             while (!queue.isEmpty()) {
                 Object form = queue.pollFirst();
                 enter(form);
-                if (!exprs.isEmpty()) {
-                    exprs.add(form);
-                    continue;
-                }
                 Object binding = headBinding(form);
                 while (binding instanceof Macro m) {
                     Scope useSite = new Scope();
@@ -927,6 +961,7 @@ public final class Expander {
                     Object id = withoutUseSites(def.id(), useSites);
                     Var v = lambda.bind(binder.check(id, form, "definition of"), true);
                     binder.bind(id, v, form, "definition of");
+                    bindExpressions();
                     vars.add(v);
                     inits.add(def.value());
                     names.add(symbol(id).toString());
@@ -938,8 +973,19 @@ public final class Expander {
                 }
             }
             if (exprs.isEmpty()) {
-                throw syntax("a body needs at least one expression", where == null ? SConstant.EMPTY_LIST : where);
+                throw syntax(vars.isEmpty() ? "a body needs at least one expression" : "a body needs at least one expression after its last definition",
+                                where == null ? SConstant.EMPTY_LIST : where);
             }
+        }
+
+        /** The expressions so far come before a definition: each becomes an anonymous binding (D14). */
+        private void bindExpressions() {
+            for (Object expr : exprs) {
+                vars.add(lambda.bind(anonymous, false));
+                inits.add(expr);
+                names.add(null);
+            }
+            exprs.clear();
         }
 
         private static Object withoutUseSites(Object id, ScopeSet useSites) {
@@ -1212,7 +1258,8 @@ public final class Expander {
      * form's head is expanded in order to find imports, macro definitions and definitions, which
      * take effect at once (so a definition covers the whole program, including references before
      * it); then the right-hand sides and expressions are expanded in order. Definitions go in this
-     * unit's namespace and shadow imports of the same name.
+     * unit's namespace and shadow imports of the same name; one whose identifier a macro introduced
+     * binds a fresh cell instead, which only identifiers with the same scopes see (D16).
      */
     private final class ProgramFrame extends Frame {
         final Lambda program;
@@ -1250,10 +1297,17 @@ public final class Expander {
                 } else if (binding == CoreForm.DEFINE) {
                     Definition def = parseDefine(form);
                     SSymbol name = symbol(def.id());
-                    GlobalCell cell = namespace.cell(name);
-                    if (resolve(def.id()) != cell) {
-                        // Shadows an import, a macro or a keyword.
+                    GlobalCell cell;
+                    if (!scopes(def.id()).equals(unitScopes)) {
+                        // A macro introduced the identifier: a fresh cell, for its scopes only (D16).
+                        cell = namespace.freshCell(name);
                         top.bind(name, scopes(def.id()), cell);
+                    } else {
+                        cell = namespace.cell(name);
+                        if (resolve(def.id()) != cell) {
+                            // Shadows an import, a macro or a keyword.
+                            top.bind(name, scopes(def.id()), cell);
+                        }
                     }
                     items.add(new Object[]{cell, def.value(), name.toString()});
                 } else if (binding == CoreForm.DEFINE_SYNTAX) {

@@ -128,7 +128,8 @@ public class ExpanderTest {
         assertTrue(showError("(lambda (x x) x)").getMessage().contains("duplicate parameter x"));
         assertTrue(showError("(lambda () (define a 1) (define a 2) a)").getMessage().contains("duplicate definition of a"));
         assertTrue(showError("(lambda () (define a 1))").getMessage().contains("at least one expression"));
-        assertTrue(showError("(lambda () 1 (define a 1) a)").getMessage().contains("only allowed at the top level or at the start of a body"));
+        assertTrue(showError("(lambda () 1 (define a 1))").getMessage().contains("at least one expression after its last definition"));
+        assertTrue(showError("(+ 1 (define a 1))").getMessage().contains("only allowed at the top level or in a body"));
         assertTrue(showError("(+ 1 if)").getMessage().contains("syntax keyword used as an expression"));
         assertTrue(showError("(set! lambda 1)").getMessage().contains("set! of a syntax keyword"));
         assertTrue(showError("(lambda (1) 1)").getMessage().contains("invalid parameter 1"));
@@ -179,8 +180,9 @@ public class ExpanderTest {
         // An introduced definition is invisible to the use site.
         defineMacro("def-hidden", form -> list(sym("begin"), list(sym("define"), sym("hidden"), arg(form, 1)), sym("hidden")));
         assertEquals("(lambda (hidden.1) (letrec* ((hidden.2 1)) (begin hidden.2 hidden.1)))", show("(lambda (hidden) (def-hidden 1) hidden)"));
-        // After the first expression, a definition is an error even when a macro makes it.
-        assertTrue(showError("(lambda () 1 (def-one a) a)").getMessage().contains("only allowed at the top level or at the start of a body"));
+        // After an expression, a definition (even one a macro makes) still covers the whole body,
+        // and the expression before it runs first, as an anonymous binding (design.md D14).
+        assertEquals("(lambda () (letrec* ((%expression.1 (f)) (a.2 1)) a.2))", show("(lambda () (f) (def-one a) a)"));
     }
 
     @Test

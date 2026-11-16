@@ -156,14 +156,15 @@ public class LibraryTest {
                         """);
         file("lib/util-body.scm", "(define (square-it x) (* x x))");
         file("lib/util-ci.scm", "(define SHOUT 'Loud)");
-        assertEquals("(49 loud)", run("(import (lib util)) (display (list (square-it 7) shout))"));
+        // A program sees only what it imports (design.md D15), so it imports what it displays with.
+        assertEquals("(49 loud)", run("(import (scheme base) (scheme write) (lib util)) (display (list (square-it 7) shout))"));
         // include in a program, relative to the program file; include-library-declarations.
         file("prog/main.scm", "(define x 1) (include \"part.scm\") (display (list x y))");
         file("prog/part.scm", "(define y (+ x 1))");
         assertEquals("(1 2)", runFile("prog/main.scm"));
         file("decls.scm", "(export eight) (begin (define eight 8))");
         file("lib/decl.sld", "(define-library (lib decl) (import (scheme base)) (include-library-declarations \"../decls.scm\"))");
-        assertEquals("8", run("(import (lib decl)) (display eight)"));
+        assertEquals("8", run("(import (scheme write) (lib decl)) (display eight)"));
         assertTrue(error("(import (lib missing))").contains("library not found: (lib missing)"));
         assertTrue(error("(include \"nope.scm\")").contains("cannot find file nope.scm"));
     }

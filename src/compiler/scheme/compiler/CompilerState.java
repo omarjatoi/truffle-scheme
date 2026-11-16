@@ -8,10 +8,11 @@ import scheme.runtime.GlobalEnvironment;
 import scheme.runtime.value.SEnvironment;
 
 /**
- * The compiler's state in one context (design.md D7): the syntactic bindings of every unit, the
- * libraries, and the interaction environment that programs and REPL inputs run in. The interaction
- * environment imports (r7rs %primitives) and every standard library, and persists from one program
- * to the next: a program's {@code import} adds to it, and its definitions stay.
+ * The compiler's state in one context (design.md D7, D15): the syntactic bindings of every unit, the
+ * libraries, and the interaction environment that REPL inputs and other text without a leading
+ * {@code import} run in. The interaction environment imports (r7rs %primitives) and every standard
+ * library, and persists from one input to the next: an {@code import} adds to it, and definitions
+ * stay. A program (text whose first form is {@code import}) gets a top level of its own instead.
  */
 final class CompilerState {
 
@@ -34,6 +35,6 @@ final class CompilerState {
     Libraries libraries;
 
     CompilerState() {
-        top.registerNamespace(interactionScope, interaction);
+        top.registerInteraction(interactionScope, interaction);
     }
 }

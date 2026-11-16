@@ -41,7 +41,8 @@ public class EvalTest {
     public void environmentImportSets() {
         check("(1 2)", "(eval '(list 1 2) (environment '(only (scheme base) list)))");
         check("3", "(eval '(b:+ 1 2) (environment '(prefix (scheme base) b:)))");
-        check("(a . b)", "(eval '(kons 'a 'b) (environment '(rename (only (scheme base) cons) (cons kons))))");
+        // 'a is (quote a): quote is a binding like any other (design.md D15), so it is imported too.
+        check("(a . b)", "(eval '(kons 'a 'b) (environment '(rename (only (scheme base) cons quote) (cons kons))))");
         // Macros from the imported libraries work, hygienically.
         check("6", "(eval '(let loop ((i 0) (acc 0)) (if (> i 3) acc (loop (+ i 1) (+ acc i)))) (environment '(scheme base)))");
         // An environment is a value of its own type.
