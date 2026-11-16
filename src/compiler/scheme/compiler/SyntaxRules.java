@@ -247,7 +247,7 @@ final class SyntaxRules implements Transformer {
                 List<Object> elements = new ArrayList<>();
                 Object tail = SConstant.EMPTY_LIST;
                 if (d instanceof SVector vec) {
-                    elements.addAll(List.of(vec.elements));
+                    elements.addAll(List.of(vec.toArray()));
                 } else {
                     Object rest = d;
                     while (rest instanceof SPair p) {
@@ -331,7 +331,7 @@ final class SyntaxRules implements Transformer {
                 Object tail = SConstant.EMPTY_LIST;
                 boolean immutable = false;
                 if (d instanceof SVector vec) {
-                    items.addAll(List.of(vec.elements));
+                    items.addAll(List.of(vec.toArray()));
                     immutable = vec.immutable;
                 } else {
                     Object rest = d;
@@ -458,7 +458,7 @@ final class SyntaxRules implements Transformer {
             if (!(d instanceof SVector vec)) {
                 return false;
             }
-            items.addAll(List.of(vec.elements));
+            items.addAll(List.of(vec.toArray()));
         } else {
             Object rest = in;
             while (Syntax.e(rest) instanceof SPair p) {
@@ -574,7 +574,7 @@ final class SyntaxRules implements Transformer {
                 }
                 if (seq.vector) {
                     Object[] elements = new Object[parts.size()];
-                    t.sink().accept(new SVector(elements, seq.immutable));
+                    t.sink().accept(SVector.of(elements, seq.immutable));
                     for (int i = 0; i < parts.size(); i++) {
                         int k = i;
                         tasks.push(new ITask(parts.get(i), envs.get(i), o -> elements[k] = o));

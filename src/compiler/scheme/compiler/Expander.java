@@ -1264,8 +1264,8 @@ public final class Expander {
                 }
             } else if (d instanceof SVector v) {
                 Object elements = SConstant.EMPTY_LIST;
-                for (int i = v.elements.length - 1; i >= 0; i--) {
-                    elements = new SPair(v.elements[i], elements);
+                for (int i = v.length - 1; i >= 0; i--) {
+                    elements = new SPair(v.get(i), elements);
                 }
                 PrimCall call = new PrimCall(listToVector, (Object) null);
                 tasks.push(new QTask(elements, t.depth(), call.args, 0));
@@ -1293,7 +1293,7 @@ public final class Expander {
             } else if (constant && call.cell == cons) {
                 call.folded = new Ast.Const(new SPair(((Ast.Const) call.args[0]).value, ((Ast.Const) call.args[1]).value));
             } else if (constant && call.cell == listToVector) {
-                call.folded = new Ast.Const(new SVector(listElements(((Ast.Const) call.args[0]).value), false));
+                call.folded = new Ast.Const(SVector.of(listElements(((Ast.Const) call.args[0]).value), false));
             }
         }
         Object result = root[0] instanceof PrimCall call && call.folded != null ? call.folded : root[0];

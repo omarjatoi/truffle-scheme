@@ -188,7 +188,7 @@ public class PrinterTest {
         assertEquals("#0=(1 2 3 . #0#)", Printer.print(cycle, Mode.WRITE_SHARED));
 
         SVector vector = new SVector(new Object[]{1L, 2L});
-        vector.elements[1] = vector;
+        vector.set(1, vector);
         assertEquals("#0=#(1 #0#)", write(vector));
 
         Object shared = list(1L, 2L);

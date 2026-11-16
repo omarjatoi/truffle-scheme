@@ -682,7 +682,7 @@ public final class Reader {
             return result;
         } else if (top instanceof VectorFrame vector) {
             stack.pop();
-            return new SVector(vector.items.toArray(), literals);
+            return SVector.of(vector.items.toArray(), literals);
         } else if (top instanceof BytevectorFrame bv) {
             stack.pop();
             return new SBytevector(bv.bytes.toByteArray(), literals);
@@ -716,11 +716,12 @@ public final class Reader {
                     stack.push(p.cdr);
                 }
             } else if (node instanceof SVector v) {
-                for (int i = 0; i < v.elements.length; i++) {
-                    if (v.elements[i] == placeholder) {
-                        v.elements[i] = value;
+                for (int i = 0; i < v.length; i++) {
+                    Object element = v.get(i);
+                    if (element == placeholder) {
+                        v.set(i, value);
                     } else {
-                        stack.push(v.elements[i]);
+                        stack.push(element);
                     }
                 }
             }

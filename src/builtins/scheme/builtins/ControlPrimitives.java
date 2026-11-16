@@ -492,11 +492,11 @@ final class ControlPrimitives {
         @Override
         public Object invoke(Object[] args) {
             SRecordType type = (SRecordType) args[1];
-            Object[] indices = ((SVector) args[2]).elements;
+            SVector indices = (SVector) args[2];
             Object[] fields = new Object[type.fieldNames.length];
             java.util.Arrays.fill(fields, SConstant.UNSPECIFIED);
             for (int i = 0; i < indices.length; i++) {
-                fields[(int) (long) (Long) indices[i]] = args[i + 3];
+                fields[(int) (long) (Long) indices.get(i)] = args[i + 3];
             }
             return new SRecord(type, fields);
         }
@@ -656,25 +656,34 @@ final class ControlPrimitives {
                             continue;
                         }
                     } else {
-                        Object[] xs = ((SVector) x).elements;
-                        Object[] ys = ((SVector) y).elements;
-                        boolean descend = false;
-                        for (int i = 0; i < xs.length; i++) {
-                            int c = compareShallow(xs[i], ys[i]);
-                            if (c == DIFFERENT) {
+                        SVector xv = (SVector) x;
+                        SVector yv = (SVector) y;
+                        if (!xv.isObjects() || !yv.isObjects()) {
+                            // Fixnum or flonum storage on one side (M5-06): nothing to look inside.
+                            if (!numbersEqual(xv, yv)) {
                                 return false;
                             }
-                            descend |= c == DESCEND;
-                        }
-                        if (descend) {
-                            // Every element is now SAME or DESCEND; push the DESCEND ones, first on top,
-                            // and a run of one pair of nodes (as in (make-vector n x)) only once.
-                            for (int i = xs.length - 1; i >= 0; i--) {
-                                Object u = xs[i];
-                                Object v = ys[i];
-                                if (u != v && (u instanceof SPair || u instanceof SVector) && (i == 0 || xs[i - 1] != u || ys[i - 1] != v)) {
-                                    stack = push(stack, sp, u, v);
-                                    sp += 2;
+                        } else {
+                            Object[] xs = xv.objects();
+                            Object[] ys = yv.objects();
+                            boolean descend = false;
+                            for (int i = 0; i < xs.length; i++) {
+                                int c = compareShallow(xs[i], ys[i]);
+                                if (c == DIFFERENT) {
+                                    return false;
+                                }
+                                descend |= c == DESCEND;
+                            }
+                            if (descend) {
+                                // Every element is now SAME or DESCEND; push the DESCEND ones, first on top,
+                                // and a run of one pair of nodes (as in (make-vector n x)) only once.
+                                for (int i = xs.length - 1; i >= 0; i--) {
+                                    Object u = xs[i];
+                                    Object v = ys[i];
+                                    if (u != v && (u instanceof SPair || u instanceof SVector) && (i == 0 || xs[i - 1] != u || ys[i - 1] != v)) {
+                                        stack = push(stack, sp, u, v);
+                                        sp += 2;
+                                    }
                                 }
                             }
                         }
@@ -690,6 +699,26 @@ final class ControlPrimitives {
             }
         }
 
+        /**
+         * Two vectors of the same length, at least one with fixnum or flonum storage, so neither has an
+         * element to look inside: eqv? on each pair of elements.
+         */
+        private static boolean numbersEqual(SVector x, SVector y) {
+            if (x.isLongs() && y.isLongs()) {
+                return java.util.Arrays.equals(x.longs(), y.longs());
+            }
+            if (x.isDoubles() && y.isDoubles()) {
+                // Compares the flonums' bits, as eqv? does (Double.equals).
+                return java.util.Arrays.equals(x.doubles(), y.doubles());
+            }
+            for (int i = 0; i < x.length; i++) {
+                if (!Eqv.eqv(x.get(i), y.get(i))) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         /** Compares two objects without looking inside pairs and vectors. */
         private static int compareShallow(Object x, Object y) {
             if (x == y) {
@@ -699,7 +728,7 @@ final class ControlPrimitives {
                 return y instanceof SPair ? DESCEND : DIFFERENT;
             }
             if (x instanceof SVector v) {
-                return y instanceof SVector w && v.elements.length == w.elements.length ? DESCEND : DIFFERENT;
+                return y instanceof SVector w && v.length == w.length ? DESCEND : DIFFERENT;
             }
             if (x instanceof SString s) {
                 return y instanceof SString t && sameString(s, t) ? SAME : DIFFERENT;

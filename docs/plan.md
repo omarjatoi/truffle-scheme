@@ -571,7 +571,7 @@ M5-01 benchmarks and M5-02's report.
     `let` expand to, without allocating a closure.
   - **Done when** the affected benchmarks improve and every suite passes in
     every mode.
-- [ ] **M5-06 · Vector storage strategies** *(needs M5-01)*
+- [x] **M5-06 · Vector storage strategies** *(needs M5-01)*
   - Specialized storage for vectors (D10's deferral): e.g. `long[]`/`double[]`
     when every element is a fixnum or flonum, generalizing on the first other
     store, with DSL specializations on the accessors.

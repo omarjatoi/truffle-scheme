@@ -108,11 +108,11 @@ public final class Syntax {
                 last.cdr = adjust(rest, pendingAdds, pendingFlips);
                 result = head;
             } else if (datum instanceof SVector v) {
-                Object[] elements = new Object[v.elements.length];
+                Object[] elements = new Object[v.length];
                 for (int i = 0; i < elements.length; i++) {
-                    elements[i] = adjust(v.elements[i], pendingAdds, pendingFlips);
+                    elements[i] = adjust(v.get(i), pendingAdds, pendingFlips);
                 }
-                result = new SVector(elements, v.immutable);
+                result = SVector.of(elements, v.immutable);
             }
         }
         opened = result;
@@ -143,7 +143,7 @@ public final class Syntax {
                     pair.cdr = value;
                 }
             } else {
-                ((SVector) fill[0]).elements[(Integer) fill[1]] = value;
+                ((SVector) fill[0]).set((Integer) fill[1], value);
             }
         }
         return result;
@@ -169,10 +169,16 @@ public final class Syntax {
         if (datum instanceof SVector v) {
             Object copy = copies.get(v);
             if (copy == null) {
-                SVector vector = new SVector(new Object[v.elements.length], v.immutable);
+                if (!v.isObjects()) {
+                    // Fixnums or flonums (M5-06): no syntax inside, so a copy with the same storage.
+                    copy = v.copy(0, v.length, v.immutable);
+                    copies.put(v, copy);
+                    return copy;
+                }
+                SVector vector = new SVector(new Object[v.length], v.immutable);
                 copies.put(v, vector);
-                for (int i = v.elements.length - 1; i >= 0; i--) {
-                    fills.push(new Object[]{vector, i, v.elements[i]});
+                for (int i = v.length - 1; i >= 0; i--) {
+                    fills.push(new Object[]{vector, i, v.get(i)});
                 }
                 copy = vector;
             }
