@@ -807,6 +807,12 @@ def _run_ours(file, vm_args, jvm_args=()):
     return rc, out.data, err.data
 
 
+def scheme(args):
+    """run the scheme launcher (M6-01, design.md D17): [option...] [-I dir]... [file.scm [arg...]]; no file starts a REPL"""
+    return mx.run_java(list(_launcher_jvm_args()) + _TRUFFLE_VM_ARGS + ['-m', 'scheme.launcher/scheme.launcher.SchemeMain'] + args,
+                       nonZeroIsFatal=False)
+
+
 def _run_chibi(file):
     out, err = mx.OutputCapture(), mx.OutputCapture()
     rc = mx.run(['chibi-scheme', file], out=out, err=err, nonZeroIsFatal=False)
@@ -1413,6 +1419,7 @@ def tests(args):
 mx.update_commands(_suite, {
     'checks': [checks, '[' + ' | '.join(_CHECKS) + ']...'],
     'tests': [tests, '[' + ' | '.join(_TESTS) + ']...'],
+    'scheme': [scheme, '[option...] [-I dir]... [file.scm [arg...]]'],
     'r7rs-test': [r7rs_test, '[section] [--suite all|chibi|larceny] [--torture] [--compile] [-v]'],
     'r7rs-spec': [r7rs_spec, '[-j N] [--shard I/N] [case...]'],
     'r7rs-diff': [r7rs_diff, 'file.scm [--compile] [--torture]'],

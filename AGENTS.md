@@ -80,6 +80,8 @@ mx r7rs-test 6.10                         # one conformance section (chibi's 6.1
 mx r7rs-test --torture                    # capture + resume at every non-tail call
 mx r7rs-test --compile                    # Graal JIT; compile immediately; failures are errors
 mx r7rs-spec                              # tests/spec (tail-call space, continuations, depth)
+mx scheme [-I dir]... file.scm [arg]...   # the launcher: run a program (--help lists the engine/log options)
+mx scheme                                 # no file: a REPL on stdin
 mx r7rs-diff path/to/file.scm             # run under chibi and under us; compare stdout + exit status
 mx r7rs-diff-all                          # every program in tests/diff/ (part of mx tests)
 mx r7rs-space                             # tail loop and deep recursion under -Xss256k (part of mx tests)
@@ -228,7 +230,7 @@ src/runtime/               Bytecode DSL root + operations, continuations
                            (Capture, Segment), trampoline, DynEnv
 src/builtins/              leaf primitives only (see rule 1)
 src/prelude/               standard libraries (.sld) and prelude Scheme code
-src/launcher/              host-side embedding: the conformance runner
+src/launcher/              host-side embedding: the `scheme` launcher, the conformance runner
 tests/r7rs/                chibi suite, vendored, read-only (see its README)
 tests/r7rs-larceny/        Larceny's R7RS suite, vendored, read-only (see its README)
 bench/r7rs-ecraven/        ecraven's R7RS benchmarks, vendored, read-only (see its README)

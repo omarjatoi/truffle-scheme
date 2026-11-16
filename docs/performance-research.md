@@ -419,10 +419,11 @@ performance. Don't add `injectBranchProbability` without evidence.
 
 ## 5. Tooling
 
-Our launcher (`SchemeMain`) doesn't enable experimental options yet (D17
-brings `--experimental-options` in M6). Pass
-`-Dpolyglot.engine.AllowExperimentalOptions=true` to the JVM, then any
-engine or compiler option as `-Dpolyglot.<option>=…`:
+The `scheme` launcher (`mx scheme`, D17, M6-01) takes engine and compiler
+options directly: `mx scheme --experimental-options --engine.TraceCompilation file.scm`.
+The mx commands that run `SchemeMain` themselves (`r7rs-diff`, benchmarks) take
+them as JVM flags: pass `-Dpolyglot.engine.AllowExperimentalOptions=true` to the
+JVM, then any engine or compiler option as `-Dpolyglot.<option>=…`:
 
 | Question | Option |
 |---|---|

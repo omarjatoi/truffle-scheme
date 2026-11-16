@@ -84,9 +84,22 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
         return program(SchemeContext.get(null), request.getSource());
     }
 
-    /** A program with its prompt around it (design.md D6). */
+    /**
+     * A program with its prompt around it (design.md D6). An interactive source (REPL input, design.md
+     * D17) also writes its values.
+     */
     private CallTarget program(SchemeContext context, Source source) {
-        return withPrompt(compiler().compileProgram(this, context, source));
+        CallTarget program = withPrompt(compiler().compileProgram(this, context, source));
+        return source.isInteractive() ? new InteractiveRootNode(this, program).getCallTarget() : program;
+    }
+
+    /**
+     * The language prints the values of interactive sources itself ({@link InteractiveRootNode}),
+     * so Truffle never prints them again.
+     */
+    @Override
+    protected boolean isVisible(SchemeContext context, Object value) {
+        return false;
     }
 
     /** A program or library body with its prompt around it (design.md D6). */
