@@ -13,6 +13,7 @@ import hashlib
 import os
 import re
 import shutil
+import tempfile
 import time
 from os.path import exists, join
 
@@ -207,13 +208,13 @@ def _unittest_in_parallel(compile, torture, jobs, shard):
 # Conformance, spec, differential, status
 # ---------------------------------------------------------------------------
 
-_RESULT_LINE = re.compile(r'^@@r7rs-test (BEGIN|PASS|FAIL|ERROR|END) ?(.*)$')
+_RESULT_LINE = re.compile(r'^@@r7rs-test (BEGIN|PASS|FAIL|ERROR|SKIP|END) ?(.*)$')
 _SECTION_LINE = re.compile(r'^@@section (\S+) (.*)$')
 
 
 def _count_results(output):
-    """Counts the shim's @@r7rs-test lines (tests/lib/chibi/test.sld)."""
-    counts = {'pass': 0, 'fail': 0, 'error': 0, 'complete': False}
+    """Counts the shims' @@r7rs-test lines (tests/lib/chibi/test.sld, tests/lib/tests/scheme/test.sld)."""
+    counts = {'pass': 0, 'fail': 0, 'error': 0, 'skip': 0, 'complete': False}
     depth = 0
     for line in output.splitlines():
         m = _RESULT_LINE.match(line)
@@ -230,91 +231,206 @@ def _count_results(output):
     return counts
 
 
-def _r7rs_dir():
-    return join(_suite.dir, 'tests', 'r7rs')
+class _Section:
+    """One conformance section: a program the runner runs in a fresh context, and its total."""
+
+    def __init__(self, suite, section_id, title, file, total, args=(), env=(), exit_status=None, jit=False):
+        self.suite = suite
+        self.id = section_id
+        self.title = title
+        self.file = file
+        self.total = total
+        self.args = list(args)
+        self.env = list(env)  # ['NAME=value', ...]
+        # None: the program must finish normally and report its end. Otherwise it must exit with this
+        # status, which counts as one more passing test (as Larceny's testall scripts count it).
+        self.exit_status = exit_status
+        # Always compiled (compile immediately): the section's results depend on speed.
+        self.jit = jit
 
 
-def _sections():
-    """[(section id, title, total tests)] in suite order, from tests/r7rs/sections.tsv."""
-    rows = []
-    with open(join(_r7rs_dir(), 'sections.tsv'), encoding='utf-8') as f:
-        for line in f:
-            if line.startswith('#') or not line.strip():
-                continue
-            section_id, title, total = line.rstrip('\n').split('\t')
-            rows.append((section_id, title, int(total)))
-    return rows
+class _ConformanceSuite:
+    def __init__(self, name, directory, heading, column):
+        self.name = name  # for --suite
+        self.dir = join(_suite.dir, 'tests', directory)
+        self.heading = heading  # Markdown, for the status block and run summaries
+        self.column = column  # what one row is
+
+    def sections(self):
+        raise NotImplementedError
+
+    def runner_args(self, workdir):
+        """ConformanceRunner arguments before the files: library path and working directory."""
+        raise NotImplementedError
+
+    def _rows(self):
+        with open(join(self.dir, 'sections.tsv'), encoding='utf-8') as f:
+            return [line.rstrip('\n').split('\t') for line in f if line.strip() and not line.startswith('#')]
 
 
-def _run_conformance(section_ids, vm_args):
-    """Runs sections under our implementation, all in one JVM (scheme.launcher.ConformanceRunner).
+class _ChibiSuite(_ConformanceSuite):
+    """chibi-scheme's r7rs-tests.scm, split by section (tests/r7rs/, M1-01)."""
 
-    Returns {section id: {'pass', 'fail', 'error', 'complete', 'message'}}."""
-    files = [join(_r7rs_dir(), s + '.scm') for s in section_ids]
-    out = mx.OutputCapture()
-    jvm_args = mx.get_runtime_jvm_args(['SCHEME_LAUNCHER'])
-    rc = mx.run_java(jvm_args + _TRUFFLE_VM_ARGS + vm_args
-                     # tests/lib holds the (chibi test) shim the sections import.
-                     + ['-m', 'scheme.launcher/scheme.launcher.ConformanceRunner', '-I', join(_suite.dir, 'tests', 'lib')] + files,
-                     out=out, err=out, nonZeroIsFatal=False)
+    def __init__(self):
+        super().__init__('chibi', 'r7rs', "chibi-scheme's R7RS suite (`tests/r7rs/`)", 'Section')
+
+    def sections(self):
+        return [_Section(self, section_id, title, join(self.dir, section_id + '.scm'), int(total))
+                for section_id, title, total in self._rows()]
+
+    def runner_args(self, workdir):
+        # tests/lib holds the (chibi test) shim the sections import.
+        return ['-I', join(_suite.dir, 'tests', 'lib')]
+
+
+class _LarcenySuite(_ConformanceSuite):
+    """Larceny's R7RS test libraries, one program per (scheme ...) library (tests/r7rs-larceny/, M4-11)."""
+
+    def __init__(self):
+        super().__init__('larceny', 'r7rs-larceny', "Larceny's R7RS test suite (`tests/r7rs-larceny/`)", 'Library')
+
+    def program(self, name):
+        return join(self.dir, 'tests', 'scheme', 'run', name + '.sps')
+
+    def sections(self):
+        def words(field):
+            return [] if field == '-' else field.split(' ')
+        return [_Section(self, section_id, title, self.program(program), int(total), words(args), words(env),
+                         None if exit_status == '-' else int(exit_status), jit=section_id in _LARCENY_JIT)
+                for section_id, title, program, args, env, exit_status, total, _ in self._rows()]
+
+    def runner_args(self, workdir):
+        # tests/lib holds the (tests scheme test) shim; the vendored libraries come after it.
+        return ['-I', join(_suite.dir, 'tests', 'lib'), '-I', self.dir, '-C', workdir]
+
+    @staticmethod
+    def make_workdir(workdir, suite_dir):
+        """The suite loads tests/scheme/*.scm relative to the working directory and writes scratch
+        files there (io-tmp2, tmp-catch-out): a fresh directory whose tests/ is the vendored one."""
+        os.symlink(join(suite_dir, 'tests'), join(workdir, 'tests'))
+
+
+# Sections whose results depend on speed, so they always run compiled (compile immediately), where
+# they are deterministic: (scheme time)'s second test checks that jiffies are accurate to a tenth
+# of a second by polling the clock between runs of a million-iteration loop, so it assumes such a
+# loop takes well under 0.1 s. Interpreted, ours takes about 0.2-0.5 s, and the test passes or
+# fails by chance.
+_LARCENY_JIT = {'time'}
+
+_CHIBI = _ChibiSuite()
+_LARCENY = _LarcenySuite()
+_SUITES = [_CHIBI, _LARCENY]
+
+
+def _count_section(section, output, message):
+    counts = _count_results(output)
+    counts['message'] = message
+    counts['output'] = output
+    if section.exit_status is not None:
+        counts['complete'] = message == f'exit {section.exit_status}'
+        if counts['complete']:
+            counts['pass'] += 1
+    return counts
+
+
+def _run_conformance(sections, compile=False, torture=False):
+    """Runs sections under our implementation, one JVM per suite and mode (scheme.launcher.ConformanceRunner).
+
+    Returns {(suite name, section id): {'pass', 'fail', 'error', 'complete', 'message', 'output'}}."""
     results = {}
-    current = None
-    for line in out.data.splitlines(keepends=True):
-        m = _SECTION_LINE.match(line)
-        if m:
-            path, message = m.group(1), m.group(2)
-            section_id = os.path.basename(path)[:-len('.scm')]
-            counts = _count_results(current or '')
-            counts['message'] = message
-            counts['output'] = current or ''
-            results[section_id] = counts
-            current = None
-        else:
-            current = (current or '') + line
-    missing = [s for s in section_ids if s not in results]
-    if rc != 0 or missing:
-        mx.abort(f'ConformanceRunner failed (exit {rc}); no result for {missing}:\n{out.data}')
+    for suite, jit in [(suite, jit) for suite in _SUITES for jit in (False, True)]:
+        mine = [s for s in sections if s.suite is suite and s.jit == jit]
+        if not mine:
+            continue
+        vm_args = r7rs_vm_args(compile=compile or jit, torture=torture)
+        workdir = tempfile.mkdtemp(prefix=f'r7rs-{suite.name}-')
+        try:
+            if suite is _LARCENY:
+                _LarcenySuite.make_workdir(workdir, suite.dir)
+            files = []
+            for s in mine:
+                files += [a for arg in s.args for a in ('--arg', arg)]
+                files += [a for binding in s.env for a in ('--env', binding)]
+                files.append(s.file)
+            out = mx.OutputCapture()
+            jvm_args = mx.get_runtime_jvm_args(['SCHEME_LAUNCHER'])
+            rc = mx.run_java(jvm_args + _TRUFFLE_VM_ARGS + vm_args
+                             + ['-m', 'scheme.launcher/scheme.launcher.ConformanceRunner'] + suite.runner_args(workdir) + files,
+                             out=out, err=out, nonZeroIsFatal=False)
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+        # One @@section line per file, in order.
+        done = []
+        current = ''
+        for line in out.data.splitlines(keepends=True):
+            m = _SECTION_LINE.match(line)
+            if m and len(done) < len(mine):
+                section = mine[len(done)]
+                results[(suite.name, section.id)] = _count_section(section, current, m.group(2))
+                done.append(section)
+                current = ''
+            else:
+                current += line
+        if rc != 0 or len(done) != len(mine):
+            missing = [s.id for s in mine[len(done):]]
+            mx.abort(f'ConformanceRunner failed (exit {rc}); no result for {missing}:\n{out.data}')
     return results
 
 
+def _select_suites(name):
+    return _SUITES if name == 'all' else [s for s in _SUITES if s.name == name]
+
+
 def r7rs_test(args):
-    """run the chibi conformance suite: [section] [--torture] [--compile]"""
+    """run the conformance suites (chibi's and Larceny's): [section] [--suite S] [--torture] [--compile]"""
     parser = argparse.ArgumentParser(prog='mx r7rs-test')
-    parser.add_argument('section', nargs='?', help='one conformance section, e.g. 6.10')
+    parser.add_argument('section', nargs='?', help="one conformance section, e.g. 6.10 (chibi's) or base (Larceny's)")
+    parser.add_argument('--suite', choices=['all'] + [s.name for s in _SUITES], default='all', help='which suite (default: all)')
     parser.add_argument('--torture', action='store_true', help='capture + resume at every non-tail call')
     parser.add_argument('--compile', action='store_true', help='compile immediately; compilation failures are errors')
     parser.add_argument('-v', '--verbose', action='store_true', help='also list failing tests')
     parser.add_argument('--markdown', metavar='FILE', help='append a Markdown results table to FILE (e.g. $GITHUB_STEP_SUMMARY)')
     parsed = parser.parse_args(args)
-    sections = _sections()
+    suites = _select_suites(parsed.suite)
+    sections = [s for suite in suites for s in suite.sections()]
     if parsed.section:
-        sections = [s for s in sections if s[0] == parsed.section]
+        sections = [s for s in sections if s.id == parsed.section]
         if not sections:
-            mx.abort(f'unknown section {parsed.section}; sections: ' + ' '.join(s[0] for s in _sections()))
-    vm_args = r7rs_vm_args(compile=parsed.compile, torture=parsed.torture)
-    results = _run_conformance([s[0] for s in sections], vm_args)
-    total_pass = total = 0
-    for section_id, title, tests in sections:
-        r = results[section_id]
-        total_pass += r['pass']
-        total += tests
-        note = '' if r['complete'] else '  (aborted: ' + r['message'] + ')'
-        mx.log(f'{section_id:<5} {r["pass"]:>4}/{tests:<4} {title}{note}')
-        if parsed.verbose:
-            for line in r['output'].splitlines():
-                if line.startswith(('@@r7rs-test FAIL', '@@r7rs-test ERROR')):
-                    mx.log('      ' + line[len('@@r7rs-test '):])
-    mx.log(f'TOTAL {total_pass:>4}/{total}')
-    if parsed.markdown:
-        mode = ', '.join(m for m, on in (('--compile', parsed.compile), ('--torture', parsed.torture)) if on) or 'interpreter only'
-        rows = [f'### R7RS conformance ({mode}): {total_pass}/{total}', '',
-                '| Section | Passing | Tests | Note |', '|---|---:|---:|---|']
-        for section_id, title, tests in sections:
-            r = results[section_id]
+            mx.abort(f'unknown section {parsed.section}; sections: ' + ' '.join(s.id for suite in suites for s in suite.sections()))
+    results = _run_conformance(sections, compile=parsed.compile, torture=parsed.torture)
+    mode = ', '.join(m for m, on in (('--compile', parsed.compile), ('--torture', parsed.torture)) if on) or 'interpreter only'
+    markdown = []
+    for suite in suites:
+        mine = [s for s in sections if s.suite is suite]
+        if not mine:
+            continue
+        mx.log(f'{suite.name}:')
+        total_pass = total = 0
+        width = max(len(s.id) for s in mine)
+        for s in mine:
+            r = results[(suite.name, s.id)]
+            total_pass += r['pass']
+            total += s.total
+            note = '' if r['complete'] else '  (aborted: ' + r['message'] + ')'
+            note += '  (compiled: depends on speed)' if s.jit and not parsed.compile else ''
+            mx.log(f'{s.id:<{width}} {r["pass"]:>4}/{s.total:<4} {s.title}{note}')
+            if parsed.verbose:
+                for line in r['output'].splitlines():
+                    if line.startswith(('@@r7rs-test FAIL', '@@r7rs-test ERROR')):
+                        mx.log('      ' + line[len('@@r7rs-test '):])
+        mx.log(f'{"TOTAL":<{width}} {total_pass:>4}/{total}')
+        markdown += [f'### {suite.heading} ({mode}): {total_pass}/{total}', '',
+                     f'| {suite.column} | Passing | Tests | Note |', '|---|---:|---:|---|']
+        for s in mine:
+            r = results[(suite.name, s.id)]
             note = '' if r['complete'] else 'aborted: ' + r['message'].replace('|', '\\|')
-            rows.append(f'| {title} | {r["pass"]} | {tests} | {note} |')
+            if s.jit and not parsed.compile:
+                note = (note + '; ' if note else '') + 'compiled: depends on speed'
+            markdown.append(f'| {s.title} | {r["pass"]} | {s.total} | {note} |')
+        markdown.append('')
+    if parsed.markdown:
         with open(parsed.markdown, 'a', encoding='utf-8') as f:
-            f.write('\n'.join(rows) + '\n\n')
+            f.write('\n'.join(markdown) + '\n')
 
 
 _SECTION_BEGIN = re.compile(r'^\(test-begin "([^"]*)"\)\s*$')
@@ -398,6 +514,138 @@ def r7rs_vendor_chibi(args):
             f.write('%s\t%s\t%d\n' % row)
     mx.log(f'wrote {len(sections)} sections ({sum(r[2] for r in rows)} tests) to '
            f'{os.path.relpath(out_dir, _suite.dir)}: ' + ' '.join(r[0] for r in rows))
+
+
+# Larceny's R7RS test suite (M4-11): the tests of the R7RS-small libraries, in the order of
+# Larceny's test/R7RS/Lib/testall-chibi, then that script's runs of process-context with options.
+# The Red Edition libraries (SRFIs: box, charset, comparator, ...) are not R7RS-small and stay out.
+_LARCENY_LIBRARIES = ['base', 'case-lambda', 'char', 'complex', 'cxr', 'eval', 'file', 'inexact', 'lazy', 'load',
+                      'read', 'repl', 'time', 'write', 'process-context']
+# (section id, arguments, environment, exit status): testall-chibi's runtest_with_options.
+_LARCENY_VARIANTS = [
+    ('process-context-getenv', '--test-getenv TEMPORARY_ENV_VAR 2776e8e', 'TEMPORARY_ENV_VAR=2776e8e', '-'),
+    ('process-context-emergency-exit', '--test-emergency-exit', '-', '0'),
+    ('process-context-emergency-exit-37', '--test-emergency-exit 37', '-', '37'),
+    ('process-context-exit', '--test-exit', '-', '0'),
+    ('process-context-exit-46', '--test-exit 46', '-', '46'),
+]
+
+
+def _larceny_file_library(name):
+    """The library a file in Larceny's tests/scheme belongs to: base-test1.scm, base.body-closed.scm -> base."""
+    return re.sub(r'-test\d+$', '', name.split('.')[0])
+
+
+def _features(command):
+    """The (features) list a Scheme command prints, given a program that writes it."""
+    with tempfile.TemporaryDirectory(prefix='r7rs-features-') as d:
+        program = join(d, 'features.scm')
+        with open(program, 'w', encoding='utf-8') as f:
+            f.write('(import (scheme base) (scheme write))\n(write (features))\n(newline)\n')
+        rc, out = command(program)
+    if rc != 0 or not out.strip().startswith('('):
+        mx.abort(f'cannot get the feature list: exit {rc}: {out}')
+    return out.strip()[1:-1].split()
+
+
+def _run_chibi_section(suite_dir, workdir, section, features, skips):
+    """Runs one section of the vendored Larceny suite under chibi-scheme with these extra features,
+    tracing the tests' start and skipping the tests numbered in skips (tests/lib/tests/scheme/test.sld).
+
+    Returns (counts, exit status, number of the last test that started)."""
+    env = dict(os.environ)
+    env.update(b.split('=', 1) for b in section.env)
+    env['R7RS_TEST_TRACE'] = '1'
+    env['R7RS_TEST_SKIP'] = ' '.join(str(n) for n in skips)
+    out = mx.OutputCapture()
+    rc = mx.run(['chibi-scheme'] + [a for f in features for a in ('-D', f)]
+                + ['-I', join(_suite.dir, 'tests', 'lib'), '-I', suite_dir, section.file] + section.args,
+                out=out, err=out, cwd=workdir, env=env, nonZeroIsFatal=False, timeout=900)
+    started = [int(m.group(1)) for m in re.finditer(r'^@@r7rs-test START (\d+)$', out.data, re.MULTILINE)]
+    counts = _count_section(section, out.data, f'exit {rc}' if section.exit_status is not None else 'ok')
+    return counts, rc, started[-1] if started else None
+
+
+def r7rs_vendor_larceny(args):
+    """copy Larceny's R7RS-small tests into tests/r7rs-larceny/ and count them (M4-11)"""
+    parser = argparse.ArgumentParser(prog='mx r7rs-vendor-larceny')
+    parser.add_argument('source', help='a checkout of https://github.com/larcenists/larceny')
+    parser.add_argument('--commit', required=True, help='the commit the checkout is at')
+    parsed = parser.parse_args(args)
+    lib = join(parsed.source, 'test', 'R7RS', 'Lib')
+    scheme_dir = join(lib, 'tests', 'scheme')
+    out_dir = _LARCENY.dir
+    shutil.rmtree(join(out_dir, 'tests'), ignore_errors=True)
+    os.makedirs(join(out_dir, 'tests', 'scheme', 'run'))
+    # The suite's license statement (LGPL) is in these READMEs; the license texts are committed
+    # next to them (COPYING.LESSER, COPYING).
+    for name in ('README', 'README2'):
+        shutil.copyfile(join(lib, name), join(out_dir, name + '.upstream'))
+    for name in ('COPYING', 'COPYING.LESSER'):
+        if not exists(join(out_dir, name)):
+            mx.abort(f'tests/r7rs-larceny/{name} (the GNU license text) is missing')
+    # Each library's .sld, the files it includes or loads, and its driver program. (tests scheme
+    # test) is not copied: tests/lib/tests/scheme/test.sld replaces it.
+    copied = []
+    for name in sorted(os.listdir(scheme_dir)):
+        if name.endswith(('.sld', '.scm')) and _larceny_file_library(name) in _LARCENY_LIBRARIES:
+            copied.append(join('tests', 'scheme', name))
+    copied += [join('tests', 'scheme', 'run', name + '.sps') for name in _LARCENY_LIBRARIES]
+    for rel in copied:
+        with open(join(lib, rel), encoding='utf-8') as f:
+            text = f.read()
+        digest = hashlib.sha256(text.encode('utf-8')).hexdigest()
+        upstream = 'test/R7RS/Lib/' + rel.replace(os.sep, '/')
+        with open(join(out_dir, rel), 'w', encoding='utf-8') as f:
+            f.write(f';; Vendored from Larceny {parsed.commit} {upstream} (sha256 {digest}).\n')
+            f.write(';; Generated by `mx r7rs-vendor-larceny`; read-only (AGENTS.md). LGPL: see tests/r7rs-larceny/README.md.\n')
+            f.write(text)
+    # Totals: the number of tests chibi-scheme runs, with our features added (-D), since some tests
+    # depend on cond-expand features (exact-complex, ...): the totals are those of our
+    # configuration. Where chibi crashes or hangs in a test (it loops in one of base's dynamic-wind
+    # tests), the test is skipped (counted, not run) and the section run again.
+    ours = _features(lambda program: _run_ours(program, r7rs_vm_args())[:2])
+    chibis = _features(lambda program: _run_chibi(program)[:2])
+    features = [f for f in ours if f not in chibis]
+    rows = [(n, f'(scheme {n})', n, '-', '-', '-') for n in _LARCENY_LIBRARIES]
+    rows += [(i, '(scheme process-context) ' + a, 'process-context', a, e, x) for i, a, e, x in _LARCENY_VARIANTS]
+    workdir = tempfile.mkdtemp(prefix='r7rs-vendor-larceny-')
+    try:
+        _LarcenySuite.make_workdir(workdir, out_dir)
+        # chibi resolves the include inside an included file (base-test3.scm's "base-test4.scm")
+        # against the working directory, not the including file's directory.
+        os.symlink(join(out_dir, 'tests', 'scheme', 'base-test4.scm'), join(workdir, 'base-test4.scm'))
+        table = []
+        for section_id, title, program, arguments, environment, exit_status in rows:
+            section = _Section(_LARCENY, section_id, title, _LARCENY.program(program), 0,
+                               [] if arguments == '-' else arguments.split(' '),
+                               [] if environment == '-' else environment.split(' '),
+                               None if exit_status == '-' else int(exit_status))
+            skips = []
+            while True:
+                counts, rc, last = _run_chibi_section(out_dir, workdir, section, features, skips)
+                if counts['complete'] or last is None or last in skips or len(skips) == 3:
+                    break
+                mx.log(f'{section_id}: chibi did not finish test {last} (exit {rc}); skipping it')
+                skips.append(last)
+            if not counts['complete']:
+                mx.abort(f'{section_id}: chibi did not finish (exit {rc}, expected {exit_status}): '
+                         f'{ {k: v for k, v in counts.items() if k != "output"} }\n{counts["output"][-3000:]}')
+            total = counts['pass'] + counts['fail'] + counts['error'] + counts['skip']
+            if section.exit_status is not None and (counts['fail'] or counts['error'] or skips):
+                mx.abort(f'{section_id}: chibi exits as expected but does not pass every test: {counts}')
+            chibi = str(counts['pass']) + (f' (skips test {", ".join(map(str, skips))})' if skips else '')
+            mx.log(f'{section_id}: {total} tests; chibi passes {chibi}')
+            table.append((section_id, title, program, arguments, environment, exit_status, str(total), chibi))
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+    with open(join(out_dir, 'sections.tsv'), 'w', encoding='utf-8') as f:
+        f.write(f'# Larceny {parsed.commit}. Generated by `mx r7rs-vendor-larceny`; columns: section id, title, program\n'
+                '# (tests/scheme/run/<program>.sps), arguments, environment, exit status (- : must finish), tests,\n'
+                '# tests chibi-scheme passes (and tests it cannot run). Counted with our features: ' + ' '.join(ours) + '\n')
+        for row in table:
+            f.write('\t'.join(row) + '\n')
+    mx.log(f'wrote {len(copied)} files and {len(table)} sections ({sum(int(r[6]) for r in table)} tests) to tests/r7rs-larceny')
 
 
 # tests/spec cases that need something a later task brings: reported as SKIPPED, naming the task.
@@ -548,13 +796,15 @@ def r7rs_torture(args):
     """torture mode (M2-06): unit tests, tests/diff/, and every conformance case that passes normally"""
     r7rs_unittest(['--torture'])
     r7rs_diff_all(['--torture'])
-    sections = [s[0] for s in _sections()]
-    normal = _run_conformance(sections, r7rs_vm_args())
-    tortured = _run_conformance(sections, r7rs_vm_args(torture=True))
-    worse = [f'{s}: {normal[s]["pass"]} normally, {tortured[s]["pass"]} under torture' for s in sections if tortured[s]['pass'] < normal[s]['pass']]
+    sections = [s for suite in _SUITES for s in suite.sections()]
+    normal = _run_conformance(sections)
+    tortured = _run_conformance(sections, torture=True)
+    keys = [(s.suite.name, s.id) for s in sections]
+    worse = [f'{suite} {s}: {normal[(suite, s)]["pass"]} normally, {tortured[(suite, s)]["pass"]} under torture'
+             for suite, s in keys if tortured[(suite, s)]['pass'] < normal[(suite, s)]['pass']]
     if worse:
         mx.abort('r7rs-torture: sections that pass less under torture:\n  ' + '\n  '.join(worse))
-    total = sum(normal[s]['pass'] for s in sections)
+    total = sum(normal[k]['pass'] for k in keys)
     mx.log(f'r7rs-torture: unit tests, tests/diff/ and conformance ({total} passing normally) all pass under torture')
 
 
@@ -602,21 +852,21 @@ _STATUS_END = '<!-- status:end -->'
 
 
 def _status_block(results):
-    sections = _sections()
     lines = [_STATUS_BEGIN,
-             'Conformance against the vendored chibi suite (`tests/r7rs/`), interpreter',
-             'only. Generated by `mx r7rs-status`; `mx tests` fails if it is stale. Don\'t',
-             'edit it by hand.',
-             '',
-             '| Section | Passing | Tests |',
-             '|---|---:|---:|']
-    total_pass = total = 0
-    for section_id, title, tests in sections:
-        passing = results[section_id]['pass']
-        total_pass += passing
-        total += tests
-        lines.append(f'| {title} | {passing} | {tests} |')
-    lines.append(f'| **Total** | **{total_pass}** | **{total}** |')
+             'Conformance against the vendored suites, interpreter only (except where a row',
+             'says compiled). Generated by `mx r7rs-status`; `mx tests` fails if it is stale.',
+             'Don\'t edit it by hand.']
+    for suite in _SUITES:
+        lines += ['', suite.heading + ':', '',
+                  f'| {suite.column} | Passing | Tests |',
+                  '|---|---:|---:|']
+        total_pass = total = 0
+        for s in suite.sections():
+            passing = results[(suite.name, s.id)]['pass']
+            total_pass += passing
+            total += s.total
+            lines.append(f'| {s.title}{" (compiled: depends on speed)" if s.jit else ""} | {passing} | {s.total} |')
+        lines.append(f'| **Total** | **{total_pass}** | **{total}** |')
     lines.append(_STATUS_END)
     return '\n'.join(lines)
 
@@ -626,7 +876,7 @@ def r7rs_status(args):
     parser = argparse.ArgumentParser(prog='mx r7rs-status')
     parser.add_argument('--check', action='store_true', help='fail if the block is stale instead of rewriting it')
     parsed = parser.parse_args(args)
-    results = _run_conformance([s[0] for s in _sections()], r7rs_vm_args())
+    results = _run_conformance([s for suite in _SUITES for s in suite.sections()])
     block = _status_block(results)
     plan = join(_suite.dir, 'docs', 'plan.md')
     with open(plan, encoding='utf-8') as f:
@@ -778,7 +1028,7 @@ def tests(args):
 mx.update_commands(_suite, {
     'checks': [checks, '[' + ' | '.join(_CHECKS) + ']...'],
     'tests': [tests, '[' + ' | '.join(_TESTS) + ']...'],
-    'r7rs-test': [r7rs_test, '[section] [--torture] [--compile]'],
+    'r7rs-test': [r7rs_test, '[section] [--suite all|chibi|larceny] [--torture] [--compile] [-v]'],
     'r7rs-spec': [r7rs_spec, '[-j N] [--shard I/N] [case...]'],
     'r7rs-diff': [r7rs_diff, 'file.scm [--compile] [--torture]'],
     'r7rs-diff-all': [r7rs_diff_all, '[--compile] [--torture]'],
@@ -787,5 +1037,6 @@ mx.update_commands(_suite, {
     'r7rs-status': [r7rs_status, ''],
     'r7rs-check': [r7rs_check, ''],
     'r7rs-vendor-chibi': [r7rs_vendor_chibi, 'path/to/r7rs-tests.scm --version <chibi version>'],
+    'r7rs-vendor-larceny': [r7rs_vendor_larceny, 'path/to/larceny --commit <hash>'],
     'r7rs-unittest': [r7rs_unittest, '[--compile] [--torture] [-j N] [--shard I/N] [unittest args...]'],
 })

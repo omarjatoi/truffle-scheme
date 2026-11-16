@@ -27,3 +27,9 @@ Unless you explicitly state otherwise, any contribution intentionally submitted 
 R7RS test suite, and `tests/lib/chibi/test.sld` includes two procedures from
 chibi-scheme's `(chibi test)`. Both are under chibi-scheme's BSD-3-Clause
 license; see [tests/r7rs/COPYING](./tests/r7rs/COPYING).
+
+`tests/r7rs-larceny/` is vendored from [Larceny](https://github.com/larcenists/larceny)'s
+R7RS test suite, which is derived from Racket's R6RS tests, and
+`tests/lib/tests/scheme/test.sld` is derived from that suite's test library.
+Both are under the GNU LGPL; see [tests/r7rs-larceny/README.md](./tests/r7rs-larceny/README.md).
+They are test inputs only: nothing in the implementation includes or links them.
