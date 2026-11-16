@@ -35,7 +35,7 @@ import scheme.runtime.value.SPair;
  * CallSiteEmitter (AGENTS.md rule 2): {@code Call}, then {@code IsCapture}, then
  * {@code SuspendFrame}.
  */
-@GenerateBytecode(languageClass = SchemeLanguage.class)
+@GenerateBytecode(languageClass = SchemeLanguage.class, storeBytecodeIndexInFrame = true)
 public abstract class SchemeRootNode extends RootNode implements BytecodeRootNode {
 
     private String name;
@@ -123,9 +123,10 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
 
     /**
      * A non-tail call: calls the procedure, then runs the trampoline. Past {@link #SPILL_DEPTH}
-     * nested calls it returns a spill capture instead of calling.
+     * nested calls it returns a spill capture instead of calling. It stores the bytecode index:
+     * guest frames below it need this call's location (design.md D13).
      */
-    @Operation
+    @Operation(storeBytecodeIndex = true)
     public static final class Call {
         @Specialization(guards = "procedure.callTarget == cachedTarget", limit = "4")
         static Object doDirect(SClosure procedure, @Variadic Object[] arguments,
@@ -229,7 +230,8 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
         }
     }
 
-    @Operation
+    /** Stores the bytecode index: its arity error names this location (design.md D13). */
+    @Operation(storeBytecodeIndex = true)
     @ConstantOperand(type = int.class)
     @ConstantOperand(type = int.class)
     public static final class CheckArity {
@@ -249,7 +251,7 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
     }
 
     /** The arguments from {@code start} on, as a list (a rest parameter). */
-    @Operation
+    @Operation(storeBytecodeIndex = false)
     @ConstantOperand(type = int.class)
     public static final class RestList {
         @Specialization
@@ -290,8 +292,12 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
         }
     }
 
-    /** A global read: a compile-time constant while the cell's assumption holds (design.md D7). */
-    @Operation
+    /**
+     * A global read: a compile-time constant while the cell's assumption holds (design.md D7). It
+     * doesn't store the bytecode index: an unbound-variable error is raised in the calling frame
+     * (D8), whose Call stores its own.
+     */
+    @Operation(storeBytecodeIndex = false)
     @ConstantOperand(type = GlobalCell.class)
     public static final class GlobalRef {
         @Specialization(assumptions = "stable", guards = "value != null")

@@ -9,6 +9,8 @@ import java.util.Map;
 
 import com.oracle.truffle.api.bytecode.BytecodeLabel;
 import com.oracle.truffle.api.bytecode.BytecodeLocal;
+import com.oracle.truffle.api.source.Source;
+import com.oracle.truffle.api.source.SourceSection;
 
 import scheme.compiler.Ast.Expr;
 import scheme.compiler.Ast.Lambda;
@@ -42,6 +44,8 @@ final class CodeGenerator {
         final Lambda lambda;
         final Map<Var, BytecodeLocal> locals = new HashMap<>();
         BytecodeLabel loop;
+        /** The Source the open source sections belong to (design.md D13), or null. */
+        Source source;
 
         State(Lambda lambda) {
             this.lambda = lambda;
@@ -76,8 +80,39 @@ final class CodeGenerator {
         }
     }
 
+    /**
+     * The task that emits {@code e}: its operations, wrapped in its source section when it has
+     * one (design.md D13), so every bytecode maps back to the form it came from. A form from
+     * another file (include, a library) opens that file's Source first.
+     */
     private Runnable gen(Expr e, Ctx ctx) {
-        return () -> push(expand(e, ctx));
+        return () -> {
+            SourceSection section = e.source;
+            if (section == null || !section.isAvailable()) {
+                push(expand(e, ctx));
+                return;
+            }
+            State st = state();
+            Source outer = st.source;
+            Source source = section.getSource();
+            List<Runnable> seq = new ArrayList<>();
+            seq.add(() -> {
+                if (source != outer) {
+                    b.beginSource(source);
+                    st.source = source;
+                }
+                b.beginSourceSection(section.getCharIndex(), section.getCharLength());
+            });
+            seq.addAll(expand(e, ctx));
+            seq.add(() -> {
+                b.endSourceSection();
+                if (source != outer) {
+                    b.endSource();
+                    st.source = outer;
+                }
+            });
+            push(seq);
+        };
     }
 
     private State state() {
@@ -90,10 +125,16 @@ final class CodeGenerator {
     private void pushRoot(Lambda fn, RootHolder holder) {
         boolean loops = !fn.program && fn.rest == null;
         List<Runnable> seq = new ArrayList<>();
+        SourceSection section = fn.source != null && fn.source.isAvailable() ? fn.source : null;
         seq.add(() -> {
             b.beginRoot();
             State st = new State(fn);
             states.push(st);
+            if (section != null) {
+                b.beginSource(section.getSource());
+                b.beginSourceSection(section.getCharIndex(), section.getCharLength());
+                st.source = section.getSource();
+            }
             for (Var v : fn.owned) {
                 st.locals.put(v, b.createLocal());
             }
@@ -129,6 +170,10 @@ final class CodeGenerator {
                 b.emitLabel(st.loop);
                 b.endBlock();
                 b.endWhile();
+            }
+            if (section != null) {
+                b.endSourceSection();
+                b.endSource();
             }
             SchemeRootNode root = b.endRoot();
             root.setName(fn.program ? "<program>" : fn.name);

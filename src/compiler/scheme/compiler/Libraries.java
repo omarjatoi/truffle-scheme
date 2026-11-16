@@ -261,6 +261,9 @@ final class Libraries {
             }
         }
         Ast.Lambda program = expander.expandProgram(body);
+        if (declaration.form() instanceof Syntax s && s.source != null) {
+            program.source = s.source;
+        }
         if (!body.isEmpty()) {
             // Most standard libraries only re-export, and have nothing to run.
             runner.run(program);

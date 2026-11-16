@@ -310,7 +310,7 @@ They follow design.md D3, D4, D5 and D7.
   - **Done when** those four sections pass in full, normally and under
     `--torture`, and the status block shows it.
 
-- [ ] **M3-09 · Source locations** *(needs M3-04)*
+- [x] **M3-09 · Source locations** *(needs M3-04)*
   - The core AST carries each form's `SourceSection` (from its syntax object,
     M3-01) to the code generator, which wraps operations in Bytecode DSL
     source sections; `storeBytecodeIndexInFrame` keeps locations exact across
