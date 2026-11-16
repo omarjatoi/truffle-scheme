@@ -6,6 +6,7 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
+import java.util.function.Consumer;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.TruffleLanguage;
@@ -72,6 +73,8 @@ public final class SchemeContext {
     public long tortureCaptures;
     /** Where allocations go to listeners such as {@code --memtracer} ({@link Allocations}). */
     AllocationReporter allocationReporter;
+    /** What the language added to {@link #allocationReporter}, removed when the context is disposed. */
+    Consumer<Boolean> allocationListener;
 
     SchemeContext(TruffleLanguage.Env env) {
         this.env = env;
