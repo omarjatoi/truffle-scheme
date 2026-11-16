@@ -165,7 +165,7 @@ public class SpilledFramesTest {
         try (Context context = Context.newBuilder(SCHEME).out(new ByteArrayOutputStream()).build()) {
             Debugger debugger = Debugger.find(context.getEngine());
             try (DebuggerSession session = debugger.startSession(event -> {
-                suspensions.add(describe(event));
+                suspensions.add(describe(event, true));
                 event.prepareContinue();
             })) {
                 Breakpoint breakpoint = Breakpoint.newBuilder(source.getURI()).lineIs(4).build();
@@ -189,11 +189,74 @@ public class SpilledFramesTest {
         assertEquals(expected, stack);
     }
 
+    @Test
+    public void everyFrameOnceAtEveryLevelDownAndBackUp() {
+        // A frame is on the Java stack or pending on the heap, never both and never neither: at each
+        // level on the way down (spilling every 50 frames) and on the way back up (resuming each
+        // pending frame), the stack is exactly the live activations. Lines 2 and 6 call only
+        // primitives, so under torture each is hit once per level too.
+        int depth = 200;
+        Source source = Source.newBuilder(SCHEME, """
+                        (define (down n)
+                          (car (cons n n))
+                          (if (= n 0)
+                              0
+                              (let ((r (down (- n 1))))
+                                (car (cons r n))
+                                (+ 1 r))))
+                        (down DEPTH)
+                        """.replace("DEPTH", Integer.toString(depth)), "down-and-up.scm").buildLiteral();
+        List<List<String>> suspensions = new ArrayList<>();
+        try (Context context = Context.newBuilder(SCHEME).out(new ByteArrayOutputStream()).build()) {
+            Debugger debugger = Debugger.find(context.getEngine());
+            try (DebuggerSession session = debugger.startSession(event -> {
+                // Before the first spill and after the last resume, the program's frame is on the Java
+                // stack and nothing is pending: no asynchronous stack (and Truffle 25.5's
+                // getAsynchronousStacks() throws if there is none, so don't ask).
+                boolean pending = true;
+                for (DebugStackFrame frame : event.getStackFrames()) {
+                    pending &= !frame.getName().equals("<program>");
+                }
+                List<String> stack = describe(event, pending);
+                stack.remove("<prompt>");
+                suspensions.add(stack);
+                event.prepareContinue();
+            })) {
+                session.install(Breakpoint.newBuilder(source.getURI()).lineIs(2).build());
+                session.install(Breakpoint.newBuilder(source.getURI()).lineIs(6).build());
+                assertEquals(depth, context.eval(source).asInt());
+            }
+        }
+        List<List<String>> expected = new ArrayList<>();
+        for (int n = depth; n >= 0; n--) {
+            expected.add(live(n, 2, depth));
+        }
+        for (int n = 1; n <= depth; n++) {
+            expected.add(live(n, 6, depth));
+        }
+        assertEquals(expected.size(), suspensions.size());
+        for (int i = 0; i < expected.size(); i++) {
+            assertEquals("suspension " + i, runs(expected.get(i)), runs(suspensions.get(i)));
+        }
+    }
+
+    /** The live frames when down(n) is at {@code line}: it, each caller waiting on line 5, the program. */
+    private static List<String> live(int n, int line, int depth) {
+        List<String> stack = new ArrayList<>();
+        stack.add("down:" + line + " n=" + n);
+        for (int m = n + 1; m <= depth; m++) {
+            stack.add("down:5 n=" + m);
+        }
+        stack.add("<program>:8");
+        return stack;
+    }
+
     /**
      * The suspended stack as a debugger front end shows it, innermost first: the frames on the Java
-     * stack, then the asynchronous stack (the frames on the heap). "name:line n=value".
+     * stack, then, if {@code pending}, the one asynchronous stack (the frames on the heap).
+     * "name:line n=value".
      */
-    private static List<String> describe(SuspendedEvent event) {
+    private static List<String> describe(SuspendedEvent event, boolean pending) {
         List<String> stack = new ArrayList<>();
         for (DebugStackFrame frame : event.getStackFrames()) {
             if (frame.getSourceSection() == null) {
@@ -202,6 +265,9 @@ public class SpilledFramesTest {
                 DebugValue n = frame.getScope().getDeclaredValue("n");
                 stack.add(frame.getName() + ":" + frame.getSourceSection().getStartLine() + (n == null ? "" : " n=" + n.toDisplayString()));
             }
+        }
+        if (!pending) {
+            return stack;
         }
         List<List<DebugStackTraceElement>> asynchronous = event.getAsynchronousStacks();
         assertEquals(1, asynchronous.size());

@@ -457,22 +457,28 @@ def _cpusampler(workdir, commands):
     mx.log('  cpusampler: call tree has <program> > loop > fib')
     # Past the spill depth, frames wait on the heap, not the Java stack; the prompt reports them as
     # its asynchronous stack, which the sampler splices in after it (design.md "Spilled frames in
-    # tools"). The deepest sampled path must have every frame of down.
+    # tools"). Every sample in spin must have every frame of down (n = 500 down to 1), and no sample
+    # may have a frame twice: at most 501 frames of down, the 501st being down(0) before it
+    # tail-calls spin. That sample is as long as one in spin, so "the deepest sample" is either.
     tree = json.loads(_profile(workdir, command, lambda out: ['--cpusampler', '--cpusampler.Output=json', '--cpusampler.Period=1ms', '--cpusampler.OutputFile=' + out],
                                [r'"samples"'], program=_SPILL_PROGRAM))
-    deepest = []
+    in_spin = 0
     for thread in tree['contexts'][0]['profile']:
         work = [(root, []) for root in thread['samples']]
         while work:
             node, path = work.pop()
             path = path + [node['root_name']]
-            if node['self_hit_count'] > 0 and len(path) > len(deepest):
-                deepest = path
+            if node['self_hit_count'] > 0:
+                frames = path.count('down')
+                if path[-1] == 'spin':
+                    in_spin += node['self_hit_count']
+                    _check(frames == _SPILL_DEPTH,
+                           f'cpusampler: a sample in spin has {frames} frames of down, not {_SPILL_DEPTH}: {path[:5]} ... {path[-5:]}')
+                _check(frames <= _SPILL_DEPTH + 1,
+                       f'cpusampler: a sample has {frames} frames of down, more than the {_SPILL_DEPTH + 1} there are: {path[:5]} ... {path[-5:]}')
             work.extend((child, path) for child in node['children'])
-    frames = deepest.count('down')
-    _check(frames == _SPILL_DEPTH and deepest[-1] == 'spin',
-           f'cpusampler: the deepest sample has {frames} frames of down, not {_SPILL_DEPTH}: {deepest[:5]} ... {deepest[-5:]}')
-    mx.log(f'  cpusampler: samples at the bottom of a recursion {_SPILL_DEPTH} deep have all {frames} frames')
+    _check(in_spin > 0, 'cpusampler: no sample in spin')
+    mx.log(f'  cpusampler: all {in_spin} samples at the bottom of a recursion {_SPILL_DEPTH} deep have all {_SPILL_DEPTH} frames')
 
 
 def _memtracer(workdir, commands):
