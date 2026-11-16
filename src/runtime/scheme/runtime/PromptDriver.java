@@ -40,7 +40,8 @@ final class PromptDriver extends Node {
     private record PendingRaise(Object condition) {
     }
 
-    @Child private IndirectCallNode callNode = IndirectCallNode.create();
+    /** Performs the calls and tail calls the driver makes, through an inline cache (plan.md M5-10). */
+    @Child private Trampoline calls = Trampoline.create();
     @Child private ResumeNode resumeNode = PromptDriverFactory.ResumeNodeGen.create();
 
     PromptDriver() {
@@ -230,10 +231,7 @@ final class PromptDriver extends Node {
     }
 
     Object callThunk(Object procedure) {
-        if (!(procedure instanceof SClosure closure)) {
-            throw notAProcedure(procedure);
-        }
-        return callNode.call(closure.callTarget, closure);
+        return calls.executeCall(procedure, new Object[]{procedure});
     }
 
     /** Index 0 of {@code arguments} is (or is set to) the procedure. */
@@ -242,7 +240,7 @@ final class PromptDriver extends Node {
             throw notAProcedure(procedure);
         }
         arguments[0] = closure;
-        return callNode.call(closure.callTarget, arguments);
+        return calls.executeCall(closure, arguments);
     }
 
     @TruffleBoundary
