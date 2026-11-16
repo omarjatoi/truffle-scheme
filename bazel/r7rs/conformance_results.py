@@ -30,6 +30,13 @@ def main():
     suite = next(s for s in r7rs.suites() if s.name == args.suite)
     sections = suite.sections()
     results = r7rs.run_conformance(runtime, sections, jobs=4)
+    # The runner gives each section 120 s (ConformanceRunner's scheme.conformance.timeout). On an
+    # overloaded machine (lazy's 1M-iteration loops take about a minute interpreted) that can
+    # trip, and this result is cached: run a timed-out section once more, on its own.
+    timed_out = [s for s in sections if results[(suite.name, s.id)]['message'].startswith('timeout')]
+    if timed_out:
+        r7rs.log('timed out, running again alone: ' + ' '.join(s.id for s in timed_out))
+        results.update(r7rs.run_conformance(runtime, timed_out))
     with open(args.block, 'w', encoding='utf-8') as f:
         f.write(r7rs.suite_block(suite, results) + '\n')
     with open(args.json, 'w', encoding='utf-8') as f:
