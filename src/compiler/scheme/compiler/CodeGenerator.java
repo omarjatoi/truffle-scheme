@@ -173,7 +173,8 @@ final class CodeGenerator {
                 st.source = section.getSource();
             }
             for (Var v : fn.owned) {
-                st.locals.put(v, b.createLocal());
+                // Named, so the debugger shows Scheme variables by name; temporaries stay unnamed.
+                st.locals.put(v, b.createLocal(v.name.toString(), null));
             }
             if (!fn.program) {
                 int n = fn.params.size();
