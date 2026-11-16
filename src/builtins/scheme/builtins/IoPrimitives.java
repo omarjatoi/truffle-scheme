@@ -1,23 +1,39 @@
 package scheme.builtins;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.List;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.TruffleFile;
+import com.oracle.truffle.api.TruffleLanguage;
 
+import scheme.reader.CharSource;
+import scheme.reader.Reader;
 import scheme.runtime.PrimitiveNode;
 import scheme.runtime.PrimitiveSpec;
 import scheme.runtime.SchemeContext;
 import scheme.runtime.SchemeError;
 import scheme.runtime.printer.Printer;
+import scheme.runtime.value.SBytevector;
 import scheme.runtime.value.SChar;
 import scheme.runtime.value.SConstant;
+import scheme.runtime.value.SErrorObject;
+import scheme.runtime.value.SPair;
 import scheme.runtime.value.SPort;
 import scheme.runtime.value.SString;
 
 /**
  * The input and output area (R7RS §6.13): its primitives, all leaves (AGENTS.md rule 1). One of the
- * fan-out areas (AGENTS.md "Areas"): add this area's primitives here and nowhere else. Output takes
- * an explicit port; io.scm supplies current-output-port when it is left out.
+ * fan-out areas (AGENTS.md "Areas"): add this area's primitives here and nowhere else. The
+ * {@code %}-primitives take every argument explicitly; io.scm supplies the current ports and the
+ * default ranges when they are left out, and the procedures that call Scheme
+ * ({@code call-with-port}, {@code with-input-from-file}, ...).
+ *
+ * <p>File ports go through {@link TruffleFile} (design.md D10). A file that can't be opened, read or
+ * written is a {@code file-error?} (design.md D8); {@code read} raises the reader's errors, which are
+ * {@code read-error?}s.
  */
 final class IoPrimitives {
 
@@ -27,94 +43,205 @@ final class IoPrimitives {
     /** This area's primitives: the one list to add to. */
     static List<PrimitiveSpec> primitives() {
         return List.of(
-                        new PrimitiveSpec("%stdout-port", 0, 0, StdoutPort::new),
-                        new PrimitiveSpec("%display", 2, 2, () -> new Print(Printer.Mode.DISPLAY)),
-                        new PrimitiveSpec("%write", 2, 2, () -> new Print(Printer.Mode.WRITE)),
-                        new PrimitiveSpec("%write-shared", 2, 2, () -> new Print(Printer.Mode.WRITE_SHARED)),
-                        new PrimitiveSpec("%write-simple", 2, 2, () -> new Print(Printer.Mode.WRITE_SIMPLE)),
-                        new PrimitiveSpec("%write-string", 2, 2, WriteString::new),
-                        new PrimitiveSpec("%write-char", 2, 2, WriteChar::new),
-                        new PrimitiveSpec("%flush-output-port", 1, 1, Flush::new),
+                        // Console ports, the initial values of the current-port parameters.
+                        new PrimitiveSpec("%stdout-port", 0, 0, () -> new ConsolePort(ConsolePort.OUT)),
+                        new PrimitiveSpec("%stderr-port", 0, 0, () -> new ConsolePort(ConsolePort.ERR)),
+                        new PrimitiveSpec("%stdin-port", 0, 0, () -> new ConsolePort(ConsolePort.IN)),
+                        // Predicates and closing.
+                        new PrimitiveSpec("port?", 1, 1, () -> new TypePredicate(x -> x instanceof SPort)),
+                        new PrimitiveSpec("input-port?", 1, 1, () -> new TypePredicate(x -> x instanceof SPort p && p.isInput())),
+                        new PrimitiveSpec("output-port?", 1, 1, () -> new TypePredicate(x -> x instanceof SPort p && p.isOutput())),
+                        new PrimitiveSpec("textual-port?", 1, 1, () -> new TypePredicate(x -> x instanceof SPort p && p.isTextual())),
+                        new PrimitiveSpec("binary-port?", 1, 1, () -> new TypePredicate(x -> x instanceof SPort p && p.isBinary())),
+                        new PrimitiveSpec("input-port-open?", 1, 1, () -> new PortOpen(true)),
+                        new PrimitiveSpec("output-port-open?", 1, 1, () -> new PortOpen(false)),
+                        new PrimitiveSpec("close-port", 1, 1, () -> new ClosePort("close-port")),
+                        new PrimitiveSpec("close-input-port", 1, 1, () -> new ClosePort("close-input-port")),
+                        new PrimitiveSpec("close-output-port", 1, 1, () -> new ClosePort("close-output-port")),
+                        new PrimitiveSpec("eof-object", 0, 0, EofObject::new),
+                        new PrimitiveSpec("eof-object?", 1, 1, () -> new TypePredicate(x -> x == SConstant.EOF)),
+                        // String and bytevector ports.
+                        new PrimitiveSpec("open-input-string", 1, 1, OpenInputString::new),
                         new PrimitiveSpec("open-output-string", 0, 0, OpenOutputString::new),
                         new PrimitiveSpec("get-output-string", 1, 1, GetOutputString::new),
-                        new PrimitiveSpec("port?", 1, 1, () -> new TypePredicate(x -> x instanceof SPort)),
-                        new PrimitiveSpec("output-port?", 1, 1, () -> new TypePredicate(x -> x instanceof SPort)),
-                        new PrimitiveSpec("textual-port?", 1, 1, () -> new TypePredicate(x -> x instanceof SPort)),
-                        new PrimitiveSpec("input-port?", 1, 1, () -> new TypePredicate(x -> x instanceof SPort p && p.isInput())),
-                        new PrimitiveSpec("output-port-open?", 1, 1, () -> new TypePredicate(x -> x instanceof SPort p && p.isOpen())),
-                        new PrimitiveSpec("close-port", 1, 1, ClosePort::new),
-                        new PrimitiveSpec("close-output-port", 1, 1, ClosePort::new));
+                        new PrimitiveSpec("open-input-bytevector", 1, 1, OpenInputBytevector::new),
+                        new PrimitiveSpec("open-output-bytevector", 0, 0, OpenOutputBytevector::new),
+                        new PrimitiveSpec("get-output-bytevector", 1, 1, GetOutputBytevector::new),
+                        // File ports (R7RS §6.13.1, (scheme file)).
+                        new PrimitiveSpec("open-input-file", 1, 1, () -> new OpenFile(OpenFile.TEXT_IN)),
+                        new PrimitiveSpec("open-binary-input-file", 1, 1, () -> new OpenFile(OpenFile.BINARY_IN)),
+                        new PrimitiveSpec("open-output-file", 1, 1, () -> new OpenFile(OpenFile.TEXT_OUT)),
+                        new PrimitiveSpec("open-binary-output-file", 1, 1, () -> new OpenFile(OpenFile.BINARY_OUT)),
+                        new PrimitiveSpec("file-exists?", 1, 1, () -> new FileOp(FileOp.EXISTS)),
+                        new PrimitiveSpec("delete-file", 1, 1, () -> new FileOp(FileOp.DELETE)),
+                        // Input (R7RS §6.13.2): (%op [k] port).
+                        new PrimitiveSpec("%read", 1, 1, Read::new),
+                        new PrimitiveSpec("%read-char", 1, 1, () -> new ReadChar(false)),
+                        new PrimitiveSpec("%peek-char", 1, 1, () -> new ReadChar(true)),
+                        new PrimitiveSpec("%read-line", 1, 1, ReadLine::new),
+                        new PrimitiveSpec("%char-ready?", 1, 1, () -> new Ready(false)),
+                        new PrimitiveSpec("%read-string", 2, 2, ReadString::new),
+                        new PrimitiveSpec("%read-u8", 1, 1, () -> new ReadU8(false)),
+                        new PrimitiveSpec("%peek-u8", 1, 1, () -> new ReadU8(true)),
+                        new PrimitiveSpec("%u8-ready?", 1, 1, () -> new Ready(true)),
+                        new PrimitiveSpec("%read-bytevector", 2, 2, ReadBytevector::new),
+                        new PrimitiveSpec("%read-bytevector!", 2, 4, ReadBytevectorInto::new),
+                        // Output (R7RS §6.13.3): (%op obj port [start [end]]).
+                        new PrimitiveSpec("%display", 2, 2, () -> new Print(Printer.Mode.DISPLAY, "display")),
+                        new PrimitiveSpec("%write", 2, 2, () -> new Print(Printer.Mode.WRITE, "write")),
+                        new PrimitiveSpec("%write-shared", 2, 2, () -> new Print(Printer.Mode.WRITE_SHARED, "write-shared")),
+                        new PrimitiveSpec("%write-simple", 2, 2, () -> new Print(Printer.Mode.WRITE_SIMPLE, "write-simple")),
+                        new PrimitiveSpec("%write-char", 2, 2, WriteChar::new),
+                        new PrimitiveSpec("%write-string", 2, 4, WriteString::new),
+                        new PrimitiveSpec("%write-u8", 2, 2, WriteU8::new),
+                        new PrimitiveSpec("%write-bytevector", 2, 4, WriteBytevector::new),
+                        new PrimitiveSpec("%flush-output-port", 1, 1, Flush::new));
     }
 
-    static SPort port(String who, Object x) {
-        if (x instanceof SPort p) {
+    // ------------------------------------------------------------------------------------------
+    // Argument checks
+
+    /** An open port that is an input (or output) port, and binary (or textual). */
+    private static SPort port(String who, Object x, boolean input, boolean binary) {
+        if (x instanceof SPort p && p.isInput() == input && p.isBinary() == binary) {
             if (!p.isOpen()) {
-                throw closed(who);
+                throw closed(who, p);
             }
             return p;
         }
-        throw ControlPrimitives.notA(who, "port", x);
+        throw ControlPrimitives.notA(who, (binary ? "binary " : "textual ") + (input ? "input" : "output") + " port", x);
+    }
+
+    private static SPort textualInput(String who, Object x) {
+        return port(who, x, true, false);
+    }
+
+    private static SPort textualOutput(String who, Object x) {
+        return port(who, x, false, false);
+    }
+
+    private static SPort binaryInput(String who, Object x) {
+        return port(who, x, true, true);
+    }
+
+    private static SPort binaryOutput(String who, Object x) {
+        return port(who, x, false, true);
     }
 
     @TruffleBoundary
-    private static SchemeError closed(String who) {
-        return new SchemeError(who + ": port is closed");
+    private static SchemeError closed(String who, SPort port) {
+        return new SchemeError(who + ": port is closed: " + Printer.print(port, Printer.Mode.WRITE));
     }
 
-    static final class StdoutPort extends PrimitiveNode {
+    /** A non-negative fixnum count or index no greater than {@code max}. */
+    private static int index(String who, Object x, int min, int max) {
+        if (x instanceof Long l && l >= min && l <= max) {
+            return l.intValue();
+        }
+        throw outOfRange(who, x, min, max);
+    }
+
+    @TruffleBoundary
+    private static SchemeError outOfRange(String who, Object x, int min, int max) {
+        if (!(x instanceof Long)) {
+            return ControlPrimitives.notA(who, "exact integer", x);
+        }
+        return new SchemeError(who + ": " + x + " is out of range [" + min + ", " + max + "]");
+    }
+
+    private static SString string(String who, Object x) {
+        if (x instanceof SString s) {
+            return s;
+        }
+        throw ControlPrimitives.notA(who, "string", x);
+    }
+
+    private static SBytevector bytevector(String who, Object x) {
+        if (x instanceof SBytevector b) {
+            return b;
+        }
+        throw ControlPrimitives.notA(who, "bytevector", x);
+    }
+
+    @TruffleBoundary
+    static SchemeError fileError(String message, Object irritant) {
+        return new SchemeError(new SErrorObject(SString.of(message), new SPair(irritant, SConstant.EMPTY_LIST), SErrorObject.Kind.FILE));
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // Ports, predicates, closing
+
+    static final class ConsolePort extends PrimitiveNode {
+        static final int OUT = 0;
+        static final int ERR = 1;
+        static final int IN = 2;
+        private final int which;
+
+        ConsolePort(int which) {
+            this.which = which;
+        }
+
         @Override
         public Object execute(Object[] args) {
-            return SchemeContext.get(this).stdoutPort();
+            SchemeContext context = SchemeContext.get(this);
+            return switch (which) {
+                case OUT -> context.stdoutPort();
+                case ERR -> context.stderrPort();
+                default -> context.stdinPort();
+            };
         }
     }
 
-    /** {@code (%display obj port)}, {@code %write}, {@code %write-shared}, {@code %write-simple}. */
-    static final class Print extends PrimitiveNode {
-        private final Printer.Mode mode;
+    /** {@code input-port-open?}, {@code output-port-open?}. */
+    static final class PortOpen extends PrimitiveNode {
+        private final boolean input;
 
-        Print(Printer.Mode mode) {
-            this.mode = mode;
+        PortOpen(boolean input) {
+            this.input = input;
         }
 
         @Override
         public Object execute(Object[] args) {
-            print(port("write", args[1]), mode, args[0]);
+            if (!(args[0] instanceof SPort p)) {
+                throw ControlPrimitives.notA(input ? "input-port-open?" : "output-port-open?", "port", args[0]);
+            }
+            return p.isOpen() && p.isInput() == input;
+        }
+    }
+
+    static final class ClosePort extends PrimitiveNode {
+        private final String who;
+
+        ClosePort(String who) {
+            this.who = who;
+        }
+
+        @Override
+        public Object execute(Object[] args) {
+            if (!(args[0] instanceof SPort p)) {
+                throw ControlPrimitives.notA(who, "port", args[0]);
+            }
+            p.close();
             return SConstant.UNSPECIFIED;
+        }
+    }
+
+    static final class EofObject extends PrimitiveNode {
+        @Override
+        public Object execute(Object[] args) {
+            return SConstant.EOF;
+        }
+    }
+
+    static final class OpenInputString extends PrimitiveNode {
+        @Override
+        public Object execute(Object[] args) {
+            return open(string("open-input-string", args[0]));
         }
 
         @TruffleBoundary
-        private static void print(SPort port, Printer.Mode mode, Object value) {
-            port.write(Printer.print(value, mode));
-        }
-    }
-
-    static final class WriteString extends PrimitiveNode {
-        @Override
-        public Object execute(Object[] args) {
-            if (!(args[0] instanceof SString s)) {
-                throw ControlPrimitives.notA("write-string", "string", args[0]);
-            }
-            port("write-string", args[1]).write(s.toString());
-            return SConstant.UNSPECIFIED;
-        }
-    }
-
-    static final class WriteChar extends PrimitiveNode {
-        @Override
-        public Object execute(Object[] args) {
-            if (!(args[0] instanceof SChar c)) {
-                throw ControlPrimitives.notA("write-char", "character", args[0]);
-            }
-            port("write-char", args[1]).write(Character.toString(c.codePoint));
-            return SConstant.UNSPECIFIED;
-        }
-    }
-
-    static final class Flush extends PrimitiveNode {
-        @Override
-        public Object execute(Object[] args) {
-            port("flush-output-port", args[0]).flush();
-            return SConstant.UNSPECIFIED;
+        private static SPort open(SString s) {
+            return SPort.inputString(s.toString());
         }
     }
 
@@ -131,17 +258,416 @@ final class IoPrimitives {
             if (!(args[0] instanceof SPort p) || !p.isStringPort()) {
                 throw ControlPrimitives.notA("get-output-string", "string output port", args[0]);
             }
+            return contents(p);
+        }
+
+        @TruffleBoundary
+        private static SString contents(SPort p) {
             return SString.of(p.contents());
         }
     }
 
-    static final class ClosePort extends PrimitiveNode {
+    static final class OpenInputBytevector extends PrimitiveNode {
         @Override
         public Object execute(Object[] args) {
-            if (!(args[0] instanceof SPort p)) {
-                throw ControlPrimitives.notA("close-port", "port", args[0]);
+            return open(bytevector("open-input-bytevector", args[0]));
+        }
+
+        @TruffleBoundary
+        private static SPort open(SBytevector bv) {
+            // A copy: later changes to the bytevector don't show through the port.
+            return SPort.inputBytevector(bv.bytes.clone());
+        }
+    }
+
+    static final class OpenOutputBytevector extends PrimitiveNode {
+        @Override
+        public Object execute(Object[] args) {
+            return SPort.outputBytevector();
+        }
+    }
+
+    static final class GetOutputBytevector extends PrimitiveNode {
+        @Override
+        public Object execute(Object[] args) {
+            if (!(args[0] instanceof SPort p) || !p.isBytevectorPort()) {
+                throw ControlPrimitives.notA("get-output-bytevector", "bytevector output port", args[0]);
             }
-            p.close();
+            return new SBytevector(p.bytes());
+        }
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // Files (through TruffleFile, design.md D10)
+
+    @TruffleBoundary
+    private static TruffleFile file(TruffleLanguage.Env env, String who, SString name) {
+        try {
+            return env.getPublicTruffleFile(name.toString());
+        } catch (SecurityException | UnsupportedOperationException | IllegalArgumentException e) {
+            throw fileError(who + ": cannot access file", name);
+        }
+    }
+
+    static final class OpenFile extends PrimitiveNode {
+        static final int TEXT_IN = 0;
+        static final int BINARY_IN = 1;
+        static final int TEXT_OUT = 2;
+        static final int BINARY_OUT = 3;
+        private static final String[] NAMES = {"open-input-file", "open-binary-input-file", "open-output-file", "open-binary-output-file"};
+        private final int mode;
+
+        OpenFile(int mode) {
+            this.mode = mode;
+        }
+
+        @Override
+        public Object execute(Object[] args) {
+            String who = NAMES[mode];
+            return open(SchemeContext.get(this).getEnv(), who, mode, string(who, args[0]));
+        }
+
+        @TruffleBoundary
+        private static SPort open(TruffleLanguage.Env env, String who, int mode, SString name) {
+            TruffleFile file = file(env, who, name);
+            try {
+                return switch (mode) {
+                    case TEXT_IN -> SPort.textInput(file.newBufferedReader(StandardCharsets.UTF_8), false);
+                    case BINARY_IN -> SPort.binaryInput(file.newInputStream());
+                    case TEXT_OUT -> SPort.textOutput(file.newBufferedWriter(StandardCharsets.UTF_8));
+                    default -> SPort.binaryOutput(file.newOutputStream());
+                };
+            } catch (IOException | SecurityException | UnsupportedOperationException e) {
+                throw fileError(who + ": cannot open file", name);
+            }
+        }
+    }
+
+    /** {@code file-exists?}, {@code delete-file}. */
+    static final class FileOp extends PrimitiveNode {
+        static final int EXISTS = 0;
+        static final int DELETE = 1;
+        private final int op;
+
+        FileOp(int op) {
+            this.op = op;
+        }
+
+        @Override
+        public Object execute(Object[] args) {
+            String who = op == EXISTS ? "file-exists?" : "delete-file";
+            return run(SchemeContext.get(this).getEnv(), op, who, string(who, args[0]));
+        }
+
+        @TruffleBoundary
+        private static Object run(TruffleLanguage.Env env, int op, String who, SString name) {
+            TruffleFile file = file(env, who, name);
+            try {
+                if (op == EXISTS) {
+                    return file.exists();
+                }
+                file.delete();
+                return SConstant.UNSPECIFIED;
+            } catch (IOException | SecurityException e) {
+                throw fileError(who + ": cannot " + (op == EXISTS ? "access" : "delete") + " file", name);
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // Input
+
+    /** The reader over a port: {@link Reader} reads code points through this. */
+    private static final class PortCharSource implements CharSource {
+        private final SPort port;
+
+        PortCharSource(SPort port) {
+            this.port = port;
+        }
+
+        @Override
+        public int peek() {
+            return port.peekChar();
+        }
+
+        @Override
+        public int next() {
+            return port.readChar();
+        }
+    }
+
+    /** {@code (%read port)}: the next datum, read by the reader the port keeps. */
+    static final class Read extends PrimitiveNode {
+        @Override
+        public Object execute(Object[] args) {
+            SPort port = textualInput("read", args[0]);
+            return read(SchemeContext.get(this), port);
+        }
+
+        @TruffleBoundary
+        private static Object read(SchemeContext context, SPort port) {
+            Reader reader;
+            if (port.datumReader instanceof Reader r) {
+                reader = r;
+            } else {
+                reader = new Reader(new PortCharSource(port), context.symbols, false);
+                port.datumReader = reader;
+            }
+            return reader.read();
+        }
+    }
+
+    /** {@code (%read-char port)}, {@code (%peek-char port)}. */
+    static final class ReadChar extends PrimitiveNode {
+        private final boolean peek;
+
+        ReadChar(boolean peek) {
+            this.peek = peek;
+        }
+
+        @Override
+        public Object execute(Object[] args) {
+            SPort port = textualInput(peek ? "peek-char" : "read-char", args[0]);
+            int c = peek ? port.peekChar() : port.readChar();
+            return c < 0 ? SConstant.EOF : SChar.of(c);
+        }
+    }
+
+    static final class ReadLine extends PrimitiveNode {
+        @Override
+        public Object execute(Object[] args) {
+            return readLine(textualInput("read-line", args[0]));
+        }
+
+        /** Up to the next line ending (LF, CR LF or CR), which is consumed but not returned. */
+        @TruffleBoundary
+        private static Object readLine(SPort port) {
+            int c = port.readChar();
+            if (c < 0) {
+                return SConstant.EOF;
+            }
+            StringBuilder sb = new StringBuilder();
+            while (c >= 0 && c != '\n') {
+                if (c == '\r') {
+                    if (port.peekChar() == '\n') {
+                        port.readChar();
+                    }
+                    break;
+                }
+                sb.appendCodePoint(c);
+                c = port.readChar();
+            }
+            return SString.of(sb.toString());
+        }
+    }
+
+    /** {@code (%read-string k port)}. */
+    static final class ReadString extends PrimitiveNode {
+        @Override
+        public Object execute(Object[] args) {
+            int k = index("read-string", args[0], 0, Integer.MAX_VALUE);
+            return readString(k, textualInput("read-string", args[1]));
+        }
+
+        @TruffleBoundary
+        private static Object readString(int k, SPort port) {
+            StringBuilder sb = new StringBuilder();
+            int n = 0;
+            while (n < k) {
+                int c = port.readChar();
+                if (c < 0) {
+                    break;
+                }
+                sb.appendCodePoint(c);
+                n++;
+            }
+            return n == 0 && k > 0 ? SConstant.EOF : SString.of(sb.toString());
+        }
+    }
+
+    /** {@code (%char-ready? port)}, {@code (%u8-ready? port)}. */
+    static final class Ready extends PrimitiveNode {
+        private final boolean binary;
+
+        Ready(boolean binary) {
+            this.binary = binary;
+        }
+
+        @Override
+        public Object execute(Object[] args) {
+            return port(binary ? "u8-ready?" : "char-ready?", args[0], true, binary).ready();
+        }
+    }
+
+    /** {@code (%read-u8 port)}, {@code (%peek-u8 port)}. */
+    static final class ReadU8 extends PrimitiveNode {
+        private final boolean peek;
+
+        ReadU8(boolean peek) {
+            this.peek = peek;
+        }
+
+        @Override
+        public Object execute(Object[] args) {
+            SPort port = binaryInput(peek ? "peek-u8" : "read-u8", args[0]);
+            int b = peek ? port.peekByte() : port.readByte();
+            return b < 0 ? SConstant.EOF : (Object) (long) b;
+        }
+    }
+
+    /** {@code (%read-bytevector k port)}. */
+    static final class ReadBytevector extends PrimitiveNode {
+        @Override
+        public Object execute(Object[] args) {
+            int k = index("read-bytevector", args[0], 0, Integer.MAX_VALUE);
+            return read(k, binaryInput("read-bytevector", args[1]));
+        }
+
+        @TruffleBoundary
+        private static Object read(int k, SPort port) {
+            byte[] buffer = new byte[Math.min(k, 8192)];
+            int n = 0;
+            while (n < k) {
+                int b = port.readByte();
+                if (b < 0) {
+                    break;
+                }
+                if (n == buffer.length) {
+                    buffer = Arrays.copyOf(buffer, (int) Math.min(k, 2L * n));
+                }
+                buffer[n++] = (byte) b;
+            }
+            return n == 0 && k > 0 ? SConstant.EOF : new SBytevector(Arrays.copyOf(buffer, n));
+        }
+    }
+
+    /** {@code (%read-bytevector! bv port [start [end]])}: the number of bytes read, or eof. */
+    static final class ReadBytevectorInto extends PrimitiveNode {
+        @Override
+        public Object execute(Object[] args) {
+            SBytevector bv = bytevector("read-bytevector!", args[0]);
+            if (bv.immutable) {
+                throw ControlPrimitives.notA("read-bytevector!", "mutable bytevector", bv);
+            }
+            SPort port = binaryInput("read-bytevector!", args[1]);
+            int end = args.length > 3 ? index("read-bytevector!", args[3], 0, bv.bytes.length) : bv.bytes.length;
+            int start = args.length > 2 ? index("read-bytevector!", args[2], 0, end) : 0;
+            return read(bv.bytes, start, end, port);
+        }
+
+        @TruffleBoundary
+        private static Object read(byte[] bytes, int start, int end, SPort port) {
+            int i = start;
+            while (i < end) {
+                int b = port.readByte();
+                if (b < 0) {
+                    break;
+                }
+                bytes[i++] = (byte) b;
+            }
+            return i == start && end > start ? SConstant.EOF : (Object) (long) (i - start);
+        }
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // Output
+
+    /** {@code (%display obj port)}, {@code %write}, {@code %write-shared}, {@code %write-simple}. */
+    static final class Print extends PrimitiveNode {
+        private final Printer.Mode mode;
+        private final String who;
+
+        Print(Printer.Mode mode, String who) {
+            this.mode = mode;
+            this.who = who;
+        }
+
+        @Override
+        public Object execute(Object[] args) {
+            print(textualOutput(who, args[1]), mode, args[0]);
+            return SConstant.UNSPECIFIED;
+        }
+
+        @TruffleBoundary
+        private static void print(SPort port, Printer.Mode mode, Object value) {
+            port.write(Printer.print(value, mode));
+        }
+    }
+
+    static final class WriteChar extends PrimitiveNode {
+        @Override
+        public Object execute(Object[] args) {
+            if (!(args[0] instanceof SChar c)) {
+                throw ControlPrimitives.notA("write-char", "character", args[0]);
+            }
+            write(textualOutput("write-char", args[1]), c.codePoint);
+            return SConstant.UNSPECIFIED;
+        }
+
+        @TruffleBoundary
+        private static void write(SPort port, int codePoint) {
+            port.write(Character.toString(codePoint));
+        }
+    }
+
+    /** {@code (%write-string string port [start [end]])}. */
+    static final class WriteString extends PrimitiveNode {
+        @Override
+        public Object execute(Object[] args) {
+            SString s = string("write-string", args[0]);
+            SPort port = textualOutput("write-string", args[1]);
+            int end = args.length > 3 ? index("write-string", args[3], 0, s.length()) : s.length();
+            int start = args.length > 2 ? index("write-string", args[2], 0, end) : 0;
+            write(port, s, start, end);
+            return SConstant.UNSPECIFIED;
+        }
+
+        @TruffleBoundary
+        private static void write(SPort port, SString s, int start, int end) {
+            if (start == 0 && end == s.length()) {
+                port.write(s.toString());
+                return;
+            }
+            StringBuilder sb = new StringBuilder(end - start);
+            for (int i = start; i < end; i++) {
+                sb.appendCodePoint(s.codePointAt(i));
+            }
+            port.write(sb.toString());
+        }
+    }
+
+    static final class WriteU8 extends PrimitiveNode {
+        @Override
+        public Object execute(Object[] args) {
+            int b = index("write-u8", args[0], 0, 255);
+            binaryOutput("write-u8", args[1]).writeByte(b);
+            return SConstant.UNSPECIFIED;
+        }
+    }
+
+    /** {@code (%write-bytevector bv port [start [end]])}. */
+    static final class WriteBytevector extends PrimitiveNode {
+        @Override
+        public Object execute(Object[] args) {
+            SBytevector bv = bytevector("write-bytevector", args[0]);
+            SPort port = binaryOutput("write-bytevector", args[1]);
+            int end = args.length > 3 ? index("write-bytevector", args[3], 0, bv.bytes.length) : bv.bytes.length;
+            int start = args.length > 2 ? index("write-bytevector", args[2], 0, end) : 0;
+            port.writeBytes(bv.bytes, start, end);
+            return SConstant.UNSPECIFIED;
+        }
+    }
+
+    static final class Flush extends PrimitiveNode {
+        @Override
+        public Object execute(Object[] args) {
+            if (!(args[0] instanceof SPort p) || !p.isOutput()) {
+                throw ControlPrimitives.notA("flush-output-port", "output port", args[0]);
+            }
+            if (!p.isOpen()) {
+                throw closed("flush-output-port", p);
+            }
+            p.flush();
             return SConstant.UNSPECIFIED;
         }
     }

@@ -71,6 +71,8 @@ public final class Expander {
     private final SSymbol underscore;
     /** The innermost syntax object with a source position seen so far, for errors. */
     private Syntax current;
+    /** Whether top-level definitions and imports are errors: {@code eval} in an immutable environment. */
+    private boolean immutableTop;
 
     Expander(SymbolTable symbols, GlobalEnvironment namespace, SyntacticEnvironment top, Scope topScope, Libraries libraries, SourceDir dir) {
         this.symbols = symbols;
@@ -391,6 +393,18 @@ public final class Expander {
     Lambda expandProgram(List<Object> forms) {
         Lambda program = new Lambda(null, true);
         return (Lambda) run(new ProgramFrame(topScope == null ? forms : addScope(forms, topScope), program));
+    }
+
+    /**
+     * Expands {@code eval}'s datum (R7RS §6.12) at this unit's top level into a procedure of no
+     * arguments whose body is in tail position, so {@code eval} can tail-call it (design.md D6). In
+     * an immutable environment, definitions and imports are errors.
+     */
+    Lambda expandEval(Object datum, boolean mutable) {
+        immutableTop = !mutable;
+        Lambda thunk = new Lambda(null, false);
+        thunk.name = "eval";
+        return (Lambda) run(new ProgramFrame(List.of(Syntax.addScope(datum, topScope)), thunk));
     }
 
     // ------------------------------------------------------------------------------------------
@@ -1183,6 +1197,8 @@ public final class Expander {
                     for (int i = spliced.size() - 1; i >= 0; i--) {
                         queue.addFirst(spliced.get(i));
                     }
+                } else if (immutableTop && (binding == CoreForm.DEFINE || binding == CoreForm.DEFINE_SYNTAX || binding == CoreForm.IMPORT || binding == CoreForm.DEFINE_LIBRARY)) {
+                    throw syntax("definition or import in an immutable environment", form);
                 } else if (binding == CoreForm.IMPORT) {
                     importAll(form);
                 } else if (binding == CoreForm.DEFINE_LIBRARY) {

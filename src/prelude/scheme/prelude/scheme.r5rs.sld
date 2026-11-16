@@ -1,9 +1,12 @@
-;; R5RS's names (R7RS §5.6), re-exported from the standard libraries that define them. The four
-;; that only (scheme r5rs) has are exported as unbound cells until a later task defines them.
+;; R5RS's names (R7RS §5.6), re-exported from the standard libraries that define them. Of the four
+;; that only (scheme r5rs) has, null-environment and scheme-report-environment are primitives of
+;; the eval area (R7RS §6.12); the others are exported as unbound cells until a later task
+;; defines them.
 (define-library (scheme r5rs)
   (import (scheme base) (scheme case-lambda) (scheme char) (scheme complex) (scheme cxr)
           (scheme eval) (scheme file) (scheme inexact) (scheme lazy) (scheme load) (scheme read)
-          (scheme repl) (scheme write))
+          (scheme repl) (scheme write)
+          (only (r7rs %primitives) null-environment scheme-report-environment))
   (export
           * + - / < <= = > >= abs acos and angle append apply asin assoc assq assv atan
           begin boolean? caaaar caaadr caaar caadar caaddr caadr caar cadaar cadadr cadar

@@ -12,6 +12,7 @@ import com.oracle.truffle.api.Option;
 import com.oracle.truffle.api.TruffleLanguage;
 import com.oracle.truffle.api.instrumentation.ProvidedTags;
 import com.oracle.truffle.api.instrumentation.StandardTags;
+import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.source.Source;
 
 import scheme.runtime.value.SClosure;
@@ -24,6 +25,7 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
     public static final String MIME_TYPE = "application/x-scheme";
 
     private static final Object[] NO_CAPTURES = new Object[0];
+    private static final LanguageReference<SchemeLanguage> REFERENCE = LanguageReference.create(SchemeLanguage.class);
 
     /** Where user libraries are found (design.md D7): directories, separated by the path separator. */
     @Option(name = "LibraryPath", help = "Directories to search for libraries, separated by the path separator (-I).", category = OptionCategory.USER, stability = OptionStability.STABLE) //
@@ -53,7 +55,12 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
         compiler().initializeContext(this, context);
     }
 
-    private SchemeCompiler compiler() {
+    public static SchemeLanguage get(Node node) {
+        return REFERENCE.get(node);
+    }
+
+    /** The front end, for {@code eval} and {@code environment} (design.md D6). */
+    public SchemeCompiler compiler() {
         if (compiler == null) {
             compiler = ServiceLoader.load(SchemeCompiler.class, SchemeLanguage.class.getClassLoader()).findFirst().orElseThrow(
                             () -> new IllegalStateException("no SchemeCompiler service: is the scheme.compiler project in the distribution?"));
