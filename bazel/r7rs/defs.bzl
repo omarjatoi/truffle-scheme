@@ -81,6 +81,9 @@ def diff_tests(name, srcs, runtime, chibi):
                     "--chibi=$(rlocationpath %s)" % chibi,
                 ] + (["--torture"] if torture else []),
                 data = [runtime, src, chibi, "@chibi//:version"],
+                # chibi-scheme itself takes about 90 s on escape-callcc.scm (ctak with real
+                # continuations): leave room on a slow CI runner.
+                size = "large",
             )
             tests.append(test)
     native.test_suite(name = name, tests = tests)
