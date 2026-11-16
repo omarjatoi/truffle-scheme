@@ -171,6 +171,8 @@ full R7RS-small conformance comes first.
     it runs. Each root prompt takes its thread's limit. On a 2 MB stack
     (macOS's default) about 3,300 compiled calls fit before a spill, instead
     of 50; with a larger `-Xss`, more (the probe looks at no more than 64 MB).
+    The `scheme` launcher evaluates on a thread with a 256 MB stack unless
+    it is given a stack size (D17, "The evaluation thread").
     The option `scheme.SpillDepth` fixes the old count of nested calls
     instead, for tests of spilled frames.
   - *Spilling is still per frame.* A frame that doesn't fit is materialized
@@ -982,6 +984,69 @@ Each entry: the decision, why, and what was rejected.
     - With assertions on, an interrupt that lands at a Bytecode DSL root's
       return fails an assertion in Truffle (docs/upstream.md); the launcher
       runs without them.
+- **The evaluation thread.** The launcher creates, uses and closes its
+  context on a thread of its own with a 256 MB Java stack
+  (`EvaluationThread`), and the launcher's thread waits for it and takes
+  over what it throws (an exit status, as the framework's
+  `AbortException`). Deep non-tail recursion stays on the Java stack until
+  it has used most of the thread's (the stack-depth spill, M8-01), and a
+  spilled frame costs about 1 KB and 240 ns, so a thread with a 1 or 2 MB
+  stack (a JVM's default) spilled most of a recursion tens of thousands
+  deep: `ack(3,12)` (32,765 deep) steady went from 24.6 s to 2.4 s. Everything
+  around evaluation runs on that thread: the REPL and its reads (JLine's
+  terminal reads, which Ctrl-C interrupts, are that thread's), `exit`
+  statuses, stdin, the tools, and the native launcher's pre-initialized
+  context, which `Context.Builder.build` takes over there.
+  - *Unless a size is given.* A stack size given to the VM (`-Xss` or
+    `-XX:ThreadStackSize`, also through `JDK_JAVA_OPTIONS` or
+    `JAVA_TOOL_OPTIONS`; the native executable's `-Xss` or
+    `-XX:StackSize`), read from `RuntimeMXBean.getInputArguments`, keeps
+    evaluation on the launcher's own thread, which has that stack, as before:
+    the spec and space tests run the launcher with `-Xss256k`, so that
+    their deep recursions still spill (rule 4). `--stack-size=<size>` (or
+    the native launcher's `--vm.Xss<size>`) sets the evaluation thread's
+    stack, and `--stack-size=default` evaluates on the launcher's thread
+    (the JVM's default stack; the native launcher's is the process's main
+    thread, 8 MB). If the system won't reserve the stack (a limit on
+    address space), the launcher evaluates on its own thread. `SchemeMain.run`
+    (in-process, for tests) evaluates on its caller's thread.
+  - *Why 256 MB.* A stack's address space is reserved when its thread starts,
+    and only the pages a recursion reaches take memory. The spill limit
+    looks at no more than 64 MB of a thread's stack, so a larger stack gains
+    nothing today (256 MB and 1 GB measured alike); below about 72 MB,
+    measuring the stack overflows it, which took 0.3 to 0.6 s on the JVM
+    with 16 or 64 MB stacks, against 15 to 45 ms when the measurement stops
+    at its 64 MB. 256 MB leaves room over the 64 MB, and is the size M8-01
+    measured `ack` with.
+  - *What it costs.* The stack's measurement touches its 64 MB the first
+    time a recursion is more than about 50 interpreted calls deep, and they
+    stay resident. Medians of interleaved runs on an Apple M3 Max shared
+    with other jobs (wall time, peak RSS; "before" is `main`, or for the
+    native launcher `--stack-size=default`, which runs as before):
+
+    | | Before | After |
+    |---|---:|---:|
+    | A hello-world program, native (30 runs) | 11 ms, 20 MB | 11 ms, 20 MB |
+    | A hello-world program, JVM (20 runs) | 387 ms, 354 MB | 402 ms, 360 MB |
+    | A program that recurses 100 deep, native (10 runs) | 41 ms, 29 MB | 55 ms, 85 MB |
+    | A program that recurses 100 deep, JVM (20 runs) | 422 ms, 363 MB | 467 ms, 442 MB |
+
+    ecraven's programs at M8-01's counts, 3 processes each (`divrec` 6; `ack` 3
+    iterations, the others 5), the steady iterations' median, and peak RSS:
+
+    | | JVM before | JVM after | Native before | Native after |
+    |---|---:|---:|---:|---:|
+    | `ack` (1, `ack(3,12)`) | 24.6 s, 4.5 GB | 2.4 s, 1.5 GB | 20.4 s, 381 MB | 1.8 s, 146 MB |
+    | `divrec` (100000) | 356 ms | 360 ms | 354 ms | 338 ms |
+    | `primes` (1000) | 115 ms | 116 ms | 81 ms | 86 ms |
+
+    `divrec` (500 deep) and `primes` (about 1,000) already fit in the old
+    stacks, so only their RSS changes (60 to 90 MB more, the measurement).
+    A smaller default would make the measurement cheaper only by making it
+    overflow, which is slower (above); measuring a stack whose size the
+    launcher knows is a runtime change (a follow-up).
+  - Native image honours `Thread`'s stack size argument: on a 256 KB
+    thread the native launcher spills as the JVM does.
 - The Chrome inspector, DAP and profiler tools are optional modules
   (`//bazel:tools_modules`), which `bazel-bin/scheme` puts on the module
   path, and CI runs a smoke test of each against a Scheme program

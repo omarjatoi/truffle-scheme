@@ -27,7 +27,7 @@ import org.graalvm.polyglot.io.IOAccess;
  * The {@code scheme} launcher (design.md D17), on GraalVM's launcher framework:
  *
  * <pre>
- * scheme [option...] [-I dir]... [--end-status=n] [file.scm [arg...]]
+ * scheme [option...] [-I dir]... [--end-status=n] [--stack-size=size] [file.scm [arg...]]
  * </pre>
  *
  * <p>With a file, it runs the file as a program (design.md D15), and {@code command-line} returns
@@ -38,7 +38,9 @@ import org.graalvm.polyglot.io.IOAccess;
  * its lines from Scheme's console input port, so Scheme code it runs reads the same input. On a
  * terminal, the lines come from JLine, with line editing and a history ({@link TerminalInput},
  * plan.md M7-07), and Ctrl-C interrupts an evaluation and goes back to the prompt
- * ({@link Interrupter}, plan.md M8-06). The framework adds
+ * ({@link Interrupter}, plan.md M8-06). It evaluates on a thread with a large Java stack, unless a
+ * stack size is given ({@link EvaluationThread}): the context is created, used and closed there.
+ * The framework adds
  * {@code --help}, {@code --version}, {@code --engine.*}, {@code --log.*} and the other standard
  * options, and the tools' options when they are on the module path.
  *
@@ -69,6 +71,9 @@ public final class SchemeMain extends AbstractLanguageLauncher {
 
     private static final String LIBRARY_PATH_OPTION = "scheme.LibraryPath";
     private static final String END_STATUS_OPTION = "--end-status=";
+    private static final String STACK_SIZE_OPTION = "--stack-size=";
+    /** The native launcher's stack size option, which the framework also applies to new threads. */
+    private static final String VM_STACK_SIZE_OPTION = "--vm.Xss";
     /** The prompts, shown only when stdin and stdout are a terminal. */
     private static final String PROMPT = "> ";
     private static final String CONTINUATION_PROMPT = "  ";
@@ -81,6 +86,10 @@ public final class SchemeMain extends AbstractLanguageLauncher {
     private int endStatus;
     /** {@code --version} or {@code --show-version}. */
     private VersionAction versionAction = VersionAction.None;
+    /** The evaluation thread's stack ({@link EvaluationThread}): {@code --stack-size}, or null. */
+    private Long stackSize;
+    /** {@code --vm.Xss}, or null. */
+    private Long vmStackSize;
 
     public static void main(String[] args) {
         new SchemeMain().launch(args);
@@ -113,6 +122,15 @@ public final class SchemeMain extends AbstractLanguageLauncher {
                 i++;
             } else if (arg.startsWith(END_STATUS_OPTION)) {
                 endStatus = status(arg.substring(END_STATUS_OPTION.length()));
+                i++;
+            } else if (arg.startsWith(STACK_SIZE_OPTION)) {
+                stackSize = stackSize(arg.substring(STACK_SIZE_OPTION.length()));
+                i++;
+            } else if (arg.startsWith(VM_STACK_SIZE_OPTION)) {
+                // The framework takes it too: the native launcher applies it to its new threads
+                // (and reports a malformed size), the JVM launcher ignores it.
+                vmStackSize = EvaluationThread.parseSize(arg.substring(VM_STACK_SIZE_OPTION.length()));
+                unrecognized.add(arg);
                 i++;
             } else if (arg.equals("--version")) {
                 versionAction = VersionAction.PrintAndExit;
@@ -150,6 +168,30 @@ public final class SchemeMain extends AbstractLanguageLauncher {
         throw abort(END_STATUS_OPTION + " needs an exit status from 0 to 255: " + END_STATUS_OPTION + value, EXIT_USAGE);
     }
 
+    /** A {@code --stack-size} value: a size, as {@code -Xss} takes it, or {@code default}. */
+    private long stackSize(String value) {
+        Long size = EvaluationThread.parseSize(value);
+        if (size == null) {
+            throw abort(STACK_SIZE_OPTION + " needs a size (such as 512k, 64m or 1g) or " + EvaluationThread.DEFAULT + ": " + STACK_SIZE_OPTION + value, EXIT_USAGE);
+        }
+        return size;
+    }
+
+    /**
+     * The evaluation thread's stack: {@code --stack-size}, else {@code --vm.Xss}, else the
+     * launcher's thread if the VM was given a stack size, else a large one.
+     */
+    private long evaluationStackSize() {
+        if (stackSize != null) {
+            return stackSize;
+        } else if (vmStackSize != null) {
+            return vmStackSize;
+        } else if (EvaluationThread.givenToTheVM()) {
+            return EvaluationThread.LAUNCHER_THREAD;
+        }
+        return EvaluationThread.LARGE_STACK;
+    }
+
     /** {@code --scheme.LibraryPath=...} comes before the {@code -I} directories. */
     @Override
     protected void validateArguments(Map<String, String> polyglotOptions) {
@@ -167,6 +209,13 @@ public final class SchemeMain extends AbstractLanguageLauncher {
                 runVersionAction(versionAction, engine);
             }
         }
+        // The context is created, used and closed on the evaluation thread. An exit status is
+        // thrown (AbortException), on to the framework on this thread.
+        EvaluationThread.run(evaluationStackSize(), () -> evaluate(builder));
+    }
+
+    /** Runs the program or the REPL; throws the exit status, unless it is 0. */
+    private void evaluate(Context.Builder builder) {
         int status;
         if (file == null) {
             TerminalInput terminal = isTTY() ? TerminalInput.open(CONTINUATION_PROMPT) : null;
@@ -199,7 +248,7 @@ public final class SchemeMain extends AbstractLanguageLauncher {
 
     @Override
     protected void printHelp(OptionCategory maxCategory) {
-        println("Usage: scheme [option...] [-I dir]... [file.scm [arg...]]");
+        println("Usage: scheme [option...] [-I dir]... [--stack-size=<size>] [file.scm [arg...]]");
         println("");
         println("Runs file.scm as an R7RS program; (command-line) returns the file and its arguments.");
         println("With no file, starts a REPL that reads from stdin and writes each value.");
@@ -210,6 +259,9 @@ public final class SchemeMain extends AbstractLanguageLauncher {
         println("Scheme options:");
         launcherOption("-I <dir>", "Add a directory to the library path (repeatable).");
         launcherOption("--end-status=<n>", "Exit with status n when the program or the REPL's input ends without exit (default 0).");
+        launcherOption(STACK_SIZE_OPTION + "<size>", "Evaluate on a thread with this much Java stack (such as 512k, 64m, 1g), or on the launcher's own with " + STACK_SIZE_OPTION +
+                        EvaluationThread.DEFAULT + ". Default: " + (EvaluationThread.LARGE_STACK >> 20) +
+                        "m, unless the VM was given a stack size (-Xss), which is then the evaluation's. Deep recursion beyond the stack spills to the heap, which is slower.");
         launcherOption("--version", "Print the version and exit.");
         launcherOption("--show-version", "Print the version and continue.");
         launcherOption("--", "End the options: the next argument is the file.");
@@ -219,6 +271,7 @@ public final class SchemeMain extends AbstractLanguageLauncher {
     protected void collectArguments(Set<String> options) {
         options.add("-I");
         options.add(END_STATUS_OPTION);
+        options.add(STACK_SIZE_OPTION);
         options.add("--version");
         options.add("--show-version");
         options.add("--");
@@ -239,7 +292,8 @@ public final class SchemeMain extends AbstractLanguageLauncher {
     /**
      * The launcher without the framework's options, in this process: {@code [-I dir]...
      * [--end-status=n] [file.scm [arg...]]}, with no file reading REPL input from {@code in}.
-     * Returns the exit status.
+     * Returns the exit status. It evaluates on the caller's thread: {@code --stack-size} is
+     * accepted, and does nothing.
      */
     public static int run(String[] args, InputStream in, OutputStream out, OutputStream err) {
         PrintStream errors = new PrintStream(err, true, StandardCharsets.UTF_8);
