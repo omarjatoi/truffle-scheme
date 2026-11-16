@@ -37,20 +37,20 @@ final class EvalPrimitives {
     static List<PrimitiveSpec> primitives() {
         return List.of(
                         // R7RS requires the environment; with none, chibi uses the interaction environment.
-                        new PrimitiveSpec("eval", 1, 2, Eval::new),
+                        PrimitiveSpec.transfersControl("eval", 1, 2, Eval::new),
                         new PrimitiveSpec("environment", 0, -1, Environment::new),
                         new PrimitiveSpec("interaction-environment", 0, 0, InteractionEnvironment::new),
                         // (scheme r5rs) imports these two from (r7rs %primitives).
                         new PrimitiveSpec("scheme-report-environment", 1, 1, () -> new ReportEnvironment("scheme-report-environment", false)),
                         new PrimitiveSpec("null-environment", 1, 1, () -> new ReportEnvironment("null-environment", true)),
                         // (scheme load) imports it from (r7rs %primitives).
-                        new PrimitiveSpec("load", 1, 2, Load::new));
+                        PrimitiveSpec.transfersControl("load", 1, 2, Load::new));
     }
 
     /** {@code (eval expr-or-def [environment])}: compiles, then tail-calls the result (design.md D6). */
     static final class Eval extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
+        public Object invoke(Object[] args) {
             SClosure thunk = compile(args);
             return new TailCall(thunk, new Object[]{thunk});
         }
@@ -60,14 +60,14 @@ final class EvalPrimitives {
             SchemeLanguage language = SchemeLanguage.get(this);
             SchemeContext context = SchemeContext.get(this);
             SEnvironment environment;
-            if (args.length < 2) {
+            if (args.length < 3) {
                 environment = language.compiler().interactionEnvironment(context);
-            } else if (args[1] instanceof SEnvironment e) {
+            } else if (args[2] instanceof SEnvironment e) {
                 environment = e;
             } else {
-                throw ControlPrimitives.notA("eval", "environment", args[1]);
+                throw ControlPrimitives.notA("eval", "environment", args[2]);
             }
-            return language.compiler().compileEval(language, context, args[0], environment);
+            return language.compiler().compileEval(language, context, args[1], environment);
         }
     }
 
@@ -79,25 +79,25 @@ final class EvalPrimitives {
      */
     static final class Load extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
+        public Object invoke(Object[] args) {
             SClosure thunk = compile(args);
             return new TailCall(thunk, new Object[]{thunk});
         }
 
         @TruffleBoundary
         private SClosure compile(Object[] args) {
-            if (!(args[0] instanceof SString name)) {
-                throw ControlPrimitives.notA("load", "string", args[0]);
+            if (!(args[1] instanceof SString name)) {
+                throw ControlPrimitives.notA("load", "string", args[1]);
             }
             SchemeLanguage language = SchemeLanguage.get(this);
             SchemeContext context = SchemeContext.get(this);
             SEnvironment environment;
-            if (args.length < 2) {
+            if (args.length < 3) {
                 environment = language.compiler().interactionEnvironment(context);
-            } else if (args[1] instanceof SEnvironment e) {
+            } else if (args[2] instanceof SEnvironment e) {
                 environment = e;
             } else {
-                throw ControlPrimitives.notA("load", "environment", args[1]);
+                throw ControlPrimitives.notA("load", "environment", args[2]);
             }
             Source source;
             try {
@@ -113,19 +113,19 @@ final class EvalPrimitives {
     /** {@code (environment import-set ...)}: an immutable environment importing them (design.md D7). */
     static final class Environment extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
+        public Object invoke(Object[] args) {
             return environment(args);
         }
 
         @TruffleBoundary
         private Object environment(Object[] args) {
-            return SchemeLanguage.get(this).compiler().environment(SchemeContext.get(this), args, false);
+            return SchemeLanguage.get(this).compiler().environment(SchemeContext.get(this), java.util.Arrays.copyOfRange(args, 1, args.length), false);
         }
     }
 
     static final class InteractionEnvironment extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
+        public Object invoke(Object[] args) {
             return interaction();
         }
 
@@ -149,8 +149,8 @@ final class EvalPrimitives {
         }
 
         @Override
-        public Object execute(Object[] args) {
-            return environment(args[0]);
+        public Object invoke(Object[] args) {
+            return environment(args[1]);
         }
 
         @TruffleBoundary

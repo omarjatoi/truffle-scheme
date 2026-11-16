@@ -589,7 +589,7 @@ M5-01 benchmarks and M5-02's report.
 From `docs/performance-research.md`'s ranking, confirmed by M5-01's
 baseline (the fixnum-overflow fix already landed in #74):
 
-- [ ] **M5-09 · Primitives in place** *(needs M5-01)*
+- [x] **M5-09 · Primitives in place** *(needs M5-01)*
   - Leaf primitives run without a Truffle call: in tail position, a call to a
     primitive runs in place instead of returning a `TailCall` to the caller's
     trampoline (rule 1 makes this safe: primitives never call Scheme); at

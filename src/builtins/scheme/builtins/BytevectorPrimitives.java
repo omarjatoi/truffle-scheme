@@ -47,10 +47,10 @@ final class BytevectorPrimitives {
     /** {@code (bytevector byte ...)}. */
     static final class MakeBytevector extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            byte[] bytes = new byte[args.length];
-            for (int i = 0; i < args.length; i++) {
-                bytes[i] = toByte("bytevector", args[i]);
+        public Object invoke(Object[] args) {
+            byte[] bytes = new byte[args.length - 1];
+            for (int i = 1; i < args.length; i++) {
+                bytes[i - 1] = toByte("bytevector", args[i]);
             }
             return new SBytevector(bytes);
         }
@@ -59,13 +59,13 @@ final class BytevectorPrimitives {
     /** {@code (make-bytevector k [byte])}: filled with 0 when {@code byte} is absent. */
     static final class MakeBytevectorOfLength extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            if (!(args[0] instanceof Long k) || k < 0 || k > Integer.MAX_VALUE - 8) {
-                throw notA("make-bytevector", "valid bytevector length", args[0]);
+        public Object invoke(Object[] args) {
+            if (!(args[1] instanceof Long k) || k < 0 || k > Integer.MAX_VALUE - 8) {
+                throw notA("make-bytevector", "valid bytevector length", args[1]);
             }
             byte[] bytes = new byte[(int) (long) k];
-            if (args.length > 1) {
-                java.util.Arrays.fill(bytes, toByte("make-bytevector", args[1]));
+            if (args.length > 2) {
+                java.util.Arrays.fill(bytes, toByte("make-bytevector", args[2]));
             }
             return new SBytevector(bytes);
         }
@@ -73,27 +73,27 @@ final class BytevectorPrimitives {
 
     static final class BytevectorLength extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            return (long) bytevector("bytevector-length", args[0]).bytes.length;
+        public Object invoke(Object[] args) {
+            return (long) bytevector("bytevector-length", args[1]).bytes.length;
         }
     }
 
     /** {@code (bytevector-u8-ref bytevector k)}. */
     static final class BytevectorRef extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            SBytevector bv = bytevector("bytevector-u8-ref", args[0]);
-            return (long) (bv.bytes[index("bytevector-u8-ref", bv, args[1])] & 0xff);
+        public Object invoke(Object[] args) {
+            SBytevector bv = bytevector("bytevector-u8-ref", args[1]);
+            return (long) (bv.bytes[index("bytevector-u8-ref", bv, args[2])] & 0xff);
         }
     }
 
     /** {@code (bytevector-u8-set! bytevector k byte)}. */
     static final class BytevectorSet extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            SBytevector bv = mutable("bytevector-u8-set!", args[0]);
-            int k = index("bytevector-u8-set!", bv, args[1]);
-            bv.bytes[k] = toByte("bytevector-u8-set!", args[2]);
+        public Object invoke(Object[] args) {
+            SBytevector bv = mutable("bytevector-u8-set!", args[1]);
+            int k = index("bytevector-u8-set!", bv, args[2]);
+            bv.bytes[k] = toByte("bytevector-u8-set!", args[3]);
             return SConstant.UNSPECIFIED;
         }
     }
@@ -101,11 +101,11 @@ final class BytevectorPrimitives {
     /** {@code (bytevector-copy bytevector [start [end]])}: a fresh mutable copy. */
     static final class BytevectorCopy extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            SBytevector bv = bytevector("bytevector-copy", args[0]);
+        public Object invoke(Object[] args) {
+            SBytevector bv = bytevector("bytevector-copy", args[1]);
             int length = bv.bytes.length;
-            int start = start("bytevector-copy", args, 1, length);
-            int end = end("bytevector-copy", args, 2, start, length);
+            int start = start("bytevector-copy", args, 2, length);
+            int end = end("bytevector-copy", args, 3, start, length);
             return new SBytevector(java.util.Arrays.copyOfRange(bv.bytes, start, end));
         }
     }
@@ -116,15 +116,15 @@ final class BytevectorPrimitives {
      */
     static final class BytevectorCopyInto extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
+        public Object invoke(Object[] args) {
             String who = "bytevector-copy!";
-            SBytevector to = mutable(who, args[0]);
-            SBytevector from = bytevector(who, args[2]);
-            int start = start(who, args, 3, from.bytes.length);
-            int end = end(who, args, 4, start, from.bytes.length);
+            SBytevector to = mutable(who, args[1]);
+            SBytevector from = bytevector(who, args[3]);
+            int start = start(who, args, 4, from.bytes.length);
+            int end = end(who, args, 5, start, from.bytes.length);
             int count = end - start;
-            if (!(args[1] instanceof Long at) || at < 0 || at > to.bytes.length - count) {
-                throw badIndex(who, "destination index", to.bytes.length, args[1]);
+            if (!(args[2] instanceof Long at) || at < 0 || at > to.bytes.length - count) {
+                throw badIndex(who, "destination index", to.bytes.length, args[2]);
             }
             System.arraycopy(from.bytes, start, to.bytes, (int) (long) at, count);
             return SConstant.UNSPECIFIED;
@@ -134,23 +134,23 @@ final class BytevectorPrimitives {
     /** {@code (bytevector-append bytevector ...)}. */
     static final class BytevectorAppend extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
+        public Object invoke(Object[] args) {
             return append(args);
         }
 
         @TruffleBoundary
         private static SBytevector append(Object[] args) {
             long total = 0;
-            for (Object arg : args) {
-                total += bytevector("bytevector-append", arg).bytes.length;
+            for (int i = 1; i < args.length; i++) {
+                total += bytevector("bytevector-append", args[i]).bytes.length;
             }
             if (total > Integer.MAX_VALUE - 8) {
                 throw new SchemeError("bytevector-append: result too long");
             }
             byte[] bytes = new byte[(int) total];
             int at = 0;
-            for (Object arg : args) {
-                byte[] part = ((SBytevector) arg).bytes;
+            for (int i = 1; i < args.length; i++) {
+                byte[] part = ((SBytevector) args[i]).bytes;
                 System.arraycopy(part, 0, bytes, at, part.length);
                 at += part.length;
             }
@@ -161,11 +161,11 @@ final class BytevectorPrimitives {
     /** {@code (utf8->string bytevector [start [end]])}: a fresh mutable string; invalid UTF-8 is an error. */
     static final class Utf8ToString extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
+        public Object invoke(Object[] args) {
             String who = "utf8->string";
-            SBytevector bv = bytevector(who, args[0]);
-            int start = start(who, args, 1, bv.bytes.length);
-            int end = end(who, args, 2, start, bv.bytes.length);
+            SBytevector bv = bytevector(who, args[1]);
+            int start = start(who, args, 2, bv.bytes.length);
+            int end = end(who, args, 3, start, bv.bytes.length);
             return decode(bv.bytes, start, end);
         }
 
@@ -182,13 +182,13 @@ final class BytevectorPrimitives {
     /** {@code (string->utf8 string [start [end]])}: {@code start} and {@code end} count characters. */
     static final class StringToUtf8 extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
+        public Object invoke(Object[] args) {
             String who = "string->utf8";
-            if (!(args[0] instanceof SString s)) {
-                throw notA(who, "string", args[0]);
+            if (!(args[1] instanceof SString s)) {
+                throw notA(who, "string", args[1]);
             }
-            int start = start(who, args, 1, s.length());
-            int end = end(who, args, 2, start, s.length());
+            int start = start(who, args, 2, s.length());
+            int end = end(who, args, 3, start, s.length());
             return new SBytevector(encode(s, start, end));
         }
 

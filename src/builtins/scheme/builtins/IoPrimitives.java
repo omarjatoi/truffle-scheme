@@ -182,7 +182,7 @@ final class IoPrimitives {
         }
 
         @Override
-        public Object execute(Object[] args) {
+        public Object invoke(Object[] args) {
             SchemeContext context = SchemeContext.get(this);
             return switch (which) {
                 case OUT -> context.stdoutPort();
@@ -201,9 +201,9 @@ final class IoPrimitives {
         }
 
         @Override
-        public Object execute(Object[] args) {
-            if (!(args[0] instanceof SPort p)) {
-                throw ControlPrimitives.notA(input ? "input-port-open?" : "output-port-open?", "port", args[0]);
+        public Object invoke(Object[] args) {
+            if (!(args[1] instanceof SPort p)) {
+                throw ControlPrimitives.notA(input ? "input-port-open?" : "output-port-open?", "port", args[1]);
             }
             return p.isOpen() && p.isInput() == input;
         }
@@ -217,9 +217,9 @@ final class IoPrimitives {
         }
 
         @Override
-        public Object execute(Object[] args) {
-            if (!(args[0] instanceof SPort p)) {
-                throw ControlPrimitives.notA(who, "port", args[0]);
+        public Object invoke(Object[] args) {
+            if (!(args[1] instanceof SPort p)) {
+                throw ControlPrimitives.notA(who, "port", args[1]);
             }
             p.close();
             return SConstant.UNSPECIFIED;
@@ -228,15 +228,15 @@ final class IoPrimitives {
 
     static final class EofObject extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
+        public Object invoke(Object[] args) {
             return SConstant.EOF;
         }
     }
 
     static final class OpenInputString extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            return open(string("open-input-string", args[0]));
+        public Object invoke(Object[] args) {
+            return open(string("open-input-string", args[1]));
         }
 
         @TruffleBoundary
@@ -247,16 +247,16 @@ final class IoPrimitives {
 
     static final class OpenOutputString extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
+        public Object invoke(Object[] args) {
             return SPort.outputString();
         }
     }
 
     static final class GetOutputString extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            if (!(args[0] instanceof SPort p) || !p.isStringPort()) {
-                throw ControlPrimitives.notA("get-output-string", "string output port", args[0]);
+        public Object invoke(Object[] args) {
+            if (!(args[1] instanceof SPort p) || !p.isStringPort()) {
+                throw ControlPrimitives.notA("get-output-string", "string output port", args[1]);
             }
             return contents(p);
         }
@@ -269,8 +269,8 @@ final class IoPrimitives {
 
     static final class OpenInputBytevector extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            return open(bytevector("open-input-bytevector", args[0]));
+        public Object invoke(Object[] args) {
+            return open(bytevector("open-input-bytevector", args[1]));
         }
 
         @TruffleBoundary
@@ -282,16 +282,16 @@ final class IoPrimitives {
 
     static final class OpenOutputBytevector extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
+        public Object invoke(Object[] args) {
             return SPort.outputBytevector();
         }
     }
 
     static final class GetOutputBytevector extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            if (!(args[0] instanceof SPort p) || !p.isBytevectorPort()) {
-                throw ControlPrimitives.notA("get-output-bytevector", "bytevector output port", args[0]);
+        public Object invoke(Object[] args) {
+            if (!(args[1] instanceof SPort p) || !p.isBytevectorPort()) {
+                throw ControlPrimitives.notA("get-output-bytevector", "bytevector output port", args[1]);
             }
             return new SBytevector(p.bytes());
         }
@@ -322,9 +322,9 @@ final class IoPrimitives {
         }
 
         @Override
-        public Object execute(Object[] args) {
+        public Object invoke(Object[] args) {
             String who = NAMES[mode];
-            return open(SchemeContext.get(this).getEnv(), who, mode, string(who, args[0]));
+            return open(SchemeContext.get(this).getEnv(), who, mode, string(who, args[1]));
         }
 
         @TruffleBoundary
@@ -354,9 +354,9 @@ final class IoPrimitives {
         }
 
         @Override
-        public Object execute(Object[] args) {
+        public Object invoke(Object[] args) {
             String who = op == EXISTS ? "file-exists?" : "delete-file";
-            return run(SchemeContext.get(this).getEnv(), op, who, string(who, args[0]));
+            return run(SchemeContext.get(this).getEnv(), op, who, string(who, args[1]));
         }
 
         @TruffleBoundary
@@ -399,8 +399,8 @@ final class IoPrimitives {
     /** {@code (%read port)}: the next datum, read by the reader the port keeps. */
     static final class Read extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            SPort port = textualInput("read", args[0]);
+        public Object invoke(Object[] args) {
+            SPort port = textualInput("read", args[1]);
             return read(SchemeContext.get(this), port);
         }
 
@@ -426,8 +426,8 @@ final class IoPrimitives {
         }
 
         @Override
-        public Object execute(Object[] args) {
-            SPort port = textualInput(peek ? "peek-char" : "read-char", args[0]);
+        public Object invoke(Object[] args) {
+            SPort port = textualInput(peek ? "peek-char" : "read-char", args[1]);
             int c = peek ? port.peekChar() : port.readChar();
             return c < 0 ? SConstant.EOF : SChar.of(c);
         }
@@ -435,8 +435,8 @@ final class IoPrimitives {
 
     static final class ReadLine extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            return readLine(textualInput("read-line", args[0]));
+        public Object invoke(Object[] args) {
+            return readLine(textualInput("read-line", args[1]));
         }
 
         /** Up to the next line ending (LF, CR LF or CR), which is consumed but not returned. */
@@ -464,9 +464,9 @@ final class IoPrimitives {
     /** {@code (%read-string k port)}. */
     static final class ReadString extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            int k = index("read-string", args[0], 0, Integer.MAX_VALUE);
-            return readString(k, textualInput("read-string", args[1]));
+        public Object invoke(Object[] args) {
+            int k = index("read-string", args[1], 0, Integer.MAX_VALUE);
+            return readString(k, textualInput("read-string", args[2]));
         }
 
         @TruffleBoundary
@@ -494,8 +494,8 @@ final class IoPrimitives {
         }
 
         @Override
-        public Object execute(Object[] args) {
-            return port(binary ? "u8-ready?" : "char-ready?", args[0], true, binary).ready();
+        public Object invoke(Object[] args) {
+            return port(binary ? "u8-ready?" : "char-ready?", args[1], true, binary).ready();
         }
     }
 
@@ -508,8 +508,8 @@ final class IoPrimitives {
         }
 
         @Override
-        public Object execute(Object[] args) {
-            SPort port = binaryInput(peek ? "peek-u8" : "read-u8", args[0]);
+        public Object invoke(Object[] args) {
+            SPort port = binaryInput(peek ? "peek-u8" : "read-u8", args[1]);
             int b = peek ? port.peekByte() : port.readByte();
             return b < 0 ? SConstant.EOF : (Object) (long) b;
         }
@@ -518,9 +518,9 @@ final class IoPrimitives {
     /** {@code (%read-bytevector k port)}. */
     static final class ReadBytevector extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            int k = index("read-bytevector", args[0], 0, Integer.MAX_VALUE);
-            return read(k, binaryInput("read-bytevector", args[1]));
+        public Object invoke(Object[] args) {
+            int k = index("read-bytevector", args[1], 0, Integer.MAX_VALUE);
+            return read(k, binaryInput("read-bytevector", args[2]));
         }
 
         @TruffleBoundary
@@ -544,14 +544,14 @@ final class IoPrimitives {
     /** {@code (%read-bytevector! bv port [start [end]])}: the number of bytes read, or eof. */
     static final class ReadBytevectorInto extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            SBytevector bv = bytevector("read-bytevector!", args[0]);
+        public Object invoke(Object[] args) {
+            SBytevector bv = bytevector("read-bytevector!", args[1]);
             if (bv.immutable) {
                 throw ControlPrimitives.notA("read-bytevector!", "mutable bytevector", bv);
             }
-            SPort port = binaryInput("read-bytevector!", args[1]);
-            int end = args.length > 3 ? index("read-bytevector!", args[3], 0, bv.bytes.length) : bv.bytes.length;
-            int start = args.length > 2 ? index("read-bytevector!", args[2], 0, end) : 0;
+            SPort port = binaryInput("read-bytevector!", args[2]);
+            int end = args.length > 4 ? index("read-bytevector!", args[4], 0, bv.bytes.length) : bv.bytes.length;
+            int start = args.length > 3 ? index("read-bytevector!", args[3], 0, end) : 0;
             return read(bv.bytes, start, end, port);
         }
 
@@ -583,8 +583,8 @@ final class IoPrimitives {
         }
 
         @Override
-        public Object execute(Object[] args) {
-            print(textualOutput(who, args[1]), mode, args[0]);
+        public Object invoke(Object[] args) {
+            print(textualOutput(who, args[2]), mode, args[1]);
             return SConstant.UNSPECIFIED;
         }
 
@@ -596,11 +596,11 @@ final class IoPrimitives {
 
     static final class WriteChar extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            if (!(args[0] instanceof SChar c)) {
-                throw ControlPrimitives.notA("write-char", "character", args[0]);
+        public Object invoke(Object[] args) {
+            if (!(args[1] instanceof SChar c)) {
+                throw ControlPrimitives.notA("write-char", "character", args[1]);
             }
-            write(textualOutput("write-char", args[1]), c.codePoint);
+            write(textualOutput("write-char", args[2]), c.codePoint);
             return SConstant.UNSPECIFIED;
         }
 
@@ -613,11 +613,11 @@ final class IoPrimitives {
     /** {@code (%write-string string port [start [end]])}. */
     static final class WriteString extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            SString s = string("write-string", args[0]);
-            SPort port = textualOutput("write-string", args[1]);
-            int end = args.length > 3 ? index("write-string", args[3], 0, s.length()) : s.length();
-            int start = args.length > 2 ? index("write-string", args[2], 0, end) : 0;
+        public Object invoke(Object[] args) {
+            SString s = string("write-string", args[1]);
+            SPort port = textualOutput("write-string", args[2]);
+            int end = args.length > 4 ? index("write-string", args[4], 0, s.length()) : s.length();
+            int start = args.length > 3 ? index("write-string", args[3], 0, end) : 0;
             write(port, s, start, end);
             return SConstant.UNSPECIFIED;
         }
@@ -638,9 +638,9 @@ final class IoPrimitives {
 
     static final class WriteU8 extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            int b = index("write-u8", args[0], 0, 255);
-            binaryOutput("write-u8", args[1]).writeByte(b);
+        public Object invoke(Object[] args) {
+            int b = index("write-u8", args[1], 0, 255);
+            binaryOutput("write-u8", args[2]).writeByte(b);
             return SConstant.UNSPECIFIED;
         }
     }
@@ -648,11 +648,11 @@ final class IoPrimitives {
     /** {@code (%write-bytevector bv port [start [end]])}. */
     static final class WriteBytevector extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            SBytevector bv = bytevector("write-bytevector", args[0]);
-            SPort port = binaryOutput("write-bytevector", args[1]);
-            int end = args.length > 3 ? index("write-bytevector", args[3], 0, bv.bytes.length) : bv.bytes.length;
-            int start = args.length > 2 ? index("write-bytevector", args[2], 0, end) : 0;
+        public Object invoke(Object[] args) {
+            SBytevector bv = bytevector("write-bytevector", args[1]);
+            SPort port = binaryOutput("write-bytevector", args[2]);
+            int end = args.length > 4 ? index("write-bytevector", args[4], 0, bv.bytes.length) : bv.bytes.length;
+            int start = args.length > 3 ? index("write-bytevector", args[3], 0, end) : 0;
             port.writeBytes(bv.bytes, start, end);
             return SConstant.UNSPECIFIED;
         }
@@ -660,9 +660,9 @@ final class IoPrimitives {
 
     static final class Flush extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            if (!(args[0] instanceof SPort p) || !p.isOutput()) {
-                throw ControlPrimitives.notA("flush-output-port", "output port", args[0]);
+        public Object invoke(Object[] args) {
+            if (!(args[1] instanceof SPort p) || !p.isOutput()) {
+                throw ControlPrimitives.notA("flush-output-port", "output port", args[1]);
             }
             if (!p.isOpen()) {
                 throw closed("flush-output-port", p);

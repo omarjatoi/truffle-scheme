@@ -14,6 +14,8 @@ import org.graalvm.polyglot.Source;
 import org.graalvm.polyglot.Value;
 import org.junit.Test;
 
+import com.oracle.truffle.api.bytecode.BytecodeRootNode;
+import com.oracle.truffle.api.bytecode.Instruction;
 import com.oracle.truffle.api.dsl.Introspection;
 import com.oracle.truffle.api.dsl.Introspection.SpecializationInfo;
 import com.oracle.truffle.api.nodes.Node;
@@ -75,19 +77,22 @@ public class NumbersTest {
     }
 
     /**
-     * One fixnum overflow must not cost the fixnum fast path: each primitive has one node per context,
-     * shared by every call site, so a specialization excluded by an overflow would slow down every
-     * {@code +} in the program and the prelude (docs/performance-research.md, section 2, item 3).
+     * One fixnum overflow must not cost the fixnum fast path: a primitive's root node is shared by
+     * every call that doesn't run the primitive in place (through {@code apply}, {@code map}, a call
+     * site that has seen too many procedures), so a specialization excluded by an overflow would slow
+     * all of them down (docs/performance-research.md, section 2, item 3). The calls below go through
+     * {@code apply}, which reaches that node; a call site's own node (plan.md M5-09) is the same
+     * node class.
      */
     @Test
     public void fixnumArithmeticKeepsItsFastPathAfterAnOverflow() {
         String[][] cases = {
                         // primitive, an overflowing call, its result, then small calls on the same node
-                        {"+", "(+ 4611686018427387904 4611686018427387904)", "9223372036854775808", "(+ 1 2)", "3"},
-                        {"-", "(- -9223372036854775808 1)", "-9223372036854775809", "(- 7 2)", "5"},
-                        {"-", "(- -9223372036854775808)", "9223372036854775808", "(- 7)", "-7"},
-                        {"*", "(* 4294967296 4294967296)", "18446744073709551616", "(* 6 7)", "42"},
-                        {"*", "(* -9223372036854775808 -1)", "9223372036854775808", "(* -6 7)", "-42"},
+                        {"+", "(apply + '(4611686018427387904 4611686018427387904))", "9223372036854775808", "(apply + '(1 2))", "3"},
+                        {"-", "(apply - '(-9223372036854775808 1))", "-9223372036854775809", "(apply - '(7 2))", "5"},
+                        {"-", "(apply - '(-9223372036854775808))", "9223372036854775808", "(apply - '(7))", "-7"},
+                        {"*", "(apply * '(4294967296 4294967296))", "18446744073709551616", "(apply * '(6 7))", "42"},
+                        {"*", "(apply * '(-9223372036854775808 -1))", "9223372036854775808", "(apply * '(-6 7))", "-42"},
         };
         for (String[] c : cases) {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
@@ -101,26 +106,66 @@ public class NumbersTest {
                     assertEquals(c[3], Long.parseLong(c[4]), small.asLong());
                 }
                 context.eval(Source.newBuilder("scheme", c[0], ResultProbe.SOURCE).buildLiteral());
-                SClosure primitive = (SClosure) probe.last;
-                List<String> active = new ArrayList<>();
-                List<String> excluded = new ArrayList<>();
-                for (Node node : NodeUtil.findAllNodeInstances(primitive.callTarget.getRootNode(), Node.class)) {
-                    if (Introspection.isIntrospectable(node)) {
-                        for (SpecializationInfo s : Introspection.getSpecializations(node)) {
-                            if (s.isActive()) {
-                                active.add(s.getMethodName());
-                            }
-                            if (s.isExcluded()) {
-                                excluded.add(s.getMethodName());
-                            }
-                        }
-                    }
-                }
-                String state = c[1] + ": active " + active + ", excluded " + excluded;
                 // Still a fixnum path, now one that handles overflow per call; not the generic path.
-                assertEquals(state, List.of("doLongOverflow"), active);
+                assertSpecializations(c[1], List.of("doLongOverflow"), ((SClosure) probe.last).callTarget.getRootNode());
             }
         }
+        // The same at call sites that run the primitive in place, with a node of their own: in tail
+        // position (+, -) and not (*).
+        String[][] sites = {
+                        // the site, an overflowing call, its result, then a small call on the same site
+                        {"(define (site a b) (+ a b))", "(site 4611686018427387904 4611686018427387904)", "9223372036854775808", "(site 1 2)", "3"},
+                        {"(define (site a) (- a))", "(site -9223372036854775808)", "9223372036854775808", "(site 7)", "-7"},
+                        {"(define (site a b) (car (list (* a b))))", "(site 4294967296 4294967296)", "18446744073709551616", "(site 6 7)", "42"},
+        };
+        for (String[] c : sites) {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            try (Context context = Context.newBuilder("scheme").out(out).build()) {
+                ResultProbe probe = context.getEngine().getInstruments().get(ResultProbe.ID).lookup(ResultProbe.class);
+                context.eval("scheme", c[0] + " (write " + c[1] + ")");
+                assertEquals(c[1], c[2], out.toString(StandardCharsets.UTF_8));
+                for (int i = 0; i < 3; i++) {
+                    assertEquals(c[3], Long.parseLong(c[4]), context.eval("scheme", c[3]).asLong());
+                }
+                context.eval(Source.newBuilder("scheme", "site", ResultProbe.SOURCE).buildLiteral());
+                assertSpecializations(c[0], List.of("doLongOverflow"), ((SClosure) probe.last).callTarget.getRootNode());
+            }
+        }
+    }
+
+    /**
+     * The active specializations of the introspectable nodes under {@code root}, sorted, are
+     * {@code expected}. Under a Bytecode DSL root, those are the nodes that its operations cache.
+     */
+    private static void assertSpecializations(String what, List<String> expected, Node root) {
+        List<Node> nodes = new ArrayList<>();
+        if (root instanceof BytecodeRootNode bytecodeRoot) {
+            for (Instruction instruction : bytecodeRoot.getBytecodeNode().getInstructions()) {
+                for (Instruction.Argument argument : instruction.getArguments()) {
+                    if (argument.getKind() == Instruction.Argument.Kind.NODE_PROFILE && argument.asCachedNode() != null) {
+                        nodes.addAll(NodeUtil.findAllNodeInstances(argument.asCachedNode(), Node.class));
+                    }
+                }
+            }
+        } else {
+            nodes.addAll(NodeUtil.findAllNodeInstances(root, Node.class));
+        }
+        List<String> active = new ArrayList<>();
+        List<String> excluded = new ArrayList<>();
+        for (Node node : nodes) {
+            if (Introspection.isIntrospectable(node)) {
+                for (SpecializationInfo s : Introspection.getSpecializations(node)) {
+                    if (s.isActive()) {
+                        active.add(s.getMethodName());
+                    }
+                    if (s.isExcluded()) {
+                        excluded.add(s.getMethodName());
+                    }
+                }
+            }
+        }
+        active.sort(null);
+        assertEquals(what + ": active " + active + ", excluded " + excluded, expected, active);
     }
 
     /** The overflow checks of the fixnum path that survives an overflow, at the edges of the range. */

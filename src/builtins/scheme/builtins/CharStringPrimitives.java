@@ -198,13 +198,14 @@ final class CharStringPrimitives {
     /** {@code (symbol=? symbol1 symbol2 symbol3 ...)}. */
     static final class SymbolEquals extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
+        public Object invoke(Object[] args) {
             boolean result = true;
-            for (Object a : args) {
+            for (int i = 1; i < args.length; i++) {
+                Object a = args[i];
                 if (!(a instanceof SSymbol)) {
                     throw ControlPrimitives.notA("symbol=?", "symbol", a);
                 }
-                result &= a == args[0];
+                result &= a == args[1];
             }
             return result;
         }
@@ -213,11 +214,11 @@ final class CharStringPrimitives {
     /** {@code (symbol->string symbol)}: an immutable string, since R7RS makes mutating it an error. */
     static final class SymbolToString extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            if (args[0] instanceof SSymbol s) {
+        public Object invoke(Object[] args) {
+            if (args[1] instanceof SSymbol s) {
                 return name(s);
             }
-            throw ControlPrimitives.notA("symbol->string", "symbol", args[0]);
+            throw ControlPrimitives.notA("symbol->string", "symbol", args[1]);
         }
 
         @TruffleBoundary
@@ -229,8 +230,8 @@ final class CharStringPrimitives {
     /** {@code (string->symbol string)}: interned in this context's symbol table (design.md D1). */
     static final class StringToSymbol extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            return intern(SchemeContext.get(this), stringArg("string->symbol", args[0]));
+        public Object invoke(Object[] args) {
+            return intern(SchemeContext.get(this), stringArg("string->symbol", args[1]));
         }
 
         @TruffleBoundary
@@ -254,10 +255,10 @@ final class CharStringPrimitives {
         }
 
         @Override
-        public Object execute(Object[] args) {
+        public Object invoke(Object[] args) {
             boolean result = true;
-            int previous = key(charArg(name, args[0]));
-            for (int i = 1; i < args.length; i++) {
+            int previous = key(charArg(name, args[1]));
+            for (int i = 2; i < args.length; i++) {
                 int next = key(charArg(name, args[i]));
                 result &= holds(op, Integer.compare(previous, next));
                 previous = next;
@@ -292,8 +293,8 @@ final class CharStringPrimitives {
         }
 
         @Override
-        public Object execute(Object[] args) {
-            int cp = charArg(name, args[0]).codePoint;
+        public Object invoke(Object[] args) {
+            int cp = charArg(name, args[1]).codePoint;
             switch (op) {
                 case TO_INTEGER:
                     return (long) cp;
@@ -335,11 +336,11 @@ final class CharStringPrimitives {
     /** {@code (integer->char n)}: {@code n} must be a Unicode scalar value. */
     static final class IntegerToChar extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            if (args[0] instanceof Long n && n >= 0 && n <= Character.MAX_CODE_POINT && !(n >= Character.MIN_SURROGATE && n <= Character.MAX_SURROGATE)) {
+        public Object invoke(Object[] args) {
+            if (args[1] instanceof Long n && n >= 0 && n <= Character.MAX_CODE_POINT && !(n >= Character.MIN_SURROGATE && n <= Character.MAX_SURROGATE)) {
                 return SChar.of((int) (long) n);
             }
-            throw ControlPrimitives.notA("integer->char", "Unicode scalar value", args[0]);
+            throw ControlPrimitives.notA("integer->char", "Unicode scalar value", args[1]);
         }
     }
 
@@ -351,9 +352,9 @@ final class CharStringPrimitives {
     /** {@code (make-string k [char])}: a new mutable string, filled with spaces by default. */
     static final class MakeString extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            int k = indexArg("make-string", args[0], 0, MAX_LENGTH);
-            int fill = args.length > 1 ? charArg("make-string", args[1]).codePoint : ' ';
+        public Object invoke(Object[] args) {
+            int k = indexArg("make-string", args[1], 0, MAX_LENGTH);
+            int fill = args.length > 2 ? charArg("make-string", args[2]).codePoint : ' ';
             return SString.make(k, fill);
         }
     }
@@ -361,42 +362,42 @@ final class CharStringPrimitives {
     /** {@code (string char ...)}. */
     static final class StringOf extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            return fromChars("string", args);
+        public Object invoke(Object[] args) {
+            return fromChars("string", args, 1);
         }
     }
 
-    /** A new mutable string of the characters {@code chars}. */
+    /** A new mutable string of the characters {@code chars[from..]}. */
     @TruffleBoundary
-    static SString fromChars(String who, Object[] chars) {
-        SString s = SString.make(chars.length, ' ');
-        for (int i = 0; i < chars.length; i++) {
-            s.set(i, charArg(who, chars[i]).codePoint);
+    static SString fromChars(String who, Object[] chars, int from) {
+        SString s = SString.make(chars.length - from, ' ');
+        for (int i = from; i < chars.length; i++) {
+            s.set(i - from, charArg(who, chars[i]).codePoint);
         }
         return s;
     }
 
     static final class StringLength extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            return (long) stringArg("string-length", args[0]).length();
+        public Object invoke(Object[] args) {
+            return (long) stringArg("string-length", args[1]).length();
         }
     }
 
     static final class StringRef extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            SString s = stringArg("string-ref", args[0]);
-            return SChar.of(s.codePointAt(indexArg("string-ref", args[1], 0, s.length() - 1)));
+        public Object invoke(Object[] args) {
+            SString s = stringArg("string-ref", args[1]);
+            return SChar.of(s.codePointAt(indexArg("string-ref", args[2], 0, s.length() - 1)));
         }
     }
 
     static final class StringSet extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            SString s = stringArg("string-set!", args[0]);
-            int k = indexArg("string-set!", args[1], 0, s.length() - 1);
-            s.set(k, charArg("string-set!", args[2]).codePoint);
+        public Object invoke(Object[] args) {
+            SString s = stringArg("string-set!", args[1]);
+            int k = indexArg("string-set!", args[2], 0, s.length() - 1);
+            s.set(k, charArg("string-set!", args[3]).codePoint);
             return SConstant.UNSPECIFIED;
         }
     }
@@ -414,12 +415,12 @@ final class CharStringPrimitives {
         }
 
         @Override
-        public Object execute(Object[] args) {
-            for (Object a : args) {
-                stringArg(name, a);
+        public Object invoke(Object[] args) {
+            for (int i = 1; i < args.length; i++) {
+                stringArg(name, args[i]);
             }
             boolean result = true;
-            for (int i = 1; i < args.length; i++) {
+            for (int i = 2; i < args.length; i++) {
                 SString a = (SString) args[i - 1];
                 SString b = (SString) args[i];
                 result &= holds(op, ci ? compareFolded(a, b) : compare(a, b));
@@ -474,8 +475,8 @@ final class CharStringPrimitives {
         }
 
         @Override
-        public Object execute(Object[] args) {
-            return map(op, stringArg(name, args[0]));
+        public Object invoke(Object[] args) {
+            return map(op, stringArg(name, args[1]));
         }
 
         @TruffleBoundary
@@ -500,10 +501,10 @@ final class CharStringPrimitives {
         }
 
         @Override
-        public Object execute(Object[] args) {
-            SString s = stringArg(name, args[0]);
-            int end = args.length > 2 ? indexArg(name, args[2], 0, s.length()) : s.length();
-            int start = args.length > 1 ? indexArg(name, args[1], 0, end) : 0;
+        public Object invoke(Object[] args) {
+            SString s = stringArg(name, args[1]);
+            int end = args.length > 3 ? indexArg(name, args[3], 0, s.length()) : s.length();
+            int start = args.length > 2 ? indexArg(name, args[2], 0, end) : 0;
             return copy(s, start, end);
         }
 
@@ -520,23 +521,23 @@ final class CharStringPrimitives {
     /** {@code (string-append string ...)}: a new mutable string. */
     static final class StringAppend extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
+        public Object invoke(Object[] args) {
             return append(args);
         }
 
         @TruffleBoundary
         private static SString append(Object[] args) {
             long length = 0;
-            for (Object a : args) {
-                length += stringArg("string-append", a).length();
+            for (int i = 1; i < args.length; i++) {
+                length += stringArg("string-append", args[i]).length();
             }
             if (length > MAX_LENGTH) {
                 throw new SchemeError("string-append: result too long");
             }
             SString result = SString.make((int) length, ' ');
             int at = 0;
-            for (Object a : args) {
-                SString s = (SString) a;
+            for (int k = 1; k < args.length; k++) {
+                SString s = (SString) args[k];
                 for (int i = 0; i < s.length(); i++) {
                     result.set(at++, s.codePointAt(i));
                 }
@@ -548,10 +549,10 @@ final class CharStringPrimitives {
     /** {@code (string->list string [start [end]])}. */
     static final class StringToList extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            SString s = stringArg("string->list", args[0]);
-            int end = args.length > 2 ? indexArg("string->list", args[2], 0, s.length()) : s.length();
-            int start = args.length > 1 ? indexArg("string->list", args[1], 0, end) : 0;
+        public Object invoke(Object[] args) {
+            SString s = stringArg("string->list", args[1]);
+            int end = args.length > 3 ? indexArg("string->list", args[3], 0, s.length()) : s.length();
+            int start = args.length > 2 ? indexArg("string->list", args[2], 0, end) : 0;
             return toList(s, start, end);
         }
 
@@ -568,20 +569,20 @@ final class CharStringPrimitives {
     /** {@code (list->string list)}. */
     static final class ListToString extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            return fromChars("list->string", Lists.toArray("list->string", args[0]));
+        public Object invoke(Object[] args) {
+            return fromChars("list->string", Lists.toArray("list->string", args[1]), 0);
         }
     }
 
     /** {@code (string-copy! to at from [start [end]])}: overlapping ranges of one string copy as if through a temporary. */
     static final class StringCopyInto extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            SString to = stringArg("string-copy!", args[0]);
-            int at = indexArg("string-copy!", args[1], 0, to.length());
-            SString from = stringArg("string-copy!", args[2]);
-            int end = args.length > 4 ? indexArg("string-copy!", args[4], 0, from.length()) : from.length();
-            int start = args.length > 3 ? indexArg("string-copy!", args[3], 0, end) : 0;
+        public Object invoke(Object[] args) {
+            SString to = stringArg("string-copy!", args[1]);
+            int at = indexArg("string-copy!", args[2], 0, to.length());
+            SString from = stringArg("string-copy!", args[3]);
+            int end = args.length > 5 ? indexArg("string-copy!", args[5], 0, from.length()) : from.length();
+            int start = args.length > 4 ? indexArg("string-copy!", args[4], 0, end) : 0;
             if (end - start > to.length() - at) {
                 throw tooShort(to, at, end - start);
             }
@@ -611,11 +612,11 @@ final class CharStringPrimitives {
     /** {@code (string-fill! string char [start [end]])}. */
     static final class StringFill extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            SString s = stringArg("string-fill!", args[0]);
-            int fill = charArg("string-fill!", args[1]).codePoint;
-            int end = args.length > 3 ? indexArg("string-fill!", args[3], 0, s.length()) : s.length();
-            int start = args.length > 2 ? indexArg("string-fill!", args[2], 0, end) : 0;
+        public Object invoke(Object[] args) {
+            SString s = stringArg("string-fill!", args[1]);
+            int fill = charArg("string-fill!", args[2]).codePoint;
+            int end = args.length > 4 ? indexArg("string-fill!", args[4], 0, s.length()) : s.length();
+            int start = args.length > 3 ? indexArg("string-fill!", args[3], 0, end) : 0;
             fill(s, fill, start, end);
             return SConstant.UNSPECIFIED;
         }

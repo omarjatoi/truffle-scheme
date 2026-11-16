@@ -52,13 +52,13 @@ final class ControlPrimitives {
                         new PrimitiveSpec("procedure?", 1, 1, () -> new TypePredicate(x -> x instanceof SClosure)),
                         new PrimitiveSpec("values", 0, -1, Values::new),
                         new PrimitiveSpec("%values->list", 1, 1, ValuesToList::new),
-                        new PrimitiveSpec("apply", 2, -1, Apply::new),
-                        new PrimitiveSpec("call/cc", 1, 1, CallCC::new),
-                        new PrimitiveSpec("call-with-current-continuation", 1, 1, CallCC::new),
-                        new PrimitiveSpec("%capture-to-prompt", 2, 2, CaptureToPrompt::new),
+                        PrimitiveSpec.transfersControl("apply", 2, -1, Apply::new),
+                        PrimitiveSpec.transfersControl("call/cc", 1, 1, CallCC::new),
+                        PrimitiveSpec.transfersControl("call-with-current-continuation", 1, 1, CallCC::new),
+                        PrimitiveSpec.transfersControl("%capture-to-prompt", 2, 2, CaptureToPrompt::new),
                         new PrimitiveSpec("%torture-captures", 0, 0, TortureCaptures::new),
-                        new PrimitiveSpec("%apply-continuation", 2, 2, () -> new ContinuationOps(ContinuationOps.APPLY)),
-                        new PrimitiveSpec("%reinstate", 2, 2, () -> new ContinuationOps(ContinuationOps.REINSTATE)),
+                        PrimitiveSpec.transfersControl("%apply-continuation", 2, 2, () -> new ContinuationOps(ContinuationOps.APPLY)),
+                        PrimitiveSpec.transfersControl("%reinstate", 2, 2, () -> new ContinuationOps(ContinuationOps.REINSTATE)),
                         new PrimitiveSpec("%continuation-composable?", 1, 1, () -> new ContinuationOps(ContinuationOps.COMPOSABLE)),
                         new PrimitiveSpec("%continuation-dynamic-env", 1, 1, () -> new ContinuationOps(ContinuationOps.DYNAMIC_ENV)),
                         new PrimitiveSpec("%error", 1, -1, ErrorPrimitive::new),
@@ -90,9 +90,9 @@ final class ControlPrimitives {
     /** eq?: identity, except that fixnums and characters compare by value (design.md D1). */
     static final class Eq extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            Object a = args[0];
-            Object b = args[1];
+        public Object invoke(Object[] args) {
+            Object a = args[1];
+            Object b = args[2];
             if (a == b) {
                 return true;
             }
@@ -112,13 +112,13 @@ final class ControlPrimitives {
     /** {@code (boolean=? b1 b2 b3 ...)} (R7RS §6.3): all #t or all #f; every argument must be a boolean. */
     static final class BooleanEquals extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
+        public Object invoke(Object[] args) {
             boolean same = true;
-            for (Object arg : args) {
-                if (!(arg instanceof Boolean b)) {
-                    throw notA("boolean=?", "boolean", arg);
+            for (int i = 1; i < args.length; i++) {
+                if (!(args[i] instanceof Boolean b)) {
+                    throw notA("boolean=?", "boolean", args[i]);
                 }
-                same &= b.booleanValue() == (Boolean) args[0];
+                same &= b.booleanValue() == (Boolean) args[1];
             }
             return same;
         }
@@ -127,8 +127,8 @@ final class ControlPrimitives {
     /** {@code (eqv? a b)} (R7RS §6.1): eq?, or numbers of the same exactness and value, or equal characters. */
     static final class Eqv extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            return eqv(args[0], args[1]);
+        public Object invoke(Object[] args) {
+            return eqv(args[1], args[2]);
         }
 
         @TruffleBoundary
@@ -158,16 +158,16 @@ final class ControlPrimitives {
     /** {@code (values obj ...)}: one value is itself, otherwise MultipleValues (design.md D1). */
     static final class Values extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            return args.length == 1 ? args[0] : new MultipleValues(args.clone());
+        public Object invoke(Object[] args) {
+            return args.length == 2 ? args[1] : new MultipleValues(java.util.Arrays.copyOfRange(args, 1, args.length));
         }
     }
 
     /** {@code (%values->list v)}: the values a producer returned, as a list (for call-with-values). */
     static final class ValuesToList extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            Object[] values = args[0] instanceof MultipleValues m ? m.values : new Object[]{args[0]};
+        public Object invoke(Object[] args) {
+            Object[] values = args[1] instanceof MultipleValues m ? m.values : new Object[]{args[1]};
             Object result = SConstant.EMPTY_LIST;
             for (int i = values.length - 1; i >= 0; i--) {
                 result = new SPair(values[i], result);
@@ -182,18 +182,19 @@ final class ControlPrimitives {
      */
     static final class Apply extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
+        public Object invoke(Object[] args) {
             return tailCall(args);
         }
 
         @TruffleBoundary
         private static TailCall tailCall(Object[] args) {
+            // args: apply, proc, arg ..., list; all: proc, arg ..., the list's elements.
             Object[] spread = Lists.toArray("apply", args[args.length - 1]);
-            Object[] all = new Object[args.length - 1 + spread.length];
-            all[0] = args[0];
-            System.arraycopy(args, 1, all, 1, args.length - 2);
-            System.arraycopy(spread, 0, all, args.length - 1, spread.length);
-            return new TailCall(args[0], all);
+            Object[] all = new Object[args.length - 2 + spread.length];
+            all[0] = args[1];
+            System.arraycopy(args, 2, all, 1, args.length - 3);
+            System.arraycopy(spread, 0, all, args.length - 2, spread.length);
+            return new TailCall(args[1], all);
         }
     }
 
@@ -204,8 +205,8 @@ final class ControlPrimitives {
      */
     static final class CallCC extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            return Capture.full(args[0], SchemeContext.get(this).getDynamicEnv());
+        public Object invoke(Object[] args) {
+            return Capture.full(args[1], SchemeContext.get(this).getDynamicEnv());
         }
     }
 
@@ -216,8 +217,8 @@ final class ControlPrimitives {
      */
     static final class CaptureToPrompt extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            return Capture.delimited(args[0], args[1], SchemeContext.get(this).getDynamicEnv());
+        public Object invoke(Object[] args) {
+            return Capture.delimited(args[1], args[2], SchemeContext.get(this).getDynamicEnv());
         }
     }
 
@@ -239,13 +240,13 @@ final class ControlPrimitives {
         }
 
         @Override
-        public Object execute(Object[] args) {
-            Continuation k = continuation(args[0]);
+        public Object invoke(Object[] args) {
+            Continuation k = continuation(args[1]);
             switch (kind) {
                 case APPLY:
-                    throw new InvokeContinuation(k, values(args[1]));
+                    throw new InvokeContinuation(k, values(args[2]));
                 case REINSTATE:
-                    return Capture.reinstate(k, values(args[1]), SchemeContext.get(this).getDynamicEnv());
+                    return Capture.reinstate(k, values(args[2]), SchemeContext.get(this).getDynamicEnv());
                 case COMPOSABLE:
                     return k.composable;
                 default:
@@ -279,7 +280,7 @@ final class ControlPrimitives {
     /** {@code (%torture-captures)}: how many torture-mode captures this context has completed (M2-06 tests). */
     static final class TortureCaptures extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
+        public Object invoke(Object[] args) {
             return SchemeContext.get(this).tortureCaptures;
         }
     }
@@ -290,19 +291,19 @@ final class ControlPrimitives {
      */
     static final class ErrorPrimitive extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
+        public Object invoke(Object[] args) {
             throw error(args);
         }
 
         @TruffleBoundary
         private static SchemeError error(Object[] args) {
-            Object message = args[0] instanceof SString ? args[0] : SString.of(Printer.print(args[0], Printer.Mode.DISPLAY));
+            Object message = args[1] instanceof SString ? args[1] : SString.of(Printer.print(args[1], Printer.Mode.DISPLAY));
             Object irritants = SConstant.EMPTY_LIST;
-            for (int i = args.length - 1; i >= 1; i--) {
+            for (int i = args.length - 1; i >= 2; i--) {
                 irritants = new SPair(args[i], irritants);
             }
             StringBuilder text = new StringBuilder(message.toString());
-            for (int i = 1; i < args.length; i++) {
+            for (int i = 2; i < args.length; i++) {
                 text.append(' ').append(Printer.print(args[i], Printer.Mode.WRITE));
             }
             return new SchemeError(new SErrorObject(SString.of(text.toString()), irritants, SErrorObject.Kind.OTHER));
@@ -312,8 +313,8 @@ final class ControlPrimitives {
     /** Installs the prelude's %receive (control.scm), which the prompt driver calls. */
     static final class SetReceive extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            SchemeContext.get(this).receive = args[0];
+        public Object invoke(Object[] args) {
+            SchemeContext.get(this).receive = args[1];
             return SConstant.UNSPECIFIED;
         }
     }
@@ -321,8 +322,8 @@ final class ControlPrimitives {
     /** Installs the prelude's %escape (control.scm), which escape-only continuations tail-call to rewind first (M5-04). */
     static final class SetEscape extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            SchemeContext.get(this).escape = args[0];
+        public Object invoke(Object[] args) {
+            SchemeContext.get(this).escape = args[1];
             return SConstant.UNSPECIFIED;
         }
     }
@@ -344,23 +345,23 @@ final class ControlPrimitives {
         }
 
         @Override
-        public Object execute(Object[] args) {
+        public Object invoke(Object[] args) {
             switch (kind) {
                 case CURRENT:
                     return SchemeContext.get(this).getDynamicEnv();
                 case SET:
-                    SchemeContext.get(this).setDynamicEnv(dynEnv(args[0]));
+                    SchemeContext.get(this).setDynamicEnv(dynEnv(args[1]));
                     return SConstant.UNSPECIFIED;
                 case MAKE:
-                    return new DynEnv(args[0], args[1], args[2]);
+                    return new DynEnv(args[1], args[2], args[3]);
                 case TEST:
-                    return args[0] instanceof DynEnv;
+                    return args[1] instanceof DynEnv;
                 case WINDERS:
-                    return dynEnv(args[0]).winders;
+                    return dynEnv(args[1]).winders;
                 case PARAMETERIZATION:
-                    return dynEnv(args[0]).parameterization;
+                    return dynEnv(args[1]).parameterization;
                 default:
-                    return dynEnv(args[0]).handlers;
+                    return dynEnv(args[1]).handlers;
             }
         }
 
@@ -380,8 +381,8 @@ final class ControlPrimitives {
     /** Installs the prelude's raise, which call sites call with primitive errors (D8). */
     static final class SetRaise extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            SchemeContext.get(this).raise = args[0];
+        public Object invoke(Object[] args) {
+            SchemeContext.get(this).raise = args[1];
             return SConstant.UNSPECIFIED;
         }
     }
@@ -389,8 +390,8 @@ final class ControlPrimitives {
     /** {@code (%raise-uncaught obj)}: raise found no handler, so the program ends (D8). */
     static final class RaiseUncaught extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            throw uncaught(args[0]);
+        public Object invoke(Object[] args) {
+            throw uncaught(args[1]);
         }
 
         @TruffleBoundary
@@ -412,8 +413,8 @@ final class ControlPrimitives {
     /** {@code (%make-error-object message irritants)}: what {@code error} raises. */
     static final class MakeErrorObject extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            return new SErrorObject(args[0], args[1], SErrorObject.Kind.OTHER);
+        public Object invoke(Object[] args) {
+            return new SErrorObject(args[1], args[2], SErrorObject.Kind.OTHER);
         }
     }
 
@@ -431,8 +432,8 @@ final class ControlPrimitives {
         }
 
         @Override
-        public Object execute(Object[] args) {
-            Object x = args[0];
+        public Object invoke(Object[] args) {
+            Object x = args[1];
             switch (op) {
                 case TEST:
                     return x instanceof SErrorObject;
@@ -452,8 +453,8 @@ final class ControlPrimitives {
     /** {@code (%make-record-type 'name '(field ...))}. */
     static final class MakeRecordType extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            return make(args[0], args[1]);
+        public Object invoke(Object[] args) {
+            return make(args[1], args[2]);
         }
 
         @TruffleBoundary
@@ -470,8 +471,8 @@ final class ControlPrimitives {
     /** {@code (%record-index type 'field)}: the field's index, at definition time. */
     static final class RecordIndex extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            return index((SRecordType) args[0], args[1]);
+        public Object invoke(Object[] args) {
+            return index((SRecordType) args[1], args[2]);
         }
 
         @TruffleBoundary
@@ -489,13 +490,13 @@ final class ControlPrimitives {
     /** {@code (%make-record type #(index ...) value ...)}: fields not given are unspecified. */
     static final class MakeRecord extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            SRecordType type = (SRecordType) args[0];
-            Object[] indices = ((SVector) args[1]).elements;
+        public Object invoke(Object[] args) {
+            SRecordType type = (SRecordType) args[1];
+            Object[] indices = ((SVector) args[2]).elements;
             Object[] fields = new Object[type.fieldNames.length];
             java.util.Arrays.fill(fields, SConstant.UNSPECIFIED);
             for (int i = 0; i < indices.length; i++) {
-                fields[(int) (long) (Long) indices[i]] = args[i + 2];
+                fields[(int) (long) (Long) indices[i]] = args[i + 3];
             }
             return new SRecord(type, fields);
         }
@@ -504,8 +505,8 @@ final class ControlPrimitives {
     /** {@code (%record? type x)}. */
     static final class RecordTest extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            return args[1] instanceof SRecord r && r.type == args[0];
+        public Object invoke(Object[] args) {
+            return args[2] instanceof SRecord r && r.type == args[1];
         }
     }
 
@@ -518,14 +519,14 @@ final class ControlPrimitives {
         }
 
         @Override
-        public Object execute(Object[] args) {
-            SRecordType type = (SRecordType) args[0];
-            int index = (int) (long) (Long) args[1];
-            if (!(args[2] instanceof SRecord r) || r.type != type) {
-                throw notA(type.fieldNames[index], "record of type " + type.name, args[2]);
+        public Object invoke(Object[] args) {
+            SRecordType type = (SRecordType) args[1];
+            int index = (int) (long) (Long) args[2];
+            if (!(args[3] instanceof SRecord r) || r.type != type) {
+                throw notA(type.fieldNames[index], "record of type " + type.name, args[3]);
             }
             if (set) {
-                r.fields[index] = args[3];
+                r.fields[index] = args[4];
                 return SConstant.UNSPECIFIED;
             }
             return r.fields[index];
@@ -550,9 +551,9 @@ final class ControlPrimitives {
      */
     static final class Equal extends PrimitiveNode {
         @Override
-        public Object execute(Object[] args) {
-            Object a = args[0];
-            Object b = args[1];
+        public Object invoke(Object[] args) {
+            Object a = args[1];
+            Object b = args[2];
             if (a == b) {
                 return true;
             }
