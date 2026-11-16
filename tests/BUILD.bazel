@@ -1,0 +1,141 @@
+load("//bazel:java.bzl", "scheme_java_library")
+load("//bazel:java_module.bzl", "java_module_jar", "scheme_runtime")
+load("//bazel/r7rs:defs.bzl", "conformance_tests", "diff_tests", "space_test", "spec_tests", "unit_tests")
+
+# Everything under tests/ is described here: tests/r7rs/ and tests/r7rs-larceny/ are read-only
+# vendored suites (AGENTS.md "Never"), so they get no BUILD files of their own.
+
+package(default_visibility = ["//visibility:public"])
+
+# --- Runtimes: the GraalVM `java` and a module path, for the test drivers ----------------------
+
+# Programs (diff, spec, space, conformance): the launcher module and the language.
+scheme_runtime(
+    name = "launcher_runtime",
+    module = "//:scheme_launcher",
+)
+
+# JUnit: the test module, which needs the launcher, the language and JUnit.
+scheme_runtime(
+    name = "junit_runtime",
+    module = ":scheme_test",
+)
+
+# --- JUnit (tests/scheme/test; mx: scheme.test and SCHEME_TEST) --------------------------------
+
+scheme_java_library(
+    name = "scheme_test_lib",
+    srcs = glob(["scheme/test/*.java"]),
+    # The vendored suite's files that SuiteReadSyntaxTest and SyntaxRulesTest read as resources.
+    resource_strip_prefix = "tests",
+    resources = glob(["r7rs/**"]),
+    # A test instrument (ToolsTest) needs its generated registration.
+    truffle_dsl = True,
+    deps = [
+        "//src/compiler",
+        "//src/launcher",
+        "//src/reader",
+        "//src/runtime",
+        "@jvm//:junit_junit",
+        "@jvm//:org_graalvm_polyglot_polyglot",
+        "@jvm//:org_graalvm_truffle_truffle_api",
+    ],
+)
+
+java_module_jar(
+    name = "scheme_test",
+    exports = ["scheme.test to junit"],
+    libs = [":scheme_test_lib"],
+    module_name = "scheme.test",
+    opens = ["scheme.test to junit"],
+    requires = [
+        "junit",
+        "org.graalvm.polyglot",
+        "org.graalvm.truffle",
+        "scheme",
+        "scheme.launcher",
+    ],
+    deps = [
+        "//:scheme",
+        "//:scheme_launcher",
+        "//bazel:truffle_runtime_modules",
+        "@jvm//:junit_junit",
+    ],
+)
+
+# `unit_<mode>_<Class>` for every *Test.java, in the modes jit, compile and torture; `unit` is all
+# of them, `unit_jit`, `unit_compile` and `unit_torture` each mode.
+unit_tests(
+    name = "unit",
+    srcs = glob(["scheme/test/*Test.java"]),
+    runtime = ":junit_runtime",
+)
+
+# --- Programs ----------------------------------------------------------------------------------
+
+# tests/diff: `diff_<program>` (as chibi-scheme runs it) and `diff_torture_<program>`.
+diff_tests(
+    name = "diff",
+    srcs = glob(["diff/*.scm"]),
+    chibi = "@chibi//:chibi-scheme",
+    runtime = ":launcher_runtime",
+)
+
+# tests/spec: `spec_<case>`, each with the JVM limits in its header (tests/spec/README.md).
+spec_tests(
+    name = "spec",
+    srcs = glob(["spec/*.scm"]),
+    runtime = ":launcher_runtime",
+)
+
+# M1-06: a 10M-iteration tail loop under a stack and heap too small for anything that grows.
+space_test(
+    name = "space_loop_10m",
+    src = "diff/loop-10m.scm",
+    expect = "10000000",
+    limits = "-Xss256k -Xmx64m",
+    runtime = ":launcher_runtime",
+)
+
+# M2-05: 1M-deep non-tail recursion under a 256k Java stack (chibi runs out of stack on it).
+space_test(
+    name = "space_deep_recursion_1m",
+    src = "space/deep-recursion-1m.scm",
+    expect = "1000000",
+    limits = "-Xss256k -Xmx512m",
+    runtime = ":launcher_runtime",
+)
+
+test_suite(
+    name = "space",
+    tests = [
+        ":space_deep_recursion_1m",
+        ":space_loop_10m",
+    ],
+)
+
+# --- Conformance -------------------------------------------------------------------------------
+
+filegroup(
+    name = "chibi_suite",
+    srcs = glob(["r7rs/**"]) + glob(["lib/**"]),
+)
+
+filegroup(
+    name = "larceny_suite",
+    srcs = glob(["r7rs-larceny/**"]) + glob(["lib/**"]),
+)
+
+# `conformance_results_<suite>`: the suite run interpreted only, as a cached build action (its
+# status block part and pass counts). `conformance_status`: docs/plan.md's status block is
+# current. `conformance_torture_<suite>`: no section passes less under torture.
+conformance_tests(
+    name = "conformance",
+    module = "//:scheme_launcher",
+    plan = "//:docs/plan.md",
+    runtime = ":launcher_runtime",
+    suites = {
+        "chibi": ":chibi_suite",
+        "larceny": ":larceny_suite",
+    },
+)

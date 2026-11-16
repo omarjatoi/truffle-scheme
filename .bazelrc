@@ -1,0 +1,46 @@
+# Bazel settings for every build, test and run (AGENTS.md "Commands").
+
+# --- Java: GraalVM CE 25.5 for everything (design.md D11, bazel/graalvm.bzl) ---
+# Compile Java 25 with the GraalVM javac (bazel/toolchains), run tests and tools on the same
+# GraalVM, whose Graal compiler is the JIT the tests exercise.
+common --java_language_version=25
+common --tool_java_language_version=25
+common --java_runtime_version=graalvm_25
+common --tool_java_runtime_version=graalvm_25
+# No Turbine header jars: the Truffle DSL processor only runs inside javac ("Unsupported compiler
+# for element TurbineTypeElement"), and dependents need its generated classes. Dependents compile
+# against ijars of the full class jars instead.
+build --nojava_header_compilation
+
+# Python test drivers: no implicit __init__.py files in runfiles (the future default).
+common --incompatible_default_to_explicit_init_py
+
+# --- Hermeticity, so results are cacheable across machines ---
+# Actions and tests see a fixed PATH, not the shell's: tools come from Bazel (or @chibi).
+common --incompatible_strict_action_env
+build --nolegacy_external_runfiles
+# Tests start from a clean environment, write only to their sandbox, and use no network.
+test --test_output=errors
+test --sandbox_default_allow_network=false
+
+# --- Caching ---
+# Downloads (GraalVM, Maven jars, Python) land in Bazel's repository cache, which every
+# checkout and worktree on a machine shares by default.
+# CI: a disk cache that the workflow saves and restores (`--config=ci`).
+common:ci --disk_cache=~/.cache/bazel-disk-cache
+common:ci --experimental_disk_cache_gc_max_size=3G
+common:ci --repository_cache=~/.cache/bazel-repository-cache
+common:ci --color=yes
+common:ci --curses=no
+common:ci --show_progress_rate_limit=30
+common:ci --announce_rc
+# Remote cache (BuildBuddy or any REAPI cache), when it exists: `--config=remote` plus
+# `--remote_header=x-buildbuddy-api-key=...` in user.bazelrc or the CI secret.
+common:remote --remote_cache=grpcs://remote.buildbuddy.io
+common:remote --remote_timeout=3600
+common:remote --remote_download_minimal
+common:remote --bes_results_url=https://app.buildbuddy.io/invocation/
+common:remote --bes_backend=grpcs://remote.buildbuddy.io
+
+# Per-user settings (a remote cache key, a local disk cache), not checked in.
+try-import %workspace%/user.bazelrc

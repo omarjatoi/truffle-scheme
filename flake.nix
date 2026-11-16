@@ -24,7 +24,11 @@
           pkgs.python3
           pkgs.git
           pkgs.gh           # session protocol in AGENTS.md
-          pkgs.chibi        # differential testing (mx r7rs-diff), benchmark report
+          pkgs.chibi        # differential testing (mx r7rs-diff, Bazel's @chibi), benchmark report
+          # Bazel, at the version in .bazelversion (bazelisk downloads it), as `bazel`.
+          # Bazel brings its own GraalVM (bazel/graalvm.bzl); the one below is mx's.
+          pkgs.bazelisk
+          (pkgs.writeShellScriptBin "bazel" ''exec ${pkgs.bazelisk}/bin/bazelisk "$@"'')
           graalvm
         ];
         # mx creates directories inside its own checkout, so it can't run

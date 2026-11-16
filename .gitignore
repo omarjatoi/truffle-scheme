@@ -34,3 +34,7 @@ bench-results.json
 ps_r7rs-*.txt
 # downloads of `mx r7rs-bench-report`: other implementations' preludes and libraries (bench/README.md)
 bench/.cache/
+
+# Bazel: output symlinks and per-user settings
+/bazel-*
+/user.bazelrc

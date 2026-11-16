@@ -1,0 +1,13 @@
+load("//bazel:java.bzl", "scheme_java_library")
+
+# mx: scheme.runtime. The Bytecode DSL root, operations, continuations and the language class.
+scheme_java_library(
+    name = "runtime",
+    srcs = glob(["**/*.java"]),
+    truffle_dsl = True,
+    visibility = ["//visibility:public"],
+    deps = [
+        "@jvm//:org_graalvm_polyglot_polyglot",
+        "@jvm//:org_graalvm_truffle_truffle_api",
+    ],
+)

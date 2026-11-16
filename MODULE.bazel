@@ -1,0 +1,67 @@
+"""R7RS-small Scheme on GraalVM Truffle: the Bazel build (AGENTS.md "Commands")."""
+
+module(name = "truffle_scheme")
+
+# design.md D11: the GraalVM JDK and the Truffle libraries are the same release. This one
+# version picks both: the JDK in bazel/graalvm.bzl and the Maven artifacts below. Upgrading:
+# add the release to bazel/graalvm.bzl, change this, `bazel run @jvm//:pin`, and bump
+# nixpkgs in flake.lock (the dev shell's GraalVM, which mx uses) together.
+TRUFFLE_VERSION = "25.5.5.0.3"
+
+bazel_dep(name = "platforms", version = "1.1.0")
+bazel_dep(name = "bazel_skylib", version = "1.9.2")
+bazel_dep(name = "rules_java", version = "9.9.0")
+bazel_dep(name = "rules_jvm_external", version = "7.2")
+bazel_dep(name = "rules_python", version = "2.5.1")
+bazel_dep(name = "rules_shell", version = "0.8.0")
+
+# --- JDK: GraalVM CE, pinned and downloaded (bazel/graalvm.bzl) -------------------------------
+
+graalvm = use_extension("//bazel:graalvm.bzl", "graalvm")
+graalvm.jdk(version = TRUFFLE_VERSION)
+use_repo(graalvm, "graalvm", "graalvm_linux_aarch64", "graalvm_linux_x64", "graalvm_macos_aarch64")
+
+# Runtime toolchains (`--java_runtime_version=graalvm_25`, .bazelrc), then the compilation
+# toolchain that runs javac from the same GraalVM (bazel/toolchains/BUILD.bazel).
+register_toolchains(
+    "@graalvm//:all",
+    "//bazel/toolchains:all",
+)
+
+# --- Maven: Truffle at TRUFFLE_VERSION, and JUnit (the libraries in mx.r7rs/suite.py) ----------
+
+maven = use_extension("@rules_jvm_external//:extensions.bzl", "maven")
+maven.install(
+    name = "jvm",
+    artifacts = [
+        "org.graalvm.sdk:collections:" + TRUFFLE_VERSION,
+        "org.graalvm.sdk:word:" + TRUFFLE_VERSION,
+        "org.graalvm.sdk:nativeimage:" + TRUFFLE_VERSION,
+        "org.graalvm.sdk:jniutils:" + TRUFFLE_VERSION,
+        "org.graalvm.sdk:nativebridge:" + TRUFFLE_VERSION,
+        "org.graalvm.polyglot:polyglot:" + TRUFFLE_VERSION,
+        "org.graalvm.truffle:truffle-api:" + TRUFFLE_VERSION,
+        "org.graalvm.truffle:truffle-compiler:" + TRUFFLE_VERSION,
+        "org.graalvm.truffle:truffle-runtime:" + TRUFFLE_VERSION,
+        "org.graalvm.truffle:truffle-dsl-processor:" + TRUFFLE_VERSION,
+        "junit:junit:4.13.2",
+        "org.hamcrest:hamcrest-core:1.3",
+    ],
+    fail_if_repin_required = True,
+    lock_file = "//:maven_install.json",
+    repositories = ["https://repo1.maven.org/maven2"],
+)
+use_repo(maven, "jvm")
+
+# --- Python: the test drivers (bazel/r7rs/*.py), on rules_python's hermetic interpreter ---------
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(
+    is_default = True,
+    python_version = "3.13",
+)
+
+# --- Host tools from the Nix dev shell: chibi-scheme (differential tests) ----------------------
+
+host = use_extension("//bazel:host_tools.bzl", "host_tools")
+use_repo(host, "chibi")

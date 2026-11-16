@@ -1,0 +1,66 @@
+load("//bazel:java_module.bzl", "java_module_jar")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "docs/plan.md",
+    "mx.r7rs/suite.py",
+    "maven_install.json",
+])
+
+# The Truffle and GraalVM SDK modules the scheme modules require (mx's "requires", derived from
+# the distributions' dependencies).
+_SDK_MODULES = [
+    "org.graalvm.collections",
+    "org.graalvm.jniutils",
+    "org.graalvm.nativebridge",
+    "org.graalvm.nativeimage",
+    "org.graalvm.polyglot",
+    "org.graalvm.truffle",
+    "org.graalvm.word",
+]
+
+# mx: SCHEME. The language as one module, run with Truffle on the module path as embedders will.
+# The front end and the primitives are services, so the runtime (which holds the language
+# class) needn't depend on them (scheme.runtime.SchemeCompiler).
+java_module_jar(
+    name = "scheme",
+    exports = [
+        "scheme.compiler",
+        "scheme.reader",
+        "scheme.runtime",
+        "scheme.runtime.printer",
+        "scheme.runtime.value",
+    ],
+    libs = [
+        "//src/builtins",
+        "//src/compiler",
+        "//src/prelude",
+        "//src/reader",
+        "//src/runtime",
+    ],
+    module_name = "scheme",
+    requires = _SDK_MODULES,
+    uses = [
+        "scheme.runtime.BuiltinLibrary",
+        "scheme.runtime.SchemeCompiler",
+    ],
+    deps = ["//bazel:truffle_runtime_modules"],
+)
+
+# mx: SCHEME_LAUNCHER. SchemeMain and the ConformanceRunner, with the optimizing runtime.
+java_module_jar(
+    name = "scheme_launcher",
+    exports = ["scheme.launcher"],
+    libs = ["//src/launcher"],
+    module_name = "scheme.launcher",
+    requires = _SDK_MODULES + [
+        "org.graalvm.truffle.compiler",
+        "org.graalvm.truffle.runtime",
+        "scheme",
+    ],
+    deps = [
+        ":scheme",
+        "//bazel:truffle_runtime_modules",
+    ],
+)

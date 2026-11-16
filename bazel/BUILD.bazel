@@ -1,0 +1,62 @@
+load("@rules_java//java:defs.bzl", "java_binary", "java_library", "java_plugin")
+
+package(default_visibility = ["//visibility:public"])
+
+# The Truffle DSL annotation processor (mx: "annotationProcessors": ["TRUFFLE_DSL_PROCESSOR"]).
+# Only the projects that need generated code list it in `plugins` (AGENTS.md "Truffle
+# conventions"), so edits elsewhere don't re-run it. One java_plugin per processor in the jar's
+# META-INF/services; `generates_api` because other projects use the generated classes.
+_TRUFFLE_PROCESSORS = [
+    "com.oracle.truffle.dsl.processor.TruffleProcessor",
+    "com.oracle.truffle.dsl.processor.verify.VerifyTruffleProcessor",
+    "com.oracle.truffle.dsl.processor.LanguageRegistrationProcessor",
+    "com.oracle.truffle.dsl.processor.InstrumentRegistrationProcessor",
+    "com.oracle.truffle.dsl.processor.OptionalResourceRegistrationProcessor",
+    "com.oracle.truffle.dsl.processor.InstrumentableProcessor",
+    "com.oracle.truffle.dsl.processor.verify.VerifyCompilationFinalProcessor",
+    "com.oracle.truffle.dsl.processor.OptionProcessor",
+]
+
+[
+    java_plugin(
+        name = "truffle_dsl_" + processor.rsplit(".", 1)[1],
+        generates_api = True,
+        processor_class = processor,
+        visibility = ["//visibility:private"],
+        deps = ["@jvm//:org_graalvm_truffle_truffle_dsl_processor"],
+    )
+    for processor in _TRUFFLE_PROCESSORS
+]
+
+java_library(
+    name = "truffle_dsl_processor",
+    exported_plugins = [":truffle_dsl_" + p.rsplit(".", 1)[1] for p in _TRUFFLE_PROCESSORS],
+)
+
+# The Truffle and GraalVM SDK modules, on the module path at run time (mx's "exclude" list:
+# they stay separate modules instead of being merged into the scheme jars).
+java_library(
+    name = "truffle_runtime_modules",
+    runtime_deps = [
+        "@jvm//:org_graalvm_polyglot_polyglot",
+        "@jvm//:org_graalvm_sdk_collections",
+        "@jvm//:org_graalvm_sdk_jniutils",
+        "@jvm//:org_graalvm_sdk_nativebridge",
+        "@jvm//:org_graalvm_sdk_nativeimage",
+        "@jvm//:org_graalvm_sdk_word",
+        "@jvm//:org_graalvm_truffle_truffle_api",
+        # The optimizing runtime: without it Truffle falls back to an interpreter-only runtime
+        # and the Graal JIT is never used (tests/scheme/test/RuntimeTest.java checks this).
+        "@jvm//:org_graalvm_truffle_truffle_compiler",
+        "@jvm//:org_graalvm_truffle_truffle_runtime",
+    ],
+)
+
+# Builds a named module's jar from java_library outputs (bazel/java_module.bzl).
+java_binary(
+    name = "module_jar",
+    srcs = ["ModuleJar.java"],
+    javacopts = ["-Xlint:all", "-Werror"],
+    main_class = "ModuleJar",
+    visibility = ["//visibility:private"],
+)

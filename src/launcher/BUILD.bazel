@@ -1,0 +1,10 @@
+load("//bazel:java.bzl", "scheme_java_library")
+
+# mx: scheme.launcher. Host-side tools that embed the language through the polyglot API:
+# SchemeMain (the program runner) and ConformanceRunner.
+scheme_java_library(
+    name = "launcher",
+    srcs = glob(["**/*.java"]),
+    visibility = ["//visibility:public"],
+    deps = ["@jvm//:org_graalvm_polyglot_polyglot"],
+)

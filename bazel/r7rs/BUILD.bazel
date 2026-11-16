@@ -1,0 +1,69 @@
+load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# The test drivers: a port of the test commands in mx.r7rs/mx_r7rs.py. bazel/r7rs/defs.bzl makes
+# the targets; tests/BUILD.bazel lists them.
+exports_files([
+    "conformance_test.py",
+    "program_test.py",
+    "unit_test.py",
+])
+
+py_library(
+    name = "r7rs",
+    srcs = ["r7rs.py"],
+    imports = ["."],
+)
+
+# The build action behind //tests:conformance_results_<suite>.
+py_binary(
+    name = "conformance_results",
+    srcs = ["conformance_results.py"],
+    deps = [":r7rs"],
+)
+
+# `bazel run //bazel/r7rs:status`: rewrite the status block in docs/plan.md (mx r7rs-status).
+py_binary(
+    name = "status",
+    srcs = ["status.py"],
+    args = [
+        "$(rlocationpath //tests:conformance_results_chibi.md)",
+        "$(rlocationpath //tests:conformance_results_larceny.md)",
+    ],
+    data = [
+        "//tests:conformance_results_chibi.md",
+        "//tests:conformance_results_larceny.md",
+    ],
+    deps = [":r7rs"],
+)
+
+# AGENTS.md rule 1: Java builtins never call Scheme (mx r7rs-check).
+py_test(
+    name = "rules_test",
+    size = "small",
+    srcs = ["rules_test.py"],
+    tags = ["lint"],
+    args = ["$(rlocationpaths //src/builtins:srcs)"],
+    data = ["//src/builtins:srcs"],
+    deps = [":r7rs"],
+)
+
+# design.md D11: the test JDK is the GraalVM release of the Truffle libraries.
+py_test(
+    name = "versions_test",
+    size = "small",
+    srcs = ["versions_test.py"],
+    tags = ["lint"],
+    args = [
+        "--runtime=$(rlocationpath //tests:launcher_runtime)",
+        "--lock=$(rlocationpath //:maven_install.json)",
+        "--suite=$(rlocationpath //:mx.r7rs/suite.py)",
+    ],
+    data = [
+        "//:maven_install.json",
+        "//:mx.r7rs/suite.py",
+        "//tests:launcher_runtime",
+    ],
+    deps = [":r7rs"],
+)

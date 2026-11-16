@@ -1,0 +1,4 @@
+# Directories Bazel must not look into for packages: tool outputs and local state.
+mxbuild
+.claude
+.direnv

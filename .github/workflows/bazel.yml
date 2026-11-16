@@ -1,0 +1,72 @@
+name: Bazel
+
+on:
+  pull_request:          # every PR, including PRs stacked on other PRs
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bazel-${{ github.ref }}
+  cancel-in-progress: true
+
+# The Bazel build (MODULE.bazel), next to the mx workflow (ci.yml) while both exist. The two jobs
+# mirror mx's required checks: `Checks (Bazel)` builds everything (javac -Werror) and runs the
+# tests tagged `lint`, `Tests (Bazel)` runs every other test. To make Bazel the required build,
+# rename them `Checks` and `Tests` and delete ci.yml.
+#
+# Bazel runs inside the Nix dev shell, which provides bazelisk (as `bazel`, at .bazelversion) and
+# chibi-scheme; Bazel downloads its own pinned GraalVM (bazel/graalvm.bzl), Maven jars and Python.
+# Caching: `--config=ci` keeps a disk cache (action outputs and test results) and a repository
+# cache (downloads) under ~/.cache, which actions/cache saves after each run and restores into
+# the next. With a remote cache (BuildBuddy), `--config=remote` replaces both.
+jobs:
+  checks:
+    name: Checks (Bazel)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: DeterminateSystems/determinate-nix-action@v3
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/bazel-disk-cache
+            ~/.cache/bazel-repository-cache
+          key: bazel-${{ runner.os }}-checks-${{ github.sha }}
+          restore-keys: |
+            bazel-${{ runner.os }}-checks-
+            bazel-${{ runner.os }}-
+      - name: Build everything (javac, warnings are errors)
+        run: nix develop --command bazel build --config=ci //...
+      - name: Static checks (tests tagged lint)
+        run: nix develop --command bazel test --config=ci --test_tag_filters=lint //...
+
+  tests:
+    name: Tests (Bazel)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: DeterminateSystems/determinate-nix-action@v3
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/bazel-disk-cache
+            ~/.cache/bazel-repository-cache
+          key: bazel-${{ runner.os }}-tests-${{ github.sha }}
+          restore-keys: |
+            bazel-${{ runner.os }}-tests-
+            bazel-${{ runner.os }}-
+      - name: Tests (unit in three modes, conformance, diff, spec, space, torture)
+        run: nix develop --command bazel test --config=ci --test_tag_filters=-lint //...
+      - name: Test results
+        if: ${{ !cancelled() }}
+        run: |
+          {
+            echo '### Conformance (interpreter only)'
+            echo
+            cat bazel-bin/tests/conformance_results_chibi.md bazel-bin/tests/conformance_results_larceny.md 2>/dev/null || echo '(not built)'
+          } >> "$GITHUB_STEP_SUMMARY"
