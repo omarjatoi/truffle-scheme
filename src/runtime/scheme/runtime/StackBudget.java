@@ -35,6 +35,13 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
  * ({@link #remainingStack}), and the limit becomes most of it, less the reserve, never below the
  * floor. Each root prompt takes the limit of the thread it runs on.
  *
+ * <p>The measurement touches the stack it measures (up to 64 MB), which stays resident, and takes
+ * milliseconds to a few tenths of a second. An embedder that knows the stack size of the thread it
+ * creates the context on (it started the thread with that size) gives it as
+ * {@code scheme.StackSize}; on that thread, the limit comes from the size ({@link #limitFor}), and
+ * nothing is measured. Any other thread that enters the context is measured as before. The
+ * {@code scheme} launcher gives its evaluation thread's size (design.md D17).
+ *
  * <p>The {@code scheme.SpillDepth} option instead counts each nested call as 1, and spills past that
  * many, as before M8-01 (tests that need frames on the heap at a known depth).
  */
@@ -51,6 +58,12 @@ final class StackBudget {
     static final long RESERVE = 256 * 1024;
     /** The largest limit, so that the stack use never overflows an int. */
     static final int MAX_LIMIT = Integer.MAX_VALUE / 2;
+    /**
+     * What a thread's stack holds besides the calls the limit counts, when only its size is known:
+     * the VM's guard zones and the thread's first frames (118 KB on HotSpot, macOS aarch64), and the
+     * frames below the root prompt (the embedder's, the polyglot API's).
+     */
+    static final long THREAD_OVERHEAD = 256 * 1024;
 
     /** The measured limit of each thread, once a call on it has passed the floor. */
     private static final ThreadLocal<Integer> MEASURED = new ThreadLocal<>();
@@ -58,8 +71,14 @@ final class StackBudget {
     private StackBudget() {
     }
 
-    /** Sets up a new context's costs: the option's fixed count of nested calls, or bytes. */
-    static void initialize(SchemeContext context, int spillDepth) {
+    /**
+     * Sets up a new context's costs: the option's fixed count of nested calls, or bytes. Called on
+     * the thread the context is created on, whose stack is {@code stackSize} bytes if that isn't 0
+     * ({@code scheme.StackSize}).
+     */
+    static void initialize(SchemeContext context, int spillDepth, long stackSize) {
+        context.sizedThread = stackSize > 0 ? Thread.currentThread() : null;
+        context.sizedThreadLimit = limitFor(stackSize);
         if (spillDepth > 0) {
             context.interpretedCallCost = 1;
             context.compiledCallCost = 1;
@@ -102,6 +121,11 @@ final class StackBudget {
 
     @TruffleBoundary
     private static void setThreadLimit(SchemeContext context) {
+        if (Thread.currentThread() == context.sizedThread) {
+            context.stackLimit = context.sizedThreadLimit;
+            context.stackMeasured = true;
+            return;
+        }
         Integer measured = MEASURED.get();
         context.stackLimit = measured == null ? FLOOR : measured;
         context.stackMeasured = measured != null;
@@ -120,8 +144,14 @@ final class StackBudget {
 
     @TruffleBoundary
     private static boolean measure(SchemeContext context, int use) {
+        if (Thread.currentThread() == context.sizedThread) {
+            context.stackLimit = context.sizedThreadLimit;
+            context.stackMeasured = true;
+            return use <= context.stackLimit;
+        }
         Integer measured = MEASURED.get();
         if (measured == null) {
+            context.stackProbes++;
             long remaining = remainingStack();
             // The stack use counts from the root prompt, and the stack remaining from here: this
             // ignores what the calls below already use (at most the floor), as margin.
@@ -134,6 +164,45 @@ final class StackBudget {
         return use <= measured;
     }
 
+    /**
+     * The limit on a thread whose stack is {@code stackSize} bytes, the whole of it from its start:
+     * what a measurement of it would give. The stack less {@link #THREAD_OVERHEAD} is what remains,
+     * of which at most {@link #MEASURED_MAX} counts, as a measurement looks no further; the limit is
+     * that less the reserve, never below the floor. So the size only spares the measurement, and a
+     * large stack doesn't raise the limit: in a native image, the costs undercount compiled frames
+     * while a recursion is being compiled, by up to about 2 times (design.md "Stack-depth spill"),
+     * which the stack beyond 64 MB covers.
+     */
+    static int limitFor(long stackSize) {
+        long remaining = Math.min(stackSize - THREAD_OVERHEAD, MEASURED_MAX);
+        long limit = remaining - Math.max(RESERVE, remaining / 8);
+        return (int) Math.max(FLOOR, Math.min(limit, MAX_LIMIT));
+    }
+
+    /**
+     * A {@code scheme.StackSize}: bytes, or with a suffix {@code k}, {@code m} or {@code g} (as
+     * {@code -Xss} takes it); 0 for unknown.
+     */
+    static Long parseStackSize(String value) {
+        String digits = value;
+        int shift = 0;
+        if (!value.isEmpty()) {
+            switch (Character.toLowerCase(value.charAt(value.length() - 1))) {
+                case 'k' -> shift = 10;
+                case 'm' -> shift = 20;
+                case 'g' -> shift = 30;
+                default -> shift = 0;
+            }
+            if (shift != 0) {
+                digits = value.substring(0, value.length() - 1);
+            }
+        }
+        if (digits.isEmpty() || digits.length() > 15 || !digits.chars().allMatch(c -> c >= '0' && c <= '9') || Long.parseLong(digits) > Long.MAX_VALUE >> shift) {
+            throw new IllegalArgumentException("scheme.StackSize needs a number of bytes, with k, m or g after it or not (such as 256m): " + value);
+        }
+        return Long.parseLong(digits) << shift;
+    }
+
     // ------------------------------------------------------------------------------------------
     // Measuring the stack
 
@@ -142,9 +211,10 @@ final class StackBudget {
     private static final long LARGE_STACK = 1024 * 1024;
     /**
      * At most this much of a thread's stack is measured, and so touched (a stack's pages, once
-     * touched, stay in memory): room for some 200,000 compiled calls.
+     * touched, stay in memory): room for some 200,000 compiled calls. A given size counts as no more
+     * either ({@link #limitFor}).
      */
-    private static final long MEASURED_MAX = 64L * 1024 * 1024;
+    static final long MEASURED_MAX = 64L * 1024 * 1024;
     private static final int ROUNDS = 12;
 
     /**
@@ -226,9 +296,18 @@ final class StackBudget {
             return depth;
         }
 
+        /**
+         * The deepest frame that can catch the overflow does, and the rest return normally: an
+         * error unwinding through millions of compiled frames took 0.3 s on a 16 MB stack, four
+         * times longer.
+         */
         private void down() {
             if (++depth < cap) {
-                down();
+                try {
+                    down();
+                } catch (StackOverflowError e) {
+                    // The bottom.
+                }
             }
         }
     }

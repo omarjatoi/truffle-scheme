@@ -66,6 +66,7 @@ final class ControlPrimitives {
                         new PrimitiveSpec("%spills", 0, 0, Spills::new),
                         new PrimitiveSpec("%in-place-resumes", 0, 0, () -> new Resumes(true)),
                         new PrimitiveSpec("%copied-resumes", 0, 0, () -> new Resumes(false)),
+                        new PrimitiveSpec("%stack-probes", 0, 0, StackProbes::new),
                         PrimitiveSpec.transfersControl("%apply-continuation", 2, 2, () -> new ContinuationOps(ContinuationOps.APPLY)),
                         PrimitiveSpec.transfersControl("%reinstate", 2, 2, () -> new ContinuationOps(ContinuationOps.REINSTATE)),
                         new PrimitiveSpec("%continuation-composable?", 1, 1, () -> new ContinuationOps(ContinuationOps.COMPOSABLE)),
@@ -309,6 +310,17 @@ final class ControlPrimitives {
         public Object invoke(Object[] args) {
             SchemeContext context = SchemeContext.get(this);
             return inPlace ? context.inPlaceResumes : context.copiedResumes;
+        }
+    }
+
+    /**
+     * {@code (%stack-probes)}: how many times this context has measured a thread's Java stack
+     * (StackBudget), for tests: none on a thread whose size {@code scheme.StackSize} gives.
+     */
+    static final class StackProbes extends PrimitiveNode {
+        @Override
+        public Object invoke(Object[] args) {
+            return SchemeContext.get(this).stackProbes;
         }
     }
 

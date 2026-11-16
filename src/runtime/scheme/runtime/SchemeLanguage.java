@@ -6,6 +6,7 @@ import org.graalvm.options.OptionCategory;
 import org.graalvm.options.OptionDescriptors;
 import org.graalvm.options.OptionKey;
 import org.graalvm.options.OptionStability;
+import org.graalvm.options.OptionType;
 
 import com.oracle.truffle.api.Assumption;
 import com.oracle.truffle.api.CallTarget;
@@ -55,6 +56,15 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
      */
     @Option(name = "SpillDepth", help = "Spill deep recursion to the heap past this many nested calls (0: from the Java stack available).", category = OptionCategory.INTERNAL, stability = OptionStability.EXPERIMENTAL) //
     public static final OptionKey<Integer> SPILL_DEPTH = new OptionKey<>(0);
+
+    /**
+     * The Java stack size of the thread the context is created on, when the embedder knows it (it
+     * started that thread with that size): on that thread, the spill limit comes from it instead of
+     * a measurement of the stack (StackBudget). 0, the default: measured. The {@code scheme}
+     * launcher passes its evaluation thread's (design.md D17).
+     */
+    @Option(name = "StackSize", help = "The Java stack size of the thread the context is created on, such as 256m (0: unknown, measured when needed).", category = OptionCategory.EXPERT, stability = OptionStability.STABLE, usageSyntax = "<size>") //
+    public static final OptionKey<Long> STACK_SIZE = new OptionKey<>(0L, new OptionType<>("size", StackBudget::parseStackSize));
 
     private SchemeCompiler compiler;
     /** What runs a procedure called through interop (design.md D10): see {@link #interopCallTarget}. */
