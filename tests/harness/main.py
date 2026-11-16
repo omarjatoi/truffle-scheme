@@ -6,20 +6,16 @@ As commands, `bazel run //:r7rs -- <command> ...` (AGENTS.md "Commands"):
                      the conformance suites, per section (ad hoc; the checks are the tests)
   conformance-report [--markdown FILE]
                      the conformance tests' last results, a table per suite
-  status [--check] [--native FILE]
-                     rewrite (or check) the status block in docs/plan.md
+  status [--check]   rewrite (or check) the status block in docs/plan.md
   diff FILE [--compile] [--torture]
                      a program under chibi-scheme and under ours: same stdout and exit status?
   format             the Eclipse formatter over src/ and tests/
-  readme [--native]  run docs/usage.md's and docs/embedding.md's commands, check their samples
   tools NAME         one of the tools' smoke tests (tools.py), e.g. terminal
-  native-image [--output FILE] [native-image option...]
-                     the launcher as a native executable (minutes, ~3 GB)
   benchmark, bench-report, bench-check, vendor-benchmarks   bench.py
   vendor-chibi, vendor-larceny                              vendor.py
 
 As Bazel tests (tests/harness/defs.bzl, bazel/lint/defs.bzl): unit, program, conformance,
-conformance-status, tools, rules, versions, lint.
+conformance-status, conformance-native, readme, tools, rules, versions, lint.
 
 The options before the command name the runfiles of the runtime and tools it uses; the targets that
 run this pass them.
@@ -29,8 +25,8 @@ import argparse
 import difflib
 import json
 import os
-import platform
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -408,20 +404,13 @@ def test(o):
 
 def status(o):
     """Rewrites the status block in docs/plan.md from what the conformance tests check (the
-    suites' totals and listed exceptions); with --check, fails if it differs; with --native, checks
-    it against a run through that native launcher."""
+    suites' totals and listed exceptions); with --check, fails if it differs."""
     plan = join(harness.workspace(), 'docs', 'plan.md')
     with open(plan, encoding='utf-8') as f:
         text = f.read()
     block = expected_status_block()
-    if o.native:
-        all_suites = harness.suites()
-        sections = [s for suite in all_suites for s in suite.sections()]
-        results = harness.run_conformance(None, sections, native=resolve(o.native))
-        native = harness.status_block([harness.suite_block(suite, results) for suite in all_suites])
-        check(native == block, 'Through the native launcher, the suites give a different status block:\n' + native)
     new, current = harness.replace_status_block(text, block)
-    if o.check or o.native:
+    if o.check:
         check(current == block, 'The status block in docs/plan.md differs from what the suites give:\n' + block)
         log('status block in docs/plan.md is up to date')
     elif new != text:
@@ -440,35 +429,49 @@ def format_sources(o):
     sys.exit(subprocess.run([rlocation(o.formatter), '--fix', rlocation(o.prefs)] + files).returncode)
 
 
-def readme_command(o):
-    problems = readme.run(harness.workspace(), native=o.native)
+def _shim(directory, name, verb):
+    """`name verb ...` succeeds and does nothing: the readme test depends on what it would build."""
+    path = join(directory, name)
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(f'#!/bin/sh\n[ "$1" = {verb} ] && exit 0\n'
+                f'echo "the readme test runs only \\`{name} {verb}\\`, not: {name} $*" >&2\nexit 1\n')
+    os.chmod(path, 0o755)
+
+
+def readme_test(o):
+    """Test: docs/usage.md's and docs/embedding.md's blocks (readme.py), the commands as written, in
+    a directory laid out like the checkout: `bazel-bin/` holds the targets this test depends on,
+    `bazel build` and `nix develop` do nothing (Bazel built those first), and `java` is the pinned
+    GraalVM's. With --native, only the native-image blocks, against that launcher."""
+    tmp = os.environ['TEST_TMPDIR']
+    main_repo = os.path.dirname(os.path.dirname(rlocation(o.usage)))
+    checkout, shims = join(tmp, 'checkout'), join(tmp, 'shims')
+    os.makedirs(join(checkout, 'bazel-bin'))
+    os.makedirs(shims)
+    # Copies, not runfiles symlinks: the profilers print a program's path relative to its real one.
+    shutil.copytree(join(main_repo, 'docs'), join(checkout, 'docs'))
+    os.symlink(join(main_repo, 'tests'), join(checkout, 'tests'))
+    os.symlink(rlocation(o.scheme), join(checkout, 'bazel-bin', 'scheme'))
+    os.symlink(os.path.dirname(rlocation(o.jars[0])), join(checkout, 'bazel-bin', 'scheme_jars'))
+    if o.native:
+        os.symlink(rlocation(o.native), join(checkout, 'bazel-bin', 'scheme-native'))
+    _shim(shims, 'bazel', 'build')
+    _shim(shims, 'nix', 'develop')
+    os.symlink(Runtime.from_manifest(o.runtime).java, join(shims, 'java'))
+    os.environ['PATH'] = shims + os.pathsep + os.environ.get('PATH', '')
+    problems = readme.run(checkout, native=bool(o.native))
     check(not problems, 'readme: failed:\n' + '\n'.join(problems))
     log('readme: ' + ('the native blocks run' if o.native else 'every block is checked, and every command runs as documented'))
 
 
-def native_image(o, options):
-    """The launcher as a native executable (design.md D17), with the dev shell's GraalVM (JAVA_HOME):
-    the same release as Bazel's, but nixpkgs' native-image is set up to find the shell's C
-    toolchain, which the upstream archive's doesn't recognize. The module path is the launcher's
-    without the tools; the language's build-time initialization and resources come from the
-    scheme jar's META-INF/native-image, and Truffle's runtime on the module path gives the
-    executable the Graal JIT. On x86-64 Linux the baseline target (-march=compatibility) keeps
-    nixpkgs' static libm out of the dynamically linked executable."""
-    runtime = Runtime.from_manifest(o.runtime)
-    java_home = os.environ.get('JAVA_HOME', '')
-    tool = join(java_home, 'bin', 'native-image')
-    check(exists(tool), f'no native-image at {tool}: run this inside `nix develop`, whose JAVA_HOME is GraalVM')
-    pinned = bench.graalvm_version(runtime.release)
-    check(bench.graalvm_version(join(java_home, 'release')) == pinned, f'JAVA_HOME is not GraalVM {pinned} (design.md D11)')
-    output = os.path.abspath(o.output)
-    os.makedirs(os.path.dirname(output), exist_ok=True)
-    if sys.platform.startswith('linux') and platform.machine() in ('x86_64', 'amd64'):
-        options = ['-march=compatibility'] + options
-    start = time.time()
-    p = subprocess.run([tool, '-p', runtime.module_path, '-m', harness.LAUNCHER_MAIN, '-o', output] + options,
-                       cwd=os.path.dirname(output))
-    check(p.returncode == 0, f'native-image failed (exit {p.returncode})')
-    log(f'native-image: built {output} in {time.time() - start:.0f}s')
+def conformance_native(o):
+    """Test: both suites through the native launcher pass what docs/plan.md's status block says."""
+    all_suites = harness.suites()
+    sections = [s for suite in all_suites for s in suite.sections()]
+    results = harness.run_conformance(None, sections, native=rlocation(o.native))
+    block = harness.status_block([harness.suite_block(suite, results) for suite in all_suites])
+    check(block == expected_status_block(), 'Through the native launcher, the suites give a different status block:\n' + block)
+    log('the native launcher passes what docs/plan.md says')
 
 
 def main():
@@ -504,6 +507,13 @@ def main():
     p.add_argument('--mode', choices=list(_MODES), required=True)
     p = sub.add_parser('conformance-status')
     p.add_argument('plan')
+    p = sub.add_parser('conformance-native')
+    p.add_argument('native')
+    p = sub.add_parser('readme')
+    p.add_argument('--usage', required=True)
+    p.add_argument('--scheme', required=True)
+    p.add_argument('--jars', nargs='+', required=True, help="bazel-bin/scheme_jars' jars")
+    p.add_argument('--native', help='only the native-image blocks, against this launcher')
     p = sub.add_parser('tools')
     p.add_argument('--programs', help='a program in tests/tools (default: the checkout\'s)')
     p.add_argument('name', choices=list(tools.SMOKE_TESTS))
@@ -528,12 +538,7 @@ def main():
     p.add_argument('--markdown', metavar='FILE', help='write it here (CI: the annotation)')
     p = sub.add_parser('status', help='rewrite the status block in docs/plan.md')
     p.add_argument('--check', action='store_true')
-    p.add_argument('--native', metavar='FILE', help='check it against a run through this native launcher')
     sub.add_parser('format', help='the Eclipse formatter over src/ and tests/')
-    p = sub.add_parser('readme', help="run docs/usage.md's and docs/embedding.md's commands")
-    p.add_argument('--native', action='store_true', help='only the native-image blocks')
-    p = sub.add_parser('native-image', help='the launcher as a native executable')
-    p.add_argument('--output', default='native/scheme')
     for name in ('benchmark', 'bench-report', 'bench-check', 'vendor-benchmarks', 'vendor-chibi', 'vendor-larceny'):
         add(name, add_help=False)
 
@@ -544,7 +549,7 @@ def main():
     os.environ['RUNFILES_DIR'] = os.path.abspath(harness.runfiles_dir())
     if 'BUILD_WORKING_DIRECTORY' in os.environ:
         os.chdir(os.environ['BUILD_WORKING_DIRECTORY'])
-    if rest and o.command not in ('native-image', 'benchmark', 'bench-report', 'bench-check', 'vendor-benchmarks',
+    if rest and o.command not in ('benchmark', 'bench-report', 'bench-check', 'vendor-benchmarks',
                                   'vendor-chibi', 'vendor-larceny'):
         parser.error(f'unrecognized arguments: {" ".join(rest)}')
     if o.runtime:
@@ -555,12 +560,10 @@ def main():
         'unit': unit, 'diff': diff, 'program': program, 'conformance': conformance_test,
         'conformance-status': conformance_status, 'conformance-report': conformance_report, 'tools': tools_test, 'rules': rules,
         'versions': versions, 'lint': lint, 'test': test, 'status': status, 'format': format_sources,
-        'readme': readme_command,
+        'readme': readme_test, 'conformance-native': conformance_native,
     }
     if o.command in commands:
         commands[o.command](o)
-    elif o.command == 'native-image':
-        native_image(o, rest)
     else:
         {'benchmark': bench.benchmark, 'bench-report': bench.r7rs_bench_report, 'bench-check': bench.r7rs_bench_check,
          'vendor-benchmarks': bench.r7rs_vendor_benchmarks, 'vendor-chibi': vendor.r7rs_vendor_chibi,

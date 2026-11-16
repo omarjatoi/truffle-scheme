@@ -8,6 +8,7 @@ prelude_image    the standard libraries expanded and compiled at build time (des
 scheme_runtime   the GraalVM `java` and a module path, as runfiles and a JSON manifest of their
                  runfiles paths (tests/harness/harness.py: Runtime).
 module_dir       a module path's jars in one directory, for running or embedding outside Bazel.
+native_image     a module's main class as a native executable (design.md D17).
 """
 
 load("@rules_java//java/common:java_common.bzl", "java_common")
@@ -155,4 +156,45 @@ module_dir = rule(
         "extra": attr.label_list(providers = [JavaInfo]),
         "module": attr.label(mandatory = True, providers = [JavaModuleInfo]),
     },
+)
+
+def _native_image_impl(ctx):
+    jdk = ctx.attr._jdk[java_common.JavaRuntimeInfo]
+    module_path = _module_path([ctx.attr.module])
+    out = ctx.actions.declare_file(ctx.label.name)
+    args = ctx.actions.args()
+    args.add(jdk.java_home)
+    args.add(out)
+    args.add_joined(module_path, join_with = ctx.configuration.host_path_separator)
+    args.add(ctx.attr.main)
+    args.add_all(ctx.attr.options)
+    linux = ctx.target_platform_has_constraint(ctx.attr._linux[platform_common.ConstraintValueInfo])
+    ctx.actions.run_shell(
+        # The image's working files go to a temporary directory; only the executable is the output.
+        command = 'home="$1" out="$2" mp="$3" main="$4"; shift 4; tmp="$(mktemp -d)"; ' +
+                  '"$home/bin/native-image" -p "$mp" -m "$main" -o "$tmp/image" "$@" && cp "$tmp/image" "$out"',
+        arguments = [args],
+        inputs = depset(transitive = [module_path, jdk.files]),
+        outputs = [out],
+        mnemonic = "NativeImage",
+        progress_message = "Building the native launcher %{label}",
+        # The target's native-image and C toolchain: on the executors for the tests (they target
+        # Linux), here for this machine's `bazel-bin/scheme-native`.
+        use_default_shell_env = True,
+        execution_requirements = {} if linux else {"no-remote-exec": "1"},
+    )
+    return [DefaultInfo(files = depset([out]), executable = out)]
+
+native_image = rule(
+    implementation = _native_image_impl,
+    doc = "`<name>`: a module's main class as a native executable, by the pinned GraalVM's native-image " +
+          "and the host's C toolchain (design.md D17).",
+    attrs = {
+        "main": attr.string(mandatory = True, doc = "module/class, as `java -m` takes it"),
+        "module": attr.label(mandatory = True, providers = [JavaModuleInfo]),
+        "options": attr.string_list(),
+        "_jdk": _JDK,
+        "_linux": attr.label(default = "@platforms//os:linux"),
+    },
+    executable = True,
 )

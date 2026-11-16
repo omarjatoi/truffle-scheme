@@ -86,3 +86,11 @@ chibi_scheme(
     makefile = "@chibi_src//:Makefile",
     srcs = ["@chibi_src//:srcs"],
 )
+
+config_setting(
+    name = "linux_x86_64",
+    constraint_values = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:linux",
+    ],
+)

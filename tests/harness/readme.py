@@ -1,6 +1,6 @@
 """Runs the commands of docs/usage.md and docs/embedding.md, and checks their samples (plan.md M6-07).
 
-`bazel run //:r7rs -- readme` (CI's Tests job) reads the documents' fenced blocks. Every block has a
+The test `//tests:readme` (main.py: readme_test) reads the documents' fenced blocks. Every block has a
 marker, an HTML comment on the line before its opening fence (blank lines in between are allowed),
 that says how CI checks it; a block without one fails the step:
 
@@ -9,7 +9,7 @@ that says how CI checks it; a block without one fails the step:
 - `<!-- readme: run server -->`: the block starts a server (`--inspect`, `--dap`). It runs until
   its output (stdout and stderr) matches the block's `output` block, then it is killed.
 - `<!-- readme: run native -->`: the block needs GraalVM's native-image, which takes minutes and
-  gigabytes, so only `bazel run //:r7rs -- readme --native` runs it, locally (AGENTS.md).
+  gigabytes, so only `//tests:readme_native` (manual) runs it, against `//:scheme-native`.
 - `<!-- readme: output -->` after a run block: what the block prints on stdout (on stdout and
   stderr for a server). `...` matches any text, newlines included; trailing spaces don't count.
 - `<!-- readme: file PATH -->` or `<!-- readme: file PATH#NAME -->`: the block is the file's text,

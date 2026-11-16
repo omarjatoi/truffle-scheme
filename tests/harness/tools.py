@@ -16,7 +16,7 @@ tests/tools/:
 - `terminal`: the REPL on a pseudo-terminal (M7-07): line editing, the history and its file, the
   continuation prompt, Ctrl-C, and `read-line` reading what is typed next. It runs the launcher
   without the tools, and runs `SCHEME_NATIVE_LAUNCHER` the same way if that variable names an
-  executable (the native launcher, `bazel run //:r7rs -- native-image`).
+  executable (the native launcher, `bazel-bin/scheme-native`).
 
 The DAP and CDP clients are dependency-free (the standard library only), ported from the
 exploration in #76. Every wait has a timeout, and the child JVM is killed whatever happens, so a

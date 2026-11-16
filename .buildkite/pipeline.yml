@@ -33,5 +33,4 @@ steps:
       - nix develop --command bazel test --config=ci --remote_header=x-buildbuddy-api-key=$$BUILDBUDDY_API_KEY --invocation_id=$$BUILDKITE_JOB_ID --test_tag_filters=-lint //... || status=$$?
       - nix develop --command bazel run --config=ci --remote_header=x-buildbuddy-api-key=$$BUILDBUDDY_API_KEY //:r7rs -- conformance-report --markdown "$$PWD/conformance.md"
       - buildkite-agent annotate --context conformance < conformance.md
-      - nix develop --command bazel run --config=ci --remote_header=x-buildbuddy-api-key=$$BUILDBUDDY_API_KEY //:r7rs -- readme || status=$$?
       - exit $${status:-0}
