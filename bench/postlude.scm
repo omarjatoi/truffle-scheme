@@ -1,8 +1,8 @@
 ;;; Our postlude for the vendored benchmark sets (bench/README.md). `mx benchmark` puts it where
 ;;; ecraven's bench script puts an implementation's postlude: after the program and the suite's
 ;;; src/common.scm, before the call that runs the benchmark. Before it, the driver defines
-;;; %r7rs-bench-implementation, %r7rs-bench-iterations and %r7rs-bench-count (#f: the program's
-;;; own count).
+;;; %r7rs-bench-implementation and %r7rs-bench-iterations. A count other than the program's own
+;;; (`--count`) is the driver's business: it rewrites the count in the program's .input file.
 
 ;; ecraven's common.scm reports each result under this name (each implementation's prelude or
 ;; postlude defines it).
@@ -18,4 +18,4 @@
           (let loop ((i 1) (result #f))
             (if (> i %r7rs-bench-iterations)
                 result
-                (loop (+ i 1) (run-once name (or %r7rs-bench-count count) thunk ok?)))))))
+                (loop (+ i 1) (run-once name count thunk ok?)))))))

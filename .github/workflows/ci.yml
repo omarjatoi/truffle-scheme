@@ -82,6 +82,11 @@ jobs:
           # (breakpoint, stack, locals, step), and the CPU sampler and memory tracer profile one.
           - name: tools
             steps: [tools]
+          # Performance thresholds (M5-08): a benchmark subset, each program in a JVM of its own,
+          # one after another, against bench/thresholds.json, whose baselines were measured on
+          # this runner type (bench/README.md "Thresholds").
+          - name: benchmarks
+            steps: [bench]
     steps:
       - uses: actions/checkout@v7
       - uses: DeterminateSystems/determinate-nix-action@v3
@@ -117,6 +122,16 @@ jobs:
         if: contains(matrix.steps, 'tools')
         timeout-minutes: 20
         run: nix develop --command mx tests tools
+      - name: Benchmark thresholds (bench/thresholds.json)
+        if: contains(matrix.steps, 'bench')
+        run: nix develop --command mx r7rs-bench-check --json bench-check.json --markdown "$GITHUB_STEP_SUMMARY"
+      # The measurements, which `mx r7rs-bench-check --update --from` turns into new thresholds.
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() && contains(matrix.steps, 'bench') }}
+        with:
+          name: bench-check-${{ github.run_attempt }}
+          path: bench-check.json
+          if-no-files-found: ignore
 
   # Required check on main: all tests. It passes only if every test job above succeeded;
   # a failed, cancelled or skipped test job fails it.
