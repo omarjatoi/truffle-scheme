@@ -465,19 +465,39 @@ normally and with `--torture`.
 
 ## M5 · Performance
 
-The escape-only `call/cc` fast path, Fixing Letrec, vector storage strategies,
-and benchmark thresholds in CI using `mx benchmark` with ecraven's
-`r7rs-benchmarks`. Also:
+Starts once M4's exit holds (both conformance suites pass in full), so every
+benchmark measures a conforming implementation. Benchmark first, then optimize
+against the numbers.
 
-- Context startup: cache the compiled standard libraries with Bytecode DSL
-  serialization (design.md D13's proposal), so a context doesn't recompile
-  the prelude. Measure context creation before and after.
-- `equal?`'s union-find fast path for small trees (D9; M3-08's `equal?` is
-  the plain coinductive walk).
-- Compile `((lambda (x ...) body) arg ...)` (what `let`, `or` and named `let`
-  expand to) without allocating a closure.
+- **Benchmarks:** vendor, read-only like `tests/r7rs/`, both standard R7RS
+  benchmark sets: ecraven's `r7rs-benchmarks`
+  (https://ecraven.github.io/r7rs-benchmarks/, the Gabriel and newer programs
+  most Scheme comparisons use) and Larceny's
+  `test/Benchmarking/R7RS`. Run them under `mx benchmark` (D11), with the
+  JIT, reporting time after warmup, peak memory, and pass/fail of each
+  program's own result check, in the interpreter too.
+- **Comparative report:** run the same programs on the other R7RS
+  implementations the dev shell can provide (chibi-scheme already; add Chez
+  Scheme, Gauche, Chicken, Guile or Racket's R7RS mode, as nixpkgs has them,
+  through `flake.nix`), using each suite's own driver conventions so numbers
+  are comparable with ecraven's published tables. Publish a report (a table
+  per benchmark: time relative to the fastest, failures, and our
+  interpreter/JIT split) as a generated page in the repo and as a CI
+  artifact, and keep it reproducible with one `mx` command.
+- **Optimizations**, each measured against that baseline and the report:
+  - the escape-only `call/cc` fast path (design.md "Continuations",
+    `unwindExceptions`), Fixing Letrec, and vector storage strategies (D10);
+  - context startup: cache the compiled standard libraries with Bytecode DSL
+    serialization (D13's proposal), so a context doesn't recompile the
+    prelude; measure context creation before and after;
+  - `equal?`'s union-find fast path for small trees (D9; M3-08's `equal?` is
+    the plain coinductive walk);
+  - compile `((lambda (x ...) body) arg ...)` (what `let`, `or` and named
+    `let` expand to) without allocating a closure.
 
-**Exit:** thresholds set from measured baselines, and CI enforcing them.
+**Exit:** both benchmark sets run under `mx benchmark` with every program
+passing its own check, the comparative report is published and reproducible,
+thresholds are set from the measured baselines, and CI enforces them.
 
 ## M6 · Release
 
