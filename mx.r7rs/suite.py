@@ -209,6 +209,8 @@ suite = {
             "sourceDirs": ["../../../src/launcher"],
             "dependencies": [
                 "LAUNCHER_COMMON",
+                # Line editing and history in the REPL (M7-07).
+                "JLINE",
                 "POLYGLOT",
                 "TRUFFLE_RUNTIME",
             ],

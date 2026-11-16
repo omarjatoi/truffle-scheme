@@ -4,6 +4,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -79,6 +80,17 @@ public final class Expander {
     private Syntax current;
     /** Whether top-level definitions and imports are errors: {@code eval} in an immutable environment. */
     private boolean immutableTop;
+    /**
+     * Whether each top-level form's values are written as it completes: REPL input (an interactive
+     * source, design.md D17, plan.md M7-07).
+     */
+    private boolean writeValues;
+    /**
+     * Whether {@code set!} of this unit's own top-level variables is an error: code a debugger
+     * evaluates in a frame of an isolated program, which was compiled as a closed unit
+     * ({@link EscapeAnalysis}) on the assumption that only its own code assigns them (M7-07).
+     */
+    private boolean frozenTop;
     /** The scopes of an identifier written at this unit's top level, not introduced by a macro. */
     private final ScopeSet unitScopes;
 
@@ -485,6 +497,17 @@ public final class Expander {
     }
 
     /**
+     * Expands REPL input (an interactive source, design.md D17) like {@link #expandProgram}, but
+     * each top-level form writes its values when it completes ({@code %repl-write}): a form that
+     * a top-level {@code begin} splices counts as one, whose values are its last form's, and a
+     * definition writes nothing.
+     */
+    Lambda expandInteractive(List<Object> forms) {
+        writeValues = true;
+        return expandProgram(forms, false);
+    }
+
+    /**
      * Computes the unit's closure conversion facts (M5-05, {@link Closures}), then turns its
      * escape-only call/cc calls into %call/ec calls (M5-04).
      */
@@ -552,7 +575,8 @@ public final class Expander {
      * ({@link Ast.Var#preboxed}), so {@code set!} writes the frame's variable; {@code set!} of any other
      * parameter would write only a copy, so it is a syntax error.
      */
-    Lambda expandInFrame(List<Object> forms, List<SSymbol> names, boolean[] boxed) {
+    Lambda expandInFrame(List<Object> forms, List<SSymbol> names, boolean[] boxed, boolean frozen) {
+        frozenTop = frozen;
         Object formals = SConstant.EMPTY_LIST;
         for (int i = names.size() - 1; i >= 0; i--) {
             formals = new SPair(Syntax.addScope(names.get(i), topScope), formals);
@@ -841,6 +865,9 @@ public final class Expander {
                     // included), or one of the library whose macro introduced the identifier.
                     if (!namespace.owns(cell) && !namespaceOf(f.get(1)).owns(cell)) {
                         throw syntax("set! of an imported variable", form);
+                    }
+                    if (frozenTop && namespace.owns(cell)) {
+                        throw syntax("set! of a program's variable, which the debugger can't change", f.get(1));
                     }
                     target = new Ast.GlobalRef(cell);
                 } else {
@@ -1408,14 +1435,28 @@ public final class Expander {
         final List<Expr> body = new ArrayList<>();
         /** Each a form to expand, or a {cell, value, name} definition. */
         final List<Object> items = new ArrayList<>();
+        /**
+         * With {@link #writeValues}: the indexes of the items whose values to write, the last of
+         * each top-level form if it is an expression.
+         */
+        final Set<Integer> written = new HashSet<>();
         int index;
         GlobalCell pendingDefine;
 
         ProgramFrame(List<Object> forms, Lambda program) {
             this.program = program;
-            Deque<Object> queue = new ArrayDeque<>(forms);
+            // Each form with the index of the top-level form it is part of (a begin splices).
+            Deque<Object[]> queue = new ArrayDeque<>();
+            for (int i = 0; i < forms.size(); i++) {
+                queue.addLast(new Object[]{forms.get(i), i});
+            }
+            // The item a top-level form's latest part added, if an expression; else -1.
+            Map<Integer, Integer> lastItem = new HashMap<>();
             while (!queue.isEmpty()) {
-                Object form = queue.pollFirst();
+                Object[] entry = queue.pollFirst();
+                Object form = entry[0];
+                Integer origin = (Integer) entry[1];
+                lastItem.put(origin, -1);
                 enter(form);
                 Object binding = headBinding(form);
                 while (binding instanceof Macro m) {
@@ -1425,7 +1466,7 @@ public final class Expander {
                 List<Object> spliced = splice(binding, form);
                 if (spliced != null) {
                     for (int i = spliced.size() - 1; i >= 0; i--) {
-                        queue.addFirst(spliced.get(i));
+                        queue.addFirst(new Object[]{spliced.get(i), origin});
                     }
                 } else if (immutableTop && (binding == CoreForm.DEFINE || binding == CoreForm.DEFINE_SYNTAX || binding == CoreForm.IMPORT || binding == CoreForm.DEFINE_LIBRARY)) {
                     throw syntax("definition or import in an immutable environment", form);
@@ -1457,6 +1498,14 @@ public final class Expander {
                     top.bind(symbol(def[0]), scopes(def[0]), transformer(def[1]));
                 } else {
                     items.add(form);
+                    lastItem.put(origin, items.size() - 1);
+                }
+            }
+            if (writeValues) {
+                for (int item : lastItem.values()) {
+                    if (item >= 0) {
+                        written.add(item);
+                    }
                 }
             }
         }
@@ -1479,6 +1528,9 @@ public final class Expander {
             if (pendingDefine != null) {
                 body.add(new Ast.GlobalSet(pendingDefine, e, true));
                 pendingDefine = null;
+            } else if (written.contains(index - 1)) {
+                // No source section of its own: the form's statement is the one tools see.
+                body.add(new Ast.Call(new Ast.GlobalRef(primitive("%repl-write")), List.of(e)));
             } else {
                 body.add(e);
             }

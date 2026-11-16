@@ -32,16 +32,16 @@ final class BytevectorPrimitives {
     static List<PrimitiveSpec> primitives() {
         return List.of(
                         new PrimitiveSpec("bytevector?", 1, 1, () -> new TypePredicate(x -> x instanceof SBytevector)),
-                        new PrimitiveSpec("bytevector", 0, -1, MakeBytevector::new),
-                        new PrimitiveSpec("make-bytevector", 1, 2, MakeBytevectorOfLength::new),
+                        new PrimitiveSpec("bytevector", 0, -1, MakeBytevector::new).allocating(),
+                        new PrimitiveSpec("make-bytevector", 1, 2, MakeBytevectorOfLength::new).allocating(),
                         new PrimitiveSpec("bytevector-length", 1, 1, BytevectorLength::new),
                         new PrimitiveSpec("bytevector-u8-ref", 2, 2, BytevectorRef::new),
                         new PrimitiveSpec("bytevector-u8-set!", 3, 3, BytevectorSet::new),
-                        new PrimitiveSpec("bytevector-copy", 1, 3, BytevectorCopy::new),
+                        new PrimitiveSpec("bytevector-copy", 1, 3, BytevectorCopy::new).allocating(),
                         new PrimitiveSpec("bytevector-copy!", 3, 5, BytevectorCopyInto::new),
-                        new PrimitiveSpec("bytevector-append", 0, -1, BytevectorAppend::new),
-                        new PrimitiveSpec("utf8->string", 1, 3, Utf8ToString::new),
-                        new PrimitiveSpec("string->utf8", 1, 3, StringToUtf8::new));
+                        new PrimitiveSpec("bytevector-append", 0, -1, BytevectorAppend::new).allocating(),
+                        new PrimitiveSpec("utf8->string", 1, 3, Utf8ToString::new).allocating(),
+                        new PrimitiveSpec("string->utf8", 1, 3, StringToUtf8::new).allocating());
     }
 
     /** {@code (bytevector byte ...)}. */

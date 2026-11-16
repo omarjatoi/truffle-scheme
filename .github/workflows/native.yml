@@ -18,6 +18,7 @@ on:
       - src/compiler/scheme/compiler/PreludeImage.java
       - mx.r7rs/mx_r7rs_readme.py
       - docs/usage.md
+      - src/launcher/scheme/launcher/TerminalInput.java
 
 permissions:
   contents: read
@@ -67,6 +68,9 @@ jobs:
               print(f'| `scheme {" ".join(args)}` | {statistics.median(times) * 1000:.0f} ms | {rss:.0f} MB |')
           print()
           EOF
+      # The REPL on a pseudo-terminal (M7-07): JLine's line editing and history, on the JVM and natively.
+      - name: REPL on a terminal
+        run: SCHEME_NATIVE_LAUNCHER="$PWD/native/scheme" nix develop --command mx r7rs-tools terminal
       - name: Conformance through the native launcher
         run: nix develop --command mx r7rs-test --native native/scheme --markdown "$GITHUB_STEP_SUMMARY"
       - name: Passes what the status block says

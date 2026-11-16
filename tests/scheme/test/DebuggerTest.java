@@ -184,6 +184,49 @@ public class DebuggerTest {
         assertEquals("24", result);
     }
 
+    // An isolated program (design.md D15): it imports only (scheme base), and defines base and
+    // scale. scale's body is line 5.
+    private static final String ISOLATED = """
+                    (import (scheme base))
+                    (define base 10)
+                    (define table (list 1 2))
+                    (define (scale x)
+                      (* x base))
+                    (scale 2)
+                    """;
+
+    /**
+     * M7-07: code evaluated in a frame of an isolated program sees that program's top level (its
+     * definitions and imports), not the interaction environment's; and it may not assign the
+     * program's variables, which the program was compiled on the assumption that nothing else does.
+     */
+    @Test
+    public void expressionsInAnIsolatedProgramsFrameSeeItsDefinitions() {
+        Source source = Source.newBuilder(SCHEME, ISOLATED, "isolated.scm").buildLiteral();
+        List<String> values = new ArrayList<>();
+        try (Context context = Context.newBuilder(SCHEME).out(new ByteArrayOutputStream()).build()) {
+            // Defined in the interaction environment only: the program can't see it.
+            context.eval(SCHEME, "(define only-interactive 1)");
+            Debugger debugger = Debugger.find(context.getEngine());
+            try (DebuggerSession session = debugger.startSession(event -> {
+                DebugStackFrame top = event.getTopStackFrame();
+                values.add(top.getName());
+                values.add(top.eval("(list x base (procedure? scale) table)").toDisplayString());
+                for (String name : new String[]{"only-interactive", "display"}) {
+                    DebugException e = assertThrows(DebugException.class, () -> top.eval(name));
+                    values.add(e.getMessage().contains(name) ? name + " is unbound" : e.getMessage());
+                }
+                DebugException e = assertThrows(DebugException.class, () -> top.eval("(set! base 0)"));
+                values.add(e.getMessage().contains("base") ? "set! names base" : e.getMessage());
+                event.prepareContinue();
+            })) {
+                session.install(Breakpoint.newBuilder(source.getURI()).lineIs(5).build());
+                assertEquals(20, context.eval(source).asInt());
+            }
+        }
+        assertEquals(List.of("scale", "(2 10 #t (1 2))", "only-interactive is unbound", "display is unbound", "set! names base"), values);
+    }
+
     // The self tail call evaluates its arguments into unnamed temporaries, and or binds a variable
     // of its own: outer's frame has both live while inner runs, and neither shows.
     private static final String TEMPORARIES = """

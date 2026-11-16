@@ -54,6 +54,13 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
     String[] capturedNames;
     /** The name of the fixed letrec* variable that is the running closure here, or null. */
     String selfName;
+    /**
+     * The top level the procedure was compiled in when it isn't the interaction environment: an
+     * isolated program's (design.md D15), where code a debugger evaluates in its frames resolves
+     * global names (plan.md M7-07). Opaque here: the compiler's. Transient, so serialization leaves
+     * it out: the prelude image's roots have none.
+     */
+    transient Object topLevel;
 
     protected SchemeRootNode(SchemeLanguage language, FrameDescriptor frameDescriptor) {
         super(language, frameDescriptor);
@@ -61,6 +68,16 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
 
     public void setName(String name) {
         this.name = name;
+    }
+
+    /** See {@link #topLevel}. */
+    public void setTopLevel(Object topLevel) {
+        this.topLevel = topLevel;
+    }
+
+    /** See {@link #topLevel}. */
+    public Object getTopLevel() {
+        return topLevel;
     }
 
     /** What the scope shows besides the locals (plan.md M6-05): see {@link FrameVariables}. */
@@ -351,12 +368,15 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
     // ------------------------------------------------------------------------------------------
     // Procedures and arguments
 
-    @Operation
+    /** Makes no calls: binding the node (to report the allocation) needs no bytecode index stored. */
+    @Operation(storeBytecodeIndex = false)
     @ConstantOperand(type = SchemeRootNode.class)
     public static final class MakeClosure {
         @Specialization
-        static SClosure doMake(SchemeRootNode root, @Variadic Object[] captured) {
-            return new SClosure(root.getCallTarget(), captured);
+        static SClosure doMake(SchemeRootNode root, @Variadic Object[] captured, @Bind Node node) {
+            SClosure closure = new SClosure(root.getCallTarget(), captured);
+            Allocations.report(node, closure, Allocations.OBJECT);
+            return closure;
         }
     }
 
@@ -410,12 +430,13 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
     @ConstantOperand(type = int.class)
     public static final class RestList {
         @Specialization
-        static Object doRest(int start, @Bind VirtualFrame frame) {
+        static Object doRest(int start, @Bind VirtualFrame frame, @Bind Node node) {
             Object[] arguments = frame.getArguments();
             Object list = SConstant.EMPTY_LIST;
             for (int i = arguments.length - 1; i >= start; i--) {
                 list = new SPair(arguments[i], list);
             }
+            Allocations.report(node, list, Allocations.LIST);
             return list;
         }
     }

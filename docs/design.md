@@ -575,7 +575,19 @@ Each entry: the decision, why, and what was rejected.
   `enableTagInstrumentation`, so the debugger (DAP), the Chrome inspector and
   other instruments work on Scheme code, breakpoints and stepping included.
   Instrumentation is off until a tool attaches, so it costs nothing
-  otherwise. Frames on the heap reach error traces, the debugger and the
+  otherwise.
+- **Allocations (M7-07).** The language reports the Scheme objects it makes
+  to the context's `AllocationReporter`, which the memory tracer
+  (`--memtracer`) listens to: closures and rest-argument lists where the
+  bytecode makes them, and the results of the primitives whose
+  `PrimitiveSpec` says they allocate (`allocating()`, or `allocatingList()`
+  for a list of new pairs), wrapped in a reporting node. Each report has an
+  estimate of the object's size (`Allocations.sizeOf`). Until a listener is
+  active in some context, a report is one check of a language-wide
+  assumption that the first active listener invalidates, so compiled code
+  pays nothing. Boxes aren't reported: an allocation listener takes only
+  interop values. An object is reported once it exists, so `onEnter` and
+  `onReturnValue` follow each other. Frames on the heap reach error traces, the debugger and the
   sampler too: see "Spilled frames in tools" above.
 - **Scopes, names and evaluation in a frame (M6-05).** A frame's scope
   (`tagTreeNodeLibrary`, `FrameScope`) shows the variables Scheme code there
@@ -591,8 +603,16 @@ Each entry: the decision, why, and what was rejected.
   its frame slot or captured value is a copy that closures and continuation
   segments (immutable, AGENTS.md rule 3) share. `DebugStackFrame.eval`
   compiles the code (`parse(InlineParsingRequest)`) as a body whose
-  parameters are the frame's variables, in the interaction environment, and
-  passes a boxed variable as its Box. A procedure's frames are named by its
+  parameters are the frame's variables, and passes a boxed variable as its
+  Box. Its global names resolve in the frame's own top level (M7-07): every
+  root of an isolated program (D15) records the program's top-level scope
+  and namespace (`SchemeRootNode.getTopLevel`, transient, so not in the
+  prelude image), and code evaluated in its frames sees exactly the
+  program's imports and definitions; elsewhere, the interaction
+  environment. Evaluated code may not `set!` an isolated program's own
+  variables: the program was compiled as a closed unit, assuming only its
+  own code assigns them (`EscapeAnalysis`). Library frames still use the
+  interaction environment. A procedure's frames are named by its
   binding (`define`, `let`, `letrec*`, `set!`, through a let body), else by
   its location, `<lambda@file.scm:3:5>`; a record type's procedures are
   primitives named by their bindings (D1), which have no frame when run in
@@ -733,6 +753,32 @@ Each entry: the decision, why, and what was rejected.
   even when it starts with `import` (which then adds to that environment),
   and the language writes its values itself, as `write` does, one per line
   (`isVisible` is false, so Truffle doesn't print them again).
+  - **Every form's values (M7-07).** The expander wraps each top-level form
+    of an interactive source in a call to `%repl-write`, which writes the
+    form's values as it completes and returns them, so `1 2 (values 3 4)`
+    writes 1, 2, 3 and 4. A form a top-level `begin` splices counts as one;
+    a definition writes nothing. The input is still one program: an error
+    in one form skips the forms after it.
+  - **One input (M7-07).** The REPL reads its lines with `%read-line` from
+    the console input port (the initial `current-input-port`), through
+    interop, so it and the Scheme code it runs share one input and its
+    buffering: `(read-line)` typed at the REPL reads the next line, and the
+    REPL goes on with what Scheme code leaves. Two readers each buffering
+    the process's stdin would race for its bytes.
+  - **Line editing (M7-07).** When stdin and stdout are a terminal, the
+    context's standard input is a stream of lines read with JLine (the
+    shadowed JLine 3 that `launcher-common` already needs), with editing,
+    the `> ` and continuation prompts, and a history kept in
+    `~/.scheme_history` (or `$SCHEME_HISTORY`; empty for none). Lines are
+    read only when a reader needs one; the lines Scheme code reads have no
+    prompt and stay out of the history. Ctrl-C drops the unfinished input.
+    JLine's shell-like parsing is off (quotes, escapes, `!` history
+    expansion), so Scheme text is taken as typed. Without a terminal, the
+    path is the one tests and pipes use: no JLine, no prompts. JLine
+    reaches the terminal through the FFM API, so the JVM launcher gets
+    `--enable-native-access=org.graalvm.shadowed.jline`; JLine's own
+    native-image configuration registers the downcalls for the native
+    launcher.
 - The Chrome inspector, DAP and profiler tools ship as a separate optional
   distribution, and CI runs a smoke test of each against a Scheme program
   (D13's tags and source sections are what they consume).

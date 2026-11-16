@@ -233,6 +233,43 @@ public class LauncherTest {
         assertEquals("3\n\"a string with\\na newline\"\n", r.out());
     }
 
+    /**
+     * M7-07: an input with several forms writes the values of each, as each one completes; a form
+     * that a top-level begin splices is one form, whose values are its last form's.
+     */
+    @Test
+    public void replWritesTheValuesOfEveryFormOfAnInput() {
+        Result r = run("""
+                        1 2 (values 3 4)
+                        (define z 5) z (display "six") (newline) (begin 6 7) (begin (define w 8)) w
+                        (values) (if #f #f) 'last
+                        """);
+        assertEquals(r.err(), 0, r.status());
+        assertEquals("1\n2\n3\n4\n5\nsix\n7\n8\nlast\n", r.out());
+    }
+
+    /**
+     * M7-07: Scheme's {@code read-line}, {@code read} and {@code read-char} in the REPL read from the
+     * same input as the REPL: the lines after the form that reads them, not ones the REPL buffered.
+     */
+    @Test
+    public void replReadsFromTheSameInputAsScheme() {
+        Result r = run("""
+                        (define x (read-line))
+                        hello
+                        x
+                        (read)
+                        (a "b"
+                         c)
+                        (list (read-char) (read-line))
+                        xyz
+                        (read-line)
+                        (char-ready?)
+                        """);
+        assertEquals(r.err(), 0, r.status());
+        assertEquals("\"hello\"\n(a \"b\" c)\n(#\\x \"yz\")\n\"(char-ready?)\"\n", r.out());
+    }
+
     @Test
     public void replExitStopsTheSessionWithItsStatus() {
         Result r = run("""
@@ -350,6 +387,11 @@ public class LauncherTest {
         Result ended = launch("(+ 1 2)\n");
         assertEquals(ended.err(), 0, ended.status());
         assertEquals("3\n", ended.out());
+
+        // M7-07: the process's stdin, read by the REPL and by Scheme alike.
+        Result read = launch("(define line (read-line)) 'x\nhello there\n(string-length line) (read)\n(a b)\n");
+        assertEquals(read.err(), 0, read.status());
+        assertEquals("x\n11\n(a b)\n", read.out());
     }
 
     @Test

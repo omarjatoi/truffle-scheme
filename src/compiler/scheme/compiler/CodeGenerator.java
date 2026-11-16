@@ -67,8 +67,12 @@ final class CodeGenerator {
     /** The expressions in statement position: body sequence elements and root bodies. */
     private final Set<Expr> statements = Collections.newSetFromMap(new IdentityHashMap<>());
 
-    CodeGenerator(SchemeRootNodeGen.Builder b) {
+    /** What every root generated here records as its top level ({@link SchemeRootNode#setTopLevel}), or null. */
+    private final Object topLevel;
+
+    CodeGenerator(SchemeRootNodeGen.Builder b, Object topLevel) {
         this.b = b;
+        this.topLevel = topLevel;
     }
 
     /** Emits the program and every lambda in it; returns the program root. */
@@ -256,6 +260,7 @@ final class CodeGenerator {
             SchemeRootNode root = b.endRoot();
             root.setName(fn.program ? "<program>" : fn.name);
             root.setVariableNames(capturedNames(fn), fn.self != null && fn.self.visible() ? fn.self.name.toString() : null);
+            root.setTopLevel(topLevel);
             holder.root = root;
         });
         push(seq);

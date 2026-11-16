@@ -7,6 +7,7 @@ import org.graalvm.options.OptionDescriptors;
 import org.graalvm.options.OptionKey;
 import org.graalvm.options.OptionStability;
 
+import com.oracle.truffle.api.Assumption;
 import com.oracle.truffle.api.CallTarget;
 import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.Option;
@@ -52,10 +53,24 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
     @CompilationFinal private RootCallTarget interopCall;
     /** The Static Object Model shapes of records (design.md D1). */
     private final RecordShapes recordShapes = new RecordShapes(this);
+    /**
+     * Valid until an allocation listener ({@code --memtracer}) is active in a context of this
+     * language: until then nothing reports allocations, at no cost ({@link Allocations}).
+     */
+    final Assumption noAllocationListeners = Assumption.create("no allocation listeners");
 
     @Override
     protected SchemeContext createContext(Env env) {
-        return new SchemeContext(env);
+        SchemeContext context = new SchemeContext(env);
+        context.allocationReporter.addActiveListener(active -> {
+            if (active) {
+                noAllocationListeners.invalidate();
+            }
+        });
+        if (context.allocationReporter.isActive()) {
+            noAllocationListeners.invalidate();
+        }
+        return context;
     }
 
     @Override
@@ -112,8 +127,9 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
     /**
      * Code evaluated in a suspended frame of a Scheme procedure (the debugger's
      * {@code DebugStackFrame.eval}, plan.md M6-05): the forms run as a body whose variables are the
-     * frame's ({@link FrameVariables}: what its scope shows) inside the interaction environment
-     * (design.md D15). Elsewhere, or without a frame, Truffle evaluates it as a program.
+     * frame's ({@link FrameVariables}: what its scope shows) inside the frame's top level: an
+     * isolated program's own (plan.md M7-07), else the interaction environment (design.md D15).
+     * Elsewhere, or without a frame, Truffle evaluates it as a program.
      */
     @Override
     protected ExecutableNode parse(InlineParsingRequest request) {
@@ -129,22 +145,23 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
         for (int k = 0; k < boxed.length; k++) {
             boxed[k] = variables.raw(own, k) instanceof Box;
         }
-        SClosure procedure = compiler().compileInFrame(this, SchemeContext.get(null), request.getSource(), variables.names, boxed);
+        Object topLevel = ((SchemeRootNode) variables.bytecode.getBytecodeRootNode()).getTopLevel();
+        SClosure procedure = compiler().compileInFrame(this, SchemeContext.get(null), request.getSource(), variables.names, boxed, topLevel);
         return new FrameEvalNode(this, variables, procedure);
     }
 
     /**
      * A program with its prompt around it (design.md D6). An interactive source (REPL input, design.md
-     * D17) also writes its values.
+     * D17) also writes the values of each of its top-level forms, as each completes (plan.md M7-07):
+     * the compiler wraps each in a call to {@code %repl-write}.
      */
     private CallTarget program(SchemeContext context, Source source) {
-        CallTarget program = withPrompt(compiler().compileProgram(this, context, source));
-        return source.isInteractive() ? new InteractiveRootNode(this, program).getCallTarget() : program;
+        return withPrompt(compiler().compileProgram(this, context, source));
     }
 
     /**
-     * The language prints the values of interactive sources itself ({@link InteractiveRootNode}),
-     * so Truffle never prints them again.
+     * The language writes the values of interactive sources itself ({@link #program}), so Truffle
+     * never prints them again.
      */
     @Override
     protected boolean isVisible(SchemeContext context, Object value) {
