@@ -7,9 +7,13 @@ import java.io.DataInputStream;
 import java.io.DataOutput;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.io.OutputStream;
+import java.math.BigInteger;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
@@ -18,10 +22,13 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
+import java.util.zip.CRC32;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.TruffleLogger;
 import com.oracle.truffle.api.bytecode.BytecodeConfig;
 import com.oracle.truffle.api.bytecode.BytecodeRootNodes;
 import com.oracle.truffle.api.bytecode.serialization.BytecodeDeserializer;
@@ -53,7 +60,7 @@ import scheme.runtime.value.SSymbol;
 import scheme.runtime.value.SVector;
 
 /**
- * The standard libraries, expanded and compiled once per JVM (design.md D13): a context restores
+ * The standard libraries, expanded and compiled ahead of time (design.md D13): a context restores
  * them from this image instead of reading, expanding and compiling the prelude again.
  *
  * <p>The image has two parts. The library bodies are serialized with the Bytecode DSL
@@ -61,25 +68,59 @@ import scheme.runtime.value.SVector;
  * and runs them, as instantiating the libraries would. The expander's state after the standard
  * libraries are instantiated (scopes, namespaces and their cells, syntactic bindings, macros, and
  * each library's exports) is saved as a graph of records that refer to each other by index; a
- * context rebuilds it with its own symbols, scopes and cells. Values that no context can change
- * (numbers, characters, sources and source sections) are shared, not copied.
+ * context rebuilds it with its own symbols, scopes and cells. Every value is a record of bytes, so
+ * the image can be written to a file; only the prelude's {@link Source}s are objects, made once per
+ * image from the bundled resources and shared by the contexts that restore from it.
  *
- * <p>The first context of a JVM initializes the normal way and builds nothing, so a program run
- * once pays nothing for the image. The second builds it, and the ones after restore from it.
- * {@code -Dscheme.preludeImage=false} turns the image off.
+ * <p>The image comes from the build (M7-05): {@code mx build} runs a context that writes it
+ * ({@code -Dscheme.preludeImage.write}) into the SCHEME jar, beside the prelude, as
+ * {@value #RESOURCE}. It records the text of every prelude file the standard libraries read, and
+ * the primitives and core forms they were expanded with; an image whose files, primitives or core
+ * forms differ from the running implementation's is stale and isn't used, nor is one whose checksum
+ * doesn't match. In a native image the build-time image is read and checked when the image is built
+ * (the language's classes are initialized then, design.md D17), and lives in its heap.
+ *
+ * <p>Without a usable build-time image, the image is built per JVM: the first context initializes
+ * the normal way and builds nothing, so a program run once pays nothing for it; the second builds
+ * it, and the ones after restore from it. {@code -Dscheme.preludeImage=false} turns both off, and
+ * the option {@code scheme.PreludeImage=false} turns them off for one context.
  */
 final class PreludeImage {
 
     private static final boolean ENABLED = !"false".equals(System.getProperty("scheme.preludeImage"));
+    /** Where a context writes the image it builds (the build step), or null. */
+    private static final String WRITE = System.getProperty("scheme.preludeImage.write");
+    /** A file to use as the build-time image instead of the bundled one (tests), or null. */
+    private static final String FILE = System.getProperty("scheme.preludeImage.file");
+    /** The build-time image's name among the prelude's resources (SourceDir.Resources). */
+    static final String RESOURCE = "prelude.image";
+
+    private static final TruffleLogger LOG = TruffleLogger.getLogger(SchemeLanguage.ID, "preludeImage");
+
+    private static final int MAGIC = 0x52375049;
+    /** The format's version: change it whenever what the image holds or how it is written changes. */
+    private static final int FORMAT = 1;
+
     /** Contexts initialized the normal way so far. */
     private static final AtomicInteger NORMAL_INITIALIZATIONS = new AtomicInteger();
+    /** The image built in this JVM, or null. */
     private static volatile PreludeImage image;
+    /**
+     * The bundled build-time image, read and checked when this class is initialized: when the
+     * language is built into a native image, at image build time.
+     */
+    private static final Loaded BUNDLED = ENABLED && WRITE == null && FILE == null ? Loaded.read(SourceDir.Resources.bytes(RESOURCE)) : null;
+    /** The image of {@link #FILE}, once read. */
+    private static volatile Loaded fromFile;
+    /** Whether the build-time image's state has been logged. */
+    private static final AtomicBoolean REPORTED = new AtomicBoolean();
 
     /** What every library body root is named (CodeGenerator); no procedure of the prelude is. */
     private static final String PROGRAM = "<program>";
 
-    // Value records.
-    private static final byte SHARED = 0;
+    // Value records. To save a new kind of value: give it a number here, its children (the values
+    // its record refers to) in Writer.children, its record in Writer.record and Reader.readValue,
+    // and change FORMAT.
     private static final byte SYMBOL = 1;
     private static final byte STRING = 2;
     private static final byte PAIR = 3;
@@ -90,6 +131,21 @@ final class PreludeImage {
     /** A vector with fixnum or flonum storage (M5-06): its elements are written in place. */
     private static final byte VECTOR_LONGS = 8;
     private static final byte VECTOR_DOUBLES = 9;
+    private static final byte FIXNUM = 10;
+    private static final byte FLONUM = 11;
+    private static final byte BOOLEAN = 12;
+    private static final byte CHAR = 13;
+    /** One of {@link SConstant}'s values, by its printed name. */
+    private static final byte CONSTANT = 14;
+    private static final byte BIG_INTEGER = 15;
+    private static final byte RATIONAL = 16;
+    private static final byte COMPLEX = 17;
+    /** A Java string or array of them (root names, captured variables' names). */
+    private static final byte JAVA_STRING = 18;
+    private static final byte JAVA_STRINGS = 19;
+    /** A {@link Source}, by its index in the image's sources. */
+    private static final byte SOURCE = 20;
+    private static final byte SECTION = 21;
 
     // Bindings.
     private static final byte CORE_FORM = 0;
@@ -100,38 +156,119 @@ final class PreludeImage {
     private static final byte ROOT = 0;
     private static final byte VALUE = 1;
 
-    /** Values that are the same in every context. */
-    private final Object[] shared;
+    // Sources.
+    private static final byte RESOURCE_SOURCE = 0;
+    private static final byte LITERAL_SOURCE = 1;
+
+    /** The primitives the image was made with, by name, sorted. */
+    private final String[] primitives;
+    /** The prelude files the standard libraries read, by name: their Source, or null if there was no such file. */
+    private final Map<String, Source> resources;
+    private final Source[] sources;
     private final byte[] state;
     private final byte[] bytecode;
     private final int bodies;
 
-    private PreludeImage(Object[] shared, byte[] state, byte[] bytecode, int bodies) {
-        this.shared = shared;
+    private PreludeImage(String[] primitives, Map<String, Source> resources, Source[] sources, byte[] state, byte[] bytecode, int bodies) {
+        this.primitives = primitives;
+        this.resources = resources;
+        this.sources = sources;
         this.state = state;
         this.bytecode = bytecode;
         this.bodies = bodies;
     }
 
-    /** The image, or null if there is none yet. */
-    static PreludeImage get() {
-        return ENABLED ? image : null;
+    /** A build-time image, or why it can't be used. */
+    record Loaded(PreludeImage image, String problem) {
+
+        @TruffleBoundary
+        static Loaded read(byte[] bytes) {
+            if (bytes == null) {
+                return new Loaded(null, "there is none");
+            }
+            try {
+                return fromBytes(bytes, SourceDir.Resources::bytes);
+            } catch (IOException | RuntimeException e) {
+                return new Loaded(null, "it is corrupt (" + e + ")");
+            }
+        }
+    }
+
+    /**
+     * The image this context can restore from, or null if it should initialize the normal way: the
+     * one built in this JVM, else the build-time image if it is up to date.
+     */
+    @TruffleBoundary
+    static PreludeImage get(SchemeContext context) {
+        if (!ENABLED || WRITE != null || !context.getEnv().getOptions().get(SchemeLanguage.PRELUDE_IMAGE)) {
+            return null;
+        }
+        PreludeImage built = image;
+        if (built != null) {
+            return built;
+        }
+        Loaded loaded = buildTime(context);
+        String problem = loaded.problem();
+        if (loaded.image() != null) {
+            problem = loaded.image().primitivesProblem(context);
+            if (problem == null) {
+                LOG.fine("the standard libraries are restored from the build-time prelude image");
+                return loaded.image();
+            }
+        }
+        if (REPORTED.compareAndSet(false, true)) {
+            LOG.fine("the build-time prelude image isn't used: " + problem + "; the standard libraries are expanded");
+        }
+        return null;
+    }
+
+    private static Loaded buildTime(SchemeContext context) {
+        if (FILE == null) {
+            return BUNDLED;
+        }
+        Loaded loaded = fromFile;
+        if (loaded == null) {
+            synchronized (PreludeImage.class) {
+                loaded = fromFile;
+                if (loaded == null) {
+                    try {
+                        loaded = Loaded.read(context.getEnv().getPublicTruffleFile(FILE).readAllBytes());
+                    } catch (IOException | SecurityException e) {
+                        loaded = new Loaded(null, "cannot read " + FILE + ": " + e.getMessage());
+                    }
+                    fromFile = loaded;
+                }
+            }
+        }
+        return loaded;
     }
 
     /**
      * Called by a context about to initialize the normal way: whether it should record its library
      * bodies and build the image afterwards.
      */
-    static boolean shouldBuild() {
-        return ENABLED && image == null && NORMAL_INITIALIZATIONS.incrementAndGet() >= 2;
+    static boolean shouldBuild(SchemeContext context) {
+        if (WRITE != null) {
+            return true;
+        }
+        return ENABLED && context.getEnv().getOptions().get(SchemeLanguage.PRELUDE_IMAGE) && image == null && NORMAL_INITIALIZATIONS.incrementAndGet() >= 2;
     }
 
-    /** Builds the image from a context that has just initialized the normal way, and publishes it. */
+    /**
+     * Builds the image from a context that has just initialized the normal way, and publishes it
+     * (or, in the build step, writes it).
+     */
     @TruffleBoundary
     static void build(SchemeContext context, CompilerState compilerState, List<Ast.Lambda> libraryBodies) {
         PreludeImage built;
         try {
             built = new Writer(context, compilerState).write(libraryBodies);
+            if (WRITE != null) {
+                try (OutputStream out = context.getEnv().getPublicTruffleFile(WRITE).newOutputStream()) {
+                    out.write(built.toBytes());
+                }
+                return;
+            }
         } catch (IOException e) {
             throw new IllegalStateException("prelude image: " + e.getMessage(), e);
         }
@@ -159,9 +296,30 @@ final class PreludeImage {
         }
     }
 
-    private static boolean isShared(Object o) {
-        return o instanceof Long || o instanceof Double || o instanceof Boolean || o instanceof SChar || o instanceof SConstant || o instanceof SBigInteger || o instanceof SRational ||
-                        o instanceof SComplex || o instanceof String || o instanceof String[] || o instanceof Source || o instanceof SourceSection;
+    /** Why the image doesn't fit this context's primitives, or null if it does. */
+    private String primitivesProblem(SchemeContext context) {
+        if (!Arrays.equals(primitives, primitiveNames(context.globals))) {
+            return "it was made with other primitives";
+        }
+        return null;
+    }
+
+    private static String[] primitiveNames(GlobalEnvironment globals) {
+        List<String> names = new ArrayList<>();
+        for (GlobalCell cell : globals.cells()) {
+            names.add(cell.name.toString());
+        }
+        Collections.sort(names);
+        return names.toArray(new String[0]);
+    }
+
+    private static String[] coreFormNames() {
+        CoreForm[] forms = CoreForm.values();
+        String[] names = new String[forms.length];
+        for (int i = 0; i < forms.length; i++) {
+            names[i] = forms[i].name();
+        }
+        return names;
     }
 
     private static void writeString(DataOutput out, String s) throws IOException {
@@ -177,6 +335,152 @@ final class PreludeImage {
         return new String(chars);
     }
 
+    private static void writeStrings(DataOutput out, String[] strings) throws IOException {
+        out.writeInt(strings.length);
+        for (String s : strings) {
+            writeString(out, s);
+        }
+    }
+
+    private static String[] readStrings(DataInput in) throws IOException {
+        String[] strings = new String[in.readInt()];
+        for (int i = 0; i < strings.length; i++) {
+            strings[i] = readString(in);
+        }
+        return strings;
+    }
+
+    private static void writeBytes(DataOutput out, byte[] bytes) throws IOException {
+        out.writeInt(bytes.length);
+        out.write(bytes);
+    }
+
+    private static byte[] readBytes(DataInput in) throws IOException {
+        byte[] bytes = new byte[in.readInt()];
+        in.readFully(bytes);
+        return bytes;
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // The image as bytes (the build-time image)
+
+    /**
+     * The image as bytes: a header, what it was made from (core forms, primitives, and the text of
+     * every prelude file read), its sources, its records and bytecode, and a checksum of all that.
+     */
+    @TruffleBoundary
+    byte[] toBytes() throws IOException {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        DataOutputStream out = new DataOutputStream(bytes);
+        out.writeInt(MAGIC);
+        out.writeInt(FORMAT);
+        writeStrings(out, coreFormNames());
+        writeStrings(out, primitives);
+        Map<Source, String> resourceNames = new HashMap<>();
+        out.writeInt(resources.size());
+        for (Map.Entry<String, Source> e : resources.entrySet()) {
+            writeString(out, e.getKey());
+            out.writeBoolean(e.getValue() != null);
+            if (e.getValue() != null) {
+                writeBytes(out, e.getValue().getCharacters().toString().getBytes(StandardCharsets.UTF_8));
+                resourceNames.put(e.getValue(), e.getKey());
+            }
+        }
+        out.writeInt(sources.length);
+        for (Source source : sources) {
+            String resource = resourceNames.get(source);
+            if (resource != null) {
+                out.writeByte(RESOURCE_SOURCE);
+                writeString(out, resource);
+            } else if (source.getPath() == null && source.hasCharacters()) {
+                out.writeByte(LITERAL_SOURCE);
+                writeString(out, source.getName());
+                writeString(out, source.getCharacters().toString());
+                out.writeBoolean(source.isInternal());
+            } else {
+                throw new IllegalStateException("prelude image: a source that is neither a prelude file nor literal text: " + source.getName());
+            }
+        }
+        out.writeInt(bodies);
+        writeBytes(out, state);
+        writeBytes(out, bytecode);
+        out.flush();
+        CRC32 crc = new CRC32();
+        crc.update(bytes.toByteArray());
+        out.writeLong(crc.getValue());
+        out.flush();
+        return bytes.toByteArray();
+    }
+
+    /**
+     * Reads an image written by {@link #toBytes}, if it is up to date: its checksum matches, and
+     * the core forms and the prelude's files ({@code files} reads them by name) are the ones it was
+     * made from. Its prelude sources are made from those files.
+     */
+    @TruffleBoundary
+    static Loaded fromBytes(byte[] bytes, Function<String, byte[]> files) throws IOException {
+        if (bytes.length < 16) {
+            return new Loaded(null, "it is truncated");
+        }
+        CRC32 crc = new CRC32();
+        crc.update(bytes, 0, bytes.length - Long.BYTES);
+        if (crc.getValue() != ByteBuffer.wrap(bytes, bytes.length - Long.BYTES, Long.BYTES).getLong()) {
+            return new Loaded(null, "its checksum doesn't match");
+        }
+        DataInputStream in = new DataInputStream(new ByteArrayInputStream(bytes, 0, bytes.length - Long.BYTES));
+        if (in.readInt() != MAGIC) {
+            return new Loaded(null, "it isn't a prelude image");
+        }
+        int format = in.readInt();
+        if (format != FORMAT) {
+            return new Loaded(null, "its format is " + format + ", not " + FORMAT);
+        }
+        if (!Arrays.equals(readStrings(in), coreFormNames())) {
+            return new Loaded(null, "it was made with other core forms");
+        }
+        String[] primitives = readStrings(in);
+        Map<String, Source> resources = new LinkedHashMap<>();
+        for (int n = in.readInt(); n > 0; n--) {
+            String name = readString(in);
+            byte[] then = in.readBoolean() ? readBytes(in) : null;
+            byte[] now = files.apply(name);
+            if (then == null || now == null) {
+                if (then != now) {
+                    return new Loaded(null, "prelude/" + name + (now == null ? " was removed" : " was added"));
+                }
+                resources.put(name, null);
+            } else if (!Arrays.equals(then, now)) {
+                return new Loaded(null, "prelude/" + name + " changed");
+            } else {
+                resources.put(name, SourceDir.Resources.source(name, now));
+            }
+        }
+        Source[] sources = new Source[in.readInt()];
+        for (int i = 0; i < sources.length; i++) {
+            byte kind = in.readByte();
+            if (kind == RESOURCE_SOURCE) {
+                String name = readString(in);
+                sources[i] = resources.get(name);
+                if (sources[i] == null) {
+                    throw new IOException("no prelude file " + name);
+                }
+            } else if (kind == LITERAL_SOURCE) {
+                String name = readString(in);
+                String text = readString(in);
+                sources[i] = Source.newBuilder(SchemeLanguage.ID, text, name).internal(in.readBoolean()).build();
+            } else {
+                throw new IOException("bad source " + kind);
+            }
+        }
+        int bodies = in.readInt();
+        byte[] state = readBytes(in);
+        byte[] bytecode = readBytes(in);
+        if (in.available() != 0) {
+            throw new IOException("bytes after the bytecode");
+        }
+        return new Loaded(new PreludeImage(primitives, resources, sources, state, bytecode, bodies), null);
+    }
+
     // ------------------------------------------------------------------------------------------
     // Writing
 
@@ -185,8 +489,8 @@ final class PreludeImage {
         private final SchemeContext context;
         private final CompilerState compilerState;
 
-        private final List<Object> shared = new ArrayList<>();
-        private final Map<Object, Integer> sharedIds = new IdentityHashMap<>();
+        private final List<Source> sources = new ArrayList<>();
+        private final Map<Source, Integer> sourceIds = new HashMap<>();
 
         private final ByteArrayOutputStream valueBytes = new ByteArrayOutputStream();
         private final DataOutputStream values = new DataOutputStream(valueBytes);
@@ -306,7 +610,16 @@ final class PreludeImage {
             out.flush();
             rest.writeTo(imageOut);
             imageOut.flush();
-            return new PreludeImage(shared.toArray(), all.toByteArray(), bytecodeBytes.toByteArray(), libraryBodies.size());
+
+            List<String> primitives = new ArrayList<>();
+            for (Object export : compilerState.libraries.loaded().get(Libraries.PRIMITIVES).exports().values()) {
+                if (export instanceof GlobalCell cell) {
+                    primitives.add(cell.name.toString());
+                }
+            }
+            Collections.sort(primitives);
+            return new PreludeImage(primitives.toArray(new String[0]), new LinkedHashMap<>(compilerState.libraries.resources().read()), sources.toArray(new Source[0]),
+                            all.toByteArray(), bytecodeBytes.toByteArray(), libraryBodies.size());
         }
 
         private void namespace(GlobalEnvironment namespace) {
@@ -350,6 +663,16 @@ final class PreludeImage {
                 id = scopeSets.size();
                 scopeSetIds.put(set, id);
                 scopeSets.add(set);
+            }
+            return id;
+        }
+
+        private int source(Source source) {
+            Integer id = sourceIds.get(source);
+            if (id == null) {
+                id = sources.size();
+                sourceIds.put(source, id);
+                sources.add(source);
             }
             return id;
         }
@@ -404,6 +727,10 @@ final class PreludeImage {
                 return v.isObjects() ? v.objects() : new Object[0];
             } else if (o instanceof Syntax s) {
                 return s.source == null ? new Object[]{s.open()} : new Object[]{s.open(), s.source};
+            } else if (o instanceof SComplex c) {
+                return new Object[]{c.real, c.imag};
+            } else if (o instanceof SourceSection section) {
+                return new Object[]{section.getSource()};
             }
             return new Object[0];
         }
@@ -448,15 +775,49 @@ final class PreludeImage {
         }
 
         private void record(Object o) throws IOException {
-            if (isShared(o)) {
-                values.writeByte(SHARED);
-                Integer id = sharedIds.get(o);
-                if (id == null) {
-                    id = shared.size();
-                    sharedIds.put(o, id);
-                    shared.add(o);
+            if (o instanceof Long n) {
+                values.writeByte(FIXNUM);
+                values.writeLong(n);
+            } else if (o instanceof Double d) {
+                values.writeByte(FLONUM);
+                values.writeLong(Double.doubleToRawLongBits(d));
+            } else if (o instanceof Boolean b) {
+                values.writeByte(BOOLEAN);
+                values.writeBoolean(b);
+            } else if (o instanceof SChar c) {
+                values.writeByte(CHAR);
+                values.writeInt(c.codePoint);
+            } else if (o instanceof SConstant c) {
+                values.writeByte(CONSTANT);
+                writeString(values, c.toString());
+            } else if (o instanceof SBigInteger n) {
+                values.writeByte(BIG_INTEGER);
+                writeBytes(values, n.value.toByteArray());
+            } else if (o instanceof SRational q) {
+                values.writeByte(RATIONAL);
+                writeBytes(values, q.numerator.toByteArray());
+                writeBytes(values, q.denominator.toByteArray());
+            } else if (o instanceof SComplex c) {
+                values.writeByte(COMPLEX);
+                values.writeInt(valueIds.get(c.real));
+                values.writeInt(valueIds.get(c.imag));
+            } else if (o instanceof String s) {
+                values.writeByte(JAVA_STRING);
+                writeString(values, s);
+            } else if (o instanceof String[] strings) {
+                values.writeByte(JAVA_STRINGS);
+                writeStrings(values, strings);
+            } else if (o instanceof Source s) {
+                values.writeByte(SOURCE);
+                values.writeInt(source(s));
+            } else if (o instanceof SourceSection s) {
+                values.writeByte(SECTION);
+                values.writeInt(valueIds.get(s.getSource()));
+                values.writeBoolean(s.isAvailable());
+                if (s.isAvailable()) {
+                    values.writeInt(s.getCharIndex());
+                    values.writeInt(s.getCharLength());
                 }
-                values.writeInt(id);
             } else if (o instanceof SSymbol s) {
                 values.writeByte(SYMBOL);
                 writeString(values, s.toString());
@@ -506,6 +867,35 @@ final class PreludeImage {
                 throw new IllegalStateException("prelude image: unexpected constant " + o + " (" + o.getClass().getName() + ")");
             }
             valueIds.put(o, valueIds.size());
+        }
+    }
+
+    /**
+     * A restored {@code syntax-rules} macro, compiled when it is first used: most programs use few
+     * of the prelude's macros, and compiling them all would make every context pay for each.
+     */
+    private static final class Uncompiled implements Transformer {
+        private final Object spec;
+        private final Expander definer;
+        private final SSymbol ellipsis;
+        private final SSymbol underscore;
+        private SyntaxRules compiled;
+
+        Uncompiled(Object spec, Expander definer, SSymbol ellipsis, SSymbol underscore) {
+            this.spec = spec;
+            this.definer = definer;
+            this.ellipsis = ellipsis;
+            this.underscore = underscore;
+        }
+
+        @Override
+        public Object transform(Object form, Expander expander) {
+            SyntaxRules rules = compiled;
+            if (rules == null) {
+                rules = new SyntaxRules(spec, definer, ellipsis, underscore);
+                compiled = rules;
+            }
+            return rules.transform(form, expander);
         }
     }
 
@@ -578,7 +968,10 @@ final class PreludeImage {
 
             CompilerState compilerState = new CompilerState(scopes[in.readInt()], namespaces[1]);
             compilerState.libraries = makeLibraries.apply(compilerState);
-            // Macros are compiled again, each by an expander for the unit that defined it.
+            // The prelude's files are read: later lookups of them find these.
+            compilerState.libraries.resources().read().putAll(resources);
+            // Macros are compiled again, each by an expander for the unit that defined it, when
+            // first used.
             Map<GlobalEnvironment, Expander> definers = new IdentityHashMap<>();
             macros = new Macro[macroCount];
             SSymbol ellipsis = context.symbols.intern("...");
@@ -588,8 +981,8 @@ final class PreludeImage {
                 GlobalEnvironment namespace = namespaces[m[1]];
                 Scope scope = scopes[m[2]];
                 Expander definer = definers.computeIfAbsent(namespace,
-                                ns -> new Expander(context.symbols, ns, compilerState.top, scope, compilerState.libraries, SourceDir.Resources.INSTANCE));
-                macros[i] = new Macro(new SyntaxRules(values[m[0]], definer, ellipsis, underscore));
+                                ns -> new Expander(context.symbols, ns, compilerState.top, scope, compilerState.libraries, compilerState.libraries.resources()));
+                macros[i] = new Macro(new Uncompiled(values[m[0]], definer, ellipsis, underscore));
             }
             for (int n = in.readInt(); n > 0; n--) {
                 Scope scope = scopes[in.readInt()];
@@ -649,8 +1042,32 @@ final class PreludeImage {
         private Object readValue(DataInput in) throws IOException {
             byte kind = in.readByte();
             switch (kind) {
-                case SHARED:
-                    return shared[in.readInt()];
+                case FIXNUM:
+                    return in.readLong();
+                case FLONUM:
+                    return Double.longBitsToDouble(in.readLong());
+                case BOOLEAN:
+                    return in.readBoolean();
+                case CHAR:
+                    return SChar.of(in.readInt());
+                case CONSTANT:
+                    return constant(readString(in));
+                case BIG_INTEGER:
+                    return SBigInteger.normalize(new BigInteger(readBytes(in)));
+                case RATIONAL:
+                    return SRational.make(new BigInteger(readBytes(in)), new BigInteger(readBytes(in)));
+                case COMPLEX:
+                    return SComplex.make(values[in.readInt()], values[in.readInt()]);
+                case JAVA_STRING:
+                    return readString(in);
+                case JAVA_STRINGS:
+                    return readStrings(in);
+                case SOURCE:
+                    return sources[in.readInt()];
+                case SECTION: {
+                    Source source = (Source) values[in.readInt()];
+                    return in.readBoolean() ? source.createSection(in.readInt(), in.readInt()) : source.createUnavailableSection();
+                }
                 case SYMBOL:
                     return context.symbols.intern(readString(in));
                 case STRING: {
@@ -696,6 +1113,15 @@ final class PreludeImage {
                 default:
                     throw new IOException("bad value " + kind);
             }
+        }
+
+        private Object constant(String name) throws IOException {
+            for (SConstant c : new SConstant[]{SConstant.EMPTY_LIST, SConstant.UNSPECIFIED, SConstant.EOF, SConstant.DEFAULT}) {
+                if (c.toString().equals(name)) {
+                    return c;
+                }
+            }
+            throw new IOException("bad constant " + name);
         }
     }
 }

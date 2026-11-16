@@ -40,6 +40,13 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
     @Option(name = "LibraryPath", help = "Directories to search for libraries, separated by the path separator (-I).", category = OptionCategory.USER, stability = OptionStability.STABLE) //
     public static final OptionKey<String> LIBRARY_PATH = new OptionKey<>("");
 
+    /**
+     * Whether a context may restore the standard libraries from the prelude image (design.md D13):
+     * false expands them, and the context takes no part in building a per-JVM image.
+     */
+    @Option(name = "PreludeImage", help = "Restore the standard libraries from the prelude image instead of expanding them.", category = OptionCategory.INTERNAL, stability = OptionStability.STABLE) //
+    public static final OptionKey<Boolean> PRELUDE_IMAGE = new OptionKey<>(true);
+
     private SchemeCompiler compiler;
     /** What runs a procedure called through interop (design.md D10): see {@link #interopCallTarget}. */
     @CompilationFinal private RootCallTarget interopCall;

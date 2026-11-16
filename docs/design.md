@@ -596,25 +596,73 @@ Each entry: the decision, why, and what was rejected.
   `local3`, boxes as objects, no captured variables, and every slot
   writable, including a heap segment's); a parent scope with the globals
   (the debugger already shows the top scope, thousands of names, by itself).
-- **The standard libraries are cached per JVM (M5-03).** After the second
-  context of a JVM has instantiated them the normal way, it saves a
-  `PreludeImage`: the library bodies serialized with the Bytecode DSL
+- **The standard libraries come from a prelude image (M5-03, M7-05).** A
+  `PreludeImage` holds the library bodies serialized with the Bytecode DSL
   (`enableSerialization`), and the expander's state (scopes, namespaces and
   their cells, syntactic bindings, macros as their `syntax-rules` forms,
-  library exports) as records that refer to each other by index. Later
-  contexts rebuild that state with their own symbols, scopes and cells, and
-  deserialize and run the bodies: nothing is read or expanded. The first
-  context builds nothing, so a program run once pays nothing.
-  `-Dscheme.preludeImage=false` turns it off.
-- Why per JVM and per context: symbols, cells and scopes belong to a context
-  (D1, D7), and compiled code embeds cells as constants, so roots can't be
-  shared between contexts, and with `Context.create` each context has its
-  own engine anyway.
+  library exports) as records that refer to each other by index. A context
+  rebuilds that state with its own symbols, scopes and cells, and
+  deserializes and runs the bodies: nothing is read or expanded, and a
+  macro is compiled again only when it is first used. Every value in the
+  image is bytes (numbers, characters, strings, symbols, pairs, vectors with
+  their storage, syntax objects, source sections); a new kind of constant
+  needs a record kind and a new format number (`PreludeImage.FORMAT`).
+  - **Built at build time (M7-05).** `mx build` runs a context of the
+    language's classes (project `scheme.prelude.image`,
+    `mx_r7rs.PreludeImageProject`), which writes the image as it initializes
+    (`-Dscheme.preludeImage.write`), into the `SCHEME` jar beside the prelude
+    (`scheme/prelude/prelude.image`). mx builds it again whenever a project
+    it is made from or a prelude file changes. So the first context of a
+    process restores too.
+  - **Staleness.** The image records the text of every prelude file the
+    standard libraries read (and the ones they looked for and didn't find),
+    the primitives' names and the core forms, and ends with a CRC32 of the
+    rest. The language reads the bundled image once per JVM and uses it only
+    if each of those files is byte for byte the one it bundles, the core
+    forms and a context's primitives are the same, and the checksum matches;
+    otherwise it logs why (`--log.scheme.preludeImage.level=FINE`) and
+    expands. The comparison costs one read of the prelude files, which the
+    prelude's `Source`s are then made from. Changes to the compiler itself
+    are mx's to catch: the image is rebuilt with every build of the classes
+    it depends on.
+  - **Per JVM, as a fallback (M5-03).** Without a usable build-time image,
+    the second context of a JVM that instantiates the libraries the normal
+    way builds an image in memory, and later contexts restore from it. The
+    first builds nothing, so a program run once pays nothing for it.
+  - `-Dscheme.preludeImage=false` turns both off, and the internal option
+    `scheme.PreludeImage=false` turns them off for one context (it then
+    expands, and takes no part in building an image). `-Dscheme.preludeImage.file`
+    names an image file to use instead of the bundled one (tests).
+  - Numbers (M7-05) on an Apple M3 Max shared with other jobs (load 10 to
+    20), medians of 15 (JVM) and 30 (native) fresh processes, the two
+    variants interleaved; "expanding" is the same build with the image off
+    (`-Dscheme.preludeImage=false`, given to native-image for the native
+    launcher), which is what the first context did before:
+
+    | | Expanding | Restoring |
+    |---|---:|---:|
+    | JVM: `Context` create and initialize, cold | 309 ms | 254 ms |
+    | JVM: a hello-world program (the launcher's `java` command) | 380 ms | 348 ms |
+    | Native launcher: a hello-world program | 16.9 ms, 27 MB | 14.4 ms, 22 MB |
+
+    On the cold JVM, restoring costs about 70 ms against expanding's 95
+    (most of it the Bytecode DSL replaying the builder calls, which is
+    interpreted Java there); the rest of a cold context is the engine and the
+    primitives. The image is 350 KB.
+- Why per context: symbols, cells and scopes belong to a context (D1, D7),
+  and compiled code embeds cells as constants, so roots can't be shared
+  between contexts, and with `Context.create` each context has its own
+  engine anyway. Why at build time as well as per JVM: the first context is
+  the one a program run once pays for (the launcher, a script, a test
+  process), and only a prebuilt image helps it; the staleness check makes
+  the build step safe to forget.
 - *Rejected:* sharing roots between the contexts of an engine (needs
   `ContextPolicy.SHARED` and globals looked up per context instead of
-  constant cells, and doesn't help a context per engine); an image built at
-  build time (it would also speed up the first context, but adds a build
-  step and a staleness check; a follow-up if cold start matters).
+  constant cells, and doesn't help a context per engine); a hash of the
+  prelude files instead of their text (needs a digest provider at startup
+  for no saving: the files are read either way); checking the compiler's
+  class files at run time (reading them costs more than the image saves,
+  and mx already rebuilds the image with them).
 - *Rejected:* hand-rolled position tracking in our own frames or exceptions
   (duplicates Truffle and doesn't reach tools).
 
@@ -688,8 +736,13 @@ Each entry: the decision, why, and what was rejected.
   of the language's packages, as GraalVM's own languages have (the language
   provider and the DSL-generated library exports live in the image heap).
   Static state then keeps its build-time value: `-Dscheme.torture` and
-  `-Dscheme.preludeImage` have no effect in a native image, so torture mode
-  needs the JVM. No reflection configuration is needed (D10).
+  `-Dscheme.preludeImage` (and its `.file`) have no effect in a native image,
+  so torture mode needs the JVM. No reflection configuration is needed (D10).
+  - The build-time prelude image (D13, M7-05) is read and checked when
+    `PreludeImage` is initialized, so at image build time: the checked image,
+    its prelude `Source`s included, is in the image heap, the executable
+    doesn't read it (nor, when it restores, the prelude files), and the
+    resources the executable carries leave it out.
   - Code that partial evaluation reaches must not reach a method
     native-image blocklists for runtime compilation. On HotSpot such a path
     only costs code size, but native-image refuses to build: a call through
@@ -697,7 +750,9 @@ Each entry: the decision, why, and what was rejected.
     in the image), a root's `getName`, and string concatenation outside a
     `@TruffleBoundary` all failed the first build.
   - Numbers on an Apple M3 Max (16 cores, macOS), median of 10 runs; the
-    JVM launcher is the `java` command `mx scheme` runs, without mx:
+    JVM launcher is the `java` command `mx scheme` runs, without mx (M6-06;
+    since M7-05 the first context restores the prelude image, which D13
+    measures against expanding):
 
     | | Native | JVM |
     |---|---:|---:|
@@ -744,9 +799,9 @@ Each entry: the decision, why, and what was rejected.
     run on any x86-64 machine.
   - Limits: the tools (inspector, DAP, profilers) are only on the JVM
     launcher (`mx scheme`); the executable is for the platform that built
-    it; and there is no auxiliary engine cache or prebuilt prelude in the
-    image (the first context still reads and expands the prelude, which
-    AOT-compiled code does in a few milliseconds).
+    it; and there is no auxiliary engine cache or pre-initialized context in
+    the image (each context still restores the prelude image and runs the
+    library bodies).
 - Why: Truffle languages get debugging, profiling and engine tuning from
   the platform; a hand-written launcher would have to re-implement or forgo
   all of it.

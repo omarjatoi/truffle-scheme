@@ -61,6 +61,87 @@ _TRUFFLE_VM_ARGS = [
 
 
 
+# ---------------------------------------------------------------------------
+# The build-time prelude image (M7-05, design.md D13)
+# ---------------------------------------------------------------------------
+
+class PreludeImageProject(mx.ArchivableProject):
+    """The standard libraries, expanded and compiled at build time: `prelude.image`, beside the
+    prelude's resources in the SCHEME jar (scheme/prelude/). A context with the language's classes
+    (on the class path, from the projects' output directories: the jar doesn't exist yet) writes it
+    (-Dscheme.preludeImage.write) as it initializes. It is built again whenever a project it is made
+    from changes; at run time, the language ignores an image whose prelude files differ from the
+    ones it bundles (PreludeImage.java)."""
+
+    def __init__(self, suite, name, deps, workingSets, theLicense, **kw_args):
+        super().__init__(suite, name, deps, workingSets, theLicense, **kw_args)
+        # Only to build it: none of them is in the jar because of this project.
+        self.buildDependencies = list(getattr(self, 'buildDependencies', []))
+
+    def output_dir(self):
+        return join(self.get_output_root(), 'image')
+
+    def archive_prefix(self):
+        return 'scheme/prelude/'
+
+    def image(self):
+        return join(self.output_dir(), 'prelude.image')
+
+    def getResults(self):
+        return [self.image()]
+
+    def getBuildTask(self, args):
+        return _PreludeImageBuildTask(self, args)
+
+
+class _PreludeImageBuildTask(mx.BuildTask):
+    def __init__(self, subject, args):
+        super().__init__(subject, args, 1)
+
+    def __str__(self):
+        return f'Building {self.subject.name}'
+
+    def _prelude_sources(self):
+        prelude = join(_suite.dir, 'src', 'prelude')
+        return [join(root, f) for root, _, files in os.walk(prelude) for f in files]
+
+    def needsBuild(self, newestInput):
+        sup = super().needsBuild(newestInput)
+        if sup[0]:
+            return sup
+        image = mx.TimeStampFile(self.subject.image())
+        if not exists(image.path):
+            return True, f'{image.path} does not exist'
+        if newestInput and image.isOlderThan(newestInput):
+            return True, f'{newestInput} is newer than {image.path}'
+        sources = self._prelude_sources()
+        if image.isOlderThan(sources):
+            return True, 'a prelude file is newer than the image'
+        return False, None
+
+    def newestOutput(self):
+        return mx.TimeStampFile(self.subject.image())
+
+    def build(self):
+        os.makedirs(self.subject.output_dir(), exist_ok=True)
+        image = self.subject.image()
+        partial = image + '.partial'
+        empty = join(self.subject.output_dir(), 'empty.scm')
+        with open(empty, 'w') as f:
+            f.write('')
+        classpath = mx.classpath(['scheme.launcher', 'scheme.compiler', 'scheme.builtins', 'scheme.prelude'])
+        mx.run_java(['--enable-native-access=ALL-UNNAMED', '--sun-misc-unsafe-memory-access=allow'] + INTERPRETER_VM_ARGS
+                    + [f'-Dscheme.preludeImage.write={partial}', '-cp', classpath, 'scheme.launcher.SchemeMain', empty])
+        if not exists(partial):
+            mx.abort(f'{self}: the context wrote no image')
+        os.replace(partial, image)
+        os.remove(empty)
+
+    def clean(self, forBuild=False):
+        if exists(self.subject.image()):
+            os.remove(self.subject.image())
+
+
 def r7rs_vm_args(compile=False, torture=False):
     args = list(COMPILE_VM_ARGS if compile else INTERPRETER_VM_ARGS)
     if torture:

@@ -3,7 +3,9 @@ package scheme.compiler;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Map;
 
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.TruffleFile;
 import com.oracle.truffle.api.TruffleLanguage;
 import com.oracle.truffle.api.source.Source;
@@ -23,22 +25,51 @@ abstract class SourceDir {
     /** The directory that files included from {@code source} are relative to. */
     abstract SourceDir dirOf(Source source);
 
-    /** The prelude's resources (src/prelude/scheme/prelude): the implementation's own bundled sources. */
+    /**
+     * The prelude's resources (src/prelude/scheme/prelude): the implementation's own bundled sources.
+     * Each lookup is remembered, so a file is read once, and {@link PreludeImage} knows which files
+     * the standard libraries were made from.
+     */
     static final class Resources extends SourceDir {
-        static final Resources INSTANCE = new Resources();
         private static final String ROOT = "/scheme/prelude/";
 
-        @Override
-        Source find(String relative) {
+        /** Every file looked up so far, by name: its Source, or null if there is no such file. */
+        private final Map<String, Source> read;
+
+        Resources(Map<String, Source> read) {
+            this.read = read;
+        }
+
+        /** The resource's bytes, or null if there is none. */
+        @TruffleBoundary
+        static byte[] bytes(String relative) {
             try (InputStream in = SourceDir.class.getResourceAsStream(ROOT + relative)) {
-                if (in == null) {
-                    return null;
-                }
-                String text = new String(in.readAllBytes(), StandardCharsets.UTF_8);
-                return Source.newBuilder(SchemeLanguage.ID, text, "prelude/" + relative).internal(true).build();
+                return in == null ? null : in.readAllBytes();
             } catch (IOException e) {
                 throw new IllegalStateException("cannot read prelude resource " + relative, e);
             }
+        }
+
+        /** The Source of the resource with these bytes. */
+        @TruffleBoundary
+        static Source source(String relative, byte[] bytes) {
+            return Source.newBuilder(SchemeLanguage.ID, new String(bytes, StandardCharsets.UTF_8), "prelude/" + relative).internal(true).build();
+        }
+
+        /** Every file looked up so far. */
+        Map<String, Source> read() {
+            return read;
+        }
+
+        @Override
+        Source find(String relative) {
+            if (read.containsKey(relative)) {
+                return read.get(relative);
+            }
+            byte[] bytes = bytes(relative);
+            Source source = bytes == null ? null : source(relative, bytes);
+            read.put(relative, source);
+            return source;
         }
 
         @Override

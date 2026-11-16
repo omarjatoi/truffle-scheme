@@ -742,7 +742,7 @@ deferral that was never scheduled. Each task comes from a PR's follow-ups
   - **Done when** a record-heavy benchmark (add one to `tests/diff` or use
     one from the sets) improves, interop (M6-02) and the debugger (M6-05)
     still show record fields, and both suites pass.
-- [ ] **M7-05 · First-context startup** *(early)*
+- [x] **M7-05 · First-context startup** *(early)*
   - M5-03's option (c): build the prelude image at build time (and into the
     native image, M6-06), with a staleness check, so the first context in a
     process restores instead of expanding.
