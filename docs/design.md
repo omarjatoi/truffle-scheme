@@ -23,6 +23,12 @@ full R7RS-small conformance comes first.
   A tail call returns a `TailCall(procedure, args)` marker. Every non-tail
   call site runs a trampoline loop: call, and while the result is a
   `TailCall`, perform it. Tail calls never grow the Java stack.
+- **Primitives run in place (M5-09).** A call, in tail position or not, whose
+  procedure is a leaf primitive that returns a value runs the primitive at the
+  call site, with a node of the site's own and no Truffle call, `TailCall` or
+  argument copy; its errors are raised in the calling frame (D8). Only the
+  primitives that transfer control (`apply`, `call/cc`, `eval`, `load`, and
+  the continuation internals) are still called.
 - Self tail calls in named `let` and `do` compile to loops (back-edges, OSR).
 
 ### Continuations: a segmented stack
@@ -58,11 +64,18 @@ full R7RS-small conformance comes first.
 - **Stack-depth spill.** A depth counter forces a capture past a threshold,
   then execution resumes on a fresh stack. Deep non-tail recursion never
   overflows the Java stack.
-- **Escape-only fast path (M5).** When the compiler can prove a `call/cc`'s
-  `k` is only ever called directly inside the body and never captured by a
-  closure, it compiles to an escape exception instead of a capture. A
-  candidate mechanism is `@GenerateBytecode(unwindExceptions = ...)` (25.5),
-  which lets the escape bypass guest exception handlers such as `guard`'s.
+- **Escape-only fast path (M5-04).** When `EscapeAnalysis` proves that a
+  `call/cc`'s `k` is never `set!`, never referenced by a nested lambda, and is
+  only called or passed to a known procedure (a literal lambda, an internal
+  definition, or in an isolated program a once-defined global) whose
+  parameter qualifies in turn, the call compiles to `%call/ec`: a prompt with
+  a fresh tag. Calling `k` throws `EscapeException`, a `ControlFlowException`;
+  a `k` tail-called back to its own prompt returns with no throw. An escape
+  across a change of dynamic environment goes through the prelude's
+  `%escape`, which rewinds first. Captures flatten the prompt into a marker
+  like any other, so `k` works from re-entered copies too.
+  `unwindExceptions` isn't needed: guard is prompt-based (D4), so there are
+  no guest exception handlers for an escape to bypass.
 
 > **Spike results (M0, Truffle 25.5): go.**
 > - **M0-02 (#7):** a capture across 3 frames, resumed 2 and 3 times from
@@ -108,7 +121,7 @@ Each entry: the decision, why, and what was rejected.
 | string | `SString`: Latin-1 `byte[]` until a character above 255 is stored, then UTF-32 `int[]`. Indexing and `string-set!` are O(1). Literals carry an immutable flag. |
 | symbol | `SSymbol`, interned per context, name is a `TruffleString` |
 | pair | `SPair`, mutable `car`/`cdr` fields |
-| vector / bytevector | `SVector` (`Object[]`) / `SBytevector` (`byte[]`), each with an immutable flag for literals |
+| vector / bytevector | `SVector` (`long[]` while every element is a fixnum, `double[]` while every element is a flonum, otherwise `Object[]`, generalizing for good on the first store that doesn't fit; M5-06) / `SBytevector` (`byte[]`), each with an immutable flag for literals |
 | empty list, unspecified, eof, default object | singletons |
 | procedure | `SClosure { RootCallTarget, Object[] captured }` |
 | multiple values | a single value is returned as itself; zero or 2+ values are a `MultipleValues` (`Object[]`) |
@@ -290,8 +303,9 @@ Each entry: the decision, why, and what was rejected.
 - **Out of scope:** Scheme-side access to other languages and the host,
   native image in CI, threads, and SRFIs. Avoid reflection and dynamic class
   loading so a native-image launcher (M6, optional) stays possible.
-- **Deferred to M5:** escape-only `call/cc`, Fixing Letrec, vector storage
-  strategies, and the Static Object Model for records.
+- **Deferred to M5:** escape-only `call/cc` (done, M5-04), Fixing Letrec,
+  vector storage strategies (done, M5-06), and the Static Object Model for
+  records.
 
 ### D11. Build and tooling
 
@@ -376,8 +390,6 @@ Each entry: the decision, why, and what was rejected.
   constant cells, and doesn't help a context per engine); an image built at
   build time (it would also speed up the first context, but adds a build
   step and a staleness check; a follow-up if cold start matters).
-- **Proposed, not yet scheduled:** `unwindExceptions` for the escape-only
-  `call/cc` fast path (already under "Continuations").
 - *Rejected:* hand-rolled position tracking in our own frames or exceptions
   (duplicates Truffle and doesn't reach tools).
 
