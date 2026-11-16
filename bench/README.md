@@ -59,7 +59,8 @@ A program is built the way each set's upstream `bench` script builds it, with
 The JVM runs it with `scheme.launcher.SchemeMain` in a fresh working
 directory (with `inputs` linked to the set's and an empty `outputs`, which
 programs read and write), with `inputs/<program>.input` on standard input, as
-`bench` does.
+`bench` does. So with the JIT it also gets the launcher's JIT warm-up on a
+thread of its own (design.md D17, plan.md M8-03), as a user's run does.
 
 Each program calls the suite's harness, `run-r7rs-benchmark`, once: it times
 `count` runs of the benchmark with `current-jiffy`, checks the last result,

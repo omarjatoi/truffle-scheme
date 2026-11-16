@@ -1151,6 +1151,60 @@ Each entry: the decision, why, and what was rejected.
     20 to 23 ms after.
   - Native image honours `Thread`'s stack size argument: on a 256 KB
     thread the native launcher spills as the JVM does.
+- **The JIT warm-up (M8-03).** With a program file and the JIT on, on the
+  JVM, with 4 or more processors, the launcher starts a daemon thread
+  (`scheme-warm-up`) that creates a context of its own (its own engine, no
+  I/O, none of the command line's options) and runs `SchemeMain.WARM_UP`: a
+  procedure of the common operations (calls, a closure, fixnum and flonum
+  arithmetic and comparisons, pairs, vectors), called 2,000 times, so that
+  it gets compiled. It starts once the program's context is initialized and
+  runs on another core while the evaluation thread reads, expands and runs
+  the program; the JVM doesn't wait for it. Starting after the program's
+  context keeps that the process's first context: the one that takes a
+  pre-initialized context (M8-07) and reports on its error stream what
+  became of the build-time prelude image (M7-05), which a warm-up started
+  with the launcher took. `--engine.Compilation=false` (as an option or a
+  `polyglot.engine.Compilation` system property), the native launcher (whose
+  compiler's graphs are built into the image) and the REPL go without.
+  - *Why.* A process's first Truffle compilations are slow: 30-140 ms each
+    for procedures that take 2-3 ms once a few others have been compiled (the
+    compiler parses and caches, once per process, the interpreter's methods
+    it partially evaluates), and the interpreter's own host code starts in
+    HotSpot's interpreter. A benchmark's first iteration ran in the
+    interpreter while that happened: in the M7 report the first run was 2.4
+    times the steady state (geometric mean). Compilation traces of the first
+    iteration of 24 programs showed few invalidations (0 to 13 a program:
+    argument and return type profiles, local tags, splits), so deopts aren't
+    the gap; the time until compiled code runs is.
+  - *What it gives.* On 24 of ecraven's programs at the report's counts
+    (0.1 times their own, `-Xmx2g`, 3 iterations in a fresh JVM, as
+    `bench-report` runs them; 3 interleaved rounds, the medians; an Apple M3
+    Max shared with other agents, load 9-11, runs above 10 dropped), against
+    `main`: the first iteration's geometric mean 0.918 times (`sumfp` 0.48,
+    `fft` 0.63, `chudnovsky` 0.74, `string` 0.80, `maze` 0.85, `parsing`
+    0.86), the steady state's 0.993 times, and the whole process's wall time
+    0.969 times. Started with the launcher instead (before the program's
+    context), it measured 0.905, 0.991 and 0.957. A hello-world program
+    takes about 10 ms longer (455 ms against 444, medians of 41 interleaved
+    runs), the warm-up's start as it ends. The second context costs memory
+    while it lives: a program that runs 2 s peaks about 80 MB higher (487 MB
+    against 407), a hello-world program no higher.
+  - *Rejected:* running the warm-up on the evaluation thread before the
+    program: the first run fell further (0.84-0.87 times), but by moving
+    work before the harness's timer: it took 85-140 ms of that thread, a
+    hello-world program went from about 370 to 480 ms, and whole processes
+    took as long as before or longer. Truffle engine options as launcher
+    defaults: `OSRCompilationThreshold` 10,240 instead of 100,352 (a long loop
+    in a procedure entered once is OSR-compiled sooner: `sumfp` 0.61 times,
+    `fft` 0.83, the geometric mean 0.985), with `FirstTierCompilationThreshold`
+    100 (0.975): small, and they are experimental options, which the
+    launcher could set only by accepting every experimental option without
+    `--experimental-options`. `CompilerThreads=12` (1.14 times, on a shared
+    machine), `MultiTier=false` (1.22 times first, 1.37 steady),
+    `Mode=latency` (first tier only, no splitting: it gives up the steady
+    state). A larger warm-up (20,000 calls of two procedures, to reach the
+    second tier too) did less (0.955 times against 0.925): it holds a core
+    longer.
 - The Chrome inspector, DAP and profiler tools are optional modules
   (`//bazel:tools_modules`), which `bazel-bin/scheme` puts on the module
   path, and CI runs a smoke test of each against a Scheme program

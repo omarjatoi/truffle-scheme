@@ -92,6 +92,36 @@ public final class SchemeMain extends AbstractLanguageLauncher {
     private Long stackSize;
     /** {@code --vm.Xss}, or null. */
     private Long vmStackSize;
+    /** False when {@code --engine.Compilation=false} (or its system property) turns the JIT off. */
+    private boolean compilation = true;
+
+    private static final String COMPILATION_OPTION = "engine.Compilation";
+    /** The warm-up takes a core of its own: below this, it would take the program's. */
+    private static final int WARM_UP_MIN_PROCESSORS = 4;
+
+    /**
+     * What the launcher warms the JIT with, on a thread and in a context of its own, while it runs a
+     * program (plan.md M8-03, design.md D17): a procedure of the usual operations (calls, a closure,
+     * fixnum and flonum arithmetic and comparisons, pairs, vectors), called often enough to be
+     * compiled. A process's first Truffle compilations take 30-140 ms each, against 2-3 ms for the
+     * same code later (the compiler parses and caches the interpreter's methods it partially
+     * evaluates), and the host code of the interpreter starts in HotSpot's interpreter; both are
+     * per process, so this way a program's first compilations and iterations pay less of them.
+     */
+    public static final String WARM_UP = """
+                    (import (scheme base))
+                    (define (%launcher-warm-up i v)
+                      (let ((x (vector-ref v (remainder i 3)))
+                            (f (lambda (y) (cons y i))))
+                        (if (and (pair? x) (not (null? (cdr x))))
+                            (car (f (+ (car x) i)))
+                            (if (< i 0) (* 2.0 i) (- (+ i 1) (* i 2))))))
+                    (let loop ((i 0) (v (vector (list 1 2) 0.5 '())))
+                      (when (< i 2000)
+                        (%launcher-warm-up i v)
+                        (vector-set! v 1 (+ (vector-ref v 1) 1.5))
+                        (loop (+ i 1) v)))
+                    """;
 
     public static void main(String[] args) {
         new SchemeMain().launch(args);
@@ -197,6 +227,7 @@ public final class SchemeMain extends AbstractLanguageLauncher {
     /** {@code --scheme.LibraryPath=...} comes before the {@code -I} directories. */
     @Override
     protected void validateArguments(Map<String, String> polyglotOptions) {
+        compilation = !"false".equals(polyglotOptions.getOrDefault(COMPILATION_OPTION, System.getProperty("polyglot." + COMPILATION_OPTION)));
         String given = polyglotOptions.remove(LIBRARY_PATH_OPTION);
         if (given != null && !given.isEmpty()) {
             libraryPath.addAll(0, Arrays.asList(given.split(File.pathSeparator)));
@@ -239,11 +270,39 @@ public final class SchemeMain extends AbstractLanguageLauncher {
                 closeQuietly(terminal);
             }
         } else {
-            status = runProgram(builder, file, programArguments, System.err, endStatus);
+            boolean warmUp = compilation && !isAOT() && Runtime.getRuntime().availableProcessors() >= WARM_UP_MIN_PROCESSORS;
+            status = runProgram(builder, file, programArguments, System.err, endStatus, warmUp ? SchemeMain::startWarmUp : null);
         }
         System.out.flush();
         if (status != 0) {
             throw exit(status);
+        }
+    }
+
+    /**
+     * Runs {@link #WARM_UP} on a daemon thread, in a context of its own with no I/O, while this
+     * thread reads, expands and runs the program: on another core, so the program's thread does what
+     * it did before, and the JVM doesn't wait for it to end. It starts once the program's context is
+     * initialized, so that the program's is the process's first context: the one that takes a
+     * pre-initialized context, and that reports, on its error stream, what became of the build-time
+     * prelude image. Only for a
+     * program with the JIT on, on the JVM (a native image's compiler has nothing to parse: its
+     * graphs are built with the image) and with a core to spare. Nothing it does can change the
+     * program's run: it shares no context or engine with it, nor the options given on the command
+     * line, and its failures are dropped.
+     */
+    private static void startWarmUp() {
+        Thread thread = new Thread(() -> warmUp(Context.newBuilder(LANGUAGE)), "scheme-warm-up");
+        thread.setDaemon(true);
+        thread.start();
+    }
+
+    /** Runs {@link #WARM_UP} in a context of {@code builder}'s, with no I/O; drops its failures. */
+    public static void warmUp(Context.Builder builder) {
+        try (Context context = builder.in(InputStream.nullInputStream()).out(OutputStream.nullOutputStream()).err(OutputStream.nullOutputStream()).build()) {
+            context.eval(Source.newBuilder(LANGUAGE, WARM_UP, "<warm-up>").internal(true).buildLiteral());
+        } catch (RuntimeException e) {
+            // Only ever a warm-up: the program's run doesn't depend on it.
         }
     }
 
@@ -323,7 +382,7 @@ public final class SchemeMain extends AbstractLanguageLauncher {
         if (launcher.file == null) {
             return repl(builder, null, out, err, launcher.endStatus);
         }
-        return runProgram(builder, launcher.file, launcher.programArguments, errors, launcher.endStatus);
+        return runProgram(builder, launcher.file, launcher.programArguments, errors, launcher.endStatus, null);
     }
 
     /** {@link #run(String[], InputStream, OutputStream, OutputStream)} with empty stdin. */
@@ -333,9 +392,10 @@ public final class SchemeMain extends AbstractLanguageLauncher {
 
     /**
      * Runs {@code file} as a program, with {@code arguments} after it in {@code command-line}.
-     * Returns {@code endStatus} if it ends without exit.
+     * Returns {@code endStatus} if it ends without exit. Unless null, {@code initialized} runs once
+     * the context is initialized, before the program is read.
      */
-    static int runProgram(Context.Builder builder, String file, String[] arguments, PrintStream errors, int endStatus) {
+    static int runProgram(Context.Builder builder, String file, String[] arguments, PrintStream errors, int endStatus, Runnable initialized) {
         Source source;
         try {
             source = Source.newBuilder(LANGUAGE, new File(file)).build();
@@ -347,6 +407,10 @@ public final class SchemeMain extends AbstractLanguageLauncher {
         commandLine[0] = file;
         System.arraycopy(arguments, 0, commandLine, 1, arguments.length);
         try (Context context = builder.arguments(LANGUAGE, commandLine).build()) {
+            if (initialized != null) {
+                context.initialize(LANGUAGE);
+                initialized.run();
+            }
             context.eval(source);
             return endStatus;
         } catch (PolyglotException e) {
