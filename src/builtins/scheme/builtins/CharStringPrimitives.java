@@ -511,9 +511,7 @@ final class CharStringPrimitives {
         @TruffleBoundary
         static SString copy(SString s, int start, int end) {
             SString result = SString.make(end - start, ' ');
-            for (int i = start; i < end; i++) {
-                result.set(i - start, s.codePointAt(i));
-            }
+            result.copyFrom(0, s, start, end);
             return result;
         }
     }
@@ -538,9 +536,8 @@ final class CharStringPrimitives {
             int at = 0;
             for (int k = 1; k < args.length; k++) {
                 SString s = (SString) args[k];
-                for (int i = 0; i < s.length(); i++) {
-                    result.set(at++, s.codePointAt(i));
-                }
+                result.copyFrom(at, s, 0, s.length());
+                at += s.length();
             }
             return result;
         }
@@ -592,15 +589,7 @@ final class CharStringPrimitives {
 
         @TruffleBoundary
         private static void copy(SString to, int at, SString from, int start, int end) {
-            if (to == from && at > start) {
-                for (int i = end - 1; i >= start; i--) {
-                    to.set(at + i - start, from.codePointAt(i));
-                }
-            } else {
-                for (int i = start; i < end; i++) {
-                    to.set(at + i - start, from.codePointAt(i));
-                }
-            }
+            to.copyFrom(at, from, start, end);
         }
 
         @TruffleBoundary

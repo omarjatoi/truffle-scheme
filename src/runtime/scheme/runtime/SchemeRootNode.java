@@ -8,6 +8,7 @@ import com.oracle.truffle.api.bytecode.BytecodeRootNode;
 import com.oracle.truffle.api.bytecode.ConstantOperand;
 import com.oracle.truffle.api.bytecode.ContinuationRootNode;
 import com.oracle.truffle.api.bytecode.GenerateBytecode;
+import com.oracle.truffle.api.bytecode.LocalRangeAccessor;
 import com.oracle.truffle.api.bytecode.Operation;
 import com.oracle.truffle.api.bytecode.OperationProxy;
 import com.oracle.truffle.api.bytecode.ShortCircuitOperation;
@@ -25,6 +26,7 @@ import com.oracle.truffle.api.frame.MaterializedFrame;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.ControlFlowException;
 import com.oracle.truffle.api.nodes.DirectCallNode;
+import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.nodes.IndirectCallNode;
 import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.nodes.RootNode;
@@ -490,6 +492,35 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
             int count = frame.getArguments().length - 1;
             if (count < required || (max >= 0 && count > max)) {
                 throw arityError(required, max, count);
+            }
+        }
+    }
+
+    /**
+     * The prologue of a procedure whose parameters are all required (plan.md M8-04): checks the
+     * number of arguments, as {@link CheckArity} does, and stores each argument in its parameter's
+     * local, in a {@link Box} if the parameter is assigned (design.md D2): one instruction on every
+     * call, where {@code CheckArity} and a load and a store per parameter were 1 + 2n.
+     * {@code boxed} has bit {@code i} set if parameter {@code i} is boxed. Each store goes through
+     * the local's boxing-elimination profile, as a {@code StoreLocal} would, so a parameter that is
+     * always a fixnum stays an unboxed {@code long}. Stores the bytecode index: its arity error names
+     * this location (design.md D13).
+     */
+    @Operation(storeBytecodeIndex = true)
+    @ConstantOperand(type = LocalRangeAccessor.class)
+    @ConstantOperand(type = int.class)
+    public static final class BindArguments {
+        @Specialization
+        @ExplodeLoop
+        static void doBind(LocalRangeAccessor parameters, int boxed, @Bind VirtualFrame frame, @Bind BytecodeNode bytecode) {
+            Object[] arguments = frame.getArguments();
+            int n = parameters.getLength();
+            if (arguments.length - 1 != n) {
+                throw arityError(n, n, arguments.length - 1);
+            }
+            for (int i = 0; i < n; i++) {
+                Object value = arguments[i + 1];
+                parameters.setObject(bytecode, frame, i, (boxed & (1 << i)) != 0 ? new Box(value) : value);
             }
         }
     }

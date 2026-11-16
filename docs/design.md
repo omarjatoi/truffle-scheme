@@ -120,6 +120,29 @@ full R7RS-small conformance comes first.
   count as iterations of a loop of the root it is in (`LoopNode.reportLoopCount`),
   as a self tail call's jump does, so a procedure called a few times whose sites
   perform many tail calls is compiled.
+- **No uncached interpreter (M8-04).** *Rejected:* the Bytecode DSL's uncached
+  tier (`enableUncachedInterpreter`), which runs a root without allocating the
+  cached tier's nodes or quickening until it has been entered or looped 16 times.
+  Every operation can run uncached (a call through `IndirectCallNode.getUncached()`,
+  a primitive in place with its root's own node, tail calls in a loop of uncached
+  calls), so it was measured both ways. With every root uncached at first, the
+  prelude's library bodies took 6 ms instead of 11 when a context starts (of
+  about 385 ms for `hello.scm`), but splitting broke: a call site in the
+  uncached interpreter has no call node, and Truffle decides once, from the call
+  nodes a procedure's callers have when it goes polymorphic, whether to split it,
+  so `map`'s loop, megamorphic while its callers were still uncached, was never
+  split for them (`CallSiteTest`, `StableWarmupTest`, `TailCallCacheTest`). With
+  only code that runs once uncached (a program's top level, library bodies, REPL
+  inputs, `eval`) and procedures cached from their first call, nothing changed
+  measurably: the bodies still took 11 ms, `hello.scm` 386 ms against 385, and
+  the interpreter's first runs of 40 benchmarks were within 1-2% (noise).
+- **One instruction binds the parameters (M8-04).** A procedure whose
+  parameters are all required starts with `BindArguments`: it checks the arity
+  and stores each argument in its parameter's local (a `LocalRangeAccessor`),
+  boxed if the parameter is assigned, through the local's boxing-elimination
+  profile, so a fixnum parameter is an unboxed `long` as with a `StoreLocal`.
+  It replaces `CheckArity` and a load and a store per parameter. A rest
+  parameter, or more than 31 parameters, keeps those.
 
 ### Continuations: a segmented stack
 
@@ -364,7 +387,7 @@ Each entry: the decision, why, and what was rejected.
 | complex | `SComplex { real, imag }`. Both parts are real numbers of the **same exactness**: exact (`long`, `SBigInteger` or `SRational`) or inexact (`double`). Mixing exactness makes both parts inexact. |
 | boolean | `boolean` |
 | char | `SChar` (`int` code point), with a cache for 0–255 |
-| string | `SString`: Latin-1 `byte[]` until a character above 255 is stored, then UTF-32 `int[]`. Indexing and `string-set!` are O(1). Literals carry an immutable flag. |
+| string | `SString`: Latin-1 `byte[]` until a character above 255 is stored, then UTF-32 `int[]`. Indexing and `string-set!` are O(1). Literals carry an immutable flag. `substring`, `string-append` and `string-copy!` copy between strings of one storage with an array copy (M8-04). |
 | symbol | `SSymbol`, interned per context (held weakly, so a symbol nothing refers to is collected; M8-02), name is a `TruffleString` |
 | pair | `SPair`, mutable `car`/`cdr` fields |
 | vector / bytevector | `SVector` (`long[]` while every element is a fixnum, `double[]` while every element is a flonum, otherwise `Object[]`, generalizing for good on the first store that doesn't fit; M5-06) / `SBytevector` (`byte[]`), each with an immutable flag for literals |

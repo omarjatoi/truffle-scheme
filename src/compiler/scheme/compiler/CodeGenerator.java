@@ -225,14 +225,28 @@ final class CodeGenerator {
             }
             if (!fn.program) {
                 int n = fn.params.size();
-                b.emitCheckArity(n, fn.rest == null ? n : -1);
-                for (int i = 0; i < n; i++) {
-                    Var v = fn.params.get(i);
-                    int argument = i + 1;
-                    store(v, () -> b.emitLoadArgument(argument));
-                }
-                if (fn.rest != null) {
-                    store(fn.rest, () -> b.emitRestList(n + 1));
+                if (fn.rest == null && n > 0 && n < Integer.SIZE) {
+                    // One instruction checks the arity and binds every parameter (plan.md M8-04).
+                    BytecodeLocal[] parameters = new BytecodeLocal[n];
+                    int boxed = 0;
+                    for (int i = 0; i < n; i++) {
+                        Var v = fn.params.get(i);
+                        parameters[i] = st.locals.get(v);
+                        if (v.boxed() && !v.preboxed) {
+                            boxed |= 1 << i;
+                        }
+                    }
+                    b.emitBindArguments(parameters, boxed);
+                } else {
+                    b.emitCheckArity(n, fn.rest == null ? n : -1);
+                    for (int i = 0; i < n; i++) {
+                        Var v = fn.params.get(i);
+                        int argument = i + 1;
+                        store(v, () -> b.emitLoadArgument(argument));
+                    }
+                    if (fn.rest != null) {
+                        store(fn.rest, () -> b.emitRestList(n + 1));
+                    }
                 }
             }
             if (loops) {

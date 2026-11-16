@@ -852,6 +852,23 @@ load rule.
     cold code.
   - **Done when** the interpreter's geometric mean improves, `string` is back,
     and more programs finish within the timeout.
+  - *Progress (not done).* `string` is back: 89% of its interpreted time was
+    `substring`'s and `string-append`'s character-by-character loops, which
+    boxing elimination doesn't touch (M7-03's 5% was most likely the host JIT's
+    extra work for its instruction variants while those loops were compiling);
+    they are array copies now, and bench-check's `string-interpreter` takes
+    67 ms instead of 168 (`string` with the JIT 53 instead of 216). One
+    instruction binds a procedure's parameters. The uncached interpreter was
+    measured and rejected (design.md "Calls and tail calls"). What remains:
+    the first-run geometric mean of the 51 programs that finish is unchanged
+    (×1.00, ±2% between runs), and no more programs finish within 60 s:
+    `tak` takes 84 s in the interpreter (815 million calls at about 100 ns,
+    some 30% too slow), `ntakl` 104 s, `takl` 127, `cpstak` 168 and `ack` 186.
+    A first run at the report's scale is mostly the host JIT compiling the
+    interpreter's code paths for that program: a program run after three others
+    in one JVM ran no faster, but after itself, in a fresh context, in 0.45 s
+    instead of 0.71 (`browse`). An interpreted call costs about 48 ns before
+    its arguments; a third of `tak`'s samples are the frame's allocation.
 - [ ] **M8-05 · Steady-state outliers** *(needs M8-01)*
   - Profile the remaining steady-state outliers after M8-01 (`graphs`,
     `sboyer`, `cpstak`, `paraffins`, `lattice`, `pi`) and fix what the

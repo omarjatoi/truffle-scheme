@@ -81,6 +81,34 @@ public class CharStringTest {
         assertTrue(error("(string-copy! (make-string 2) 0 \"abc\")").contains("string-copy!"));
     }
 
+    /**
+     * M8-04: substring, string-append and string-copy! copy a string's array at once when both
+     * strings have the same storage (Latin-1 or UTF-32), and character by character between
+     * storages: every combination gives the same characters, overlapping copies within one string
+     * included.
+     */
+    @Test
+    public void copiesBetweenStorages() {
+        // λ (#x3bb) makes a string UTF-32; the others are Latin-1.
+        assertEquals("(\"bcd\" \"λb\" \"bc\" \"\")",
+                        write("(list (substring \"abcde\" 1 4) (substring \"aλbc\" 1 3) (substring (string-append \"aλbc\") 2 4) (substring \"aλ\" 1 1))"));
+        assertEquals("(\"abcdé\" \"abλcdλ\" \"λab\" \"ab\" \"\")",
+                        write("(list (string-append \"ab\" \"c\" \"dé\") (string-append \"ab\" \"λ\" \"cd\" \"λ\") (string-append \"λ\" \"ab\") (string-append \"\" \"ab\" \"\") (string-append))"));
+        // The result is a new mutable string, whatever it was copied from.
+        assertEquals("(\"zbc\" \"zλ\")", write("(list (let ((s (string-append \"abc\"))) (string-set! s 0 #\\z) s) (let ((s (substring \"aλ\" 0 2))) (string-set! s 0 #\\z) s))"));
+        // Latin-1 into UTF-32 and back, and overlapping copies forwards and backwards in each storage.
+        assertEquals("(\"λxyλ\" \"aλλd\" \"ababc\" \"cdcde\" \"λaλab\" \"λaλaλ\")", write(
+                        "(list (let ((s (string #\\x3bb #\\a #\\b #\\x3bb))) (string-copy! s 1 \"xy\") s)" +
+                                        " (let ((s (string-copy \"abcd\"))) (string-copy! s 1 \"λλ\") s)" +
+                                        " (let ((s (string-copy \"abcde\"))) (string-copy! s 2 s 0 3) s)" +
+                                        " (let ((s (string-copy \"abcde\"))) (string-copy! s 0 s 2 4) s)" +
+                                        " (let ((s (string #\\x3bb #\\a #\\b #\\c #\\d))) (string-copy! s 2 s 0 3) s)" +
+                                        " (let ((s (string #\\x3bb #\\a #\\x3bb #\\b #\\c))) (string-copy! s 3 s 1 3) (string-copy! s 0 s 2 3) s))"));
+        // Copying nothing into a literal changes nothing; copying something is an error.
+        assertEquals("\"abc\"", write("(let ((s \"abc\")) (string-copy! s 0 \"\") s)"));
+        assertTrue(error("(string-copy! \"abc\" 0 \"x\")").contains("immutable"));
+    }
+
     @Test
     public void comparisons() {
         assertEquals("(#t #f #t #f #t #t)", write(

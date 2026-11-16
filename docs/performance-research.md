@@ -343,6 +343,9 @@ vector strategies, M5-07 `equal?`.
   by default, and `doIndirect` covers it. `SuspendFrame` and the
   continuation path work in the uncached tier: the generated code already
   has a branch for continuation roots in `UNCACHED`. Run torture mode.
+- **Outcome.** Measured and rejected in M8-04 (design.md "Calls and tail
+  calls"): a few milliseconds of startup at best, and with procedures uncached
+  at first, Truffle no longer split polymorphic prelude procedures.
 
 ### 11. Fixed-arity primitive fast paths
 
