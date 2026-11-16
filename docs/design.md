@@ -656,7 +656,11 @@ Each entry: the decision, why, and what was rejected.
   a matching labsjdk: a ~1.5 GB graal checkout plus a labsjdk whose JVMCI
   version must track the graal commit; revisit only if we need an unreleased
   Truffle fix. Maven or Gradle (no test caching across machines); Buck2
-  (thinner open-source JVM support).
+  (thinner open-source JVM support). Splitting `src/runtime` into libraries
+  (values and printer below the rest): values need the context and the
+  language for interop by design (D10), so the split needs hooks, and it
+  reruns no fewer tests (every test loads the whole language) for a small
+  compile-time gain.
 
 ### D12. Continuation strategy
 
