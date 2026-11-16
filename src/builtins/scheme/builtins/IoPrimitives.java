@@ -109,7 +109,12 @@ final class IoPrimitives {
             }
             return p;
         }
-        throw ControlPrimitives.notA(who, (binary ? "binary " : "textual ") + (input ? "input" : "output") + " port", x);
+        throw notAPort(who, x, input, binary);
+    }
+
+    @TruffleBoundary
+    private static SchemeError notAPort(String who, Object x, boolean input, boolean binary) {
+        return ControlPrimitives.notA(who, (binary ? "binary " : "textual ") + (input ? "input" : "output") + " port", x);
     }
 
     private static SPort textualInput(String who, Object x) {

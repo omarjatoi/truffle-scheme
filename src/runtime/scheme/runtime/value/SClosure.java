@@ -39,6 +39,11 @@ public final class SClosure implements TruffleObject {
         this.captured = captured;
     }
 
+    /**
+     * The procedure's name, or null. Behind a boundary: it asks the root node, and a root's
+     * {@code getName} (an OSR root's formats a string) is not for partial evaluation.
+     */
+    @TruffleBoundary
     public String getName() {
         return callTarget.getRootNode().getName();
     }

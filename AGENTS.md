@@ -79,6 +79,8 @@ mx r7rs-test -v 6.10                      # one section, listing failing tests
 mx r7rs-test 6.10                         # one conformance section (chibi's 6.10, or Larceny's base, ...)
 mx r7rs-test --torture                    # capture + resume at every non-tail call
 mx r7rs-test --compile                    # Graal JIT; compile immediately; failures are errors
+mx r7rs-native-image                      # build the native-image `scheme` launcher (design.md D17; minutes, ~3 GB)
+mx r7rs-test --native                     # both conformance suites through the native launcher
 mx r7rs-spec                              # tests/spec (tail-call space, continuations, depth)
 mx scheme [-I dir]... file.scm [arg]...   # the launcher: run a program (--help lists the engine/log options)
 mx scheme                                 # no file: a REPL on stdin

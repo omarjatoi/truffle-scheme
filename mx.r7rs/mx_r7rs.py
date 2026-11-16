@@ -388,10 +388,15 @@ def _listed_exceptions(suite, section, output):
     return marks
 
 
-def _run_conformance(sections, compile=False, torture=False):
-    """Runs sections under our implementation, one JVM per suite and mode (scheme.launcher.ConformanceRunner).
+def _run_conformance(sections, compile=False, torture=False, native=None):
+    """Runs sections under our implementation, one JVM per suite and mode (scheme.launcher.ConformanceRunner),
+    or, with `native` (the native launcher's path), one process of it per section.
 
     Returns {(suite name, section id): {'pass', 'fail', 'error', 'complete', 'message', 'output'}}."""
+    if native:
+        if torture:
+            mx.abort('--torture needs the JVM: a native image fixes scheme.torture at build time (design.md D17)')
+        return _run_conformance_native(sections, compile, native)
     results = {}
     for suite, jit in [(suite, jit) for suite in _SUITES for jit in (False, True)]:
         mine = [s for s in sections if s.suite is suite and s.jit == jit]
@@ -432,17 +437,82 @@ def _run_conformance(sections, compile=False, torture=False):
     return results
 
 
+def _launcher_options(vm_args):
+    """The launcher options that set what these -Dpolyglot.* JVM arguments set (design.md D17)."""
+    options = []
+    for arg in vm_args:
+        m = re.match(r'^-Dpolyglot\.(.*)$', arg)
+        if not m:
+            mx.abort(f'no launcher option for {arg}')
+        options.append('--experimental-options' if m.group(1) == 'engine.AllowExperimentalOptions=true' else '--' + m.group(1))
+    return options
+
+
+_NATIVE_SECTION_TIMEOUT = 120  # seconds, as ConformanceRunner's watchdog
+
+
+def _run_conformance_native(sections, compile, launcher):
+    """_run_conformance through the native launcher (M6-06): each section is a `scheme` process, run
+    as ConformanceRunner runs it (library path, working directory, arguments, environment), with
+    stdout and stderr together. The launcher can't tell `(exit 0)` from a program that ends, so a
+    section that expects exit status 0 passes its exit test when the process exits with 0."""
+    def run(section):
+        options = _launcher_options(r7rs_vm_args(compile=compile or section.jit))
+        workdir = tempfile.mkdtemp(prefix=f'r7rs-{section.suite.name}-native-')
+        try:
+            if section.suite is _LARCENY:
+                _LarcenySuite.make_workdir(workdir, section.suite.dir)
+            library_path = section.suite.runner_args(workdir)
+            if '-C' in library_path:  # the working directory is the process's
+                i = library_path.index('-C')
+                del library_path[i:i + 2]
+            env = dict(os.environ)
+            env.update(binding.split('=', 1) for binding in section.env)
+            try:
+                process = subprocess.run([launcher] + options + library_path + [section.file] + section.args,
+                                         cwd=workdir, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                         stderr=subprocess.STDOUT, timeout=_NATIVE_SECTION_TIMEOUT, check=False)
+                output = process.stdout.decode('utf-8', errors='replace')
+                rc = process.returncode
+                message = 'ok' if rc == 0 and section.exit_status is None else f'exit {rc}'
+            except subprocess.TimeoutExpired as e:
+                output = (e.stdout or b'').decode('utf-8', errors='replace')
+                message = f'timeout after {_NATIVE_SECTION_TIMEOUT}s'
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+        return _count_section(section, output, message)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=_default_jobs()) as pool:
+        counts = list(pool.map(run, sections))
+    return {(s.suite.name, s.id): c for s, c in zip(sections, counts)}
+
+
+def _native_launcher_path():
+    """Where `mx r7rs-native-image` puts the native launcher by default."""
+    return join(_suite.get_output_root(), 'native', mx.exe_suffix('scheme'))
+
+
+def _native_launcher(path):
+    """The native launcher at `path` (the default when it is True), which must exist."""
+    path = _native_launcher_path() if path is True else os.path.abspath(path)
+    if not exists(path):
+        mx.abort(f'no native launcher at {path}: build it with `mx r7rs-native-image`')
+    return path
+
+
 def _select_suites(name):
     return _SUITES if name == 'all' else [s for s in _SUITES if s.name == name]
 
 
 def r7rs_test(args):
-    """run the conformance suites (chibi's and Larceny's): [section] [--suite S] [--torture] [--compile]"""
+    """run the conformance suites (chibi's and Larceny's): [section] [--suite S] [--torture] [--compile] [--native [FILE]]"""
     parser = argparse.ArgumentParser(prog='mx r7rs-test')
     parser.add_argument('section', nargs='?', help="one conformance section, e.g. 6.10 (chibi's) or base (Larceny's)")
     parser.add_argument('--suite', choices=['all'] + [s.name for s in _SUITES], default='all', help='which suite (default: all)')
     parser.add_argument('--torture', action='store_true', help='capture + resume at every non-tail call')
     parser.add_argument('--compile', action='store_true', help='compile immediately; compilation failures are errors')
+    parser.add_argument('--native', nargs='?', const=True, metavar='FILE',
+                        help='run each section with the native launcher (default: where `mx r7rs-native-image` puts it)')
     parser.add_argument('-v', '--verbose', action='store_true', help='also list failing tests')
     parser.add_argument('--markdown', metavar='FILE', help='append a Markdown results table to FILE (e.g. $GITHUB_STEP_SUMMARY)')
     parsed = parser.parse_args(args)
@@ -452,8 +522,10 @@ def r7rs_test(args):
         sections = [s for s in sections if s.id == parsed.section]
         if not sections:
             mx.abort(f'unknown section {parsed.section}; sections: ' + ' '.join(s.id for suite in suites for s in suite.sections()))
-    results = _run_conformance(sections, compile=parsed.compile, torture=parsed.torture)
+    native = _native_launcher(parsed.native) if parsed.native else None
+    results = _run_conformance(sections, compile=parsed.compile, torture=parsed.torture, native=native)
     mode = ', '.join(m for m, on in (('--compile', parsed.compile), ('--torture', parsed.torture)) if on) or 'interpreter only'
+    mode += ', native launcher' if native else ''
     markdown = []
     for suite in suites:
         mine = [s for s in sections if s.suite is suite]
@@ -845,6 +917,37 @@ def r7rs_tools(args):
     mx.log('r7rs-tools: the inspector, DAP, the CPU sampler and the memory tracer work on Scheme programs')
 
 
+def r7rs_native_image(args):
+    """build the scheme launcher as a native executable with GraalVM's native-image (M6-06, design.md D17): [--output FILE] [native-image option...]"""
+    parser = argparse.ArgumentParser(prog='mx r7rs-native-image')
+    parser.add_argument('--output', default=_native_launcher_path(), help='the executable (default: %(default)s)')
+    parsed, options = parser.parse_known_args(args)
+    native_image = join(mx.get_jdk().home, 'bin', mx.cmd_suffix('native-image'))
+    if not exists(native_image):
+        mx.abort(f'{native_image} does not exist: the GraalVM on JAVA_HOME has no native-image')
+    mx.command_function('build')(['--dependencies', 'SCHEME_LAUNCHER'])
+    output = os.path.abspath(parsed.output)
+    os.makedirs(os.path.dirname(output), exist_ok=True)
+    # The launcher's module path, as `mx scheme` runs it but without the optional tools. The
+    # language's build-time initialization and its resources come from the SCHEME jar's
+    # META-INF/native-image (src/runtime/META-INF/native-image/org.r7rs/scheme). Truffle's runtime
+    # (TRUFFLE_RUNTIME) on the module path makes native-image add Truffle's runtime-compilation
+    # support, so the executable has the Graal JIT.
+    #
+    # On x86-64 Linux, native-image's default target (x86-64-v3) has AVX2, so the image sorts
+    # primitive arrays with the JDK's libsimdsort, which depends on libm. Nixpkgs' native-image puts
+    # glibc's static libraries on the C library path, so native-image then links glibc's libm.a
+    # into a dynamically linked executable, which fails (`undefined reference to
+    # _dl_x86_cpu_features`). The baseline target has no AVX2 and doesn't use libsimdsort; it is
+    # what nixpkgs' own native-image check builds with. An -march option given here overrides it.
+    if mx.is_linux() and mx.get_arch() == 'amd64':
+        options = ['-march=compatibility'] + options
+    start = time.time()
+    mx.run([native_image] + list(_launcher_jvm_args()) + ['-m', 'scheme.launcher/scheme.launcher.SchemeMain', '-o', output] + options,
+           cwd=os.path.dirname(output))
+    mx.log(f'r7rs-native-image: built {output} in {time.time() - start:.0f}s')
+
+
 def _run_chibi(file):
     out, err = mx.OutputCapture(), mx.OutputCapture()
     rc = mx.run(['chibi-scheme', file], out=out, err=err, nonZeroIsFatal=False)
@@ -970,11 +1073,16 @@ def _status_block(results):
 
 
 def r7rs_status(args):
-    """regenerate the status block in docs/plan.md: [--check]"""
+    """regenerate the status block in docs/plan.md: [--check [--native [FILE]]]"""
     parser = argparse.ArgumentParser(prog='mx r7rs-status')
     parser.add_argument('--check', action='store_true', help='fail if the block is stale instead of rewriting it')
+    parser.add_argument('--native', nargs='?', const=True, metavar='FILE',
+                        help='with --check: check that the native launcher passes what the block says (M6-06)')
     parsed = parser.parse_args(args)
-    results = _run_conformance([s for suite in _SUITES for s in suite.sections()])
+    if parsed.native and not parsed.check:
+        mx.abort('--native only checks the block: the block records the JVM launcher')
+    native = _native_launcher(parsed.native) if parsed.native else None
+    results = _run_conformance([s for suite in _SUITES for s in suite.sections()], native=native)
     block = _status_block(results)
     plan = join(_suite.dir, 'docs', 'plan.md')
     with open(plan, encoding='utf-8') as f:
@@ -982,10 +1090,12 @@ def r7rs_status(args):
     begin, end = text.index(_STATUS_BEGIN), text.index(_STATUS_END) + len(_STATUS_END)
     current = text[begin:end]
     if parsed.check:
+        if current != block and native:
+            mx.abort('The native launcher passes other tests than the status block in docs/plan.md says. It got:\n' + block)
         if current != block:
             mx.abort('The status block in docs/plan.md is stale. Run `mx r7rs-status` and commit the result.\n'
                      'Expected:\n' + block)
-        mx.log('r7rs-status: status block is up to date')
+        mx.log('r7rs-status: ' + ('the native launcher passes what the status block says' if native else 'status block is up to date'))
         return
     if current != block:
         with open(plan, 'w', encoding='utf-8') as f:
@@ -2071,14 +2181,15 @@ mx.update_commands(_suite, {
     'checks': [checks, '[' + ' | '.join(_CHECKS) + ']...'],
     'tests': [tests, '[' + ' | '.join(_TESTS) + ']...'],
     'scheme': [scheme, '[option...] [-I dir]... [file.scm [arg...]]'],
-    'r7rs-test': [r7rs_test, '[section] [--suite all|chibi|larceny] [--torture] [--compile] [-v]'],
+    'r7rs-test': [r7rs_test, '[section] [--suite all|chibi|larceny] [--torture] [--compile] [--native [FILE]] [-v]'],
+    'r7rs-native-image': [r7rs_native_image, '[--output FILE] [native-image option...]'],
     'r7rs-spec': [r7rs_spec, '[-j N] [--shard I/N] [case...]'],
     'r7rs-diff': [r7rs_diff, 'file.scm [--compile] [--torture]'],
     'r7rs-diff-all': [r7rs_diff_all, '[--compile] [--torture]'],
     'r7rs-space': [r7rs_space, ''],
     'r7rs-tools': [r7rs_tools, '[help | dap | inspect | cpusampler | memtracer]...'],
     'r7rs-torture': [r7rs_torture, ''],
-    'r7rs-status': [r7rs_status, ''],
+    'r7rs-status': [r7rs_status, '[--check [--native [FILE]]]'],
     'r7rs-check': [r7rs_check, ''],
     'r7rs-vendor-chibi': [r7rs_vendor_chibi, 'path/to/r7rs-tests.scm --version <chibi version>'],
     'r7rs-vendor-larceny': [r7rs_vendor_larceny, 'path/to/larceny --commit <hash>'],

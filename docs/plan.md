@@ -685,7 +685,7 @@ that edit the same files.
   - **Done when** a debugger test sees captured and `set!` variables with
     their values, evaluates an expression in a suspended frame, and no frame
     is unnamed.
-- [ ] **M6-06 · Native image** *(optional, needs M6-01)*
+- [x] **M6-06 · Native image** *(optional, needs M6-01)*
   - A native-image `scheme` launcher if GraalVM CE's `native-image` is in the
     dev shell, with its startup time measured; otherwise record the decision
     to leave it for later in design.md.
