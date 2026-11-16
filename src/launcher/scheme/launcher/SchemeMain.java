@@ -1,35 +1,58 @@
 package scheme.launcher;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
+import org.graalvm.launcher.AbstractLanguageLauncher;
+import org.graalvm.options.OptionCategory;
 import org.graalvm.polyglot.Context;
+import org.graalvm.polyglot.Engine;
 import org.graalvm.polyglot.EnvironmentAccess;
 import org.graalvm.polyglot.PolyglotException;
 import org.graalvm.polyglot.Source;
 import org.graalvm.polyglot.io.IOAccess;
 
 /**
- * Runs one Scheme program file: {@code scheme.launcher.SchemeMain [-I dir]... file.scm [arg]...}, where
- * each {@code -I dir} adds a directory to the library path (as chibi-scheme's does), and
- * {@code command-line} returns the file and its arguments (as chibi-scheme's does). Used by
- * {@code mx r7rs-diff}, which compares its stdout and exit status with chibi-scheme's (design.md
+ * The {@code scheme} launcher (design.md D17), on GraalVM's launcher framework:
+ *
+ * <pre>
+ * scheme [option...] [-I dir]... [file.scm [arg...]]
+ * </pre>
+ *
+ * <p>With a file, it runs the file as a program (design.md D15), and {@code command-line} returns
+ * the file and the arguments after it. Each {@code -I dir} adds a directory to the library path.
+ * With no file, it starts a REPL in the interaction environment: it reads lines until they hold a
+ * complete input (design.md D13's incomplete-source signal), evaluates it, and writes each of its
+ * values. An error prints a message and the REPL goes on; end of input ends it. The framework adds
+ * {@code --help}, {@code --version}, {@code --engine.*}, {@code --log.*} and the other standard
+ * options, and the tools' options when they are on the module path.
+ *
+ * <p>{@code mx r7rs-diff} compares a program's stdout and exit status with chibi-scheme's (design.md
  * D8), so the exit statuses follow chibi-scheme's:
  *
  * <ul>
- * <li>0 when the program finishes.</li>
- * <li>The program's status when it calls {@code exit} (Truffle context exit).</li>
- * <li>{@value #EXIT_UNCAUGHT_ERROR} (EX_SOFTWARE) for an uncaught error. The message goes to
- * stderr; differential tests never compare its wording.</li>
+ * <li>0 when the program or the REPL's input ends.</li>
+ * <li>The program's status when it calls {@code exit} or {@code emergency-exit}, in a program or in
+ * the REPL.</li>
+ * <li>{@value #EXIT_UNCAUGHT_ERROR} (EX_SOFTWARE) for an uncaught error in a program. The message
+ * goes to stderr; differential tests never compare its wording.</li>
+ * <li>{@value #EXIT_NO_INPUT} (EX_NOINPUT) when the file can't be read, {@value #EXIT_USAGE}
+ * (EX_USAGE) for a malformed {@code -I}, and the framework's statuses for its own options.</li>
  * </ul>
  */
-public final class SchemeMain {
+public final class SchemeMain extends AbstractLanguageLauncher {
 
     public static final String LANGUAGE = "scheme";
     /** chibi-scheme's status for an uncaught error. */
@@ -39,13 +62,119 @@ public final class SchemeMain {
     /** EX_NOINPUT. */
     public static final int EXIT_NO_INPUT = 66;
 
-    private SchemeMain() {
-    }
+    private static final String LIBRARY_PATH_OPTION = "scheme.LibraryPath";
+    /** The prompts, written only when stdin and stdout are a terminal. */
+    private static final String PROMPT = "> ";
+    private static final String CONTINUATION_PROMPT = "  ";
+
+    private final List<String> libraryPath = new ArrayList<>();
+    /** The program file, or null for the REPL. */
+    private String file;
+    private String[] programArguments = new String[0];
+    /** {@code --version} or {@code --show-version}. */
+    private VersionAction versionAction = VersionAction.None;
 
     public static void main(String[] args) {
-        int status = run(args, System.out, System.err);
+        new SchemeMain().launch(args);
+    }
+
+    @Override
+    protected String getLanguageId() {
+        return LANGUAGE;
+    }
+
+    /**
+     * Takes {@code -I dir} (or {@code -Idir}), then the program file and its arguments. Everything
+     * else that starts with {@code -} goes to the framework, which knows the standard options and
+     * rejects the rest; {@code --} ends the options.
+     */
+    @Override
+    protected List<String> preprocessArguments(List<String> arguments, Map<String, String> polyglotOptions) {
+        List<String> unrecognized = new ArrayList<>();
+        int i = 0;
+        while (i < arguments.size()) {
+            String arg = arguments.get(i);
+            if (arg.equals("-I")) {
+                if (i + 1 >= arguments.size()) {
+                    throw abort("-I needs a directory: -I <dir>", EXIT_USAGE);
+                }
+                libraryPath.add(arguments.get(i + 1));
+                i += 2;
+            } else if (arg.startsWith("-I")) {
+                libraryPath.add(arg.substring(2));
+                i++;
+            } else if (arg.equals("--version")) {
+                versionAction = VersionAction.PrintAndExit;
+                i++;
+            } else if (arg.equals("--show-version")) {
+                versionAction = VersionAction.PrintAndContinue;
+                i++;
+            } else if (arg.equals("--")) {
+                i++;
+                break;
+            } else if (arg.startsWith("-") && arg.length() > 1) {
+                unrecognized.add(arg);
+                i++;
+            } else {
+                break;
+            }
+        }
+        if (i < arguments.size()) {
+            file = arguments.get(i);
+            programArguments = arguments.subList(i + 1, arguments.size()).toArray(new String[0]);
+        }
+        return unrecognized;
+    }
+
+    /** {@code --scheme.LibraryPath=...} comes before the {@code -I} directories. */
+    @Override
+    protected void validateArguments(Map<String, String> polyglotOptions) {
+        String given = polyglotOptions.remove(LIBRARY_PATH_OPTION);
+        if (given != null && !given.isEmpty()) {
+            libraryPath.addAll(0, Arrays.asList(given.split(File.pathSeparator)));
+        }
+    }
+
+    @Override
+    protected void launch(Context.Builder builder) {
+        configure(builder, libraryPath);
+        if (versionAction != VersionAction.None) {
+            try (Engine engine = Engine.create()) {
+                runVersionAction(versionAction, engine);
+            }
+        }
+        int status;
+        if (file == null) {
+            status = repl(builder, System.in, System.out, System.err, isTTY());
+        } else {
+            status = runProgram(builder, file, programArguments, System.err);
+        }
         System.out.flush();
-        System.exit(status);
+        if (status != 0) {
+            throw exit(status);
+        }
+    }
+
+    @Override
+    protected void printHelp(OptionCategory maxCategory) {
+        println("Usage: scheme [option...] [-I dir]... [file.scm [arg...]]");
+        println("");
+        println("Runs file.scm as an R7RS program; (command-line) returns the file and its arguments.");
+        println("With no file, starts a REPL that reads from stdin and writes each value.");
+        println("");
+        println("Scheme options:");
+        launcherOption("-I <dir>", "Add a directory to the library path (repeatable).");
+        launcherOption("--version", "Print the version and exit.");
+        launcherOption("--show-version", "Print the version and continue.");
+        launcherOption("--", "End the options: the next argument is the file.");
+    }
+
+    @Override
+    protected void collectArguments(Set<String> options) {
+        options.add("-I");
+        options.add("--version");
+        options.add("--show-version");
+        options.add("--");
     }
 
     /**
@@ -53,22 +182,44 @@ public final class SchemeMain {
      * (design.md D7, D10).
      */
     public static Context.Builder newContext(List<String> libraryPath) {
-        return Context.newBuilder(LANGUAGE).allowIO(IOAccess.ALL).allowEnvironmentAccess(EnvironmentAccess.INHERIT).option("scheme.LibraryPath", String.join(File.pathSeparator, libraryPath));
+        return configure(Context.newBuilder(LANGUAGE), libraryPath);
     }
 
-    public static int run(String[] args, OutputStream out, OutputStream err) {
+    private static Context.Builder configure(Context.Builder builder, List<String> libraryPath) {
+        return builder.allowIO(IOAccess.ALL).allowEnvironmentAccess(EnvironmentAccess.INHERIT).option(LIBRARY_PATH_OPTION, String.join(File.pathSeparator, libraryPath));
+    }
+
+    /**
+     * The launcher without the framework's options, in this process: {@code [-I dir]... [file.scm
+     * [arg...]]}, with no file reading REPL input from {@code in}. Returns the exit status.
+     */
+    public static int run(String[] args, InputStream in, OutputStream out, OutputStream err) {
         PrintStream errors = new PrintStream(err, true, StandardCharsets.UTF_8);
-        List<String> libraryPath = new ArrayList<>();
-        int i = 0;
-        while (i + 1 < args.length && args[i].equals("-I")) {
-            libraryPath.add(args[i + 1]);
-            i += 2;
+        SchemeMain launcher = new SchemeMain();
+        try {
+            List<String> unrecognized = launcher.preprocessArguments(Arrays.asList(args), new HashMap<>());
+            if (!unrecognized.isEmpty()) {
+                errors.println("ERROR: unrecognized option: " + unrecognized.get(0));
+                return EXIT_USAGE;
+            }
+        } catch (AbortException e) {
+            errors.println("ERROR: " + e.getMessage());
+            return e.getExitCode();
         }
-        if (args.length < i + 1) {
-            errors.println("usage: scheme.launcher.SchemeMain [-I dir]... <file.scm> [arg]...");
-            return EXIT_USAGE;
+        Context.Builder builder = newContext(launcher.libraryPath).in(in).out(out).err(err);
+        if (launcher.file == null) {
+            return repl(builder, in, out, err, false);
         }
-        String file = args[i];
+        return runProgram(builder, launcher.file, launcher.programArguments, errors);
+    }
+
+    /** {@link #run(String[], InputStream, OutputStream, OutputStream)} with empty stdin. */
+    public static int run(String[] args, OutputStream out, OutputStream err) {
+        return run(args, InputStream.nullInputStream(), out, err);
+    }
+
+    /** Runs {@code file} as a program, with {@code arguments} after it in {@code command-line}. */
+    static int runProgram(Context.Builder builder, String file, String[] arguments, PrintStream errors) {
         Source source;
         try {
             source = Source.newBuilder(LANGUAGE, new File(file)).build();
@@ -76,22 +227,114 @@ public final class SchemeMain {
             errors.println("ERROR: cannot read " + file + ": " + e.getMessage());
             return EXIT_NO_INPUT;
         }
-        String[] commandLine = Arrays.copyOfRange(args, i, args.length);
-        try (Context context = newContext(libraryPath).arguments(LANGUAGE, commandLine).out(out).err(err).build()) {
+        String[] commandLine = new String[arguments.length + 1];
+        commandLine[0] = file;
+        System.arraycopy(arguments, 0, commandLine, 1, arguments.length);
+        try (Context context = builder.arguments(LANGUAGE, commandLine).build()) {
             context.eval(source);
             return 0;
         } catch (PolyglotException e) {
             if (e.isExit()) {
                 return e.getExitStatus();
             }
-            if (e.isInternalError()) {
-                // Internal errors are bugs and are never turned into Scheme errors (design.md D8).
-                errors.println("INTERNAL ERROR: " + e.getMessage());
-                e.printStackTrace(errors);
-            } else {
-                errors.println("ERROR: " + e.getMessage());
-            }
+            report(e, errors);
             return EXIT_UNCAUGHT_ERROR;
+        }
+    }
+
+    /**
+     * The REPL: reads lines from {@code in} until they hold a complete input, evaluates it in the
+     * interaction environment as an interactive source (which writes its values, design.md D17),
+     * and goes on until end of input or {@code exit}. Returns the exit status.
+     */
+    static int repl(Context.Builder builder, InputStream in, OutputStream out, OutputStream err, boolean prompt) {
+        BufferedReader lines = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8));
+        PrintStream output = new PrintStream(out, true, StandardCharsets.UTF_8);
+        PrintStream errors = new PrintStream(err, true, StandardCharsets.UTF_8);
+        try (Context context = builder.arguments(LANGUAGE, new String[0]).build()) {
+            StringBuilder input = new StringBuilder();
+            int first = 1;
+            int lineNumber = 0;
+            while (true) {
+                if (prompt) {
+                    output.print(input.isEmpty() ? PROMPT : CONTINUATION_PROMPT);
+                    output.flush();
+                }
+                String line = lines.readLine();
+                if (line == null) {
+                    if (!input.toString().isBlank()) {
+                        // End of input inside a datum: report what the reader says about it.
+                        Integer status = evaluate(context, input, first, true, errors);
+                        if (status != null) {
+                            return status;
+                        }
+                    }
+                    if (prompt) {
+                        output.println();
+                    }
+                    return 0;
+                }
+                lineNumber++;
+                if (input.isEmpty()) {
+                    first = lineNumber;
+                }
+                input.append(line).append('\n');
+                if (input.toString().isBlank()) {
+                    input.setLength(0);
+                    continue;
+                }
+                Integer status = evaluate(context, input, first, false, errors);
+                if (status != null) {
+                    return status;
+                }
+            }
+        } catch (IOException e) {
+            errors.println("ERROR: cannot read the input: " + e.getMessage());
+            return EXIT_NO_INPUT;
+        } catch (PolyglotException e) {
+            // Creating the context failed, or closing it after exit or cancellation.
+            if (e.isExit()) {
+                return e.getExitStatus();
+            }
+            report(e, errors);
+            return EXIT_UNCAUGHT_ERROR;
+        }
+    }
+
+    /**
+     * Evaluates one REPL input, and clears it unless it is incomplete and more may come
+     * ({@code atEnd} is false). Returns the exit status if the input exited, otherwise null.
+     */
+    private static Integer evaluate(Context context, StringBuilder input, int firstLine, boolean atEnd, PrintStream errors) {
+        String name = "<repl:" + firstLine + ">";
+        Source source = Source.newBuilder(LANGUAGE, input.toString(), name).interactive(true).cached(false).buildLiteral();
+        try {
+            context.eval(source);
+        } catch (PolyglotException e) {
+            if (e.isIncompleteSource() && !atEnd) {
+                return null;
+            }
+            input.setLength(0);
+            if (e.isExit()) {
+                return e.getExitStatus();
+            }
+            report(e, errors);
+            if (e.isCancelled()) {
+                return EXIT_UNCAUGHT_ERROR;
+            }
+            return null;
+        }
+        input.setLength(0);
+        return null;
+    }
+
+    private static void report(PolyglotException e, PrintStream errors) {
+        if (e.isInternalError()) {
+            // Internal errors are bugs and are never turned into Scheme errors (design.md D8).
+            errors.println("INTERNAL ERROR: " + e.getMessage());
+            e.printStackTrace(errors);
+        } else {
+            errors.println("ERROR: " + e.getMessage());
         }
     }
 }

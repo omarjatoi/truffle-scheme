@@ -9,8 +9,11 @@ import java.util.IdentityHashMap;
 import java.util.Locale;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.interop.TruffleObject;
 
+import scheme.runtime.Continuation;
 import scheme.runtime.DynEnv;
+import scheme.runtime.InteropValues;
 
 import scheme.runtime.value.MultipleValues;
 import scheme.runtime.value.SBigInteger;
@@ -315,6 +318,11 @@ public final class Printer {
             out.append("#<record-type ").append(t.name).append('>');
         } else if (v instanceof SEnvironment) {
             out.append("#<environment>");
+        } else if (v instanceof Continuation) {
+            out.append("#<continuation>");
+        } else if (v instanceof TruffleObject) {
+            // A foreign value that Java or another language passed in (design.md D10).
+            out.append(InteropValues.displayForeign(v));
         } else {
             // Internal error, never a Scheme error (design.md D8).
             throw new IllegalArgumentException("not a Scheme value: " + v.getClass().getName());

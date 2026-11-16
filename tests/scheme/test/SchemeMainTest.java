@@ -51,9 +51,10 @@ public class SchemeMainTest {
         assertTrue("error message goes to stderr: " + r.err(), r.err().startsWith("ERROR: "));
     }
 
+    /** M6-01: with no file the launcher starts a REPL (LauncherTest), so a usage error is a bad -I. */
     @Test
     public void usageErrorExitsWithExUsage() {
         ByteArrayOutputStream err = new ByteArrayOutputStream();
-        assertEquals(SchemeMain.EXIT_USAGE, SchemeMain.run(new String[0], new ByteArrayOutputStream(), err));
+        assertEquals(SchemeMain.EXIT_USAGE, SchemeMain.run(new String[]{"-I"}, new ByteArrayOutputStream(), err));
     }
 }

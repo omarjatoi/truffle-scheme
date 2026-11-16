@@ -85,6 +85,52 @@ suite = {
             "dependencies": ["TRUFFLE_API", "TRUFFLE_COMPILER"],
             "license": "UPL",
         },
+        # The launcher framework (design.md D17) and the shadowed JLine it requires as a module.
+        "JLINE": {
+            "digest": "sha512:228ccdf13c79a4c9129343118b375ff9b606e19fbe6e968b9bdb40a9965e9073da57d6c0d0ec9151e09a98839c91c15018ae3f9fbfbc101d32862dd60f4bd3cc",
+            "maven": {"groupId": "org.graalvm.shadowed", "artifactId": "jline", "version": "25.5.5.0.3"},
+            "moduleName": "org.graalvm.shadowed.jline",
+            "dependencies": ["NATIVEIMAGE", "POLYGLOT"],
+            "license": "UPL",
+        },
+        "LAUNCHER_COMMON": {
+            "digest": "sha512:c78f2d079a0c1a9c43f3f046bb80af422ca2b46b0adee6410a5fd270d0bbe14313c97b4106064b8047e45ec7576d80ef2c7a41742e69242e81d23cb233d5680d",
+            "maven": {"groupId": "org.graalvm.sdk", "artifactId": "launcher-common", "version": "25.5.5.0.3"},
+            "moduleName": "org.graalvm.launcher",
+            "dependencies": ["COLLECTIONS", "NATIVEIMAGE", "POLYGLOT", "JLINE"],
+            "license": "UPL",
+        },
+        # GraalVM's tools (design.md D17): the Chrome inspector, the debug adapter (DAP), and the
+        # CPU sampler and memory tracer (profiler-tool), with the shadowed JSON library they share.
+        # Only SCHEME_TOOLS uses them: the language and the launcher don't depend on them.
+        "TRUFFLE_JSON": {
+            "digest": "sha512:d6347dc2e35d464e3374c1fe2074cfbb6c9edf32edbf005d5a2148d9bbb814882d24ee3966e3fadd11bdeb332de62c9233a9a3cf3759aa673abf383589dade04",
+            "maven": {"groupId": "org.graalvm.shadowed", "artifactId": "json", "version": "25.5.5.0.3"},
+            "moduleName": "org.graalvm.shadowed.org.json",
+            "dependencies": [],
+            "license": "UPL",
+        },
+        "PROFILER_TOOL": {
+            "digest": "sha512:5c6ac45386d8d4177f09841deab79f49ef7095922a76ccd274afdac169102af25f9c400444da9dc4b2b478348dc464fcdade555d070ffafae629591c7d288562",
+            "maven": {"groupId": "org.graalvm.tools", "artifactId": "profiler-tool", "version": "25.5.5.0.3"},
+            "moduleName": "com.oracle.truffle.tools.profiler",
+            "dependencies": ["TRUFFLE_API", "TRUFFLE_JSON"],
+            "license": "UPL",
+        },
+        "DAP_TOOL": {
+            "digest": "sha512:186380a9fdea9418a29a7e95ee19c893659fc5e60f6d4c17c9094dcc346376b6865a15208b6c1fe5b94748780cfc9c26b27709fa529a60c523c6efbf06a62dd6",
+            "maven": {"groupId": "org.graalvm.tools", "artifactId": "dap-tool", "version": "25.5.5.0.3"},
+            "moduleName": "com.oracle.truffle.tools.dap",
+            "dependencies": ["TRUFFLE_API", "TRUFFLE_JSON"],
+            "license": "UPL",
+        },
+        "CHROMEINSPECTOR_TOOL": {
+            "digest": "sha512:543a9606cf1db7ece91c03f0c0cfff576e56cf7e04215ce4408c1b21997509184030ee7b0977708aa62ed153d3f1467f071405c167fec510e96c84242b9ece90",
+            "maven": {"groupId": "org.graalvm.tools", "artifactId": "chromeinspector-tool", "version": "25.5.5.0.3"},
+            "moduleName": "com.oracle.truffle.tools.chromeinspector",
+            "dependencies": ["TRUFFLE_API", "PROFILER_TOOL", "TRUFFLE_JSON"],
+            "license": "UPL",
+        },
         "TRUFFLE_DSL_PROCESSOR": {
             "digest": "sha512:172b3035371ba99147feb48731fb22f28dc8b453071d31dcf406a26908c1797107b0df541c7a679c39f6db1ca390d31e25d46637bf74bb7f0cee32f942b1dadc",
             "maven": {"groupId": "org.graalvm.truffle", "artifactId": "truffle-dsl-processor", "version": "25.5.5.0.3"},
@@ -144,10 +190,12 @@ suite = {
         },
         "scheme.launcher": {
             # Host-side tools that embed the language: the conformance runner (M1-01)
-            # and SchemeMain, the program runner that mx r7rs-diff uses (M1-02).
+            # and SchemeMain, the `scheme` launcher (M6-01, design.md D17), which
+            # mx r7rs-diff and mx scheme run.
             "dir": "mx.r7rs/projects/launcher",
             "sourceDirs": ["../../../src/launcher"],
             "dependencies": [
+                "LAUNCHER_COMMON",
                 "POLYGLOT",
                 "TRUFFLE_RUNTIME",
             ],
@@ -236,7 +284,22 @@ suite = {
                 "TRUFFLE_API",
                 "TRUFFLE_COMPILER",
                 "TRUFFLE_RUNTIME",
+                "JLINE",
+                "LAUNCHER_COMMON",
             ],
+            "maven": False,
+        },
+        "SCHEME_TOOLS": {
+            # The optional tools distribution (design.md D17): on the module path beside
+            # SCHEME_LAUNCHER, it gives the launcher --inspect, --dap, --cpusampler and
+            # --memtracer. Nothing depends on it; `mx scheme` and `mx tests tools` add it.
+            "type": "pom",
+            "runtimeDependencies": [
+                "CHROMEINSPECTOR_TOOL",
+                "DAP_TOOL",
+                "PROFILER_TOOL",
+            ],
+            "description": "GraalVM tools for R7RS-small Scheme: Chrome inspector, DAP, CPU sampler, memory tracer",
             "maven": False,
         },
         "SCHEME_TEST": {
@@ -259,6 +322,8 @@ suite = {
                 "TRUFFLE_API",
                 "TRUFFLE_COMPILER",
                 "TRUFFLE_RUNTIME",
+                "JLINE",
+                "LAUNCHER_COMMON",
             ],
             "testDistribution": True,
             "unittestConfig": "r7rs",

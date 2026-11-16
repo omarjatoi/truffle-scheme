@@ -68,7 +68,7 @@ and names that task.
 ```
 mx checks                                 # build (ECJ + javac, warnings are errors) and static checks
 mx checks format spotbugs                 # just those steps (see `mx checks nope` for the list)
-mx tests                                  # all tests (unit, conformance status, differential, spec, torture)
+mx tests                                  # all tests (unit, conformance status, differential, spec, torture, tools)
 mx tests unittest diff                    # just those steps
 mx build                                  # build everything
 mx unittest                               # JUnit tests in tests/scheme/test (Graal JIT on, background)
@@ -80,6 +80,10 @@ mx r7rs-test 6.10                         # one conformance section (chibi's 6.1
 mx r7rs-test --torture                    # capture + resume at every non-tail call
 mx r7rs-test --compile                    # Graal JIT; compile immediately; failures are errors
 mx r7rs-spec                              # tests/spec (tail-call space, continuations, depth)
+mx scheme [-I dir]... file.scm [arg]...   # the launcher: run a program (--help lists the engine/log options)
+mx scheme                                 # no file: a REPL on stdin
+mx scheme --dap file.scm                  # with the tools (SCHEME_TOOLS): --inspect, --dap, --cpusampler, --memtracer
+mx r7rs-tools                             # smoke tests of those tools against tests/tools/ (part of mx tests)
 mx r7rs-diff path/to/file.scm             # run under chibi and under us; compare stdout + exit status
 mx r7rs-diff-all                          # every program in tests/diff/ (part of mx tests)
 mx r7rs-space                             # tail loop and deep recursion under -Xss256k (part of mx tests)
@@ -228,7 +232,7 @@ src/runtime/               Bytecode DSL root + operations, continuations
                            (Capture, Segment), trampoline, DynEnv
 src/builtins/              leaf primitives only (see rule 1)
 src/prelude/               standard libraries (.sld) and prelude Scheme code
-src/launcher/              host-side embedding: the conformance runner
+src/launcher/              host-side embedding: the `scheme` launcher, the conformance runner
 tests/r7rs/                chibi suite, vendored, read-only (see its README)
 tests/r7rs-larceny/        Larceny's R7RS suite, vendored, read-only (see its README)
 bench/r7rs-ecraven/        ecraven's R7RS benchmarks, vendored, read-only (see its README)
@@ -237,6 +241,7 @@ bench/postlude.scm         our postlude for them; bench/README.md: running, fail
 tests/lib/                 test-only libraries: the (chibi test) and (tests scheme test) shims
 tests/diff/                programs that must match chibi under mx r7rs-diff; add freely
 tests/space/               programs mx r7rs-space runs under small JVM limits
+tests/tools/               programs mx r7rs-tools debugs and profiles (its checks name their lines)
 tests/spec/                tail-call / continuation / depth cases; existing cases read-only
 tests/scheme/test/         JUnit unit tests; add freely
 ```

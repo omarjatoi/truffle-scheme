@@ -32,6 +32,8 @@ import mx
 import mx_benchmark
 import mx_unittest
 
+import mx_r7rs_tools
+
 _suite = mx.suite('r7rs')
 
 # Flags the runtime reads (plan.md M0-01).
@@ -802,9 +804,16 @@ def r7rs_spec(args):
 
 
 @functools.cache
-def _launcher_jvm_args():
-    """The launcher's module path and friends. Resolved once, before any parallel runs start."""
-    return tuple(mx.get_runtime_jvm_args(['SCHEME_LAUNCHER']))
+def _launcher_jvm_args(tools=False):
+    """The launcher's module path and friends, with the optional tools distribution (design.md D17)
+    if `tools`. Resolved once, before any parallel runs start."""
+    return tuple(mx.get_runtime_jvm_args(['SCHEME_LAUNCHER'] + (['SCHEME_TOOLS'] if tools else [])))
+
+
+def _launcher_command(args, tools=False, vm_args=()):
+    """The java command line that runs the launcher with these arguments."""
+    return mx.get_jdk().generate_java_command(list(vm_args) + list(_launcher_jvm_args(tools)) + _TRUFFLE_VM_ARGS
+                                              + ['-m', 'scheme.launcher/scheme.launcher.SchemeMain'] + list(args))
 
 
 def _run_ours(file, vm_args, jvm_args=()):
@@ -814,6 +823,26 @@ def _run_ours(file, vm_args, jvm_args=()):
                      + ['-m', 'scheme.launcher/scheme.launcher.SchemeMain', file],
                      out=out, err=err, nonZeroIsFatal=False)
     return rc, out.data, err.data
+
+
+def scheme(args):
+    """run the scheme launcher (M6-01, design.md D17) with the tools: [option...] [-I dir]... [file.scm [arg...]]; no file starts a REPL"""
+    # The tools distribution is on the module path, so --inspect, --dap, --cpusampler and
+    # --memtracer work (M6-03). Instruments cost nothing until their option is given.
+    return mx.run_java(list(_launcher_jvm_args(tools=True)) + _TRUFFLE_VM_ARGS + ['-m', 'scheme.launcher/scheme.launcher.SchemeMain'] + args,
+                       nonZeroIsFatal=False)
+
+
+def r7rs_tools(args):
+    """smoke-test the tools distribution (M6-03, design.md D17) against the launcher: [help|dap|inspect|cpusampler|memtracer]..."""
+    _launcher_jvm_args(tools=True)
+    _launcher_jvm_args()
+    commands = mx_r7rs_tools.Commands(tools=lambda launcher_args: _launcher_command(launcher_args, tools=True),
+                                      bare=lambda launcher_args: _launcher_command(launcher_args))
+    failed = mx_r7rs_tools.run(args, join(_suite.dir, 'tests', 'tools'), commands)
+    if failed:
+        mx.abort('r7rs-tools: failed: ' + ' '.join(failed))
+    mx.log('r7rs-tools: the inspector, DAP, the CPU sampler and the memory tracer work on Scheme programs')
 
 
 def _run_chibi(file):
@@ -1995,6 +2024,7 @@ _TESTS = {
     'space': ('tail loop and deep recursion under small JVM limits (M1-06, M2-05)', lambda: r7rs_space([])),
     'spec': ('tests/spec: tail calls, continuations, depth (M2-00, M2-07)', lambda: r7rs_spec([])),
     'torture': ('everything that passes normally passes under --torture (M2-06)', lambda: r7rs_torture([])),
+    'tools': ('the tools distribution: DAP, Chrome inspector, CPU sampler, memory tracer (M6-03)', lambda: r7rs_tools([])),
 }
 
 
@@ -2040,11 +2070,13 @@ def tests(args):
 mx.update_commands(_suite, {
     'checks': [checks, '[' + ' | '.join(_CHECKS) + ']...'],
     'tests': [tests, '[' + ' | '.join(_TESTS) + ']...'],
+    'scheme': [scheme, '[option...] [-I dir]... [file.scm [arg...]]'],
     'r7rs-test': [r7rs_test, '[section] [--suite all|chibi|larceny] [--torture] [--compile] [-v]'],
     'r7rs-spec': [r7rs_spec, '[-j N] [--shard I/N] [case...]'],
     'r7rs-diff': [r7rs_diff, 'file.scm [--compile] [--torture]'],
     'r7rs-diff-all': [r7rs_diff_all, '[--compile] [--torture]'],
     'r7rs-space': [r7rs_space, ''],
+    'r7rs-tools': [r7rs_tools, '[help | dap | inspect | cpusampler | memtracer]...'],
     'r7rs-torture': [r7rs_torture, ''],
     'r7rs-status': [r7rs_status, ''],
     'r7rs-check': [r7rs_check, ''],

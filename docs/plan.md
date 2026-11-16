@@ -641,7 +641,7 @@ Tasks. The *(early)* ones don't touch the compiler or the call path, so
 they can run beside M5's performance work; the others wait for the M5 tasks
 that edit the same files.
 
-- [ ] **M6-01 · The `scheme` launcher** *(early)*
+- [x] **M6-01 · The `scheme` launcher** *(early)*
   - D17: `SchemeMain` on `AbstractLanguageLauncher` (add `launcher-common` at
     the Truffle version to `suite.py`, which this task may change). A file
     runs as a program (D15) with the remaining arguments as `command-line`;
@@ -652,7 +652,7 @@ that edit the same files.
   - **Done when** tests run a program with arguments, an `-I` library, and a
     scripted REPL session (multi-line input, an error, then more input), and
     `exit` statuses reach the process.
-- [ ] **M6-02 · Interop for embedders** *(early)*
+- [x] **M6-02 · Interop for embedders** *(early)*
   - D10: `@ExportLibrary(InteropLibrary.class)` on the value classes (strings
     and characters as strings, bignums as big integers, vectors and
     bytevectors as arrays, lists as iterators, records as objects, `'()` and
@@ -663,7 +663,7 @@ that edit the same files.
   - **Done when** Java tests pass Scheme values both ways, call Scheme
     procedures (including ones that capture and re-enter continuations, and
     raise), and read globals through the bindings.
-- [ ] **M6-03 · Tools distribution and smoke tests** *(needs M6-01)*
+- [x] **M6-03 · Tools distribution and smoke tests** *(needs M6-01)*
   - D17: an optional distribution with the Chrome inspector, DAP and the CPU
     sampler (and memory tracer), usable as `--inspect`, `--dap`,
     `--cpusampler` from the launcher. CI smoke tests drive DAP and the

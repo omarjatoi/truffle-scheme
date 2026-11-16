@@ -32,14 +32,21 @@ public final class PromptRootNode extends RootNode {
     @Override
     public Object execute(VirtualFrame frame) {
         SchemeContext context = SchemeContext.get(this);
-        Object first;
+        // An error that leaves the program leaves the dynamic environment as it found it, so the
+        // next program or interop call (design.md D10) doesn't run with its parameters or handlers.
+        DynEnv outer = context.getDynamicEnv();
         try {
-            first = body.call(NO_ARGUMENTS);
-        } catch (InvokeContinuation e) {
-            context.setDynamicEnv(e.continuation.dynEnv);
-            return driver.run(Capture.ROOT_TAG, e.value, e.continuation.segments, context);
+            Object first;
+            try {
+                first = body.call(NO_ARGUMENTS);
+            } catch (InvokeContinuation e) {
+                context.setDynamicEnv(e.continuation.dynEnv);
+                return driver.run(Capture.ROOT_TAG, e.value, e.continuation.segments, context);
+            }
+            return driver.run(Capture.ROOT_TAG, first, null, context);
+        } finally {
+            context.setDynamicEnv(outer);
         }
-        return driver.run(Capture.ROOT_TAG, first, null, context);
     }
 
     @Override

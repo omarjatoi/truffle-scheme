@@ -2,8 +2,10 @@ package scheme.compiler;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import com.oracle.truffle.api.CallTarget;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
@@ -81,12 +83,12 @@ public final class ProgramCompiler implements SchemeCompiler {
 
     /**
      * A program (R7RS §5.1: text whose first form is {@code import}) runs in a top level of its own,
-     * which has only its imports and its definitions; any other text runs in the interaction
-     * environment (design.md D15).
+     * which has only its imports and its definitions; any other text, and REPL input (an interactive
+     * source, design.md D17) whatever its first form, runs in the interaction environment (D15).
      */
     @Override
     public CallTarget compileProgram(SchemeLanguage language, SchemeContext context, Source source) {
-        return compile(language, context, source, true);
+        return compile(language, context, source, !source.isInteractive());
     }
 
     private static CallTarget compile(SchemeLanguage language, SchemeContext context, Source source, boolean mayBeProgram) {
@@ -195,6 +197,72 @@ public final class ProgramCompiler implements SchemeCompiler {
             return e;
         }
         return e.getErrorObject() != null ? new SchemeError(e.getErrorObject()) : new SchemeError(e.getMessage());
+    }
+
+    // The interaction environment as interop's top scope (design.md D10, D15).
+
+    @Override
+    @TruffleBoundary
+    public List<SSymbol> interactionVariables(SchemeContext context) {
+        CompilerState state = (CompilerState) context.compilerState;
+        Set<SSymbol> names = new LinkedHashSet<>(state.top.entries().keySet());
+        for (GlobalCell cell : state.interaction.cells()) {
+            names.add(cell.name);
+        }
+        List<SSymbol> variables = new ArrayList<>();
+        for (SSymbol name : names) {
+            if (resolveInteraction(state, name) instanceof GlobalCell cell && cell.valueOrNull() != null) {
+                variables.add(name);
+            }
+        }
+        return variables;
+    }
+
+    @Override
+    @TruffleBoundary
+    public GlobalCell interactionCell(SchemeContext context, SSymbol name) {
+        return resolveInteraction((CompilerState) context.compilerState, name) instanceof GlobalCell cell ? cell : null;
+    }
+
+    @Override
+    @TruffleBoundary
+    public boolean interactionDefine(SchemeContext context, SSymbol name, Object value) {
+        CompilerState state = (CompilerState) context.compilerState;
+        if (!(resolveInteraction(state, name) instanceof GlobalCell current)) {
+            return false;
+        }
+        // As the expander's top-level define does: the interaction environment's own cell, bound
+        // for its top-level scope if the name referred to something else (an import).
+        GlobalCell cell = state.interaction.cell(name);
+        if (current != cell) {
+            state.top.bind(name, ScopeSet.EMPTY.add(state.interactionScope), cell);
+        }
+        cell.define(value);
+        return true;
+    }
+
+    /**
+     * What the name refers to written at the interaction environment's top level, as the expander
+     * resolves it: a binding for the top-level scope, else a core form by name, else the interaction
+     * environment's own cell.
+     */
+    private static Object resolveInteraction(CompilerState state, SSymbol name) {
+        ScopeSet scopes = ScopeSet.EMPTY.add(state.interactionScope);
+        SyntacticEnvironment.Entry best = null;
+        for (SyntacticEnvironment.Entry entry : state.top.candidates(name)) {
+            if (entry.scopes().isSubsetOf(scopes) && (best == null || entry.scopes().size() > best.scopes().size())) {
+                best = entry;
+            }
+        }
+        if (best != null) {
+            return best.binding();
+        }
+        for (CoreForm form : CoreForm.values()) {
+            if (form.keyword.equals(name.toString())) {
+                return form;
+            }
+        }
+        return state.interaction.cell(name);
     }
 
     private static RootCallTarget generate(SchemeLanguage language, Ast.Lambda program) {

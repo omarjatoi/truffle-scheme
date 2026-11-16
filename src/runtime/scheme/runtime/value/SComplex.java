@@ -1,13 +1,20 @@
 package scheme.runtime.value;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.interop.InteropLibrary;
 import com.oracle.truffle.api.interop.TruffleObject;
+import com.oracle.truffle.api.library.ExportLibrary;
+import com.oracle.truffle.api.library.ExportMessage;
+
+import scheme.runtime.InteropValues;
+import scheme.runtime.SchemeLanguage;
 
 /**
  * A non-real complex number in rectangular form. Both parts are real numbers of the same exactness:
  * mixing exactness makes both inexact, and an exact zero imaginary part makes the number real
  * (design.md D1). An inexact zero imaginary part stays complex.
  */
+@ExportLibrary(InteropLibrary.class)
 public final class SComplex implements TruffleObject {
 
     public final Object real;
@@ -30,5 +37,32 @@ public final class SComplex implements TruffleObject {
             return new SComplex(Numbers.toDouble(real), Numbers.toDouble(imag));
         }
         return new SComplex(real, imag);
+    }
+
+    // Interop (design.md D10).
+
+    @ExportMessage
+    boolean hasLanguageId() {
+        return true;
+    }
+
+    @ExportMessage
+    String getLanguageId() {
+        return SchemeLanguage.ID;
+    }
+
+    @ExportMessage
+    boolean hasMetaObject() {
+        return true;
+    }
+
+    @ExportMessage
+    Object getMetaObject() {
+        return SchemeType.NUMBER;
+    }
+
+    @ExportMessage
+    Object toDisplayString(@SuppressWarnings("unused") boolean allowSideEffects) {
+        return InteropValues.display(this);
     }
 }
