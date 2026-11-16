@@ -20,8 +20,8 @@ import org.junit.Test;
  * code that doesn't compile: the operation node's {@code checkForPolymorphicSpecialize} reads
  * {@code $bc} and {@code $bci}, which aren't in scope there (docs/upstream.md,
  * "{@code @ReportPolymorphism} on a Bytecode DSL operation doesn't compile"). Our workaround:
- * {@code SchemeRootNode.Call} reports polymorphism itself, through {@code Trampoline.noteCallee}
- * and {@code Trampoline.megamorphic} (scheme.runtime).
+ * {@code SchemeRootNode.Call} reports polymorphism itself, through {@code Trampoline.megamorphic}
+ * (scheme.runtime).
  *
  * <p>The reproducer can't be part of the build, so this test runs javac, with the DSL processor
  * mx gives the tests ({@code -Dr7rs.truffle.dslProcessor}), on {@link #SOURCE}: once as it is,

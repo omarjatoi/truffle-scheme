@@ -174,15 +174,16 @@ thresholds follow, and the check fails past either:
 - The threshold on the time: the baseline is the median of the runs, and the threshold the
   largest of 1.4 times the baseline, the baseline plus 4 standard deviations of the runs, and 1.2
   times the slowest run. GitHub's runners are of several CPU types (AMD EPYC 7763, 9V45 and 9V74,
-  Intel Xeon 8573C and 6975P in the committed runs), and the fastest runs every benchmark about
-  1.9 times faster than the slowest, so these come out at 1.8 to 2.7 times the baseline: they catch
+  Intel Xeon 8370C, 8573C, 6973P and 6975P in the committed runs), and the fastest runs every
+  benchmark about 1.9 times faster than the slowest, so these come out at 1.5 to 2.7 times the
+  baseline: they catch
   a slowdown of everything, such as a lost inlining.
 - The machine-adjusted threshold: a run's machine factor is the median, over its benchmarks, of
   time / baseline (so a few regressed benchmarks don't move it), and a benchmark's adjusted ratio
   its time / baseline / that factor. That takes out most of the difference between runners: the
   runs' adjusted ratios spread by 3 to 10% for most benchmarks, against 15 to 20% unadjusted. The
   threshold is the largest of 1.25 times the runs' median, their median plus 4 standard
-  deviations, and 1.15 times the largest; 1.2 to 1.35 for most benchmarks (startup 1.57), so a slowdown
+  deviations, and 1.15 times the largest; 1.2 to 1.4 for most benchmarks, so a slowdown
   of one benchmark by a third is caught. A run needs at least 10 benchmarks for a machine factor, so
   `mx r7rs-bench-check fib` checks only the first threshold.
 
@@ -198,9 +199,15 @@ runs everything and prints the table, but only warns about benchmarks past their
 fails for a program that fails, a benchmark without a threshold, or a changed workload.
 `--enforce` makes it fail past a threshold anyway.
 
-`mazefun`, `peval` and `parsing` have wide thresholds (adjusted 2.0 to 2.3), and `deriv` a
-wider one (1.4): their steady state is bimodal, some JVMs settling at about 1.7 times the time of
-others, run after run of the same commit. Small slowdowns are for `mx benchmark` and the comparative report, A/B on one
+`peval`, `parsing` and `browse` have wide thresholds (adjusted 2.0 to 2.1), `mazefun` a wider
+one (1.6), and `tak` one of 2.6 from a single slow run: their numbers depend on how far
+background compilation has got. On CI's 4-CPU runners Truffle has two compiler threads, and these
+programs' compilations take longer than the 15 warmup iterations, so each JVM measures a
+different mix of compiled and not yet compiled code (plan.md M7-01; with
+`--engine.BackgroundCompilation=false` the same JVMs agree within a few percent). M7-01 cut the
+compilation work, which made `deriv`'s steady state agree within 10% across JVMs of one runner
+(its adjusted threshold, 1.4, comes from the CPU types, which slow it unevenly) and moved
+`mazefun`'s JVMs mostly to the fast mode; `peval` and `parsing` are still bimodal. Small slowdowns are for `mx benchmark` and the comparative report, A/B on one
 machine. `thresholds.json` records each benchmark's runs, baseline, standard deviation, thresholds
 and the workload it was measured on (a changed workload fails the check until it is measured
 again), and where, when and at which commit the runs were made.

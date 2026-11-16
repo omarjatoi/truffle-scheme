@@ -32,7 +32,7 @@ instrumentation and one trivial operation (the DSL warns if a root has none).
 |---|---|---|
 | [Nested root source sections](#nested-root-source-sections) | `UpstreamNestedRootSourceTest` | `CodeGenerator.usable` (`src/compiler/scheme/compiler/CodeGenerator.java`) |
 | [Empty asynchronous stacks](#empty-asynchronous-stacks) | `UpstreamAsyncStacksTest` | `DebuggerTest.frameNames`, `SpilledFramesTest.everyFrameOnceAtEveryLevelDownAndBackUp` and `describe` (`tests/scheme/test/`) |
-| [ReportPolymorphism on an operation](#reportpolymorphism-on-an-operation) | `UpstreamReportPolymorphismTest` | `SchemeRootNode.Call`'s cache initializers, `Trampoline.noteCallee` and `Trampoline.megamorphic` (`src/runtime/scheme/runtime/`) |
+| [ReportPolymorphism on an operation](#reportpolymorphism-on-an-operation) | `UpstreamReportPolymorphismTest` | `SchemeRootNode.Call`'s cache initializer `Trampoline.megamorphic` (`src/runtime/scheme/runtime/`) |
 
 ## Nested root source sections
 
@@ -262,11 +262,11 @@ path: once as it is, and once without `@ReportPolymorphism`, which compiles.
 - **Expected:** it compiles, like the same source without the annotation.
 - **Actual:** 2 errors, `cannot find symbol` for `$bc` and for `$bci`, in
   `PolyRootGen.java`.
-- **Our workaround:** `SchemeRootNode.Call` reports polymorphism itself. Its
-  cache initializers call `trampoline.noteCallee(target)`, which calls
-  `reportPolymorphicSpecialize()` from the second distinct call target on, and
-  `trampoline.megamorphic()`, which reports when the site goes megamorphic.
-  `Trampoline`, a plain DSL node, has `@ReportPolymorphism`, where it works.
+- **Our workaround:** `SchemeRootNode.Call` reports polymorphism itself: its
+  `doIndirect` cache initializer calls `trampoline.megamorphic()`, which calls
+  `reportPolymorphicSpecialize()` when the site goes megamorphic (since M7-01 a
+  site reports only then, as `@ReportPolymorphism.Megamorphic` would).
+  `Trampoline`'s tail-call caches, plain DSL nodes, report the same way.
 
 ### Issue text
 

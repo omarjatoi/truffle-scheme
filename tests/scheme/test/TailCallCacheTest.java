@@ -145,12 +145,15 @@ public class TailCallCacheTest {
 
     @Test
     public void higherOrderProceduresAreSplit() throws IOException {
-        // twice is called from three sites, each with a procedure of its own: its call site reports
-        // the polymorphism, and Truffle splits it for each caller.
+        // twice is called from five sites, each with a procedure of its own: more than its call
+        // site's cache holds, so the site reports the polymorphism, and Truffle splits twice for
+        // each caller. (Since M7-01 a site reports only when it goes megamorphic: up to the cache
+        // limit it inlines every procedure it has seen; StableWarmupTest checks that.)
         String log = engineLog("(define (twice f x) (f (f x)))" +
                         "(define (a x) (twice (lambda (y) (+ y 1)) x)) (define (b x) (twice (lambda (y) (* y 2)) x))" +
-                        "(define (c x) (twice (lambda (y) (- y 3)) x))" +
-                        "(let loop ((i 0) (s 0)) (if (= i 2000) s (loop (+ i 1) (+ s (a i) (b i) (c i)))))",
+                        "(define (c x) (twice (lambda (y) (- y 3)) x)) (define (d x) (twice (lambda (y) (+ y 4)) x))" +
+                        "(define (e x) (twice (lambda (y) (* y 5)) x))" +
+                        "(let loop ((i 0) (s 0)) (if (= i 2000) s (loop (+ i 1) (+ s (a i) (b i) (c i) (d i) (e i)))))",
                         "engine.TraceSplitting", "true");
         assertTrue(log, Pattern.compile("split\\s+\\S+\\s+twice\\b").matcher(log).find());
     }
