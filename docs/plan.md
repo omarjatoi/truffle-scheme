@@ -522,7 +522,7 @@ benchmark measures a conforming implementation. Benchmark first, then optimize
 against the numbers: every optimization task reports before and after on the
 M5-01 benchmarks and M5-02's report.
 
-- [ ] **M5-01 · Benchmark suites under `mx benchmark`** *(early)*
+- [x] **M5-01 · Benchmark suites under `mx benchmark`** *(early)*
   - Vendor, read-only like `tests/r7rs/` (with provenance, license and a
     re-vendor command), ecraven's `r7rs-benchmarks`
     (https://ecraven.github.io/r7rs-benchmarks/) and Larceny's

@@ -18,6 +18,7 @@ import time
 from os.path import exists, join
 
 import mx
+import mx_benchmark
 import mx_unittest
 
 _suite = mx.suite('r7rs')
@@ -955,6 +956,309 @@ def r7rs_status(args):
 
 
 # ---------------------------------------------------------------------------
+# Benchmarks (plan.md M5-01): ecraven's and Larceny's R7RS benchmark sets under `mx benchmark`
+# ---------------------------------------------------------------------------
+
+_BENCH_DIR = join(_suite.dir, 'bench')
+
+
+class _BenchmarkSet:
+    """A vendored benchmark set (bench/r7rs-<name>/, read-only): upstream's src/<program>.scm,
+    inputs/<program>.input and the shared src/common.scm harness, run the way upstream's `bench`
+    script runs them (bench/README.md)."""
+
+    def __init__(self, name, url, upstream_dir, copied, extra):
+        self.name = name
+        self.dir = join(_BENCH_DIR, 'r7rs-' + name)
+        self.url = url
+        self.upstream_dir = upstream_dir  # in the upstream repository
+        self.copied = copied  # files and directories of upstream_dir that are vendored
+        self.extra = extra  # {vendored name: path in the upstream repository}
+
+    def _tsv(self):
+        with open(join(self.dir, 'benchmarks.tsv'), encoding='utf-8') as f:
+            return f.read().splitlines()
+
+    def benchmarks(self):
+        """[(program, group)], in upstream's order (its bench script's ALL_BENCHMARKS)."""
+        return [tuple(line.split('\t')) for line in self._tsv() if line and not line.startswith('#')]
+
+    def commit(self):
+        m = re.search(r' at ([0-9a-f]{40})', self._tsv()[0])
+        return m.group(1) if m else 'unknown'
+
+    def failures(self):
+        """{program: reason}: the programs bench/README.md lists as failing, with the reason."""
+        return _listed_benchmark_failures().get(self.name, {})
+
+    def _read(self, *path):
+        with open(join(self.dir, *path), 'rb') as f:
+            return f.read()
+
+    def program(self, name, postlude):
+        """The program upstream's bench script builds, with our postlude in the place of an
+        implementation's postlude: after common.scm, before the call that runs the benchmark."""
+        source, common = self._read('src', name + '.scm'), self._read('src', 'common.scm')
+        if self.name == 'ecraven':
+            # bench: cat <impl>-prelude.scm <program>.scm common.scm <impl>-postlude.scm common-postlude.scm
+            return b'\n'.join([source, common, postlude, self._read('src', 'common-postlude.scm')])
+        # Larceny's bench: cat <program>.scm common.scm, where common.scm ends by calling (main).
+        # ecraven's split that call into common-postlude.scm; we split it off the same way.
+        m = re.search(rb'^\(main\)\s*\Z', common, re.MULTILINE)
+        if not m:
+            mx.abort(f'{self.dir}/src/common.scm no longer ends with (main): update the driver')
+        return b'\n'.join([source, common[:m.start()], postlude, b'(main)\n'])
+
+
+_BENCH_SETS = [
+    _BenchmarkSet('ecraven', 'https://github.com/ecraven/r7rs-benchmarks', '',
+                  ['README.org', 'bench', 'src', 'inputs'], {}),
+    _BenchmarkSet('larceny', 'https://github.com/larcenists/larceny', join('test', 'Benchmarking', 'R7RS'),
+                  ['README', 'bench', 'src', 'inputs'], {'COPYRIGHT': 'COPYRIGHT'}),
+]
+
+
+@functools.cache
+def _listed_benchmark_failures():
+    """bench/README.md's Failures table: | `set` | `program` | reason |."""
+    listed = {}
+    with open(join(_BENCH_DIR, 'README.md'), encoding='utf-8') as f:
+        in_table = False
+        for line in f:
+            if line.startswith('## '):
+                in_table = line.strip() == '## Failures'
+            elif in_table and line.startswith('| `'):
+                cells = [c.strip() for c in line.strip().strip('|').split(' | ')]
+                listed.setdefault(cells[0].strip('`'), {})[cells[1].strip('`')] = cells[2]
+    return listed
+
+
+def _bench_script_variables(text):
+    """The NAME="..." assignments of an upstream bench script, with $VAR references expanded."""
+    variables = {}
+    for m in re.finditer(r'^([A-Z0-9_]+)="([^"]*)"\s*$', text, re.MULTILINE):
+        variables[m.group(1)] = re.sub(r'\$(\w+)', lambda v: variables.get(v.group(1), ''), m.group(2))
+    return variables
+
+
+def r7rs_vendor_benchmarks(args):
+    """copy ecraven's or Larceny's R7RS benchmarks into bench/r7rs-<set>/ (M5-01)"""
+    parser = argparse.ArgumentParser(prog='mx r7rs-vendor-benchmarks')
+    parser.add_argument('set', choices=[s.name for s in _BENCH_SETS])
+    parser.add_argument('source', help='a checkout of the upstream repository (see bench/README.md)')
+    parser.add_argument('--commit', required=True, help='the commit the checkout is at')
+    parsed = parser.parse_args(args)
+    bench_set = next(s for s in _BENCH_SETS if s.name == parsed.set)
+    upstream = join(parsed.source, bench_set.upstream_dir)
+    if not re.fullmatch(r'[0-9a-f]{40}', parsed.commit):
+        mx.abort('--commit takes a full commit hash')
+    # Everything but our README.md is upstream's, copied unchanged.
+    os.makedirs(bench_set.dir, exist_ok=True)
+    for name in os.listdir(bench_set.dir):
+        if name != 'README.md':
+            path = join(bench_set.dir, name)
+            shutil.rmtree(path) if os.path.isdir(path) else os.remove(path)
+    for name in bench_set.copied:
+        source = join(upstream, name)
+        if os.path.isdir(source):
+            shutil.copytree(source, join(bench_set.dir, name))
+        else:
+            shutil.copyfile(source, join(bench_set.dir, name))
+    for name, path in bench_set.extra.items():
+        shutil.copyfile(join(parsed.source, path), join(bench_set.dir, name))
+    # The programs: the bench script's ALL_BENCHMARKS (`./bench <system> all`), grouped as it groups them.
+    with open(join(bench_set.dir, 'bench'), encoding='utf-8') as f:
+        variables = _bench_script_variables(f.read())
+    if 'ALL_BENCHMARKS' not in variables:
+        mx.abort('the bench script no longer defines ALL_BENCHMARKS: update the driver')
+    groups = [g for g in variables if g != 'ALL_BENCHMARKS' and (g.endswith('_BENCHMARKS') or g.startswith('RED_EDITION_'))]
+    rows = []
+    for program in variables['ALL_BENCHMARKS'].split():
+        group = next((g for g in groups if program in variables[g].split()), '-')
+        for needed in (join('src', program + '.scm'), join('inputs', program + '.input')):
+            if not exists(join(bench_set.dir, needed)):
+                mx.abort(f'{program}: upstream has no {needed}')
+        rows.append(f'{program}\t{group}')
+    with open(join(bench_set.dir, 'benchmarks.tsv'), 'w', encoding='utf-8') as f:
+        f.write(f'# {bench_set.url} at {parsed.commit}. Generated by `mx r7rs-vendor-benchmarks {bench_set.name}`;\n'
+                '# columns: program (the bench script\'s ALL_BENCHMARKS, in its order), the bench script\'s group.\n')
+        f.write('\n'.join(rows) + '\n')
+    sums = []
+    for dirpath, dirnames, filenames in os.walk(bench_set.dir):
+        dirnames.sort()
+        for name in sorted(filenames):
+            rel = os.path.relpath(join(dirpath, name), bench_set.dir)
+            if rel not in ('README.md', 'SHA256SUMS', 'benchmarks.tsv'):
+                with open(join(dirpath, name), 'rb') as f:
+                    sums.append(f'{hashlib.sha256(f.read()).hexdigest()}  {rel}')
+    with open(join(bench_set.dir, 'SHA256SUMS'), 'w', encoding='utf-8') as f:
+        f.write('\n'.join(sums) + '\n')
+    mx.log(f'wrote {len(sums)} files and {len(rows)} programs to {os.path.relpath(bench_set.dir, _suite.dir)}')
+
+
+_BENCH_MODES = {
+    # mode: (VM arguments, default iterations, default warmup iterations)
+    'jit': ([], 3, 1),
+    'interpreter': (INTERPRETER_VM_ARGS, 1, 0),
+}
+
+_ELAPSED_LINE = re.compile(r'^Elapsed time: (\S+) seconds \(.*\) for (.*)$', re.MULTILINE)
+
+
+def _bench_options_parser():
+    parser = argparse.ArgumentParser(prog='mx benchmark r7rs-<set>:<program> -- ', add_help=False)
+    parser.add_argument('--mode', choices=list(_BENCH_MODES) + ['*'], default='jit',
+                        help='jit (default), interpreter, or * for both')
+    parser.add_argument('--iterations', type=int, metavar='N',
+                        help="how many times one JVM runs the suite's harness (each time `count` runs and the check)")
+    parser.add_argument('--warmup', type=int, metavar='N', help='how many of those iterations are warmup')
+    parser.add_argument('--count', type=int, metavar='N',
+                        help="runs per iteration (default: the program's own count, from its .input file)")
+    parser.add_argument('--timeout', type=int, default=0, metavar='SECONDS', help='kill the JVM after this long (0: never)')
+    return parser
+
+
+class _R7RSBenchmarkSuite(mx_benchmark.StdOutBenchmarkSuite):
+    """`mx benchmark r7rs-<set>:<program>` (or :* for every program, each in a JVM of its own).
+
+    Options, after `--`: see _bench_options_parser; anything else is a JVM argument. Each iteration's
+    "Elapsed time" line (printed by the suite's own harness) becomes a `warmup` datapoint, and, after
+    the warmup iterations, a `time` datapoint; the default `rsspercentiles` tracker adds the JVM's
+    peak RSS (`max-rss`). A program whose check fails prints ERROR and fails the benchmark, unless
+    bench/README.md lists it as failing; a listed program that passes fails too, so the list stays
+    current."""
+
+    def __init__(self, bench_set):
+        super().__init__()
+        self.bench_set = bench_set
+
+    def name(self):
+        return 'r7rs-' + self.bench_set.name
+
+    def group(self):
+        return 'r7rs'
+
+    def subgroup(self):
+        return 'truffle-scheme'
+
+    def benchmarkList(self, bmSuiteArgs):
+        return [program for program, _ in self.bench_set.benchmarks()]
+
+    def defaultSuiteVersion(self):
+        return self.bench_set.commit()
+
+    def _options(self, bmSuiteArgs):
+        options, jvm_args = _bench_options_parser().parse_known_args([a for a in bmSuiteArgs if a != '--'])
+        if options.mode != '*':
+            vm_args, iterations, warmup = _BENCH_MODES[options.mode]
+            options.iterations = iterations if options.iterations is None else options.iterations
+            options.warmup = min(warmup, options.iterations - 1) if options.warmup is None else options.warmup
+            if options.iterations < 1 or not 0 <= options.warmup < options.iterations:
+                mx.abort('--iterations must be at least 1 and --warmup less than --iterations')
+            options.vm_args = list(vm_args)
+        return options, jvm_args
+
+    def expandBmSuiteArgs(self, benchmarks, bmSuiteArgs):
+        if self._options(bmSuiteArgs)[0].mode != '*':
+            return [bmSuiteArgs]
+        return [[f'--mode={mode}' if a in ('--mode=*', '*') else a for a in bmSuiteArgs if a != '--mode'] for mode in _BENCH_MODES]
+
+    def vmArgs(self, bmSuiteArgs):
+        options, jvm_args = self._options(bmSuiteArgs)
+        return _TRUFFLE_VM_ARGS + options.vm_args + jvm_args
+
+    def runArgs(self, bmSuiteArgs):
+        return []
+
+    def failurePatterns(self):
+        # ERROR: the harness's "returned incorrect result", or SchemeMain's uncaught error.
+        return [re.compile(r'^(ERROR|INTERNAL ERROR):', re.MULTILINE)]
+
+    def successPatterns(self):
+        return [_ELAPSED_LINE]
+
+    def run(self, benchmarks, bmSuiteArgs):
+        if not benchmarks or len(benchmarks) != 1:
+            mx.abort(f'run one program per JVM: mx benchmark {self.name()}:<program> or {self.name()}:*')
+        program = benchmarks[0]
+        reason = self.bench_set.failures().get(program)
+        try:
+            datapoints = super().run(benchmarks, bmSuiteArgs)
+        except mx_benchmark.BenchmarkFailureError:
+            if reason is None:
+                raise
+            mx.log(f'{self.name()}:{program} failed, as bench/README.md lists: {reason}')
+            return []
+        finally:
+            # The RSS tracker's samples file, if a failure kept the tracker's rule from removing it.
+            samples = getattr(self.tracker(), 'most_recent_text_output', None)
+            if samples and exists(samples):
+                os.remove(samples)
+                self.tracker().most_recent_text_output = None
+        if reason is not None:
+            raise mx_benchmark.BenchmarkFailureError(
+                f'{self.name()}:{program} passes but bench/README.md lists it as failing ({reason}): remove it from the list')
+        return datapoints
+
+    def runAndReturnStdOut(self, benchmarks, bmSuiteArgs):
+        program = benchmarks[0]
+        options, _ = self._options(bmSuiteArgs)
+        implementation = f'truffle-scheme-{options.mode}'
+        with open(join(_BENCH_DIR, 'postlude.scm'), 'rb') as f:
+            postlude = (f'(define %r7rs-bench-implementation "{implementation}")\n'
+                        f'(define %r7rs-bench-iterations {options.iterations})\n'
+                        f'(define %r7rs-bench-count {options.count or "#f"})\n').encode('utf-8') + f.read()
+        with open(join(self.bench_set.dir, 'inputs', program + '.input'), encoding='utf-8') as f:
+            stdin = f.read()
+        # Programs read inputs/... and write outputs/... relative to the working directory.
+        workdir = tempfile.mkdtemp(prefix=f'r7rs-bench-{program}-')
+        try:
+            os.symlink(join(self.bench_set.dir, 'inputs'), join(workdir, 'inputs'))
+            os.mkdir(join(workdir, 'outputs'))
+            file = join(workdir, program + '.scm')
+            with open(file, 'wb') as f:
+                f.write(self.bench_set.program(program, postlude))
+            jdk = mx.get_jdk()
+            command = jdk.generate_java_command(self.vmArgs(bmSuiteArgs) + list(_launcher_jvm_args())
+                                                + ['-m', 'scheme.launcher/scheme.launcher.SchemeMain', file])
+            command = mx.apply_command_mapper_hooks(command, [(name, hook, self) for name, hook in self._command_mapper_hooks.items()])
+            out = mx.TeeOutputCapture(mx.OutputCapture())
+            mx.log(f'{self.name()}:{program} ({options.mode}, {options.iterations} iterations, {options.warmup} warmup'
+                   + (f', count {options.count}' if options.count else '') + ')')
+            rc = mx.run(command, out=out, err=out, cwd=workdir, stdin=stdin, nonZeroIsFatal=False,
+                        timeout=options.timeout or None)
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+        return rc, out.underlying.data, {'host-vm': 'truffle-scheme', 'host-vm-config': options.mode,
+                                         'config.name': options.mode}
+
+    def rules(self, output, benchmarks, bmSuiteArgs):
+        options, _ = self._options(bmSuiteArgs)
+        elapsed = [float(m.group(1)) * 1000 for m in _ELAPSED_LINE.finditer(output)]
+        if len(elapsed) != options.iterations:
+            raise mx_benchmark.BenchmarkFailureError(
+                f'{benchmarks[0]}: {len(elapsed)} "Elapsed time" lines for {options.iterations} iterations')
+        datapoints = []
+        for i, ms in enumerate(elapsed):
+            for metric in ('warmup', 'time') if i >= options.warmup else ('warmup',):
+                datapoints.append(mx_benchmark.FixedRule({
+                    'benchmark': benchmarks[0],
+                    'metric.name': metric,
+                    'metric.value': ms,
+                    'metric.unit': 'ms',
+                    'metric.score-function': 'id',
+                    'metric.type': 'numeric',
+                    'metric.better': 'lower',
+                    'metric.iteration': i,
+                }))
+        return datapoints
+
+
+for _bench_set in _BENCH_SETS:
+    mx_benchmark.add_bm_suite(_R7RSBenchmarkSuite(_bench_set))
+
+
+# ---------------------------------------------------------------------------
 # Rule checks (AGENTS.md "Rules")
 # ---------------------------------------------------------------------------
 
@@ -1095,5 +1399,6 @@ mx.update_commands(_suite, {
     'r7rs-check': [r7rs_check, ''],
     'r7rs-vendor-chibi': [r7rs_vendor_chibi, 'path/to/r7rs-tests.scm --version <chibi version>'],
     'r7rs-vendor-larceny': [r7rs_vendor_larceny, 'path/to/larceny --commit <hash>'],
+    'r7rs-vendor-benchmarks': [r7rs_vendor_benchmarks, 'ecraven|larceny path/to/checkout --commit <hash>'],
     'r7rs-unittest': [r7rs_unittest, '[--compile] [--torture] [-j N] [--shard I/N] [unittest args...]'],
 })

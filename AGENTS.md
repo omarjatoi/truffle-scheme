@@ -87,6 +87,8 @@ mx r7rs-status                            # regenerate the status block in docs/
 mx r7rs-check                             # rule 1: Java builtins never call Scheme
 mx eclipseformat                          # format Java code (GraalVM's Eclipse formatter settings)
 mx spotbugs                               # Java static analysis (SpotBugs)
+mx benchmark r7rs-ecraven:fib             # one benchmark program, JIT (bench/README.md: options, failures)
+mx benchmark r7rs-larceny:* -- --mode=*   # every program of a set, JIT and interpreter
 ```
 
 Before opening a PR: `mx checks && mx tests`. If you touched `src/runtime` or
@@ -133,6 +135,10 @@ summary shows per-section results. Steps whose task hasn't landed yet report
 - Change the GraalVM or Truffle version (nixpkgs in `flake.lock` and the
   Truffle libraries in `suite.py` move together), change `mxversion`, add
   libraries, or change `flake.nix`/`flake.lock`, unless the task says to.
+- Edit the vendored benchmark sets in `bench/r7rs-ecraven/` and
+  `bench/r7rs-larceny/` other than their `README.md` (`mx r7rs-vendor-benchmarks`
+  re-vendors them). A program that fails goes in `bench/README.md`'s Failures
+  table, with its reason.
 
 ## Truffle conventions
 
@@ -225,6 +231,9 @@ src/prelude/               standard libraries (.sld) and prelude Scheme code
 src/launcher/              host-side embedding: the conformance runner
 tests/r7rs/                chibi suite, vendored, read-only (see its README)
 tests/r7rs-larceny/        Larceny's R7RS suite, vendored, read-only (see its README)
+bench/r7rs-ecraven/        ecraven's R7RS benchmarks, vendored, read-only (see its README)
+bench/r7rs-larceny/        Larceny's R7RS benchmarks, vendored, read-only (see its README)
+bench/postlude.scm         our postlude for them; bench/README.md: running, failures
 tests/lib/                 test-only libraries: the (chibi test) and (tests scheme test) shims
 tests/diff/                programs that must match chibi under mx r7rs-diff; add freely
 tests/space/               programs mx r7rs-space runs under small JVM limits

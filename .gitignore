@@ -29,3 +29,6 @@ mx.r7rs/projects/**
 eclipseformat.backup.zip
 # diagnostics Graal writes when a compilation fails (--compile runs)
 graal_dumps/
+# results and RSS samples of `mx benchmark` (bench/README.md)
+bench-results.json
+ps_r7rs-*.txt
