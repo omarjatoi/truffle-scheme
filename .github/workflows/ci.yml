@@ -22,10 +22,10 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: DeterminateSystems/determinate-nix-action@v3
       # Maven jars (Truffle, JUnit, checkstyle, SpotBugs, ...) that mx downloads, keyed by the pinned versions.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/.mx/cache
           key: mx-cache-${{ runner.os }}-${{ hashFiles('mx.r7rs/suite.py', 'flake.lock') }}
@@ -75,9 +75,9 @@ jobs:
           - name: torture, space
             steps: [torture, space]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: DeterminateSystems/determinate-nix-action@v3
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/.mx/cache
           key: mx-cache-${{ runner.os }}-${{ hashFiles('mx.r7rs/suite.py', 'flake.lock') }}
@@ -139,9 +139,9 @@ jobs:
           - mode: compile
             flags: "--compile"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: DeterminateSystems/determinate-nix-action@v3
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/.mx/cache
           key: mx-cache-${{ runner.os }}-${{ hashFiles('mx.r7rs/suite.py', 'flake.lock') }}
