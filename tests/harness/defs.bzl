@@ -53,18 +53,45 @@ def unit_tests(name, srcs, runtime):
         native.test_suite(name = "%s_%s" % (name, mode), tests = tests)
     native.test_suite(name = name, tests = ["%s_%s" % (name, mode) for mode in _UNIT_MODES])
 
+def _chibi_output_impl(ctx):
+    chibi = ctx.attr.chibi[DefaultInfo]
+    ctx.actions.run_shell(
+        inputs = depset([ctx.file.src], transitive = [chibi.default_runfiles.files]),
+        tools = [chibi.files_to_run],
+        outputs = [ctx.outputs.out, ctx.outputs.err, ctx.outputs.status],
+        command = '"$1" "$2" < /dev/null > "$3" 2> "$4"; echo $? > "$5"',
+        arguments = [chibi.files_to_run.executable.path, ctx.file.src.path, ctx.outputs.out.path, ctx.outputs.err.path,
+                     ctx.outputs.status.path],
+        mnemonic = "ChibiOutput",
+        progress_message = "Running %{input} under chibi-scheme",
+    )
+
+chibi_output = rule(
+    implementation = _chibi_output_impl,
+    doc = "A program under chibi-scheme, as a cached build action: `<name>.out`, `.err` and `.status`.",
+    attrs = {
+        "chibi": attr.label(mandatory = True, executable = True, cfg = "exec"),
+        "src": attr.label(mandatory = True, allow_single_file = [".scm"]),
+    },
+    outputs = {"err": "%{name}.err", "out": "%{name}.out", "status": "%{name}.status"},
+)
+
 def diff_tests(name, srcs, runtime, chibi):
-    """`<name>_<program>` and `<name>_torture_<program>`: the same stdout and exit status as chibi-scheme."""
+    """`<name>_<program>` and `<name>_torture_<program>`: the same stdout and exit status as chibi-scheme,
+    whose output for each program is a build action (`<name>_chibi_<program>`), so it reruns only when
+    the program or chibi-scheme changes."""
     tests = []
     for src in srcs:
         base = src.rsplit("/", 1)[-1].removesuffix(".scm")
+        expected = "%s_chibi_%s" % (name, base)
+        chibi_output(name = expected, src = src, chibi = chibi)
         for torture in ("", "torture_"):
             harness_test(
                 name = name + "_" + torture + base,
-                args = ["diff", _runtime(runtime), "--chibi=$(rlocationpath %s)" % chibi, "$(rlocationpath %s)" % src] +
+                args = ["diff", _runtime(runtime), "$(rlocationpath %s)" % src] +
+                       ["--chibi-%s=$(rlocationpath :%s.%s)" % (part, expected, part) for part in ("out", "err", "status")] +
                        (["--torture"] if torture else []),
-                data = [runtime, src, chibi],
-                # chibi-scheme itself takes about 90 s on escape-callcc.scm (ctak with real continuations).
+                data = [runtime, src] + [":%s.%s" % (expected, part) for part in ("out", "err", "status")],
                 size = "large",
             )
             tests.append(name + "_" + torture + base)
