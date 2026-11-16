@@ -14,6 +14,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.PolyglotException;
@@ -178,6 +179,24 @@ public class EmbeddingGuideTest {
             assertFalse(bindings.hasMember("no-such-variable"));
             // readme-snippet-end
         }
+    }
+
+    @Test
+    public void stackSize() throws InterruptedException {
+        // readme-snippet: stack-size
+        long stackSize = 64L << 20;
+        AtomicLong depth = new AtomicLong();
+        Thread thread = new Thread(null, () -> {
+            // Created on this thread, whose stack size the context is told: nothing measures it.
+            try (Context context = Context.newBuilder("scheme").option("scheme.StackSize", Long.toString(stackSize)).build()) {
+                context.eval("scheme", "(define (depth n) (if (= n 0) 0 (+ 1 (depth (- n 1)))))");
+                depth.set(context.eval("scheme", "(depth 20000)").asLong());
+            }
+        }, "scheme", stackSize);
+        thread.start();
+        thread.join();
+        assertEquals(20000, depth.get());
+        // readme-snippet-end
     }
 
     @Test

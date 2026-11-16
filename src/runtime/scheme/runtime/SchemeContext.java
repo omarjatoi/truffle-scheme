@@ -71,12 +71,20 @@ public final class SchemeContext {
     boolean stackMeasured;
     /** Whether the {@code scheme.SpillDepth} option fixes the limit as a count of nested calls. */
     boolean spillDepthFixed;
+    /**
+     * The thread the context was created on, if {@code scheme.StackSize} gives its stack size, and
+     * the limit that size allows there ({@link StackBudget}); null otherwise.
+     */
+    Thread sizedThread;
+    int sizedThreadLimit;
     /** What a non-tail call adds to {@link #stackUse} ({@link StackBudget#callCost}). */
     int interpretedCallCost;
     int compiledCallCost;
     int compiledSlotCost;
     /** Stack-depth spills completed, for tests (plan.md M8-01). */
     public long spills;
+    /** Measurements of a thread's stack ({@link StackBudget#remainingStack}), for tests. */
+    public long stackProbes;
     /**
      * The sharing epoch (design.md "Owned segments"): a spill's segments are owned, resumed in
      * place, while their token holds the epoch this was when the root prompt took them. Bumped
@@ -110,7 +118,7 @@ public final class SchemeContext {
 
     SchemeContext(TruffleLanguage.Env env) {
         this.env = env;
-        StackBudget.initialize(this, env.getOptions().get(SchemeLanguage.SPILL_DEPTH));
+        StackBudget.initialize(this, env.getOptions().get(SchemeLanguage.SPILL_DEPTH), env.getOptions().get(SchemeLanguage.STACK_SIZE));
         this.stdout = new ConsoleOutput(env.out());
         this.stderr = new ConsoleOutput(env.err());
         this.stdin = new ConsoleInput(env.in());
@@ -134,8 +142,9 @@ public final class SchemeContext {
         stderr.target = newEnv.err();
         stdin.target = newEnv.in();
         this.allocationReporter = newEnv.lookup(AllocationReporter.class);
-        // The run's options, and the run's threads: the stack measured so far was the image build's.
-        StackBudget.initialize(this, newEnv.getOptions().get(SchemeLanguage.SPILL_DEPTH));
+        // The run's options, and the run's threads: the stack measured so far was the image build's,
+        // and the thread that takes the context over is the one scheme.StackSize describes.
+        StackBudget.initialize(this, newEnv.getOptions().get(SchemeLanguage.SPILL_DEPTH), newEnv.getOptions().get(SchemeLanguage.STACK_SIZE));
     }
 
     public static SchemeContext get(Node node) {

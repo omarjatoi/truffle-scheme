@@ -2,6 +2,7 @@ package scheme.launcher;
 
 import java.lang.management.ManagementFactory;
 import java.util.Locale;
+import java.util.function.LongConsumer;
 
 /**
  * The thread the {@code scheme} launcher evaluates on (design.md D17): one with a large Java stack,
@@ -20,14 +21,20 @@ import java.util.Locale;
  * {@code --stack-size=<size>} (or the native launcher's {@code --vm.Xss<size>}) gives the
  * evaluation thread that size, and {@code --stack-size=default} keeps the launcher's own thread
  * (on the JVM, its default thread stack; in the native launcher, the process's main thread).
+ *
+ * <p>On its own thread, the launcher knows the stack's size and gives it to the runtime
+ * ({@code scheme.StackSize}), which takes the spill limit from it instead of measuring the stack
+ * (a probe that touched up to 64 MB of it). On the launcher's thread, whose size it doesn't know,
+ * the runtime measures it.
  */
 final class EvaluationThread {
 
     /**
-     * The evaluation thread's stack when no size is given. The spill limit uses at most the first
-     * 64 MB of a thread's stack (StackBudget measures no further), so that is all a recursion
-     * touches; the rest is address space. A stack under about 72 MB is slower to measure (the
-     * measurement overflows it: 0.3 to 0.6 s on 16 or 64 MB), and 256 MB and 1 GB measured alike.
+     * The evaluation thread's stack when no size is given. The launcher tells the runtime the size
+     * ({@code scheme.StackSize}), so nothing measures the stack. The spill limit uses at most 64 MB
+     * of a stack (56 MB, less the reserve), as a measurement would; the rest is room for the frames
+     * the limit undercounts (StackBudget), and address space: a recursion touches only the pages
+     * it reaches.
      */
     static final long LARGE_STACK = 256L << 20;
     /** As a stack size: no thread of its own, the launcher's thread. */
@@ -83,17 +90,19 @@ final class EvaluationThread {
     /**
      * Runs {@code body} on a new thread with a stack of {@code stackSize} bytes, and waits for it;
      * what it throws, this throws. On this thread if the size is {@link #LAUNCHER_THREAD}, or if
-     * the system won't reserve the stack (a limit on address space).
+     * the system won't reserve the stack (a limit on address space). The body is given the stack
+     * size of the thread it runs on, or {@link #LAUNCHER_THREAD} on this one, whose size the
+     * launcher doesn't know.
      */
-    static void run(long stackSize, Runnable body) {
+    static void run(long stackSize, LongConsumer body) {
         if (stackSize == LAUNCHER_THREAD) {
-            body.run();
+            body.accept(LAUNCHER_THREAD);
             return;
         }
         Throwable[] failure = new Throwable[1];
         Thread thread = new Thread(null, () -> {
             try {
-                body.run();
+                body.accept(stackSize);
             } catch (Throwable t) {
                 failure[0] = t;
             }
@@ -101,7 +110,7 @@ final class EvaluationThread {
         try {
             thread.start();
         } catch (OutOfMemoryError e) {
-            body.run();
+            body.accept(LAUNCHER_THREAD);
             return;
         }
         boolean joined = false;

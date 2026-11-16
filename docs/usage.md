@@ -189,10 +189,10 @@ Usage: scheme [option...] [-I dir]... [--stack-size=<size>] [file.scm [arg...]]
 
 The launcher evaluates on a thread of its own with a 256 MB Java stack, so
 that deep non-tail recursion stays on the stack, where it is fastest,
-instead of spilling to the heap (design.md D17). The runtime uses at most 64
-MB of it, the rest being address space only; but it measures those 64 MB the
-first time a recursion is more than about 50 calls deep, which costs that
-much memory (about 60 MB more peak RSS), and 15 to 45 ms.
+instead of spilling to the heap (design.md D17). Only the pages a recursion
+reaches take memory; the rest is address space. The launcher tells the
+runtime the thread's size (the `scheme.StackSize` option), so the runtime
+doesn't have to measure the stack, which would touch up to 64 MB of it.
 `--stack-size=<size>` sets the thread's stack (`512k`, `64m`, `1g`), and
 `--stack-size=default` evaluates on the launcher's own thread, with the
 JVM's default stack (1 or 2 MB). A stack size given to the JVM (`-Xss`, also
@@ -201,7 +201,9 @@ has it. The tests that check deep recursion run the launcher with
 `-Xss256k`. The native launcher takes the same options; a stack size given
 to it as `-Xss` or `--vm.Xss` is the evaluation's too, and
 `--stack-size=default` evaluates on the process's main thread (8 MB,
-`ulimit -s`).
+`ulimit -s`). On the launcher's own thread, whose size the launcher doesn't
+know, the runtime measures the stack the first time a recursion is more than
+about 50 calls deep.
 
 `bazel-bin/scheme` runs the launcher in a JVM with the tools below on its
 module path. Without them, it is a `java` command on the jars that

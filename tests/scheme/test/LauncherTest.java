@@ -432,20 +432,37 @@ public class LauncherTest {
         assertTrue(experimental.err(), experimental.err().contains("experimental"));
     }
 
-    /** A REPL session that recurses 10,000 calls deep, then writes the spills it made (M8-01). */
-    private static final String DEEP_SESSION = """
-                    (define (count i n) (if (= i n) 0 (+ 1 (count (+ i 1) n))))
-                    (count 0 10000)
-                    (%spills)
-                    """;
+    /**
+     * A REPL session that recurses {@code depth} calls deep, then writes the spills it made (M8-01)
+     * and how many times the runtime measured the thread's stack.
+     */
+    private static String deepSession(int depth) {
+        return """
+                        (define (count i n) (if (= i n) 0 (+ 1 (count (+ i 1) n))))
+                        (count 0 %d)
+                        (%%spills)
+                        (%%stack-probes)
+                        """.formatted(depth);
+    }
+
+    private static final String DEEP_SESSION = deepSession(10_000);
+
+    /** What a {@link #deepSession} did: its spills, and its measurements of the stack. */
+    private record Deep(long spills, long probes) {
+    }
+
+    /** What a {@link #deepSession} {@code depth} deep did, after checking that it ran. */
+    private static Deep deep(Result r, int depth) {
+        assertEquals(r.err(), 0, r.status());
+        String[] lines = r.out().split("\n");
+        assertEquals(r.out(), 3, lines.length);
+        assertEquals(r.out(), Integer.toString(depth), lines[0]);
+        return new Deep(Long.parseLong(lines[1]), Long.parseLong(lines[2]));
+    }
 
     /** The spills {@link #DEEP_SESSION} made, after checking that it ran. */
     private static long deepSpills(Result r) {
-        assertEquals(r.err(), 0, r.status());
-        String[] lines = r.out().split("\n");
-        assertEquals(r.out(), 2, lines.length);
-        assertEquals(r.out(), "10000", lines[0]);
-        return Long.parseLong(lines[1]);
+        return deep(r, 10_000).spills();
     }
 
     @Test
@@ -468,5 +485,26 @@ public class LauncherTest {
         Result bad = launch("", "--stack-size=lots");
         assertEquals(bad.err(), SchemeMain.EXIT_USAGE, bad.status());
         assertTrue(bad.err(), bad.err().contains("--stack-size"));
+    }
+
+    @Test
+    public void processTellsTheRuntimeItsEvaluationThreadsStackSize() throws IOException, InterruptedException {
+        // The launcher passes the size it created its evaluation thread with (scheme.StackSize), so
+        // the runtime takes the spill limit from it and doesn't measure the stack (a probe that
+        // touched 64 MB of it, which stayed resident). The limit is what a measurement would give,
+        // 56 MB of the default 256 MB: 20,000 nested calls in the interpreter count 51 MB (2.5 KB
+        // each), and don't spill.
+        Deep large = deep(launchWith(List.of(), deepSession(20_000), "--experimental-options", "--engine.Compilation=false"), 20_000);
+        assertEquals(new Deep(0, 0), large);
+        // A size given with --stack-size is passed on too, however small.
+        assertEquals(0, deep(launchWith(List.of(), DEEP_SESSION, "--stack-size=128m"), 10_000).probes());
+        Deep small = deep(launchWith(List.of(), DEEP_SESSION, "--stack-size=256k"), 10_000);
+        assertTrue(small.toString(), small.spills() > 0 && small.probes() == 0);
+        // On the launcher's own thread, whose size the launcher doesn't know (-Xss, or the JVM's
+        // default), the runtime measures the stack, once.
+        Deep xss = deep(launchWith(List.of("-Xss256k"), DEEP_SESSION), 10_000);
+        assertTrue(xss.toString(), xss.spills() > 0 && xss.probes() == 1);
+        Deep launcherThread = deep(launchWith(List.of(), DEEP_SESSION, "--stack-size=default"), 10_000);
+        assertTrue(launcherThread.toString(), launcherThread.spills() > 0 && launcherThread.probes() == 1);
     }
 }

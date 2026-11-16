@@ -1,7 +1,9 @@
 package scheme.test;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
@@ -93,6 +95,66 @@ public class StackBudgetTest {
             assertEquals(0L, big);
             long small = onThread(256L << 10, () -> spills(context, "(count 0 100000)", 100_000));
             assertTrue("spills: " + small, small > 100);
+        }
+    }
+
+    /** How many times {@code context} has measured a thread's stack. */
+    private static long probes(Context context) {
+        return context.eval(SCHEME, "(%stack-probes)").asLong();
+    }
+
+    @Test
+    public void aThreadMeasuresItsStackOnce() throws InterruptedException {
+        // Without scheme.StackSize, the first call past the floor on a thread measures its stack.
+        long[] result = onThread(64L << 20, () -> withContext(context -> {
+            context.eval(SCHEME, COUNT);
+            long before = probes(context);
+            long spills = spills(context, "(count 0 3000)", 3000) + spills(context, "(count 0 3000)", 3000);
+            return new long[]{before, probes(context), spills};
+        }));
+        assertArrayEquals(new long[]{0, 1, 0}, result);
+    }
+
+    @Test
+    public void stackSizeOptionGivesTheCreatingThreadsLimitWithoutAProbe() throws InterruptedException {
+        // scheme.StackSize is the stack size of the thread the context is created on: there, the
+        // limit comes from it and nothing measures the stack. 20,000 nested calls fit in 64 MB.
+        try (Context context = onThread(64L << 20, () -> {
+            Context created = Context.newBuilder(SCHEME).option("scheme.StackSize", "64m").build();
+            created.eval(SCHEME, COUNT);
+            assertEquals(0L, spills(created, "(count 0 20000)", 20_000));
+            assertEquals(0L, probes(created));
+            return created;
+        })) {
+            // Another thread that enters the context measures its own stack, as before.
+            long small = onThread(256L << 10, () -> spills(context, "(count 0 100000)", 100_000));
+            assertTrue("spills: " + small, small > 100);
+            assertEquals(1L, probes(context));
+        }
+    }
+
+    @Test
+    public void stackSizeOptionOfASmallStackSpills() throws InterruptedException {
+        // Given a 256 KB stack's size, a million nested calls spill, as with a measured one, and
+        // never overflow the stack.
+        long[] result = onThread(256L << 10, () -> {
+            try (Context context = Context.newBuilder(SCHEME).option("scheme.StackSize", "262144").build()) {
+                context.eval(SCHEME, COUNT);
+                return new long[]{spills(context, "(count 0 1000000)", 1_000_000), probes(context)};
+            }
+        });
+        assertTrue("spills: " + result[0], result[0] > 1000);
+        assertEquals(0L, result[1]);
+    }
+
+    @Test
+    public void stackSizeOptionNeedsASize() {
+        for (String bad : new String[]{"lots", "-1m", "12q", ""}) {
+            try (Context context = Context.newBuilder(SCHEME).option("scheme.StackSize", bad).build()) {
+                fail("scheme.StackSize=" + bad + " was accepted: " + context);
+            } catch (IllegalArgumentException e) {
+                assertTrue(e.getMessage(), e.getMessage().contains("scheme.StackSize"));
+            }
         }
     }
 

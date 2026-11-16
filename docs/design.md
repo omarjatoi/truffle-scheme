@@ -225,6 +225,31 @@ full R7RS-small conformance comes first.
     it is given a stack size (D17, "The evaluation thread").
     The option `scheme.SpillDepth` fixes the old count of nested calls
     instead, for tests of spilled frames.
+  - *A stack size the embedder knows isn't measured.* The probe touches
+    what it measures, up to 64 MB, which stays resident (60 MB more peak
+    RSS for a small program), and overflowing a 16 to 64 MB stack took 0.3
+    to 0.6 s. The option `scheme.StackSize` gives the stack size of the
+    thread the context is created on (Truffle creates it on the thread that
+    first uses it, or, pre-initialized in a native image, the one that
+    builds it): on that thread the limit is what a measurement would give,
+    and nothing is measured. That is the size less 256 KB (the VM's guard
+    zones and the thread's first frames, 118 KB on HotSpot, and the frames
+    below the root prompt), at most 64 MB of it as for a measurement, less
+    the same reserve: 56 MB of the launcher's 256 MB. A larger limit isn't
+    safe yet: in the native launcher, a recursion through `apply` that runs
+    while its procedure is being compiled in the background uses up to about
+    twice the stack it counts (it overflows a 64 MB stack, with a limit of
+    56 MB, but not a 128 MB one; interpreted only, or compiled at once, it
+    doesn't), so the 256 MB stack's room beyond the limit is what keeps it
+    from overflowing. The context records that thread, since the option is per
+    context and a stack size per thread: any other thread that enters the
+    context is measured as before. The launcher passes the size it created
+    its evaluation thread with (D17), and nothing when it evaluates on its
+    own thread, whose size it doesn't know (`-Xss`, `--stack-size=default`).
+    Where the probe still runs, the deepest frame that can catch the
+    `StackOverflowError` does, and the frames above it return normally:
+    unwinding the error through millions of compiled probe frames took
+    three quarters of the time (a 16 MB stack: 331 to 75 ms).
   - *Spilling is still per frame.* A frame that doesn't fit is materialized
     when it suspends, and until M8's owned segments was also copied when it
     resumed, about 1 KB allocated and 240 ns per frame (`ack`, M8-01);
@@ -1065,19 +1090,26 @@ Each entry: the decision, why, and what was rejected.
     thread, 8 MB). If the system won't reserve the stack (a limit on
     address space), the launcher evaluates on its own thread. `SchemeMain.run`
     (in-process, for tests) evaluates on its caller's thread.
+  - *The runtime is told the size.* On its own thread the launcher passes
+    the size it created the thread with as `scheme.StackSize`, so the
+    runtime doesn't measure the stack ("Stack-depth spill"); on the
+    launcher's thread (`-Xss`, `--stack-size=default`), whose size it
+    doesn't know, it passes nothing, and the runtime measures it.
   - *Why 256 MB.* A stack's address space is reserved when its thread starts,
     and only the pages a recursion reaches take memory. The spill limit
-    looks at no more than 64 MB of a thread's stack, so a larger stack gains
-    nothing today (256 MB and 1 GB measured alike); below about 72 MB,
-    measuring the stack overflows it, which took 0.3 to 0.6 s on the JVM
-    with 16 or 64 MB stacks, against 15 to 45 ms when the measurement stops
-    at its 64 MB. 256 MB leaves room over the 64 MB, and is the size M8-01
-    measured `ack` with.
-  - *What it costs.* The stack's measurement touches its 64 MB the first
-    time a recursion is more than about 50 interpreted calls deep, and they
-    stay resident. Medians of interleaved runs on an Apple M3 Max shared
-    with other jobs (wall time, peak RSS; "before" is `main`, or for the
-    native launcher `--stack-size=default`, which runs as before):
+    uses no more than 64 MB of a thread's stack (56 MB, less the reserve),
+    so a larger stack gains nothing today (256 MB and 1 GB measured alike).
+    The rest is margin: in the native launcher, a recursion that runs while
+    it is being compiled can use about twice the stack it counts
+    ("Stack-depth spill"), which overflows a 64 MB stack but not 128 MB.
+    256 MB is the size M8-01 measured `ack` with.
+  - *What it costs.* Until the launcher passed the size, the stack's
+    measurement touched its 64 MB the first time a recursion was
+    more than about 50 interpreted calls deep, and they stayed resident.
+    Medians of interleaved runs on an Apple M3 Max shared with other jobs
+    (wall time, peak RSS; "before" is `main`, or for the native launcher
+    `--stack-size=default`, which runs as before), when the launcher first
+    evaluated on its own thread:
 
     | | Before | After |
     |---|---:|---:|
@@ -1096,10 +1128,27 @@ Each entry: the decision, why, and what was rejected.
     | `primes` (1000) | 115 ms | 116 ms | 81 ms | 86 ms |
 
     `divrec` (500 deep) and `primes` (about 1,000) already fit in the old
-    stacks, so only their RSS changes (60 to 90 MB more, the measurement).
-    A smaller default would make the measurement cheaper only by making it
-    overflow, which is slower (above); measuring a stack whose size the
-    launcher knows is a runtime change (a follow-up).
+    stacks, so only their RSS changed (60 to 90 MB more, the measurement).
+    With the size passed, nothing is measured, and the RSS is back. Medians
+    of 21 interleaved runs (15 for `ack(3,12)`, three iterations each, the
+    steady ones' median); "before" measures (`main` after #139), "after" is
+    the same code with the size passed; machine load 10 to 12. The spill
+    limit is the same either way (56 MB), so beyond the measurement's few
+    tens of ms, `ack`'s difference in time is noise:
+
+    | | Native before | Native after | JVM before | JVM after |
+    |---|---:|---:|---:|---:|
+    | A hello-world program | 16 ms, 20 MB | 15 ms, 20 MB | 438 ms, 351 MB | 448 ms, 374 MB |
+    | A program that recurses 100 deep | 56 ms, 89 MB | 14 ms, 21 MB | 469 ms, 458 MB | 400 ms, 376 MB |
+    | `ack(3,12)`: run, peak RSS | 5.6 s, 184 MB | 4.6 s, 73 MB | 8.9 s, 1.59 GB | 7.5 s, 1.69 GB |
+    | `ack(3,12)`: steady iteration | 1.86 s | 1.48 s | 2.59 s | 2.17 s |
+
+    The JVM's RSS is mostly its heap, and varies by tens of MB from run to
+    run. Where the measurement still runs, it is faster (the probe catches
+    its overflow at the bottom, "Stack-depth spill"): the 100-deep program
+    with `-Xss64m` took 987 ms on the JVM before, 558 ms after; with
+    `-Xss16m`, 702 and 593 ms; in the native launcher, 40 to 43 ms before,
+    20 to 23 ms after.
   - Native image honours `Thread`'s stack size argument: on a 256 KB
     thread the native launcher spills as the JVM does.
 - The Chrome inspector, DAP and profiler tools are optional modules

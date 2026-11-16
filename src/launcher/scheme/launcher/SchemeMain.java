@@ -70,6 +70,8 @@ public final class SchemeMain extends AbstractLanguageLauncher {
     public static final int EXIT_NO_INPUT = 66;
 
     private static final String LIBRARY_PATH_OPTION = "scheme.LibraryPath";
+    /** The evaluation thread's stack size, for the runtime (StackBudget). */
+    private static final String STACK_SIZE_RUNTIME_OPTION = "scheme.StackSize";
     private static final String END_STATUS_OPTION = "--end-status=";
     private static final String STACK_SIZE_OPTION = "--stack-size=";
     /** The native launcher's stack size option, which the framework also applies to new threads. */
@@ -211,11 +213,20 @@ public final class SchemeMain extends AbstractLanguageLauncher {
         }
         // The context is created, used and closed on the evaluation thread. An exit status is
         // thrown (AbortException), on to the framework on this thread.
-        EvaluationThread.run(evaluationStackSize(), () -> evaluate(builder));
+        EvaluationThread.run(evaluationStackSize(), threadStack -> evaluate(builder, threadStack));
     }
 
-    /** Runs the program or the REPL; throws the exit status, unless it is 0. */
-    private void evaluate(Context.Builder builder) {
+    /**
+     * Runs the program or the REPL; throws the exit status, unless it is 0. The thread's stack is
+     * {@code threadStack} bytes, or of a size the launcher doesn't know if that is
+     * {@link EvaluationThread#LAUNCHER_THREAD}.
+     */
+    private void evaluate(Context.Builder builder, long threadStack) {
+        if (threadStack != EvaluationThread.LAUNCHER_THREAD) {
+            // The context is created on this thread: the runtime takes the spill limit from its
+            // size instead of measuring the stack (design.md "Stack-depth spill").
+            builder.option(STACK_SIZE_RUNTIME_OPTION, Long.toString(threadStack));
+        }
         int status;
         if (file == null) {
             TerminalInput terminal = isTTY() ? TerminalInput.open(CONTINUATION_PROMPT) : null;

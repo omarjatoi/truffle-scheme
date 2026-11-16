@@ -227,8 +227,33 @@ arguments is a Scheme error, not an interop `ArityException`. Each call runs
 under a prompt of its own (D6), as a program does, so tail calls run in
 constant space and deep recursion spills to the heap inside it. It spills
 once it has used most of the calling thread's Java stack, which the first
-deep recursion on each thread measures (a few milliseconds, design.md
-"Continuations").
+deep recursion on each thread measures (design.md "Continuations"): a few
+milliseconds, and it touches up to 64 MB of the stack, which stays in
+memory.
+
+If you start the thread that creates the context, with a stack size of your
+choosing, tell the context that size with the `scheme.StackSize` option
+(bytes, or `512k`, `64m`, `1g`): on that thread, the spill limit comes from
+the size, and nothing measures the stack. The size is that of the thread
+Scheme starts on in the context, so build the context and first use it on
+the thread you started. Other threads that enter the context still measure
+theirs. The `scheme` launcher does this for its evaluation thread.
+
+<!-- readme: file tests/scheme/test/EmbeddingGuideTest.java#stack-size -->
+```java
+long stackSize = 64L << 20;
+AtomicLong depth = new AtomicLong();
+Thread thread = new Thread(null, () -> {
+    // Created on this thread, whose stack size the context is told: nothing measures it.
+    try (Context context = Context.newBuilder("scheme").option("scheme.StackSize", Long.toString(stackSize)).build()) {
+        context.eval("scheme", "(define (depth n) (if (= n 0) 0 (+ 1 (depth (- n 1)))))");
+        depth.set(context.eval("scheme", "(depth 20000)").asLong());
+    }
+}, "scheme", stackSize);
+thread.start();
+thread.join();
+assertEquals(20000, depth.get());
+```
 
 `context.getBindings("scheme")` is the interaction environment. Its bound
 variables, imported or defined, are its members; syntactic keywords are not.
