@@ -19,6 +19,7 @@ import scheme.runtime.printer.Printer;
 import scheme.runtime.value.MultipleValues;
 import scheme.runtime.value.SBigInteger;
 import scheme.runtime.value.SChar;
+import scheme.runtime.value.SClosure;
 import scheme.runtime.value.SComplex;
 import scheme.runtime.value.SConstant;
 import scheme.runtime.value.SErrorObject;
@@ -46,9 +47,12 @@ final class ControlPrimitives {
                         new PrimitiveSpec("eqv?", 2, 2, Eqv::new),
                         new PrimitiveSpec("equal?", 2, 2, Equal::new),
                         new PrimitiveSpec("not", 1, 1, () -> new TypePredicate(x -> x instanceof Boolean b && !b)),
+                        new PrimitiveSpec("boolean?", 1, 1, () -> new TypePredicate(x -> x instanceof Boolean)),
+                        new PrimitiveSpec("boolean=?", 2, -1, BooleanEquals::new),
+                        new PrimitiveSpec("procedure?", 1, 1, () -> new TypePredicate(x -> x instanceof SClosure)),
                         new PrimitiveSpec("values", 0, -1, Values::new),
                         new PrimitiveSpec("%values->list", 1, 1, ValuesToList::new),
-                        new PrimitiveSpec("apply", 1, -1, Apply::new),
+                        new PrimitiveSpec("apply", 2, -1, Apply::new),
                         new PrimitiveSpec("call/cc", 1, 1, CallCC::new),
                         new PrimitiveSpec("call-with-current-continuation", 1, 1, CallCC::new),
                         new PrimitiveSpec("%capture-to-prompt", 2, 2, CaptureToPrompt::new),
@@ -101,6 +105,21 @@ final class ControlPrimitives {
                 return x.booleanValue() == y.booleanValue();
             }
             return false;
+        }
+    }
+
+    /** {@code (boolean=? b1 b2 b3 ...)} (R7RS §6.3): all #t or all #f; every argument must be a boolean. */
+    static final class BooleanEquals extends PrimitiveNode {
+        @Override
+        public Object execute(Object[] args) {
+            boolean same = true;
+            for (Object arg : args) {
+                if (!(arg instanceof Boolean b)) {
+                    throw notA("boolean=?", "boolean", arg);
+                }
+                same &= b.booleanValue() == (Boolean) args[0];
+            }
+            return same;
         }
     }
 
@@ -168,9 +187,6 @@ final class ControlPrimitives {
 
         @TruffleBoundary
         private static TailCall tailCall(Object[] args) {
-            if (args.length == 1) {
-                return new TailCall(args[0], new Object[]{args[0]});
-            }
             Object[] spread = Lists.toArray("apply", args[args.length - 1]);
             Object[] all = new Object[args.length - 1 + spread.length];
             all[0] = args[0];
