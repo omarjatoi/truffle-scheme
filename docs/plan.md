@@ -581,6 +581,27 @@ M5-01 benchmarks and M5-02's report.
     that runs the benchmarks and fails on a regression past them.
   - **Done when** the job runs on every PR and enforces the thresholds.
 
+**Proposed follow-ups**, from `docs/performance-research.md` (ranked there,
+with evidence, risks and a hill-climbing method). They are not tasks yet. Once
+M5-01's baseline is in, a planning PR turns the ones the numbers confirm into
+M5 tasks:
+
+- Fixnum `+`/`-`/`*` keep their `long` fast path after an overflow. Today
+  one overflow anywhere sends all fixnum arithmetic down the generic path,
+  2.7× slower on `fib`.
+- Leaf primitives in tail position run in place instead of through the
+  caller's trampoline (1.6× on `fib`).
+- Primitives run as per-call-site nodes inside `Call` instead of separate
+  call targets: no Truffle call, per-site type profiles.
+- The trampoline gets an inline cache, so tail-called procedures can be
+  inlined.
+- `Call` reports polymorphism, so Truffle splits the higher-order prelude
+  procedures (`map`, `for-each`, …).
+- Fewer argument copies (`@Variadic(startOffset = 1)`), constant-folded
+  closure contents (`@CompilationFinal` on `SClosure.captured`), and
+  `isTrivial` leaf primitives.
+- Then boxing elimination and the uncached interpreter (with M5-03).
+
 **Exit:** both benchmark sets run under `mx benchmark` with every program
 passing its own check, the comparative report is published and reproducible,
 thresholds are set from the measured baselines, and CI enforces them.
