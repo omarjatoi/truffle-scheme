@@ -576,10 +576,11 @@ Each entry: the decision, why, and what was rejected.
   the differential tests' chibi-scheme from the pinned source of the same
   release (`bazel/chibi.bzl`, with the host's C compiler and `make`), so
   every action can run on another machine. `nix develop .#bench`
-  adds the other R7RS implementations for the comparative benchmark report.
+  adds the other R7RS implementations for the comparative benchmark report;
+  CI's steps use `nix develop .#ci`, which has only `bazel`.
 - **CI runs only what runs on every commit**, on Buildkite
-  (`.buildkite/pipeline.yml`, hosted `linux-small` agents, the Nix dev
-  shell): the lint tests and the other tests. The required check is the
+  (`.buildkite/pipeline.yml`, hosted `linux-small` agents, the Nix
+  `.#ci` shell): the lint tests and the other tests. The required check is the
   build (`buildkite/truffle-scheme`); the pipeline says which steps can
   fail it. Conformance is a test per suite section and mode (interpreted,
   compiled, under torture), which passes when every test of the section

@@ -30,6 +30,15 @@
       in {
         devShells.default = pkgs.mkShell { inherit packages shellHook; };
 
+        # What CI's steps run (.buildkite/pipeline.yml): only Bazel. It brings the JDK, Python and
+        # chibi-scheme itself, and executes remotely, so this shell is a small download.
+        devShells.ci = pkgs.mkShellNoCC {
+          packages = [
+            pkgs.bazelisk
+            (pkgs.writeShellScriptBin "bazel" ''exec ${pkgs.bazelisk}/bin/bazelisk "$@"'')
+          ];
+        };
+
         # The default shell plus the other R7RS implementations that the
         # benchmark report runs ecraven's benchmarks on (bench/README.md), next to
         # chibi-scheme. A shell of its own, `nix develop .#bench`, so that the
