@@ -80,10 +80,18 @@ def _diff_text(expected, actual, from_name, to_name):
 
 def diff(o):
     """A program under chibi-scheme and under ours, interpreted (and under torture with --torture):
-    stdout and exit status must be the same."""
+    stdout and exit status must be the same. The tests take chibi-scheme's from a build action
+    (--chibi-out/-err/-status); `bazel run //:r7rs -- diff FILE` runs it."""
     file = resolve(o.file)
     check(exists(file), f'no such file: {file}')
-    chibi_rc, chibi_out, chibi_err = harness.run_chibi(rlocation(o.chibi), file)
+    if o.chibi_out:
+        chibi = {}
+        for part in ('out', 'err', 'status'):
+            with open(rlocation(getattr(o, 'chibi_' + part)), encoding='utf-8', errors='replace') as f:
+                chibi[part] = f.read()
+        chibi_rc, chibi_out, chibi_err = int(chibi['status']), chibi['out'], chibi['err']
+    else:
+        chibi_rc, chibi_out, chibi_err = harness.run_chibi(rlocation(o.chibi), file)
     ours_rc, ours_out, ours_err = harness.run_ours(Runtime.from_manifest(o.runtime), file,
                                                    harness.vm_args(compile=o.compile, torture=o.torture))
     if chibi_rc == ours_rc and chibi_out == ours_out:
@@ -494,6 +502,8 @@ def main():
     p.add_argument('test_class')
     p = sub.add_parser('diff')
     p.add_argument('file')
+    for part in ('out', 'err', 'status'):
+        p.add_argument('--chibi-' + part, help=f"chibi-scheme's {part}, from its build action (tests)")
     p.add_argument('--compile', action='store_true')
     p.add_argument('--torture', action='store_true')
     p = sub.add_parser('program')
