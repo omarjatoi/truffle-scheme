@@ -170,7 +170,8 @@ public final class Reader {
             if (isWhitespace(c)) {
                 next();
             } else if (c == ';') {
-                while (c != -1 && c != '\n') {
+                // A line comment ends at a line ending: \n, \r or \r\n (R7RS §7.1.1).
+                while (c != -1 && c != '\n' && c != '\r') {
                     c = next();
                 }
             } else if (c == '#') {

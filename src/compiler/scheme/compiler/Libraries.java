@@ -154,6 +154,17 @@ final class Libraries {
         return null;
     }
 
+    /** The file at {@code relative} in the first directory of the library path that has it, or null. */
+    Source findOnPath(String relative) {
+        for (String dir : path) {
+            Source source = new SourceDir.Files(env, env.getPublicTruffleFile(dir)).find(relative);
+            if (source != null) {
+                return source;
+            }
+        }
+        return null;
+    }
+
     /** The library, instantiated if this is its first import. */
     @TruffleBoundary
     Library instantiate(Object name, Expander errors) {

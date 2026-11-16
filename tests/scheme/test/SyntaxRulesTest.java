@@ -180,6 +180,23 @@ public class SyntaxRulesTest {
     }
 
     @Test
+    public void lexicallyBoundEllipsisIsAnOrdinaryIdentifier() {
+        // M4-12 (Larceny's base tests): where a let binds ..., it isn't free-identifier=? to the
+        // ellipsis, so in a pattern it is a pattern variable, and in a template a reference.
+        assertEquals("(2 1 3)", run("""
+                        (write (let ((... 19))
+                                 (define-syntax bar (syntax-rules () ((bar x y ...) (list y x ...))))
+                                 (bar 1 2 3)))"""));
+        assertEquals("(2 1 19)", run("""
+                        (write (let ((... 19))
+                                 (define-syntax bar (syntax-rules () ((bar x y) (list y x ...))))
+                                 (bar 1 2)))"""));
+        // Unbound, or with a custom ellipsis, it is the ellipsis as before.
+        assertEquals("(2 3 1)", run("(define-syntax bar (syntax-rules () ((bar x y ...) (list y ... x)))) (write (bar 1 2 3))"));
+        assertEquals("(2 3 1)", run("(write (let ((... 19)) (define-syntax bar (syntax-rules ::: () ((bar x y :::) (list y ::: x)))) (bar 1 2 3)))"));
+    }
+
+    @Test
     public void tailVectorAndDottedPatterns() {
         String defs = """
                         (define-syntax last-first (syntax-rules () ((_ a ... y z) '(z y a ...))))

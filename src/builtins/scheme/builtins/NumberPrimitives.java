@@ -68,7 +68,7 @@ final class NumberPrimitives {
                         unary("even?", x -> even("even?", x)),
                         new PrimitiveSpec("max", 1, -1, () -> new Extremum("max", 1)),
                         new PrimitiveSpec("min", 1, -1, () -> new Extremum("min", -1)),
-                        unary("abs", x -> Arithmetic.sign("abs", Arithmetic.checkReal("abs", x)) < 0 ? Arithmetic.sub(0L, x) : x),
+                        unary("abs", x -> x instanceof Double d ? Math.abs(d) : Arithmetic.sign("abs", Arithmetic.checkReal("abs", x)) < 0 ? Arithmetic.sub(0L, x) : x),
                         unary("square", x -> Arithmetic.mul(x, x)),
                         // Integer division
                         binary("quotient", (n, d) -> Arithmetic.divide("quotient", n, d, false)[0]),
@@ -239,6 +239,12 @@ final class NumberPrimitives {
         @Override
         public Object execute(Object[] args) {
             if (args.length == 1) {
+                // Negation, not 0 - x: (- 0.0) is -0.0.
+                if (args[0] instanceof Double d) {
+                    return -d;
+                } else if (args[0] instanceof SComplex) {
+                    return Arithmetic.negate(args[0]);
+                }
                 return sub.execute(0L, args[0]);
             }
             Object acc = Arithmetic.check("-", args[0]);

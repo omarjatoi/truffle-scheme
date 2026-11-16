@@ -47,4 +47,17 @@ public class NumbersTest {
         assertEquals("(3 2/3 1.4142135623730951 1/4 #t)", write("(list (sqrt 9) (sqrt 4/9) (sqrt 2) (exact .25) (inexact? (inexact 1/3)))"));
         assertEquals("(1.0 0.0 2.0)", write("(list (exp 0) (log 1) (log 100 10))"));
     }
+
+    @Test
+    public void signedZerosAndBranchCuts() {
+        // M4-12 (Larceny's inexact and complex tests): negation flips a zero's sign, abs clears it.
+        assertEquals("(-0.0 0.0 -0.0 0.0 0 -1/2)", write("(list (- 0.0) (- -0.0) (- -0.0 0.0) (abs -0.0) (- 0) (- 1/2))"));
+        assertEquals("-0.0-1.0i", write("(- 0.0+1.0i)"));
+        // -0.0 is on the negative side of log's branch cut; a negative real's log is complex.
+        assertEquals("(-inf.0 #t #t)", write("(let ((z (log -0.0))) (list (real-part z) (= (imag-part z) (acos -1)) (= (log -1) (make-rectangular 0.0 (acos -1)))))"));
+        assertEquals("-inf.0", write("(log 0.0)"));
+        assertEquals("+nan.0", write("(log +nan.0)"));
+        // No rational is within any distance of an infinity: (rationalize +inf.0 +inf.0) is NaN.
+        assertEquals("(+nan.0 0.0 +inf.0 +nan.0)", write("(list (rationalize +inf.0 +inf.0) (rationalize 3.0 +inf.0) (rationalize +inf.0 3.0) (rationalize +nan.0 1.0))"));
+    }
 }
