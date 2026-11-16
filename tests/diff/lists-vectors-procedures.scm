@@ -1,0 +1,48 @@
+(import (scheme base) (scheme cxr) (scheme write))
+
+;; M4-03: list and vector procedures (R7RS §6.4, §6.8) and (scheme cxr).
+(define (show x) (write x) (newline))
+
+;; Lists.
+(define circ (list 1 2 3))
+(set-cdr! (cddr circ) circ)
+(show (list (list? '(a b)) (list? '()) (list? '(a . b)) (list? circ) (list? 5)))
+(show (make-list 3 'x))
+(show (list (list-tail '(a b c d) 2) (list-ref '(a b c d) 3)))
+(define l (list 1 2 3))
+(list-set! l 2 'three)
+(show l)
+(define shared '((a) (b) . c))
+(define copy (list-copy shared))
+(show (list copy (eq? (car copy) (car shared)) (eq? copy shared) (list-copy 7)))
+(show (list (member '(b) '((a) (b) (c))) (member 2 '(1 2 3) (lambda (x y) (< x y))) (member 'z '(a))))
+(show (list (assoc "b" '(("a" . 1) ("b" . 2))) (assoc 5 '((1 . a) (6 . b)) <) (assoc 'z '())))
+
+;; (scheme cxr).
+(define tree '(((1 . 2) 3 . 4) (5 6) 7 8 9))
+(show (list (caaar tree) (cdaar tree) (cadar tree) (cddar tree) (caadr tree) (cdadr tree)
+            (caddr tree) (cdddr tree) (cadddr tree) (cddddr tree)))
+(define deep '((((a . b) . (c . d)) . ((e . f) . (g . h))) . (((i . j) . (k . l)) . ((m . n) . (o . p)))))
+(show (list (caaaar deep) (cdaaar deep) (cadaar deep) (cddaar deep) (caadar deep) (cdadar deep)
+            (caddar deep) (cdddar deep) (caaadr deep) (cdaadr deep) (cadadr deep) (cddadr deep)
+            (caaddr deep) (cdaddr deep) (cadddr deep) (cddddr deep)))
+
+;; Vectors. (Unequal lengths in vector-map are in ListVectorTest: chibi 0.12 raises an error
+;; there, where R7RS says to stop at the shortest vector.)
+(define v (vector 1 2 3 4 5))
+(show (list (vector->list v) (vector->list v 2) (vector->list v 1 3) (list->vector '(a b))))
+(show (list (vector->string #(#\a #\b #\c) 1) (string->vector "hello" 1 3)))
+(show (list (vector-copy v 3) (vector-append #(a) #() #(b c)) (vector-append)))
+(vector-fill! v 0 3)
+(show v)
+(vector-copy! v 0 #(a b c d e) 1 3)
+(show v)
+(vector-copy! v 1 v 0 4)
+(show v)
+(show (vector-map (lambda (x y) (* x y)) #(1 2 3) #(4 5 6)))
+(show (vector-map car #((a . 1) (b . 2))))
+(define sum 0)
+(vector-for-each (lambda (x) (set! sum (+ sum x))) #(1 2 3 4))
+(show sum)
+(vector-for-each (lambda (x y) (set! sum (+ sum (* x y)))) #(1 2) #(10 20))
+(show sum)

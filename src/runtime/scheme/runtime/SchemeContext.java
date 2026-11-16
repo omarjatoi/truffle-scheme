@@ -1,8 +1,10 @@
 package scheme.runtime;
 
+import java.io.InputStreamReader;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.TruffleLanguage;
 import com.oracle.truffle.api.TruffleLanguage.ContextReference;
 import com.oracle.truffle.api.nodes.Node;
@@ -10,7 +12,7 @@ import com.oracle.truffle.api.nodes.Node;
 import scheme.runtime.value.SPort;
 import scheme.runtime.value.SymbolTable;
 
-/** Per-context state: symbols (D1), globals (D7), and the output port. All I/O goes through {@link #getEnv()} (D10). */
+/** Per-context state: symbols (D1), globals (D7), and the console ports. All I/O goes through {@link #getEnv()} (D10). */
 public final class SchemeContext {
 
     private static final ContextReference<SchemeContext> REFERENCE = ContextReference.create(SchemeLanguage.class);
@@ -21,6 +23,8 @@ public final class SchemeContext {
     public final GlobalEnvironment globals = new GlobalEnvironment();
     private final PrintStream out;
     private SPort stdoutPort;
+    private SPort stderrPort;
+    private SPort stdinPort;
     /**
      * The compiler's per-context state: libraries, the interaction environment and syntactic
      * bindings, which persist from one program to the next. Owned by the compiler
@@ -70,5 +74,23 @@ public final class SchemeContext {
             stdoutPort = SPort.console(out);
         }
         return stdoutPort;
+    }
+
+    /** The console error port: the initial value of current-error-port. */
+    @TruffleBoundary
+    public SPort stderrPort() {
+        if (stderrPort == null) {
+            stderrPort = SPort.console(new PrintStream(env.err(), true, StandardCharsets.UTF_8));
+        }
+        return stderrPort;
+    }
+
+    /** The console input port: the initial value of current-input-port. */
+    @TruffleBoundary
+    public SPort stdinPort() {
+        if (stdinPort == null) {
+            stdinPort = SPort.textInput(new InputStreamReader(env.in(), StandardCharsets.UTF_8), true);
+        }
+        return stdinPort;
     }
 }

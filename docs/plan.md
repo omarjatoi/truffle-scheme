@@ -20,19 +20,19 @@ edit it by hand.
 | 5 Program structure | 15 | 15 |
 | 6.1 Equivalence Predicates | 25 | 25 |
 | 6.2 Numbers | 211 | 211 |
-| 6.3 Booleans | 18 | 18 |
-| 6.4 Lists | 39 | 65 |
-| 6.5 Symbols | 6 | 17 |
-| 6.6 Characters | 0 | 79 |
-| 6.7 Strings | 10 | 130 |
-| 6.8 Vectors | 11 | 43 |
-| 6.9 Bytevectors | 0 | 39 |
-| 6.10 Control Features | 25 | 34 |
-| 6.11 Exceptions | 14 | 30 |
-| 6.12 Environments and evaluation | 0 | 4 |
-| 6.13 Input and output | 7 | 376 |
-| 6.14 System interface | 0 | 13 |
-| **Total** | **507** | **1225** |
+| 6.3 Booleans | 10 | 18 |
+| 6.4 Lists | 65 | 65 |
+| 6.5 Symbols | 17 | 17 |
+| 6.6 Characters | 79 | 79 |
+| 6.7 Strings | 130 | 130 |
+| 6.8 Vectors | 43 | 43 |
+| 6.9 Bytevectors | 39 | 39 |
+| 6.10 Control Features | 28 | 34 |
+| 6.11 Exceptions | 30 | 30 |
+| 6.12 Environments and evaluation | 4 | 4 |
+| 6.13 Input and output | 376 | 376 |
+| 6.14 System interface | 13 | 13 |
+| **Total** | **1211** | **1225** |
 <!-- status:end -->
 
 ---
@@ -366,7 +366,7 @@ parallel. Section counts are from the status block when M4 was drafted.
     `long`/`double` fast paths with overflow into `SBigInteger`.
   - **Done when** section 6.2 (129/211) passes in full, normally and under
     `--torture`, and `tests/diff/numbers-*.scm` programs match chibi.
-- [ ] **M4-02 · Characters, strings and symbols** *(early)*
+- [x] **M4-02 · Characters, strings and symbols** *(early)*
   - R7RS §6.5–6.7 and `(scheme char)`: every character procedure (simple case
     mapping, `digit-value`), every string procedure (`SString`'s Latin-1 and
     UTF-32 storage, full case mapping for `string-upcase` and friends,
@@ -374,7 +374,7 @@ parallel. Section counts are from the status block when M4 was drafted.
     `symbol=?`, `string-map` and `string-for-each` in the prelude (D5).
   - **Done when** sections 6.5 (6/17), 6.6 (0/79) and 6.7 (10/130) pass in
     full, normally and under `--torture`.
-- [ ] **M4-03 · Lists and vectors** *(early)*
+- [x] **M4-03 · Lists and vectors** *(early)*
   - R7RS §6.4 and §6.8: `list?` (tortoise and hare, D9), `make-list`,
     `list-tail` `list-ref` `list-set!` `list-copy`, `member` and `assoc` with
     an optional predicate, the `vector` procedures (`vector-copy`
@@ -384,14 +384,14 @@ parallel. Section counts are from the status block when M4 was drafted.
     `(scheme cxr)`.
   - **Done when** sections 6.4 (39/65) and 6.8 (10/43) pass in full,
     normally and under `--torture`.
-- [ ] **M4-04 · Bytevectors** *(early)*
+- [x] **M4-04 · Bytevectors** *(early)*
   - R7RS §6.9 on `SBytevector`: `bytevector` `make-bytevector`
     `bytevector-u8-ref` `bytevector-u8-set!` `bytevector-length`
     `bytevector-copy` `bytevector-copy!` `bytevector-append`, `utf8->string`
     and `string->utf8` with ranges; literals are immutable.
   - **Done when** section 6.9 (0/39) passes in full, normally and under
     `--torture`.
-- [x] **M4-05 · Control, booleans and exceptions** *(early)*
+- [ ] **M4-05 · Control, booleans and exceptions** *(early)*
   - R7RS §6.3, §6.10 and §6.11: `boolean=?`, `procedure?`, the rest of
     `apply` `map` `for-each` `call-with-values` `dynamic-wind` (multiple
     lists, re-entry safety), `string-map` `vector-map` if M4-02/03 haven't,
@@ -399,7 +399,7 @@ parallel. Section counts are from the status block when M4 was drafted.
     tests, and `make-parameter`'s remaining cases.
   - **Done when** sections 6.3 (10/18), 6.10 (19/34) and 6.11 (14/30) pass in
     full, normally and under `--torture`.
-- [ ] **M4-06 · Input and output** *(early)*
+- [x] **M4-06 · Input and output** *(early)*
   - R7RS §6.13 and `(scheme read)`, `(scheme write)`, `(scheme file)`:
     input ports (string, bytevector, file), binary ports, `read-char`
     `peek-char` `read-line` `read-string` `read-u8` `char-ready?`, `read`
@@ -410,14 +410,14 @@ parallel. Section counts are from the status block when M4 was drafted.
     "Read syntax" and "Numeric syntax" groups.
   - **Done when** section 6.13 (7/376) passes in full, normally and under
     `--torture`.
-- [ ] **M4-07 · eval and environments** *(early)*
+- [x] **M4-07 · eval and environments** *(early)*
   - R7RS §6.12: `eval` compiles in the given environment and tail-calls the
     result (design.md D6, D5), `environment` returns a fresh environment
     importing the given libraries (D7), `interaction-environment`,
     `scheme-report-environment`, `null-environment`.
   - **Done when** section 6.12 (0/4) passes in full, normally and under
     `--torture`.
-- [ ] **M4-08 · Process context and time** *(early)*
+- [x] **M4-08 · Process context and time** *(early)*
   - R7RS §6.14: `exit` runs the outstanding after-thunks through `rewind`
     and exits the context (D9; `EXIT` through interop, D13),
     `emergency-exit` skips them, `command-line`, `get-environment-variable(s)`

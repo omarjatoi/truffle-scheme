@@ -17,6 +17,7 @@ import com.oracle.truffle.api.source.Source;
 import scheme.reader.Scope;
 import scheme.reader.ScopeSet;
 import scheme.reader.Syntax;
+import scheme.runtime.Features;
 import scheme.runtime.GlobalCell;
 import scheme.runtime.GlobalEnvironment;
 import scheme.runtime.printer.Printer;
@@ -38,8 +39,8 @@ import scheme.runtime.value.SymbolTable;
  */
 final class Libraries {
 
-    /** The feature identifiers cond-expand recognizes (R7RS Appendix B). */
-    static final Set<String> FEATURES = Set.of("r7rs", "exact-closed", "exact-complex", "ieee-float", "full-unicode", "ratios", "truffle-scheme");
+    /** The feature identifiers cond-expand recognizes (R7RS Appendix B): the ones features returns. */
+    static final Set<String> FEATURES = Set.copyOf(Features.NAMES);
 
     /** Runs an expanded library body (with its prompt, design.md D6). */
     interface Runner {
