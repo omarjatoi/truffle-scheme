@@ -7,6 +7,7 @@ import java.util.IdentityHashMap;
 import java.util.Set;
 import java.util.Deque;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
@@ -94,7 +95,7 @@ final class CodeGenerator {
     private Runnable gen(Expr e, Ctx ctx) {
         return () -> {
             Class<?>[] tags = tags(e, ctx);
-            SourceSection section = e.source != null && e.source.isAvailable() ? e.source : null;
+            SourceSection section = usable(e.source);
             if (section == null && tags.length == 0) {
                 push(expand(e, ctx));
                 return;
@@ -156,17 +157,46 @@ final class CodeGenerator {
         return states.peek();
     }
 
+    /**
+     * A source section the builder can attach to code of the current root, or null.
+     *
+     * <p>A root built inside another (a lambda's, inside the root that makes its closure) can only
+     * have sections in one Source: the Truffle 25.5 builder looks for a section's Source in every
+     * enclosing root being built, and the outermost one with a Source open wins
+     * ({@code beginSourceSectionPrefix} keeps searching after it finds one). A section in another
+     * file (from a macro template, say) would point into the wrong Source, possibly past its end,
+     * so it is left out, and the code it covers reports the enclosing section.
+     */
+    private SourceSection usable(SourceSection section) {
+        if (section == null || !section.isAvailable()) {
+            return null;
+        }
+        Iterator<State> outermostFirst = states.descendingIterator();
+        while (outermostFirst.hasNext()) {
+            State s = outermostFirst.next();
+            if (s == states.peek()) {
+                break;
+            }
+            if (s.source != null) {
+                return s.source.equals(section.getSource()) ? section : null;
+            }
+        }
+        return section;
+    }
+
     // ------------------------------------------------------------------------------------------
     // Roots
 
     private void pushRoot(Lambda fn, RootHolder holder) {
         boolean loops = !fn.program && fn.rest == null;
         List<Runnable> seq = new ArrayList<>();
-        SourceSection section = fn.source != null && fn.source.isAvailable() ? fn.source : null;
+        SourceSection[] sections = new SourceSection[1];
         seq.add(() -> {
             b.beginRoot();
             State st = new State(fn);
             states.push(st);
+            SourceSection section = usable(fn.source);
+            sections[0] = section;
             if (section != null) {
                 b.beginSource(section.getSource());
                 b.beginSourceSection(section.getCharIndex(), section.getCharLength());
@@ -212,7 +242,7 @@ final class CodeGenerator {
                 b.endBlock();
                 b.endWhile();
             }
-            if (section != null) {
+            if (sections[0] != null) {
                 b.endSourceSection();
                 b.endSource();
             }
@@ -244,6 +274,9 @@ final class CodeGenerator {
         State st = state();
         if (v.owner == st.lambda) {
             b.emitLoadLocal(st.locals.get(v));
+        } else if (v.self == st.lambda) {
+            // A fixed letrec* variable in its own lambda's root is the running closure (Closures).
+            b.emitLoadArgument(0);
         } else {
             b.beginLoadCaptured(st.lambda.free.get(v));
             b.emitLoadArgument(0);
@@ -334,6 +367,8 @@ final class CodeGenerator {
             }
             seq.add(b::endBlock);
             return seq;
+        } else if (e instanceof Ast.Let l) {
+            return let(l, ctx);
         } else if (e instanceof Ast.Letrec l) {
             List<Runnable> seq = new ArrayList<>();
             seq.add(() -> {
@@ -356,6 +391,10 @@ final class CodeGenerator {
                     seq.add(gen(l.inits.get(k), Ctx.VALUE));
                     seq.add(b::endStoreLocal);
                 }
+                if (v.fixed) {
+                    int j = k;
+                    seq.add(() -> patch(l, j));
+                }
             }
             seq.add(gen(l.body, ctx));
             seq.add(b::endBlock);
@@ -373,6 +412,66 @@ final class CodeGenerator {
             return call(c, ctx);
         }
         throw new IllegalStateException("unknown AST node " + e);
+    }
+
+    /**
+     * A fixed letrec* variable has just been initialized (Closures): its value goes into the
+     * closures of the lambda inits before it that captured it uninitialized.
+     */
+    private void patch(Ast.Letrec l, int j) {
+        Var v = l.vars.get(j);
+        for (int k = 0; k < j; k++) {
+            if (l.inits.get(k) instanceof Lambda fn && fn.free.containsKey(v)) {
+                b.beginPatchCaptured(fn.free.get(v));
+                loadValue(l.vars.get(k));
+                loadValue(v);
+                b.endPatchCaptured();
+            }
+        }
+    }
+
+    /**
+     * A let (M5-05): the inits go into the variables' locals, then the body runs, in this root. A
+     * boxed variable gets its box once every init has returned: an init's continuation invoked
+     * again binds a fresh one, as a call of the lambda would.
+     */
+    private List<Runnable> let(Ast.Let l, Ctx ctx) {
+        int n = l.vars.size();
+        List<Runnable> seq = new ArrayList<>();
+        seq.add(b::beginBlock);
+        for (int k = 0; k < n; k++) {
+            Var v = l.vars.get(k);
+            boolean boxNow = v.boxed() && k == n - 1;
+            seq.add(() -> {
+                b.beginStoreLocal(state().locals.get(v));
+                if (boxNow) {
+                    b.beginMakeBox();
+                }
+            });
+            seq.add(gen(l.inits.get(k), Ctx.VALUE));
+            seq.add(() -> {
+                if (boxNow) {
+                    b.endMakeBox();
+                }
+                b.endStoreLocal();
+            });
+        }
+        seq.add(() -> {
+            for (int k = 0; k < n - 1; k++) {
+                Var v = l.vars.get(k);
+                if (v.boxed()) {
+                    BytecodeLocal local = state().locals.get(v);
+                    b.beginStoreLocal(local);
+                    b.beginMakeBox();
+                    b.emitLoadLocal(local);
+                    b.endMakeBox();
+                    b.endStoreLocal();
+                }
+            }
+        });
+        seq.add(gen(l.body, ctx));
+        seq.add(b::endBlock);
+        return seq;
     }
 
     private List<Runnable> call(Ast.Call c, Ctx ctx) {
@@ -398,9 +497,13 @@ final class CodeGenerator {
             });
             return seq;
         }
+        int n = c.arguments.size();
+        if (c.procedure instanceof Ast.LocalRef r && r.var.self == st.lambda) {
+            // A self tail call by a fixed letrec* variable's name (Closures): it loops.
+            return selfLoop(st, arguments);
+        }
         // Possibly a self tail call: evaluate into temporaries, then loop if the procedure is the
         // running closure, else return a TailCall.
-        int n = c.arguments.size();
         BytecodeLocal[] temps = new BytecodeLocal[n + 1];
         List<Runnable> seq = new ArrayList<>();
         seq.add(() -> {
@@ -439,6 +542,34 @@ final class CodeGenerator {
             b.endMakeTailCall();
             b.endReturn();
             b.endIfThenElse();
+            b.endBlock();
+        });
+        return seq;
+    }
+
+    /** A tail call of the running closure: evaluate the arguments into temporaries, then loop. */
+    private List<Runnable> selfLoop(State st, List<Runnable> arguments) {
+        int n = arguments.size();
+        BytecodeLocal[] temps = new BytecodeLocal[n];
+        List<Runnable> seq = new ArrayList<>();
+        seq.add(() -> {
+            b.beginBlock();
+            for (int k = 0; k < n; k++) {
+                temps[k] = b.createLocal();
+            }
+        });
+        for (int k = 0; k < n; k++) {
+            int index = k;
+            seq.add(() -> b.beginStoreLocal(temps[index]));
+            seq.add(arguments.get(k));
+            seq.add(b::endStoreLocal);
+        }
+        seq.add(() -> {
+            for (int k = 0; k < n; k++) {
+                BytecodeLocal temp = temps[k];
+                store(st.lambda.params.get(k), () -> b.emitLoadLocal(temp));
+            }
+            b.emitBranch(st.loop);
             b.endBlock();
         });
         return seq;

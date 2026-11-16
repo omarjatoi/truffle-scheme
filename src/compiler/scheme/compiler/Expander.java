@@ -121,8 +121,17 @@ public final class Expander {
     /** {@link #show(SymbolTable, GlobalEnvironment, SyntacticEnvironment, String)}, as a closed unit or not (M5-04, {@link EscapeAnalysis}). */
     @TruffleBoundary
     public static String show(SymbolTable symbols, GlobalEnvironment globals, SyntacticEnvironment top, String program, boolean closed) {
+        return show(symbols, globals, top, program, closed, false);
+    }
+
+    /**
+     * {@link #show(SymbolTable, GlobalEnvironment, SyntacticEnvironment, String, boolean)}, and with
+     * {@code boxes}, each boxed variable's name ending with {@code !} (design.md D2, M5-05).
+     */
+    @TruffleBoundary
+    public static String show(SymbolTable symbols, GlobalEnvironment globals, SyntacticEnvironment top, String program, boolean closed, boolean boxes) {
         List<Object> forms = readForms(Source.newBuilder(SchemeLanguage.ID, program, "show.scm").build(), symbols, false);
-        return AstPrinter.print(new Expander(symbols, globals, top, null, null, null).expandProgram(forms, closed).body);
+        return AstPrinter.print(new Expander(symbols, globals, top, null, null, null).expandProgram(forms, closed).body, boxes);
     }
 
     // ------------------------------------------------------------------------------------------
@@ -461,8 +470,12 @@ public final class Expander {
         return analyzed((Lambda) run(new ProgramFrame(topScope == null ? forms : addScope(forms, topScope), program)), closed);
     }
 
-    /** Turns the unit's escape-only call/cc calls into %call/ec calls (M5-04). */
+    /**
+     * Computes the unit's closure conversion facts (M5-05, {@link Closures}), then turns its
+     * escape-only call/cc calls into %call/ec calls (M5-04).
+     */
     private Lambda analyzed(Lambda unit, boolean closed) {
+        Closures.analyze(unit);
         Set<GlobalCell> callCC = Set.of(primitive("call/cc"), primitive("call-with-current-continuation"));
         EscapeAnalysis.rewrite(unit, closed, callCC, primitive("%call/ec"));
         return unit;
@@ -878,8 +891,29 @@ public final class Expander {
             return switch (kind) {
                 case IF -> new Ast.If(done.get(0), done.get(1), done.size() == 3 ? done.get(2) : new Ast.Const(SConstant.UNSPECIFIED));
                 case SEQ -> done.size() == 1 ? done.get(0) : new Ast.Seq(done);
-                default -> new Ast.Call(done.get(0), done.subList(1, done.size()));
+                default -> call(done.get(0), done.subList(1, done.size()));
             };
+        }
+
+        /**
+         * A call, or, for {@code let} and {@code or} (M5-05), the {@link Ast.Let} that a literal
+         * lambda in operator position with as many arguments as parameters is. A named {@code let}'s
+         * {@code ((letrec* ((tag lambda)) tag) arg ...)} becomes {@code (letrec* ((tag lambda)) (tag
+         * arg ...))}: the arguments can't refer to tag, and the operator is evaluated first anyway.
+         * {@link Closures} then makes the let's variables locals of the root that runs it.
+         */
+        private Expr call(Expr procedure, List<Expr> arguments) {
+            if (procedure instanceof Lambda fn && fn.rest == null && fn.params.size() == arguments.size()) {
+                return new Ast.Let(fn.params, arguments, fn.body);
+            }
+            if (procedure instanceof Ast.Letrec l && l.body instanceof Ast.LocalRef r && l.vars.contains(r.var)) {
+                Ast.Call c = new Ast.Call(l.body, arguments);
+                c.source = source;
+                Ast.Letrec moved = new Ast.Letrec(l.vars, l.inits, c);
+                moved.source = l.source;
+                return moved;
+            }
+            return new Ast.Call(procedure, arguments);
         }
     }
 

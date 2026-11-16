@@ -25,11 +25,20 @@ final class AstPrinter {
     private final Deque<Object> work = new ArrayDeque<>();
     private final Map<Var, String> names = new HashMap<>();
 
-    private AstPrinter() {
+    /** Whether a boxed variable's name ends with {@code !} (design.md D2). */
+    private final boolean boxes;
+
+    private AstPrinter(boolean boxes) {
+        this.boxes = boxes;
     }
 
     static String print(Expr e) {
-        AstPrinter p = new AstPrinter();
+        return print(e, false);
+    }
+
+    /** {@code boxes}: a boxed variable's name ends with {@code !}. */
+    static String print(Expr e, boolean boxes) {
+        AstPrinter p = new AstPrinter(boxes);
         p.work.push(e);
         while (!p.work.isEmpty()) {
             Object item = p.work.pop();
@@ -45,7 +54,7 @@ final class AstPrinter {
     }
 
     private String name(Var v) {
-        return names.computeIfAbsent(v, x -> x.name + "." + (names.size() + 1));
+        return names.computeIfAbsent(v, x -> x.name + "." + (names.size() + 1) + (boxes && x.boxed() ? "!" : ""));
     }
 
     /** Pushes the pieces in order: the first one is popped first. */
@@ -64,6 +73,24 @@ final class AstPrinter {
             pieces[2 * i + 2] = items.get(i);
         }
         pieces[pieces.length - 1] = ")";
+        emit(pieces);
+    }
+
+    /** {@code (head ((var init) ...) body)}. */
+    private void bindings(String head, List<Var> vars, List<Expr> inits, Expr body) {
+        Object[] pieces = new Object[vars.size() * 5 + 4];
+        int k = 0;
+        pieces[k++] = "(" + head + " (";
+        for (int i = 0; i < vars.size(); i++) {
+            pieces[k++] = i == 0 ? "(" : " (";
+            pieces[k++] = vars.get(i);
+            pieces[k++] = " ";
+            pieces[k++] = inits.get(i);
+            pieces[k++] = ")";
+        }
+        pieces[k++] = ") ";
+        pieces[k++] = body;
+        pieces[k] = ")";
         emit(pieces);
     }
 
@@ -95,21 +122,10 @@ final class AstPrinter {
             }
             pieces[pieces.length - 1] = ")";
             emit(pieces);
+        } else if (e instanceof Ast.Let l) {
+            bindings("let", l.vars, l.inits, l.body);
         } else if (e instanceof Ast.Letrec l) {
-            Object[] pieces = new Object[l.vars.size() * 5 + 4];
-            int k = 0;
-            pieces[k++] = "(letrec* (";
-            for (int i = 0; i < l.vars.size(); i++) {
-                pieces[k++] = i == 0 ? "(" : " (";
-                pieces[k++] = l.vars.get(i);
-                pieces[k++] = " ";
-                pieces[k++] = l.inits.get(i);
-                pieces[k++] = ")";
-            }
-            pieces[k++] = ") ";
-            pieces[k++] = l.body;
-            pieces[k] = ")";
-            emit(pieces);
+            bindings("letrec*", l.vars, l.inits, l.body);
         } else if (e instanceof Lambda fn) {
             Object[] pieces = new Object[fn.params.size() * 2 + 8];
             int k = 0;

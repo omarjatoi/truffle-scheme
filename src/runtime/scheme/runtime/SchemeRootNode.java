@@ -293,6 +293,21 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
         }
     }
 
+    /**
+     * Sets {@code captured[index]} of a closure that was made before the letrec* variable it
+     * captures was initialized ("Fixing Letrec", plan.md M5-05): only between making the closures
+     * of a group of lambdas and running any Scheme code, so no code sees the slot change, and
+     * {@link SClosure#captured} can stay compilation-final (design.md D2).
+     */
+    @Operation
+    @ConstantOperand(type = int.class)
+    public static final class PatchCaptured {
+        @Specialization
+        static void doPatch(int index, SClosure closure, Object value) {
+            closure.captured[index] = value;
+        }
+    }
+
     /** Stores the bytecode index: its arity error names this location (design.md D13). */
     @Operation(storeBytecodeIndex = true)
     @ConstantOperand(type = int.class)

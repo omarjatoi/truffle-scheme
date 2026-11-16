@@ -16,13 +16,25 @@ final class Ast {
     private Ast() {
     }
 
-    /** A lexical variable. Boxed (design.md D2) if assigned, or if a letrec* variable a closure captures. */
+    /**
+     * A lexical variable. Boxed (design.md D2) if assigned, or if a letrec* variable a closure
+     * captures, unless it is fixed ({@link Closures}).
+     */
     static final class Var {
         final SSymbol name;
-        final Lambda owner;
+        /** The lambda whose root holds the variable in a local: set by the expander, then by {@link Closures}. */
+        Lambda owner;
         final boolean letrec;
         boolean assigned;
         boolean captured;
+        /**
+         * A letrec* variable bound to a lambda that no closure can see before it is initialized
+         * ("Fixing Letrec", {@link Closures}): never boxed. The closures of its group that capture
+         * it before it is initialized get its value patched in.
+         */
+        boolean fixed;
+        /** For a fixed variable: the lambda it is bound to, in whose root it is the running closure. */
+        Lambda self;
 
         Var(SSymbol name, Lambda owner, boolean letrec) {
             this.name = name;
@@ -31,7 +43,7 @@ final class Ast {
         }
 
         boolean boxed() {
-            return assigned || (letrec && captured);
+            return assigned || (letrec && captured && !fixed);
         }
     }
 
@@ -117,6 +129,23 @@ final class Ast {
         }
     }
 
+    /**
+     * {@code ((lambda (var ...) body) init ...)} with as many inits as parameters, which {@code let}
+     * and {@code or} expand to: the inits are evaluated, then bound to locals of the current root, and
+     * the body runs in the same root, with no closure (M5-05).
+     */
+    static final class Let extends Expr {
+        final List<Var> vars;
+        final List<Expr> inits;
+        final Expr body;
+
+        Let(List<Var> vars, List<Expr> inits, Expr body) {
+            this.vars = vars;
+            this.inits = inits;
+            this.body = body;
+        }
+    }
+
     static final class Letrec extends Expr {
         final List<Var> vars;
         final List<Expr> inits;
@@ -131,7 +160,8 @@ final class Ast {
 
     /** A lambda, or the program itself (no parameters, never a closure). */
     static final class Lambda extends Expr {
-        final Lambda parent;
+        /** The lambda whose root makes this closure: set by the expander, then by {@link Closures}. */
+        Lambda parent;
         final boolean program;
         final List<Var> params = new ArrayList<>();
         Var rest;

@@ -565,7 +565,7 @@ M5-01 benchmarks and M5-02's report.
     an escape (`unwindExceptions`) instead of a capture.
   - **Done when** the benchmarks that escape (e.g. `ctak`, `fibc`) improve,
     and `tests/spec/cont-*` and torture still pass.
-- [ ] **M5-05 · Fixing Letrec and closure-free `let`** *(needs M5-01)*
+- [x] **M5-05 · Fixing Letrec and closure-free `let`** *(needs M5-01)*
   - Fixing Letrec (D2): no boxes for groups of mutually recursive lambdas.
     Compile `((lambda (x ...) body) arg ...)`, which `let`, `or` and named
     `let` expand to, without allocating a closure.
