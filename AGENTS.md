@@ -59,7 +59,9 @@ testing) and a GraalVM CE 25.5 JDK (`JAVA_HOME`). Bazel downloads its own
 copy of that GraalVM release (`bazel/graalvm.bzl`): it compiles and runs
 everything, and its Graal compiler is the JIT the tests use. Truffle comes
 from Maven Central at exactly the GraalVM version (`TRUFFLE_VERSION` in
-`MODULE.bazel`); the build fails if the two differ (design.md D11).
+`MODULE.bazel`); the build fails if the two differ (design.md D11). With a
+BuildBuddy API key in `~/.bazelrc` (see `.bazelrc`), `--config=buildbuddy`
+shares CI's cache.
 
 ## Commands
 
@@ -118,7 +120,8 @@ what runs on every commit: `checks` (the lint tests), `tests` (every other
 test and the readme check), and soft-fail `conformance-*` steps (interpreter
 and `--compile`) whose annotations show per-section results. The required
 check is the build, `buildkite/truffle-scheme`; which steps can fail it is
-set in `.buildkite/pipeline.yml`.
+set in `.buildkite/pipeline.yml`. CI's cache is in BuildBuddy; the
+`buildbuddy` annotation links each step's results.
 Benchmarks, the threshold check and the native image are local commands.
 
 ## Rules (each one is enforced by `bazel test //...`)
