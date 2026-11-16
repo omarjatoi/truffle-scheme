@@ -24,6 +24,7 @@ import scheme.runtime.GlobalCell;
 import scheme.runtime.SchemeRootNode;
 import scheme.runtime.SchemeRootNodeGen;
 import scheme.runtime.value.SConstant;
+import scheme.runtime.value.SPair;
 
 /**
  * Emits Bytecode DSL builder calls for the core AST: one root per lambda, plus the program root.
@@ -296,7 +297,7 @@ final class CodeGenerator {
                     tail.push(l.body);
                 }
             } else if (e instanceof Ast.Call c && !(c.procedure instanceof Ast.LocalRef r && r.var.self != null && r.var.self.contified) &&
-                            c.arguments.size() == n && !Intrinsic.isIntrinsic(c)) {
+                            c.arguments.size() == n && !Intrinsic.isIntrinsic(c) && !ConstantMember.isConstantMember(c)) {
                 return true;
             }
         }
@@ -639,6 +640,10 @@ final class CodeGenerator {
     }
 
     private List<Runnable> call(Ast.Call c, Ctx ctx) {
+        List<SPair> pairs = ConstantMember.pairs(c);
+        if (pairs != null) {
+            return constantMember(c.arguments.get(0), pairs, ctx);
+        }
         List<Runnable> arguments = new ArrayList<>();
         for (Expr a : c.arguments) {
             arguments.add(gen(a, Ctx.VALUE));
@@ -724,6 +729,39 @@ final class CodeGenerator {
             b.endBlock();
         });
         return seq;
+    }
+
+    /**
+     * {@code (memv key 'list)} or {@code (memq key 'list)} ({@link ConstantMember}, plan.md M8-05):
+     * the key goes into a temporary, which {@code eq?}'s operation compares with each datum in turn;
+     * the value is the tail of the list whose car matched, or #f. No call, in tail position or not.
+     */
+    private List<Runnable> constantMember(Expr key, List<SPair> pairs, Ctx ctx) {
+        BytecodeLocal[] temp = new BytecodeLocal[1];
+        List<Runnable> seq = new ArrayList<>();
+        seq.add(() -> {
+            b.beginBlock();
+            temp[0] = b.createLocal();
+            b.beginStoreLocal(temp[0]);
+        });
+        seq.add(gen(key, Ctx.VALUE));
+        seq.add(() -> {
+            b.endStoreLocal();
+            for (SPair p : pairs) {
+                b.beginConditional();
+                b.beginEq();
+                b.emitLoadLocal(temp[0]);
+                b.emitLoadConstant(p.car);
+                b.endEq();
+                b.emitLoadConstant(p);
+            }
+            b.emitLoadConstant(false);
+            for (int k = 0; k < pairs.size(); k++) {
+                b.endConditional();
+            }
+            b.endBlock();
+        });
+        return valued(seq, ctx);
     }
 
     /**

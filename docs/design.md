@@ -73,6 +73,15 @@ full R7RS-small conformance comes first.
     a `TryCatch` around each root's body whose handler raises the error, since
     every exception that passes through is then rethrown from the handler,
     whose index becomes the frame's location in the stack trace.
+- **`case` compares in place (M8-05).** `case` expands to `memv` of each
+  clause's quoted datums (prelude `syntax.scm`). A call of `memv` or `memq`
+  (the primitives' own cells, as above) with a quoted proper list of at most
+  16 datums compiles to `eq?`'s operation against each datum in turn, and its
+  value is the primitive's: the tail of the list whose car matched, or #f
+  (`ConstantMember`). For `memv` every datum must be one that `eq?` compares
+  as `eqv?` does, so not a bignum, a ratio or an exact complex number. Calling
+  the primitive ran its loop behind a boundary with `eqv?`'s generic
+  comparison, once per clause: 57% of `lattice`'s time, which this halved.
 - **Inline caches for tail calls, and splitting (M5-10).** Each non-tail call
   site (and each prompt) has a trampoline node of its own, `Trampoline`, with
   a 4-entry `DirectCallNode` cache keyed on the tail-called procedure's call
