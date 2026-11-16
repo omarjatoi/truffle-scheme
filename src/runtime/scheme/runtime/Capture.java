@@ -22,7 +22,9 @@ import com.oracle.truffle.api.library.ExportMessage;
  * of any tag, then pushes the continuation's segments on top and resumes them with {@link #value}.</li>
  * <li>{@link Kind#SPILL}: stack-depth spill. A call site past the depth threshold captures up to
  * the root prompt instead of calling; the root prompt makes the call ({@link #value}, an argument
- * array with the procedure at index 0) on a fresh Java stack.</li>
+ * array with the procedure at index 0) on a fresh Java stack. Only the root prompt's driver can
+ * reach the frames that suspended, so it resumes them in place until something shares them
+ * ({@link Owner}, design.md "Owned segments").</li>
  * <li>{@link Kind#TORTURE}: torture mode (M2-06). A call returned {@link #value} normally; capture
  * up to the root prompt anyway, which resumes every frame from a copy with that value.</li>
  * </ul>
@@ -56,8 +58,40 @@ public final class Capture implements TruffleObject {
         TORTURE
     }
 
-    /** One suspended frame: resumed by calling {@code root} with a copy of {@code frame}. */
-    public record Segment(ContinuationRootNode root, MaterializedFrame frame) {
+    /**
+     * One suspended frame: resumed by calling {@code root} with {@code frame}, or with a copy of it
+     * once it is shared (design.md "Owned segments", AGENTS.md rule 3). {@code owner} is the token
+     * of the spill that suspended it, or null: a segment of any other capture is shared from the
+     * start.
+     */
+    public record Segment(ContinuationRootNode root, MaterializedFrame frame, Owner owner) {
+
+        /**
+         * Whether only the prompt driver that holds it can reach this segment, so that it may resume
+         * the original frame, once: its spill's token was stamped with the context's sharing epoch,
+         * and nothing has bumped the epoch since ({@link SchemeContext#shareSegments}).
+         */
+        boolean isOwned(SchemeContext context) {
+            return owner != null && owner.epoch == context.sharingEpoch;
+        }
+
+        /** Makes this segment, and every other of its spill, shared for good. */
+        void share() {
+            if (owner != null) {
+                owner.epoch = Owner.SHARED;
+            }
+        }
+    }
+
+    /**
+     * The token the segments of one stack-depth spill share. The root prompt's driver stamps it with
+     * the context's sharing epoch when it takes them ({@link #claim}); the segments are owned while
+     * that is the current epoch. Unstamped, or stamped {@link #SHARED}, they are shared.
+     */
+    static final class Owner {
+        static final long SHARED = -1;
+
+        long epoch = SHARED;
     }
 
     /** A prompt that a capture crossed, flattened into a segment list: {@code tag} and its dynamic environment. */
@@ -89,6 +123,8 @@ public final class Capture implements TruffleObject {
     private SegmentList last;
     /** Whether {@link #segmentsBefore} has handed the list over: nothing may be added after. */
     private boolean handedOver;
+    /** For SPILL: the token of the segments its frames suspend into ({@link Segment#owner}). */
+    private final Owner owner;
 
     private Capture(Kind kind, Object tag, Object receiver, DynEnv dynEnv, Continuation continuation, Object value) {
         this.kind = kind;
@@ -97,6 +133,7 @@ public final class Capture implements TruffleObject {
         this.dynEnv = dynEnv;
         this.continuation = continuation;
         this.value = value;
+        this.owner = kind == Kind.SPILL ? new Owner() : null;
     }
 
     public static Capture full(Object receiver, DynEnv dynEnv) {
@@ -121,7 +158,7 @@ public final class Capture implements TruffleObject {
 
     /** A frame suspends into the capture: it goes after (outside) the frames already in it. */
     public void addSegment(ContinuationRootNode root, MaterializedFrame frame) {
-        append(new Segment(root, frame));
+        append(new Segment(root, frame, owner));
     }
 
     private void append(Object item) {
@@ -147,13 +184,28 @@ public final class Capture implements TruffleObject {
         return SegmentList.hasPrompt(first, promptTag);
     }
 
-    /** A prompt driver passes the capture through: its pending segments, then itself as a marker. */
+    /**
+     * A prompt driver passes the capture through: its pending segments, then itself as a marker.
+     * The segments it re-links are made shared (design.md "Owned segments"): only a root prompt's
+     * driver resumes a segment in place, and only one whose spill it claimed itself.
+     */
     @TruffleBoundary
     void addOuter(SegmentList pending, PromptMarker prompt) {
         for (SegmentList l = pending; l != null; l = l.tail) {
+            if (l.head instanceof Segment segment) {
+                segment.share();
+            }
             append(l.head);
         }
         append(prompt);
+    }
+
+    /**
+     * A SPILL capture is complete at the root prompt, whose driver now alone holds its segments:
+     * they are owned until the epoch changes (design.md "Owned segments").
+     */
+    void claim(SchemeContext context) {
+        owner.epoch = context.sharingEpoch;
     }
 
     /**
