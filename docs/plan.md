@@ -699,3 +699,81 @@ that edit the same files.
 **Exit:** the launcher and tools work end to end with smoke tests in CI,
 embedders can call Scheme procedures with Scheme values crossing the
 boundary, and the README documents all of it.
+
+## M7 · Hardening
+
+Close the follow-ups M5 and M6 left open: behaviour R7RS leaves to us that we
+handle badly, performance that the numbers show is unstable, and the D10
+deferral that was never scheduled. Each task comes from a PR's follow-ups
+(#87–#103) or M5's "Later candidates".
+
+- [ ] **M7-01 · Stable performance after warmup** *(early)*
+  - `mazefun`, `peval`, `parsing` and `deriv` settle into one of two speeds
+    about 1.7× apart on the same commit and CPU (M5-08), and `nqueens` slows
+    from 36 s to 131 s after its first iteration (M5-01). Find the cause of
+    each (deoptimization loops, invalidated assumptions, profile pollution,
+    splitting or OSR decisions: `--engine.TraceCompilation`,
+    `TraceDeoptimizeFrame`, `TraceInvalidation`, `TraceSplitting`) and fix it.
+  - **Done when** each program's steady-state time varies by less than 20%
+    across 10 fresh JVMs, `nqueens`' later iterations are no slower than its
+    first, and their `bench/thresholds.json` entries are re-measured
+    (narrower) with the `bench-thresholds` workflow.
+- [ ] **M7-02 · Smaller call sites** *(needs M7-01)*
+  - Shorten the instruction sequence `CallSiteEmitter` emits at every
+    non-tail call (about 10 instructions, M5-10), so `map`/`for-each`'s inner
+    loop fits Truffle's splitting limit, and the interpreter does less per
+    call. Contify a named `let` entered in tail position into a `While` of the
+    enclosing root (M5-05), and report loop counts from the trampoline.
+  - **Done when** `TraceSplitting` shows `map` and `for-each` split per call
+    site, the interpreter benchmarks improve, and torture, the spec cases and
+    both suites still pass.
+- [ ] **M7-03 · Typed fast paths for hot primitives** *(needs M7-02)*
+  - DSL nodes with typed specializations and fixed-arity fast paths for the
+    hottest primitives (`car`, `cdr`, `cons`, `+`, `-`, `<`, `=`, `eq?`,
+    `vector-ref`, …) instead of the generic `invoke(Object[])` loops (M5-09),
+    so boxing elimination applies across them (the `long[]` reads of M5-06
+    included).
+  - **Done when** the arithmetic and vector benchmarks improve and
+    `bench/thresholds.json` is re-measured.
+- [ ] **M7-04 · Records on the Static Object Model** *(early)*
+  - D10's last M5 deferral: record instances as Truffle `StaticShape`
+    objects, so field access compiles to a field load, with accessors and
+    the constructor specialized per record type.
+  - **Done when** a record-heavy benchmark (add one to `tests/diff` or use
+    one from the sets) improves, interop (M6-02) and the debugger (M6-05)
+    still show record fields, and both suites pass.
+- [ ] **M7-05 · First-context startup** *(early)*
+  - M5-03's option (c): build the prelude image at build time (and into the
+    native image, M6-06), with a staleness check, so the first context in a
+    process restores instead of expanding.
+  - **Done when** the cold first context and the native launcher's startup
+    are measurably faster, and a stale image is detected and rebuilt rather
+    than used.
+- [ ] **M7-06 · Errors R7RS leaves to us** *(early)*
+  - `length` and the other list procedures on circular lists raise an error
+    instead of looping; when an error leaves an embedder's call or a REPL
+    input, the `dynamic-wind` after-thunks it skips run (M6-02); `SchemeError`
+    exposes the raised object to embedders; the launcher tells `(exit 0)` from
+    a program that ends (M6-06).
+  - **Done when** each has a test, and the R7RS text that allows the
+    behaviour is cited in design.md.
+- [ ] **M7-07 · REPL and launcher polish** *(early)*
+  - Line editing and history with the JLine library M6-01 already ships
+    (check the native image too); print every form's values when one input
+    holds several; Scheme's `read`/`read-line` in the REPL read from the same
+    input as the REPL; `--memtracer` sees allocations (`AllocationReporter`);
+    `DebugStackFrame.eval` sees an isolated program's own definitions.
+  - **Done when** each has a test, and the README's examples still pass.
+- [ ] **M7-08 · Upstream reports** *(early)*
+  - Minimal reproducers, in `docs/upstream.md`, for the Truffle 25.5 issues
+    we worked around: nested roots' source sections attributed to the wrong
+    `Source` (M5-05), `SuspendedEvent.getAsynchronousStacks()` throwing on an
+    empty stack (M6-04), and `@ReportPolymorphism` on a Bytecode DSL operation
+    generating code that doesn't compile (M5-10). Filing them upstream is a
+    human's call.
+  - **Done when** each reproducer runs against Truffle 25.5 from a test or
+    script and shows the failure, and our workarounds name the reproducer.
+
+**Exit:** every task above is done; `bench/thresholds.json` and
+`docs/benchmarks.md` are re-measured on the final M7 code; both suites pass in
+every mode, including through the native launcher.
