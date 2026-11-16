@@ -68,6 +68,8 @@ java_module_jar(
     libs = ["//src/launcher"],
     module_name = "scheme.launcher",
     requires = _SDK_MODULES + [
+        # The JVM's arguments: whether it was given a stack size (EvaluationThread).
+        "java.management",
         "org.graalvm.launcher",
         "org.graalvm.shadowed.jline",
         "org.graalvm.truffle.compiler",

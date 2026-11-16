@@ -23,8 +23,9 @@ checks it on every commit. It is for the interpreter; CI also runs both
 suites with every function compiled on first call and under torture, and the
 native launcher passes the same tests (design.md D17). Proper tail calls run in
 constant space, deep non-tail recursion spills to the heap instead of
-overflowing the Java stack (once it has used most of the thread's stack, so a
-larger `-Xss` keeps more of it on the stack, where it is faster), and a
+overflowing the Java stack (once it has used most of the thread's stack,
+which in the launcher is a large one, so that it stays on the stack, where it
+is faster: [Options](#options)), and a
 torture mode captures and re-enters a continuation at every non-tail call;
 `tests/spec/` holds those cases.
 
@@ -182,9 +183,25 @@ bazel-bin/scheme --help:tools
 <!-- readme: output -->
 ```text
 R7RS Scheme (GraalVM CE ...)
-Usage: scheme [option...] [-I dir]... [file.scm [arg...]]
+Usage: scheme [option...] [-I dir]... [--stack-size=<size>] [file.scm [arg...]]
 ...
 ```
+
+The launcher evaluates on a thread of its own with a 256 MB Java stack, so
+that deep non-tail recursion stays on the stack, where it is fastest,
+instead of spilling to the heap (design.md D17). The runtime uses at most 64
+MB of it, the rest being address space only; but it measures those 64 MB the
+first time a recursion is more than about 50 calls deep, which costs that
+much memory (about 60 MB more peak RSS), and 15 to 45 ms.
+`--stack-size=<size>` sets the thread's stack (`512k`, `64m`, `1g`), and
+`--stack-size=default` evaluates on the launcher's own thread, with the
+JVM's default stack (1 or 2 MB). A stack size given to the JVM (`-Xss`, also
+through `JDK_JAVA_OPTIONS`) is the evaluation's: the launcher's own thread
+has it. The tests that check deep recursion run the launcher with
+`-Xss256k`. The native launcher takes the same options; a stack size given
+to it as `-Xss` or `--vm.Xss` is the evaluation's too, and
+`--stack-size=default` evaluates on the process's main thread (8 MB,
+`ulimit -s`).
 
 `bazel-bin/scheme` runs the launcher in a JVM with the tools below on its
 module path. Without them, it is a `java` command on the jars that

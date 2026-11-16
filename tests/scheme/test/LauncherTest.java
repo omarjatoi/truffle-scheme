@@ -324,10 +324,17 @@ public class LauncherTest {
 
     /** Runs {@code scheme args...} in a child JVM with this one's module path, with this stdin. */
     private Result launch(String stdin, String... args) throws IOException, InterruptedException {
+        return launchWith(List.of(), stdin, args);
+    }
+
+    /** {@link #launch} with these JVM options. */
+    private Result launchWith(List<String> jvmArgs, String stdin, String... args) throws IOException, InterruptedException {
         String java = ProcessHandle.current().info().command().orElseThrow();
         String modulePath = System.getProperty("jdk.module.path");
         assertNotNull("the tests run on the module path", modulePath);
-        List<String> command = new ArrayList<>(List.of(java, "--module-path", modulePath, "--enable-native-access=org.graalvm.truffle", "--sun-misc-unsafe-memory-access=allow",
+        List<String> command = new ArrayList<>(List.of(java));
+        command.addAll(jvmArgs);
+        command.addAll(List.of("--module-path", modulePath, "--enable-native-access=org.graalvm.truffle", "--sun-misc-unsafe-memory-access=allow",
                         "-m", "scheme.launcher/scheme.launcher.SchemeMain"));
         command.addAll(List.of(args));
         Path out = folder.newFile().toPath();
@@ -423,5 +430,43 @@ public class LauncherTest {
         Result experimental = launch("", "--engine.Compilation=false", program.toString());
         assertTrue(experimental.out(), experimental.status() != 0);
         assertTrue(experimental.err(), experimental.err().contains("experimental"));
+    }
+
+    /** A REPL session that recurses 10,000 calls deep, then writes the spills it made (M8-01). */
+    private static final String DEEP_SESSION = """
+                    (define (count i n) (if (= i n) 0 (+ 1 (count (+ i 1) n))))
+                    (count 0 10000)
+                    (%spills)
+                    """;
+
+    /** The spills {@link #DEEP_SESSION} made, after checking that it ran. */
+    private static long deepSpills(Result r) {
+        assertEquals(r.err(), 0, r.status());
+        String[] lines = r.out().split("\n");
+        assertEquals(r.out(), 2, lines.length);
+        assertEquals(r.out(), "10000", lines[0]);
+        return Long.parseLong(lines[1]);
+    }
+
+    @Test
+    public void processEvaluatesOnALargeStackUnlessASizeIsGiven() throws IOException, InterruptedException {
+        // Ten thousand nested calls in the interpreter use 5 to 25 MB of Java stack, more than a
+        // JVM thread has by default (1 or 2 MB). The launcher evaluates on a thread of its own with
+        // a large stack (design.md D17), where none of them spills.
+        assertEquals(0, deepSpills(launchWith(List.of(), DEEP_SESSION)));
+        assertEquals(0, deepSpills(launchWith(List.of(), DEEP_SESSION, "--stack-size=128m")));
+        // A stack size given to the JVM, or with --stack-size, is the evaluation's: on 256 KB (the
+        // spec and space tests' -Xss256k) the recursion spills, and still returns.
+        assertTrue(deepSpills(launchWith(List.of("-Xss256k"), DEEP_SESSION)) > 0);
+        assertTrue(deepSpills(launchWith(List.of("-XX:ThreadStackSize=256"), DEEP_SESSION)) > 0);
+        assertTrue(deepSpills(launchWith(List.of(), DEEP_SESSION, "--stack-size=256k")) > 0);
+        // The JVM's default thread stack.
+        assertTrue(deepSpills(launchWith(List.of(), DEEP_SESSION, "--stack-size=default")) > 0);
+        // The option wins over the JVM's.
+        assertEquals(0, deepSpills(launchWith(List.of("-Xss256k"), DEEP_SESSION, "--stack-size=128m")));
+
+        Result bad = launch("", "--stack-size=lots");
+        assertEquals(bad.err(), SchemeMain.EXIT_USAGE, bad.status());
+        assertTrue(bad.err(), bad.err().contains("--stack-size"));
     }
 }
