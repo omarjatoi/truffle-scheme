@@ -98,6 +98,16 @@ public final class Expander {
         this.anonymous = symbols.intern("%expression");
     }
 
+    /** The namespace this unit's top-level definitions go in. */
+    GlobalEnvironment namespace() {
+        return namespace;
+    }
+
+    /** This unit's top-level scope. */
+    Scope topScope() {
+        return topScope;
+    }
+
     /**
      * For tests: the core AST of a program as text, each local variable renamed to
      * {@code name.N} in order of first appearance.

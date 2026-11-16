@@ -357,9 +357,26 @@ Each entry: the decision, why, and what was rejected.
   otherwise.
 - Why: Truffle already does this well; positions and tags are data we have
   (syntax objects) handed to machinery we don't have to write.
-- **Proposed, not yet scheduled:** Bytecode DSL serialization
-  (`enableSerialization`) to cache the compiled standard libraries and make
-  context startup cheaper (M5), and `unwindExceptions` for the escape-only
+- **The standard libraries are cached per JVM (M5-03).** After the second
+  context of a JVM has instantiated them the normal way, it saves a
+  `PreludeImage`: the library bodies serialized with the Bytecode DSL
+  (`enableSerialization`), and the expander's state (scopes, namespaces and
+  their cells, syntactic bindings, macros as their `syntax-rules` forms,
+  library exports) as records that refer to each other by index. Later
+  contexts rebuild that state with their own symbols, scopes and cells, and
+  deserialize and run the bodies: nothing is read or expanded. The first
+  context builds nothing, so a program run once pays nothing.
+  `-Dscheme.preludeImage=false` turns it off.
+- Why per JVM and per context: symbols, cells and scopes belong to a context
+  (D1, D7), and compiled code embeds cells as constants, so roots can't be
+  shared between contexts, and with `Context.create` each context has its
+  own engine anyway.
+- *Rejected:* sharing roots between the contexts of an engine (needs
+  `ContextPolicy.SHARED` and globals looked up per context instead of
+  constant cells, and doesn't help a context per engine); an image built at
+  build time (it would also speed up the first context, but adds a build
+  step and a staleness check; a follow-up if cold start matters).
+- **Proposed, not yet scheduled:** `unwindExceptions` for the escape-only
   `call/cc` fast path (already under "Continuations").
 - *Rejected:* hand-rolled position tracking in our own frames or exceptions
   (duplicates Truffle and doesn't reach tools).
