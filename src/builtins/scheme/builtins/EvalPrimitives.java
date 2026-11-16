@@ -1,8 +1,11 @@
 package scheme.builtins;
 
+import java.io.IOException;
 import java.util.List;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.TruffleFile;
+import com.oracle.truffle.api.source.Source;
 
 import scheme.runtime.PrimitiveNode;
 import scheme.runtime.PrimitiveSpec;
@@ -15,9 +18,10 @@ import scheme.runtime.value.SClosure;
 import scheme.runtime.value.SConstant;
 import scheme.runtime.value.SEnvironment;
 import scheme.runtime.value.SPair;
+import scheme.runtime.value.SString;
 
 /**
- * The eval and environments area (R7RS §6.12): its primitives, all leaves (AGENTS.md rule 1). One of the
+ * The eval and environments area (R7RS §6.12, and {@code load} from §6.13.1): its primitives, all leaves (AGENTS.md rule 1). One of the
  * fan-out areas (AGENTS.md "Areas"): add this area's primitives here and nowhere else.
  *
  * <p>The compiler is a service of the language ({@link scheme.runtime.SchemeCompiler}): {@code eval}
@@ -38,7 +42,9 @@ final class EvalPrimitives {
                         new PrimitiveSpec("interaction-environment", 0, 0, InteractionEnvironment::new),
                         // (scheme r5rs) imports these two from (r7rs %primitives).
                         new PrimitiveSpec("scheme-report-environment", 1, 1, () -> new ReportEnvironment("scheme-report-environment", false)),
-                        new PrimitiveSpec("null-environment", 1, 1, () -> new ReportEnvironment("null-environment", true)));
+                        new PrimitiveSpec("null-environment", 1, 1, () -> new ReportEnvironment("null-environment", true)),
+                        // (scheme load) imports it from (r7rs %primitives).
+                        new PrimitiveSpec("load", 1, 2, Load::new));
     }
 
     /** {@code (eval expr-or-def [environment])}: compiles, then tail-calls the result (design.md D6). */
@@ -62,6 +68,45 @@ final class EvalPrimitives {
                 throw ControlPrimitives.notA("eval", "environment", args[1]);
             }
             return language.compiler().compileEval(language, context, args[0], environment);
+        }
+    }
+
+    /**
+     * {@code (load filename [environment])} (R7RS §6.13.1): reads the file through {@link TruffleFile}
+     * (design.md D10), compiles its forms in the environment (by default the interaction
+     * environment, as in chibi), then tail-calls the result (D5, D6), like {@code eval}. A file that
+     * can't be read is a file error.
+     */
+    static final class Load extends PrimitiveNode {
+        @Override
+        public Object execute(Object[] args) {
+            SClosure thunk = compile(args);
+            return new TailCall(thunk, new Object[]{thunk});
+        }
+
+        @TruffleBoundary
+        private SClosure compile(Object[] args) {
+            if (!(args[0] instanceof SString name)) {
+                throw ControlPrimitives.notA("load", "string", args[0]);
+            }
+            SchemeLanguage language = SchemeLanguage.get(this);
+            SchemeContext context = SchemeContext.get(this);
+            SEnvironment environment;
+            if (args.length < 2) {
+                environment = language.compiler().interactionEnvironment(context);
+            } else if (args[1] instanceof SEnvironment e) {
+                environment = e;
+            } else {
+                throw ControlPrimitives.notA("load", "environment", args[1]);
+            }
+            Source source;
+            try {
+                TruffleFile file = context.getEnv().getPublicTruffleFile(name.toString());
+                source = Source.newBuilder(SchemeLanguage.ID, file).build();
+            } catch (IOException | SecurityException | UnsupportedOperationException | IllegalArgumentException e) {
+                throw IoPrimitives.fileError("load: cannot read file", name);
+            }
+            return language.compiler().compileLoad(language, context, source, environment);
         }
     }
 

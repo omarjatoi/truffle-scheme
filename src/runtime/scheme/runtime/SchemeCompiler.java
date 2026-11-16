@@ -38,4 +38,12 @@ public interface SchemeCompiler {
      * raisable {@link SchemeError}s, not parse errors.
      */
     SClosure compileEval(SchemeLanguage language, SchemeContext context, Object datum, SEnvironment environment);
+
+    /**
+     * {@code load} (R7RS §6.13.1, design.md D6): compiles every form of the file's source in the
+     * environment into one procedure of no arguments, for {@code load} to tail-call (D5). Like
+     * {@link #compileEval}, read and syntax errors are raisable {@link SchemeError}s, and they name
+     * the file, as do the compiled code's source sections (D13).
+     */
+    SClosure compileLoad(SchemeLanguage language, SchemeContext context, Source source, SEnvironment environment);
 }

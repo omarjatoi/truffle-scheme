@@ -59,9 +59,9 @@ public final class SchemeError extends AbstractTruffleException {
         this.syntaxLocation = null;
     }
 
-    private SchemeError(String message, SourceSection location, boolean incompleteSource) {
+    private SchemeError(String message, SourceSection location, boolean incompleteSource, SErrorObject errorObject) {
         super(message);
-        this.errorObject = null;
+        this.errorObject = errorObject;
         this.uncaught = message;
         this.syntax = true;
         this.incompleteSource = incompleteSource;
@@ -74,7 +74,16 @@ public final class SchemeError extends AbstractTruffleException {
      */
     @TruffleBoundary
     public static SchemeError syntax(String message, SourceSection location, boolean incompleteSource) {
-        return new SchemeError(message, location, incompleteSource);
+        return new SchemeError(message, location, incompleteSource, null);
+    }
+
+    /**
+     * A syntax error from {@code syntax-error} (R7RS §4.3.3): like {@link #syntax}, and it carries
+     * the error object that {@code eval} and {@code load} raise instead (see {@link #getErrorObject}).
+     */
+    @TruffleBoundary
+    public static SchemeError syntax(String message, SourceSection location, SErrorObject errorObject) {
+        return new SchemeError(message, location, false, errorObject);
     }
 
     public boolean isSyntaxError() {
@@ -146,6 +155,10 @@ public final class SchemeError extends AbstractTruffleException {
         this(new SErrorObject(SString.of(message), SConstant.EMPTY_LIST, SErrorObject.Kind.OTHER));
     }
 
+    /**
+     * What a call site raises; for a syntax error, what {@code eval} or {@code load} raises instead
+     * (null unless it came from {@code syntax-error}).
+     */
     public SErrorObject getErrorObject() {
         return errorObject;
     }

@@ -431,7 +431,7 @@ R7RS beyond what the chibi suite exercises. These follow design.md D14–D16
 and touch the expander and compiler, so they are not area tasks; run them
 one at a time.
 
-- [ ] **M4-09 · `syntax-error` and `load`**
+- [x] **M4-09 · `syntax-error` and `load`**
   - `syntax-error` (R7RS §4.3.3) as an expander form: expanding it is a
     syntax error carrying its message and irritants.
   - `load` (`(scheme load)`): read a file through `TruffleFile`, compile it in

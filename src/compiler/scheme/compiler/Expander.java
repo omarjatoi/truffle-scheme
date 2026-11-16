@@ -27,6 +27,7 @@ import scheme.runtime.SchemeLanguage;
 import scheme.runtime.value.SString;
 import scheme.runtime.printer.Printer;
 import scheme.runtime.value.SConstant;
+import scheme.runtime.value.SErrorObject;
 import scheme.runtime.value.SPair;
 import scheme.runtime.value.SSymbol;
 import scheme.runtime.value.SVector;
@@ -217,8 +218,34 @@ public final class Expander {
     @TruffleBoundary
     private SchemeError syntax(String message, Object form) {
         Syntax at = form instanceof Syntax s && s.source != null ? s : current;
-        String line = at == null ? "" : " (" + at.source.getSource().getName() + ", line " + at.source.getStartLine() + ", column " + at.source.getStartColumn() + ")";
-        return SchemeError.syntax("syntax error: " + message + ": " + Printer.print(Syntax.toDatum(form), Printer.Mode.WRITE) + line, at == null ? null : at.source, false);
+        return SchemeError.syntax("syntax error: " + message + ": " + Printer.print(Syntax.toDatum(form), Printer.Mode.WRITE) + location(at), at == null ? null : at.source, false);
+    }
+
+    /**
+     * {@code (syntax-error message irritant ...)} (R7RS §4.3.3): a syntax error with this message
+     * and irritants (as data), at the form's location. It carries them as an error object too, so
+     * that inside {@code eval} or {@code load} it is raised with them (R7RS §6.12).
+     */
+    @TruffleBoundary
+    private SchemeError syntaxErrorForm(List<Object> f, Object form) {
+        if (f.size() < 2 || !(Syntax.toDatum(f.get(1)) instanceof SString message)) {
+            return syntax("syntax-error needs a message string", form);
+        }
+        StringBuilder text = new StringBuilder("syntax error: ").append(message);
+        Object irritants = SConstant.EMPTY_LIST;
+        for (int i = f.size() - 1; i >= 2; i--) {
+            irritants = new SPair(Syntax.toDatum(f.get(i)), irritants);
+        }
+        for (Object rest = irritants; rest instanceof SPair p; rest = p.cdr) {
+            text.append(' ').append(Printer.print(p.car, Printer.Mode.WRITE));
+        }
+        Syntax at = form instanceof Syntax s && s.source != null ? s : current;
+        text.append(location(at));
+        return SchemeError.syntax(text.toString(), at == null ? null : at.source, new SErrorObject(message, irritants, SErrorObject.Kind.OTHER));
+    }
+
+    private static String location(Syntax at) {
+        return at == null ? "" : " (" + at.source.getSource().getName() + ", line " + at.source.getStartLine() + ", column " + at.source.getStartColumn() + ")";
     }
 
     /** The elements of a proper list (syntax objects stay wrapped), or a syntax error. */
@@ -405,6 +432,18 @@ public final class Expander {
         Lambda thunk = new Lambda(null, false);
         thunk.name = "eval";
         return (Lambda) run(new ProgramFrame(List.of(Syntax.addScope(datum, topScope)), thunk));
+    }
+
+    /**
+     * Expands the forms of a file for {@code load} (R7RS §6.13.1) at this unit's top level, like
+     * {@link #expandEval} but for every form: one procedure of no arguments, whose last form is in
+     * tail position, so {@code load} can tail-call it (design.md D6).
+     */
+    Lambda expandLoad(List<Object> forms, boolean mutable) {
+        immutableTop = !mutable;
+        Lambda thunk = new Lambda(null, false);
+        thunk.name = "load";
+        return (Lambda) run(new ProgramFrame(addScope(forms, topScope), thunk));
     }
 
     // ------------------------------------------------------------------------------------------
@@ -701,6 +740,8 @@ public final class Expander {
                 throw syntax(c.keyword + " is only allowed at the top level", form);
             case SYNTAX_RULES:
                 throw syntax("syntax-rules is only allowed as a transformer", form);
+            case SYNTAX_ERROR:
+                throw syntaxErrorForm(f, form);
             default:
                 throw new IllegalStateException("unhandled core form " + c);
         }
