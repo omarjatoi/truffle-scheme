@@ -117,7 +117,10 @@ summary shows per-section results. Steps whose task hasn't landed yet report
 
 ## Never
 
-- Edit anything under `tests/r7rs/` or `tests/r7rs-larceny/`, change or delete an existing case in
+- Edit anything under `tests/r7rs/` or `tests/r7rs-larceny/` (except the
+  `## Exceptions` table in `tests/r7rs-larceny/README.md`, which lists tests
+  that expect a result where R7RS says "it is an error"; adding a row needs
+  the R7RS text that says so), change or delete an existing case in
   `tests/spec/`, or edit the status block in `docs/plan.md` by hand. `mx r7rs-status` regenerates the block, and the
   `mx tests` fails if it's stale, so commit the regenerated block with your change. If a test looks wrong, explain why in the
   PR and stop.
