@@ -90,7 +90,8 @@ mx spotbugs                               # Java static analysis (SpotBugs)
 
 Before opening a PR: `mx checks && mx tests`. If you touched `src/runtime` or
 any Bytecode DSL operation, also run `mx r7rs-test --compile`. CI runs the same
-two commands as the required `Checks` and `Tests` jobs, one step per sub-check,
+two commands as the required `Checks` and `Tests` checks, one step per sub-check
+(`Tests` passes when the parallel `Tests (...)` jobs that split its steps all pass),
 plus non-blocking `Conformance` jobs (interpreter and `--compile`) whose run
 summary shows per-section results. Steps whose task hasn't landed yet report
 `SKIPPED` and name the task that brings them. This suite doesn't use `mx gate`.

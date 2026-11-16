@@ -47,11 +47,26 @@ jobs:
       - name: Rule checks (AGENTS.md)
         run: nix develop --command mx checks rules
 
-  # Required check on main: all tests.
-  tests:
-    name: Tests
+  # The steps of `mx tests`, spread over parallel jobs so the slow ones (unit tests in
+  # compile-immediately mode, spec, torture) don't queue behind each other. Each job builds
+  # for itself and runs only its own steps; the others show as skipped. The `Tests` job
+  # below is the required check and passes only if every one of these jobs passed.
+  test-jobs:
+    name: Tests (${{ matrix.name }})
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: unit, status, diff, space
+            steps: [unittest, conformance, diff, space]
+          - name: unit, compile immediately
+            steps: [unittest-compile]
+          - name: spec
+            steps: [spec]
+          - name: torture
+            steps: [torture]
     steps:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/determinate-nix-action@v3
@@ -63,19 +78,42 @@ jobs:
       - name: Build
         run: nix develop --command mx build
       - name: Unit tests
+        if: contains(matrix.steps, 'unittest')
         run: nix develop --command mx tests unittest
       - name: Unit tests (compile immediately)
+        if: contains(matrix.steps, 'unittest-compile')
         run: nix develop --command mx tests unittest-compile
       - name: Conformance status block is up to date
+        if: contains(matrix.steps, 'conformance')
         run: nix develop --command mx tests conformance
       - name: Differential tests (tests/diff vs chibi-scheme)
+        if: contains(matrix.steps, 'diff')
         run: nix develop --command mx tests diff
       - name: Constant stack (tail loop, deep recursion under -Xss256k)
+        if: contains(matrix.steps, 'space')
         run: nix develop --command mx tests space
       - name: Spec tests
+        if: contains(matrix.steps, 'spec')
         run: nix develop --command mx tests spec
       - name: Torture
+        if: contains(matrix.steps, 'torture')
         run: nix develop --command mx tests torture
+
+  # Required check on main: all tests. It passes only if every test job above succeeded;
+  # a failed, cancelled or skipped test job fails it.
+  tests:
+    name: Tests
+    needs: test-jobs
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every test job passed
+        env:
+          RESULT: ${{ needs.test-jobs.result }}
+        run: |
+          echo "Test jobs: $RESULT"
+          test "$RESULT" = success
 
   # Progress tracking, not a merge gate: the main ruleset requires only Checks and
   # Tests, and continue-on-error keeps a failing run from marking the workflow red.
