@@ -46,7 +46,8 @@ public abstract class Trampoline extends Node {
      * Called by the enclosing {@code Call} site, when it specializes, with each call target it
      * caches: from the second distinct one on, the site is polymorphic, and reports it (as
      * {@code @ReportPolymorphism} would), so Truffle can split the procedure it is in. Returns the
-     * target.
+     * target. (A workaround for a Truffle 25.5 bug: {@code scheme.test.upstream.UpstreamReportPolymorphismTest},
+     * docs/upstream.md#reportpolymorphism-on-an-operation.)
      */
     RootCallTarget noteCallee(RootCallTarget target) {
         if (firstCallee == null) {

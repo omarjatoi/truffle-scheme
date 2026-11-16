@@ -163,7 +163,9 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
      * procedure, Truffle may split the procedure it is in (map's loop, for instance) for each of its
      * callers, so that each copy's site sees fewer procedures and can inline them. (The Bytecode DSL
      * of Truffle 25.5 generates code that doesn't compile for {@code @ReportPolymorphism} on an
-     * operation, so the cache initializers report instead.)
+     * operation, so the cache initializers report instead: a Truffle bug, reproduced by
+     * {@code scheme.test.upstream.UpstreamReportPolymorphismTest}, docs/upstream.md#reportpolymorphism-on-an-operation.
+     * When that test fails after a Truffle upgrade, put {@code @ReportPolymorphism} here instead.)
      */
     @Operation(storeBytecodeIndex = true)
     public static final class Call {

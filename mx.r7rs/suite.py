@@ -305,8 +305,8 @@ suite = {
         "SCHEME_TEST": {
             "moduleInfo": {
                 "name": "scheme.test",
-                "exports": ["scheme.test to junit"],
-                "opens": ["scheme.test to junit"],
+                "exports": ["scheme.test to junit", "scheme.test.upstream to junit"],
+                "opens": ["scheme.test to junit", "scheme.test.upstream to junit"],
             },
             "useModulePath": True,
             "dependencies": ["scheme.test"],
