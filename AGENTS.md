@@ -106,15 +106,15 @@ like its neighbours'.
 Before opening a PR: `bazel test //...`; if you changed docs/usage.md,
 docs/embedding.md or what they run, also `bazel run //:r7rs -- readme`. If
 you touched `src/runtime` or any Bytecode DSL operation, also run `bazel run
-//:r7rs -- test --compile`. CI runs `Checks` (the lint tests) and `Tests`
-(every other test, the readme check, and `Tests (benchmarks)`), plus
-non-blocking `Conformance` jobs (interpreter and `--compile`) whose run
-summary shows per-section results. `Tests (benchmarks)` fails when a
-benchmark is slower than its threshold, measured on CI's runners: a PR that
-changes performance on purpose commits new thresholds from the `Benchmark
-thresholds` workflow and says why (bench/README.md "Thresholds"); never raise
-one by hand. The thresholds are for CI's linux-x86_64 runners: elsewhere
-`bench-check` only warns about them.
+//:r7rs -- test --compile`. CI runs on Buildkite (`.buildkite/pipeline.yml`):
+the required `Checks` (the lint tests) and `Tests` (every other test and the
+readme check), plus non-blocking `Conformance` steps (interpreter and
+`--compile`) whose annotations show per-section results. The benchmark check
+runs only on demand, in a Buildkite build started with `BENCH=check`; a PR
+that changes performance on purpose runs it, commits new thresholds from a
+`BENCH=measure` build, and says why (bench/README.md "Thresholds"). Never
+raise a threshold by hand. The thresholds are for the Buildkite agents:
+elsewhere `bench-check` only warns about them.
 
 ## Rules (each one is enforced by `bazel test //...`)
 

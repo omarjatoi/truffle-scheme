@@ -1066,7 +1066,7 @@ def r7rs_bench_check(args):
                         help='rerun a benchmark past its threshold up to N times, in fresh JVMs, keeping the best (default 2)')
     parser.add_argument('--timeout', type=int, default=300, metavar='SECONDS', help='kill a JVM after this long (default 300)')
     parser.add_argument('--json', metavar='FILE', help='write the measurements here (what --update --from reads)')
-    parser.add_argument('--markdown', metavar='FILE', help='append the table here (CI: $GITHUB_STEP_SUMMARY)')
+    parser.add_argument('--markdown', metavar='FILE', help='append the table here')
     parser.add_argument('--update', action='store_true',
                         help='rewrite the thresholds of the benchmarks chosen, from --from files, or else from --runs runs here')
     parser.add_argument('--from', dest='sources', nargs='+', metavar='FILE', help='with --update: measurement files (--json) of CI runs')

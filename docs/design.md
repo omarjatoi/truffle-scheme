@@ -535,6 +535,13 @@ Each entry: the decision, why, and what was rejected.
   `gh`, chibi-scheme (the differential tests take it from the shell) and a
   GraalVM JDK for running and embedding outside Bazel. `nix develop .#bench`
   adds the other R7RS implementations for the comparative benchmark report.
+- **CI runs on Buildkite** (`.buildkite/pipeline.yml`, `.buildkite/README.md`):
+  its steps post the required `Checks` and `Tests` commit statuses and run
+  in the Nix dev shell on fresh agents. The benchmark threshold check runs
+  on demand there (`BENCH=check`), not on every PR, by the maintainer's
+  choice, against thresholds measured on the same agents (`BENCH=measure`).
+  GitHub Actions keeps the native launcher build and the weekly comparative
+  benchmark report, which need nothing Buildkite adds.
 - **Measured** when Bazel replaced mx (same commit; Apple M3 Max, 16 cores,
   shared with other builds at load 15–25; GitHub's `ubuntu-26.04` runners):
 

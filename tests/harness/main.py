@@ -462,7 +462,7 @@ def main():
     p.add_argument('--torture', action='store_true', help='capture + resume at every non-tail call')
     p.add_argument('--native', metavar='FILE', help='through this native launcher (native-image)')
     p.add_argument('-v', '--verbose', action='store_true', help='also list failing tests')
-    p.add_argument('--markdown', metavar='FILE', help='append a Markdown table to FILE (e.g. $GITHUB_STEP_SUMMARY)')
+    p.add_argument('--markdown', metavar='FILE', help='append a Markdown table to FILE (e.g. a CI summary)')
     p = sub.add_parser('status', help='rewrite the status block in docs/plan.md')
     p.add_argument('--check', action='store_true')
     p.add_argument('--native', metavar='FILE', help='check it against a run through this native launcher')

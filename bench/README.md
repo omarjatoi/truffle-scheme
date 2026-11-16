@@ -135,9 +135,11 @@ attaches the page and JSON to the run as the `benchmark-report` artifact.
 ## Thresholds
 
 `bazel run //:r7rs -- bench-check` (plan.md M5-08) runs a subset of ecraven's set and fails if one of them
-is slower than its threshold in `thresholds.json`. CI runs it on every PR, as the `Tests
-(benchmarks)` job, one of the jobs the required `Tests` check needs. It is not a `bazel test`:
-its JVMs run one after another, with the machine to themselves.
+is slower than its threshold in `thresholds.json`. CI runs it on demand, not on every PR (the
+maintainer's choice, design.md D11): in a Buildkite build started with `BENCH=check` in its
+environment (`bk build create -b <branch> -e BENCH=check`), or for a commit whose message says
+`[bench check]`, on a hosted `linux-medium` agent. It is not a `bazel test`: its JVMs run one
+after another, with the machine to themselves.
 
 ```
 bazel run //:r7rs -- bench-check                   # every benchmark of the subset: a table, and exit 1 past a threshold
@@ -211,21 +213,20 @@ again), and where, when and at which commit the runs were made.
 ### Updating the thresholds
 
 A PR that changes performance on purpose (a slowdown it accepts, a speedup that leaves a threshold
-far too loose, or a changed workload) commits new thresholds, measured on CI's runners, and says
+far too loose, or a changed workload) commits new thresholds, measured on CI's agents, and says
 in its description which ones moved and why:
 
 ```
-gh workflow run bench-thresholds.yml --ref <branch> [-f benchmarks="fib deriv"] [-f note="why"]
-gh run download <run> -n thresholds          # writes bench/thresholds.json (and runs/, the measurements)
+bk build create -b <branch> -e BENCH=measure        # or a commit message with [bench measure]
+bk artifacts download -b <build> bench/thresholds.json
 ```
 
-The `Benchmark thresholds` workflow (`.github/workflows/bench-thresholds.yml`) measures the subset
-(or the benchmarks named) on eight fresh runners, runs `bench-check --update --from` on
-the eight measurement files, and attaches the new `thresholds.json` to the run; its summary shows
-the diff. `--update --from` takes any measurement files, so the `bench-check-<attempt>` artifacts
-that CI's `Tests (benchmarks)` job uploads on every run, passing or not, work too.
-`bench-check --update` without `--from` measures here instead (`--runs`, default 3), which
-is only right for a machine that runs the check itself.
+Such a build's eight `Measure` steps run `bench-check --measure` on fresh `linux-medium` agents,
+and its `Thresholds` step runs `bench-check --update --from` on the eight files and attaches the
+new `bench/thresholds.json`. `--update --from` takes any measurement files, so the `measure-*.json`
+artifacts of several builds can be combined, and so can a `BENCH=check` build's
+`bench-check.json`. `bench-check --update` without `--from` measures here instead (`--runs`,
+default 3), which is only right for a machine that runs the check itself.
 
 ## Failures
 

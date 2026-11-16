@@ -334,10 +334,9 @@ JVM, startup excluded, as ecraven's tables report. "Steady state" is the best
 later iteration in the same JVM, once the JIT has compiled the program. The
 interpreter's 11 misses are runs stopped at the report's 60 s limit for it.
 [bench/README.md](../bench/README.md) explains how to run the benchmarks and
-what is measured. CI also checks a subset of them against thresholds
-measured on its own runners (`bench/thresholds.json`) on every pull request,
-as the `Tests (benchmarks)` job; bench/README.md's "Thresholds" section
-describes it.
+what is measured. CI can also check a subset of them against thresholds
+measured on its own agents (`bench/thresholds.json`), on demand;
+bench/README.md's "Thresholds" section describes it.
 
 ## Embedding in Java
 
