@@ -1,0 +1,63 @@
+load("@rules_java//java:defs.bzl", "java_binary")
+load("@rules_python//python:defs.bzl", "py_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+# The static checks of `mx checks`, as Bazel tests (bazel/lint/defs.bzl). Tool versions are mx's
+# for this suite: Checkstyle 10.21.0 (suite.py's checkstyleVersion), SpotBugs 4.9.8 and ECJ
+# 3.46.0 (mx's choices for JDK 25), and the JDT formatter of Eclipse 4.36 (mx's ECLIPSE).
+
+exports_files([
+    "lint_test.py",
+    "org.eclipse.jdt.core.prefs",
+])
+
+alias(
+    name = "checkstyle_config",
+    actual = "//:mx.r7rs/projects/runtime/.checkstyle_checks.xml",
+)
+
+java_binary(
+    name = "checkstyle",
+    jvm_flags = ["-Xmx1g"],
+    main_class = "com.puppycrawl.tools.checkstyle.Main",
+    runtime_deps = ["@lint//:com_puppycrawl_tools_checkstyle"],
+)
+
+java_binary(
+    name = "spotbugs",
+    main_class = "edu.umd.cs.findbugs.LaunchAppropriateUI",
+    runtime_deps = ["@lint//:com_github_spotbugs_spotbugs"],
+)
+
+java_binary(
+    name = "ecj",
+    main_class = "org.eclipse.jdt.internal.compiler.batch.Main",
+    runtime_deps = ["@lint//:org_eclipse_jdt_ecj"],
+)
+
+java_binary(
+    name = "eclipse_format",
+    srcs = ["EclipseFormat.java"],
+    javacopts = ["-Xlint:all", "-Werror"],
+    main_class = "EclipseFormat",
+    deps = [
+        "@eclipse_formatter//:org_eclipse_jdt_org_eclipse_jdt_core",
+        "@eclipse_formatter//:org_eclipse_platform_org_eclipse_text",
+    ],
+)
+
+# `bazel run //bazel/lint:format`: format every Java file in the repository in place (mx eclipseformat).
+py_binary(
+    name = "format",
+    srcs = ["format.py"],
+    args = [
+        "$(rlocationpath :eclipse_format)",
+        "$(rlocationpath :org.eclipse.jdt.core.prefs)",
+    ],
+    data = [
+        ":eclipse_format",
+        ":org.eclipse.jdt.core.prefs",
+    ],
+    deps = ["//bazel/r7rs:r7rs"],
+)

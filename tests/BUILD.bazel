@@ -29,6 +29,8 @@ scheme_java_library(
     # The vendored suite's files that SuiteReadSyntaxTest and SyntaxRulesTest read as resources.
     resource_strip_prefix = "tests",
     resources = glob(["r7rs/**"]),
+    # As mx: SpotBugs checks non-test projects only.
+    spotbugs = False,
     # A test instrument (ToolsTest) needs its generated registration.
     truffle_dsl = True,
     deps = [

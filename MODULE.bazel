@@ -61,6 +61,30 @@ maven.install(
 )
 use_repo(maven, "jvm")
 
+# Lint tools (bazel/lint), at the versions `mx checks` uses, in repositories of their own so
+# their dependencies don't mix with the language's: Checkstyle, SpotBugs and ECJ in @lint; the
+# Eclipse formatter in @eclipse_formatter, since JDT Core 3.42 needs its own ECJ (3.42).
+maven.install(
+    name = "lint",
+    artifacts = [
+        "com.puppycrawl.tools:checkstyle:10.21.0",
+        "com.github.spotbugs:spotbugs:4.9.8",
+        "org.eclipse.jdt:ecj:3.46.0",
+    ],
+    fail_if_repin_required = True,
+    lock_file = "//bazel/lint:maven_install.json",
+    repositories = ["https://repo1.maven.org/maven2"],
+)
+maven.install(
+    name = "eclipse_formatter",
+    # The formatter of Eclipse 4.36, mx's ECLIPSE (bazel/lint/EclipseFormat.java).
+    artifacts = ["org.eclipse.jdt:org.eclipse.jdt.core:3.42.0"],
+    fail_if_repin_required = True,
+    lock_file = "//bazel/lint:eclipse_formatter_install.json",
+    repositories = ["https://repo1.maven.org/maven2"],
+)
+use_repo(maven, "eclipse_formatter", "lint")
+
 # --- Python: the test drivers (bazel/r7rs/*.py), on rules_python's hermetic interpreter ---------
 
 python = use_extension("@rules_python//python/extensions:python.bzl", "python")

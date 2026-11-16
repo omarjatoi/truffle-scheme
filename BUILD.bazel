@@ -7,6 +7,7 @@ exports_files([
     "mx.r7rs/suite.py",
     "maven_install.json",
     "mx.r7rs/mx_r7rs_tools.py",
+    "mx.r7rs/projects/runtime/.checkstyle_checks.xml",
 ])
 
 # The Truffle and GraalVM SDK modules the scheme modules require (mx's "requires", derived from
