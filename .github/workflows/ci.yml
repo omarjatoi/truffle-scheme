@@ -19,7 +19,7 @@ jobs:
   # Required check on main: build and static checks.
   checks:
     name: Checks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -49,24 +49,31 @@ jobs:
 
   # The steps of `mx tests`, spread over parallel jobs so the slow ones (unit tests in
   # compile-immediately mode, spec, torture) don't queue behind each other. Each job builds
-  # for itself and runs only its own steps; the others show as skipped. The `Tests` job
-  # below is the required check and passes only if every one of these jobs passed.
+  # for itself and runs only its own steps; the others show as skipped. Together they run
+  # every step of `mx tests`. The `Tests` job below is the required check and passes only
+  # if every one of these jobs passed.
   test-jobs:
     name: Tests (${{ matrix.name }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: unit, status, diff, space
-            steps: [unittest, conformance, diff, space]
+          - name: unit, status, diff
+            steps: [unittest, conformance, diff]
           - name: unit, compile immediately
             steps: [unittest-compile]
-          - name: spec
+          # tests/spec is the longest step and its JVMs keep all of a runner's cores busy,
+          # so it is split over two runners (every other case each).
+          - name: spec 1/2
             steps: [spec]
-          - name: torture
-            steps: [torture]
+            shard: 1/2
+          - name: spec 2/2
+            steps: [spec]
+            shard: 2/2
+          - name: torture, space
+            steps: [torture, space]
     steps:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/determinate-nix-action@v3
@@ -92,9 +99,9 @@ jobs:
       - name: Constant stack (tail loop, deep recursion under -Xss256k)
         if: contains(matrix.steps, 'space')
         run: nix develop --command mx tests space
-      - name: Spec tests
+      - name: Spec tests ${{ matrix.shard }}
         if: contains(matrix.steps, 'spec')
-        run: nix develop --command mx tests spec
+        run: nix develop --command mx r7rs-spec --shard ${{ matrix.shard }}
       - name: Torture
         if: contains(matrix.steps, 'torture')
         run: nix develop --command mx tests torture
@@ -105,7 +112,7 @@ jobs:
     name: Tests
     needs: test-jobs
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
       - name: Every test job passed
@@ -120,7 +127,7 @@ jobs:
   # Each run's per-section table is in the workflow run summary.
   conformance:
     name: Conformance (${{ matrix.mode }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 60
     continue-on-error: true
     strategy:

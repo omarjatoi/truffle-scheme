@@ -424,6 +424,7 @@ def r7rs_spec(args):
     parser.add_argument('cases', nargs='*', help='case names, e.g. tail-mutual (default: all)')
     parser.add_argument('-j', '--jobs', type=int, default=_default_jobs(), metavar='N',
                         help='JVMs to run at a time (default: the number of CPUs)')
+    parser.add_argument('--shard', metavar='I/N', help='run only every Nth case, starting with the Ith (CI splits the cases over N machines)')
     parsed = parser.parse_args(args)
     names = sorted(f[:-len('.scm')] for f in os.listdir(_spec_dir()) if f.endswith('.scm'))
     unknown = [c for c in parsed.cases if c not in names]
@@ -441,6 +442,11 @@ def r7rs_spec(args):
     # Every case runs twice (interpreter, JIT), each in a JVM of its own under the case's limits.
     # The runs are independent, so they go in parallel; results are logged in case order.
     selected = parsed.cases or names
+    if parsed.shard:
+        m = re.fullmatch(r'(\d+)/(\d+)', parsed.shard)
+        if not m or not 1 <= int(m.group(1)) <= int(m.group(2)):
+            mx.abort(f'mx r7rs-spec: --shard takes I/N with 1 <= I <= N, not {parsed.shard}')
+        selected = selected[int(m.group(1)) - 1::int(m.group(2))]
     cases = {name: _spec_case(name) for name in selected if name not in _SPEC_PENDING}
     modes = (('interpreter', r7rs_vm_args()), ('JIT', []))
     _launcher_jvm_args()
@@ -764,7 +770,7 @@ mx.update_commands(_suite, {
     'checks': [checks, '[' + ' | '.join(_CHECKS) + ']...'],
     'tests': [tests, '[' + ' | '.join(_TESTS) + ']...'],
     'r7rs-test': [r7rs_test, '[section] [--torture] [--compile]'],
-    'r7rs-spec': [r7rs_spec, '[-j N] [case...]'],
+    'r7rs-spec': [r7rs_spec, '[-j N] [--shard I/N] [case...]'],
     'r7rs-diff': [r7rs_diff, 'file.scm [--compile] [--torture]'],
     'r7rs-diff-all': [r7rs_diff_all, '[--compile] [--torture]'],
     'r7rs-space': [r7rs_space, ''],
