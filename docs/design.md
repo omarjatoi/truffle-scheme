@@ -1250,7 +1250,14 @@ Each entry: the decision, why, and what was rejected.
   one extra pointer move every other pair. `map` and `for-each` keep R7RS
   §6.10's rule: *"The lists can be circular, but it is an error if all of
   them are circular"*: they stop at the shortest list, and raise up front
-  only when every list is circular. `list-tail`, `list-ref` and `list-set!`
+  only when every list is circular. An improper list isn't a list either,
+  so the same procedures raise the same error when their walk reaches a
+  tail that is neither a pair nor `()` (the §6 audit's follow-up, below):
+  `memq` and the rest when the object isn't found before it, and `map` and
+  `for-each` when they stop, naming the first list whose tail it is (so
+  `(map + '(1 2) '(10 20 30 . 40))` stops at the shorter list without
+  reaching the improper tail, as chibi-scheme does). The check is the walk's
+  last test, once a call, so a proper list costs nothing more. `list-tail`, `list-ref` and `list-set!`
   walk a bounded number of pairs and need no check; `equal?`, `write` and
   `display` already terminate (above).
 - **Circular code is a syntax error.** R7RS §2.4: *"It is an error for a
@@ -1283,15 +1290,23 @@ Each entry: the decision, why, and what was rejected.
     integer division (`floor/`, `truncate/`, `quotient`, `modulo`, ...) by
     any zero; `utf8->string` of invalid UTF-8 (§6.9: *"It is an error for
     bytevector to contain invalid UTF-8 byte sequences"*).
-  - Not signalled, on purpose: `/` with an exact zero divisor and an inexact
-    argument gives IEEE's result (`(/ 5. 0)` is `+inf.0`; §6.2.6: *"It is an
-    error if any argument of / other than the first is an exact zero"*), so
-    the typed flonum paths (M7-03) need no extra test. `(expt 0 z)` with a
+  - Since the audit's follow-up, also `/` with an exact zero divisor and an
+    inexact argument (§6.2.6: *"It is an error if any argument of / other
+    than the first is an exact zero"*): `(/ 5. 0)` raises `"/: division by
+    zero"`, as `(/ 5 0)` did, where it gave IEEE's `+inf.0` (an inexact zero
+    still divides as IEEE does: `(/ 5. 0.)` is `+inf.0`). The check is in the
+    primitive (`Arithmetic.apply`); an exact zero is always the fixnum 0, so
+    the typed `Div` operation's flonum path (M7-03), which takes two
+    flonums, never sees one, and a site that divides flonums keeps only that
+    specialization (`NumbersTest`). Larceny's `(/ 1.0 0)` and `(/ 0.0 0)`
+    are listed exceptions for it. And `memq`, `memv`, `member`, `assq`,
+    `assv`, `assoc`, `map` and `for-each` given an improper list (above),
+    where they returned `#f` at the tail or stopped there, and took a
+    non-list argument for an empty list.
+  - Not signalled, on purpose: `(expt 0 z)` with a
     negative real part returns a number when z is inexact (`(expt 0 -1.)` is
     `0.0`; §6.2.6 allows *"either an error is signalled or an unspecified
-    number is returned"*). `memq`, `memv`, `member`, `assq`, `assv` and
-    `assoc` return `#f` at an improper list's tail, and `map` and `for-each`
-    stop there (a non-list argument is an empty list). `number->string` of
+    number is returned"*). `number->string` of
     `-0.0` in radix 2, 8 or 16, which no string reads back as (§6.2.7: *"It
     is an error if no possible result makes this expression true"*), is
     `"#i-0"`. A parameter object called with one argument sets its value, as

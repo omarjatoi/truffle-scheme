@@ -156,6 +156,12 @@ final class Arithmetic {
     static Object apply(String who, Op op, Object a, Object b) {
         check(who, a);
         check(who, b);
+        if (op == Op.DIV && b instanceof Long d && d == 0) {
+            // R7RS §6.2.6: "It is an error if any argument of / other than the first is an exact
+            // zero", whatever the others are: an inexact dividend included (design.md D9). An exact
+            // zero is always the fixnum 0. The typed Div operation's flonum path never gets here.
+            throw new SchemeError(who + ": division by zero");
+        }
         if (!(a instanceof SComplex) && !(b instanceof SComplex)) {
             return real(who, op, a, b);
         }

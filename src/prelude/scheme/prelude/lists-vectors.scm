@@ -28,6 +28,15 @@
             (if (%circular-list? (car rest)) (loop (cdr rest)))
             (apply error message l ls)))))
 
+;; Their arguments are lists (§6.10), so one whose walk reaches a tail other than () is an error
+;; (design.md D9). Where the walk of several stops, the first list whose tail isn't a pair or ()
+;; (in the tails, ls) is the irritant (in the lists, originals).
+(define (%proper-tails message ls originals)
+  (if (pair? ls)
+      (if (or (pair? (car ls)) (null? (car ls)))
+          (%proper-tails message (cdr ls) (cdr originals))
+          (error message (car originals)))))
+
 ;; Their loops call f, so they stay procedures of their own (not loops of map's root, plan.md M7-02),
 ;; small enough for Truffle to split them for each caller, so that each copy's call of f sees one
 ;; procedure. Each is named after the procedure it is the loop of: stack traces, the debugger,
@@ -36,29 +45,38 @@
   (if (null? ls)
       (begin
         (%some-finite "map: every list is circular" l '())
-        (let map ((l l) (acc '()))
-          (if (pair? l) (map (cdr l) (cons (f (car l)) acc)) (reverse acc))))
-      (begin
+        (let map ((rest l) (acc '()))
+          (if (pair? rest)
+              (map (cdr rest) (cons (f (car rest)) acc))
+              (if (null? rest) (reverse acc) (error "map: not a proper list" l)))))
+      (let ((lists (cons l ls)))
         (%some-finite "map: every list is circular" l ls)
-        (let map ((ls (cons l ls)) (acc '()))
-          (if (%all-pairs? ls) (map (%cdrs ls) (cons (apply f (%cars ls)) acc)) (reverse acc))))))
+        (let map ((ls lists) (acc '()))
+          (if (%all-pairs? ls)
+              (map (%cdrs ls) (cons (apply f (%cars ls)) acc))
+              (begin (%proper-tails "map: not a proper list" ls lists) (reverse acc)))))))
 
 (define (for-each f l . ls)
   (if (null? ls)
       (begin
         (%some-finite "for-each: every list is circular" l '())
-        (let for-each ((l l))
-          (if (pair? l) (begin (f (car l)) (for-each (cdr l))))))
-      (begin
+        (let for-each ((rest l))
+          (if (pair? rest)
+              (begin (f (car rest)) (for-each (cdr rest)))
+              (if (not (null? rest)) (error "for-each: not a proper list" l)))))
+      (let ((lists (cons l ls)))
         (%some-finite "for-each: every list is circular" l ls)
-        (let for-each ((ls (cons l ls)))
-          (if (%all-pairs? ls) (begin (apply f (%cars ls)) (for-each (%cdrs ls))))))))
+        (let for-each ((ls lists))
+          (if (%all-pairs? ls)
+              (begin (apply f (%cars ls)) (for-each (%cdrs ls)))
+              (%proper-tails "for-each: not a proper list" ls lists))))))
 
 ;; member and assoc take an optional equivalence predicate, which they call in a non-tail position,
 ;; so they live here (D5). The predicate gets the key first and the element second (R7RS §6.4).
 ;; Without one, they are the primitives %member and %assoc (equal?). With one, the walk checks for a
 ;; cycle as it goes, as the primitives do (design.md D9), with Brent's method: it keeps a pair, moved
-;; up to the walk after 1, 2, 4, ... steps, which the walk meets again only on a cycle.
+;; up to the walk after 1, 2, 4, ... steps, which the walk meets again only on a cycle. Like theirs,
+;; a walk that reaches a tail other than () raises: the argument is a list (R7RS §6.4).
 (define (member x l . compare)
   (if (pair? compare)
       (let ((same? (car compare)))
@@ -70,7 +88,7 @@
                     (cond ((eq? next mark) (error "member: not a proper list" l))
                           ((= n limit) (loop next next 0 (+ limit limit)))
                           (else (loop next mark (+ n 1) limit)))))
-              #f)))
+              (if (null? rest) #f (error "member: not a proper list" l)))))
       (%member x l)))
 
 (define (assoc x l . compare)
@@ -84,7 +102,7 @@
                     (cond ((eq? next mark) (error "assoc: not a proper list" l))
                           ((= n limit) (loop next next 0 (+ limit limit)))
                           (else (loop next mark (+ n 1) limit)))))
-              #f)))
+              (if (null? rest) #f (error "assoc: not a proper list" l)))))
       (%assoc x l)))
 
 ;; vector-map and vector-for-each call their procedure in a non-tail position (D5). They stop at

@@ -12,8 +12,8 @@ compares with other implementations. Embedding it in Java is
 Both R7RS conformance suites vendored here pass:
 
 - chibi-scheme's R7RS suite (`tests/r7rs/`): **1225 of 1225** tests.
-- Larceny's R7RS suite (`tests/r7rs-larceny/`): **2162 of 2166**. The other
-  four expect a particular result where R7RS says "it is an error", and we
+- Larceny's R7RS suite (`tests/r7rs-larceny/`): **2160 of 2166**. The other
+  six expect a particular result where R7RS says "it is an error", and we
   signal the error: [the exceptions table](../tests/r7rs-larceny/README.md#exceptions)
   lists each with the R7RS text.
 

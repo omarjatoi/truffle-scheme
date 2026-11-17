@@ -160,7 +160,63 @@ public class ListVectorTest {
         assertEquals("error", raises("(length '(1 2 . 3))"));
         assertEquals("error", raises("(reverse '(1 . 2))"));
         assertEquals("(3 (3 2 1) 0 ())", write("(list (length '(a b c)) (reverse '(1 2 3)) (length '()) (reverse '()))"));
-        assertEquals("((a b) #f (b c) #f (2 . b) #f)", write("(list (memq 'a '(a b)) (memq 'z '(a b)) (memv 'b '(a b c)) (memv 1 '(a . b)) (assv 2 '((1 . a) (2 . b))) (assq 'x '()))"));
+        assertEquals("((a b) #f (b c) #f (2 . b) #f)", write("(list (memq 'a '(a b)) (memq 'z '(a b)) (memv 'b '(a b c)) (memv 1 '(a)) (assv 2 '((1 . a) (2 . b))) (assq 'x '()))"));
+    }
+
+    /** What expr raises, as (message irritants), or its value. */
+    private static String raisesWith(String expr) {
+        return write("(guard (e ((error-object? e) (list (error-object-message e) (error-object-irritants e)))) " + expr + ")");
+    }
+
+    /**
+     * The §6 audit's follow-up: an improper list is not a list either (R7RS §6.4: "all lists have
+     * finite length and are terminated by the empty list"), and memq, memv and member take a list,
+     * assq, assv and assoc an alist (§6.4), map and for-each lists (§6.10), so passing one is an
+     * error (§1.3.2). Their walks raise "<who>: not a proper list" with the list as the irritant when
+     * they reach a tail that is neither a pair nor (), as for a circular list (design.md D9), instead
+     * of taking it for the end. Only a tail the walk reaches: an element found before it is found,
+     * and map and for-each stop at the shortest list.
+     */
+    @Test
+    public void improperListsRaise() {
+        for (String procedure : new String[]{"memq", "memv", "member"}) {
+            assertEquals(procedure, "(\"" + procedure + ": not a proper list\" ((a b . c)))", raisesWith("(" + procedure + " 'z '(a b . c))"));
+            assertEquals(procedure, "(\"" + procedure + ": not a proper list\" (x))", raisesWith("(" + procedure + " 'z 'x)"));
+            assertEquals(procedure, "(b . c)", write("(" + procedure + " 'b '(a b . c))"));
+            assertEquals(procedure, "#f", write("(" + procedure + " 'z '())"));
+        }
+        for (String procedure : new String[]{"assq", "assv", "assoc"}) {
+            assertEquals(procedure, "(\"" + procedure + ": not a proper list\" (((a . 1) (b . 2) . c)))", raisesWith("(" + procedure + " 'z '((a . 1) (b . 2) . c))"));
+            assertEquals(procedure, "(\"" + procedure + ": not a proper list\" (5))", raisesWith("(" + procedure + " 'z 5)"));
+            assertEquals(procedure, "(b . 2)", write("(" + procedure + " 'b '((a . 1) (b . 2) . c))"));
+        }
+        // With a predicate, member and assoc are a Scheme loop (lists-vectors.scm).
+        assertEquals("(\"member: not a proper list\" ((1 2 . 3)))", raisesWith("(member 5 '(1 2 . 3) =)"));
+        assertEquals("(2 . 3)", write("(member 2.0 '(1 2 . 3) =)"));
+        assertEquals("(\"assoc: not a proper list\" (((1 . a) . 3)))", raisesWith("(assoc 5 '((1 . a) . 3) =)"));
+        assertEquals("(1 . a)", write("(assoc 1.0 '((1 . a) . 3) =)"));
+        // A call the compiler turns into comparisons with each datum (a quoted proper list, plan.md
+        // M8-05, M9-05) is unaffected; with a quoted improper list it calls the primitive, which raises.
+        assertEquals("((b c) (b . 2) #f #f)", write("(let ((k 'b) (z 'z)) (list (memq k '(a b c)) (assv k '((a . 1) (b . 2))) (memv z '(a b c)) (assq z '((a . 1)))))"));
+        assertEquals("(\"memv: not a proper list\" ((a b . c)))", raisesWith("(let ((k 'z)) (memv k '(a b . c)))"));
+        assertEquals("(\"assq: not a proper list\" (((a . 1) . c)))", raisesWith("(let ((k 'z)) (assq k '((a . 1) . c)))"));
+        // map and for-each, with one list and with several: the irritant is the list whose tail the
+        // walk reached.
+        assertEquals("(\"map: not a proper list\" (((1) (2) . 3)))", raisesWith("(map car '((1) (2) . 3))"));
+        assertEquals("(\"map: not a proper list\" (5))", raisesWith("(map car 5)"));
+        assertEquals("(\"map: not a proper list\" ((10 20 . 30)))", raisesWith("(map + '(1 2 3) '(10 20 . 30))"));
+        assertEquals("(\"map: not a proper list\" ((1 . 2)))", raisesWith("(map + '(1 . 2) '(10 20 30))"));
+        assertEquals("(\"map: not a proper list\" ((a b . c)))", raisesWith("(map list '(1 2) '(a b . c))"));
+        assertEquals("(\"for-each: not a proper list\" (((1) . 3)))", raisesWith("(for-each car '((1) . 3))"));
+        assertEquals("(\"for-each: not a proper list\" (x))", raisesWith("(for-each car 'x)"));
+        assertEquals("(\"for-each: not a proper list\" ((10 . 30)))", raisesWith("(for-each + '(1 2 3) '(10 . 30))"));
+        // f has run for the elements before the tail, in order.
+        assertEquals("(2 1)", write("(let ((acc '())) (guard (e (#t acc)) (for-each (lambda (x) (set! acc (cons x acc))) '(1 2 . 3))))"));
+        // The shortest list ends first: the other's improper tail is never reached.
+        assertEquals("(11 22)", write("(map + '(1 2) '(10 20 30 . 40))"));
+        assertEquals("(1 2)", write("(let ((acc '())) (for-each (lambda (x y) (set! acc (cons x acc))) '(2 1) '(a b c . d)) acc)"));
+        // Proper lists work as before (and circular ones, circularListsRaise).
+        assertEquals("((2 3 4) () (11 22) ())", write("(list (map (lambda (x) (+ x 1)) '(1 2 3)) (map car '()) (map + '(1 2) '(10 20)) (map + '() '(1)))"));
     }
 
     /**
