@@ -411,6 +411,16 @@ it sets as it is. Its collector is chosen when it is built (below), so
 `--vm.XX:+UseG1GC` is an error that says so, and so is `--vm.cp`: it has no
 class path.
 
+Like any native-image executable, it takes `-X...`, `-XX:...` and `-D...`
+arguments from anywhere on its command line, before the program starts. After
+the program file, they are still the executable's, not the program's:
+`bazel-bin/scheme-native prog.scm a -Dx=y b` sets the property `x`, and gives
+the program `("prog.scm" "a" "b")` as its `command-line`, and one the executable
+doesn't know (`-XX:+Foo`) stops it with an error. A program that takes
+arguments of those forms needs the JVM launcher, `bazel-bin/scheme`, which
+gives a program every argument after its file as it is (design.md D17, "VM
+options").
+
 ### Choosing a garbage collector
 
 The executable's collector is chosen when it is built, by native-image's

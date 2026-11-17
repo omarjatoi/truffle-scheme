@@ -68,7 +68,8 @@ def launcher_vm_native(o):
     out, _ = run([native, '--vm.Xss2m', '--vm.Xmx1g', programs['garbage']])
     check(out == 'done', f'--vm.Xss2m with a restart: {out!r}')
     # The program's --vm. arguments stay the program's. (Its -X, -XX: and -D arguments are the
-    # executable's: native-image takes them from anywhere on its command line.)
+    # executable's: native-image takes them from anywhere on its command line. design.md D17,
+    # "VM options": why it isn't built with -H:-ParseRuntimeOptions.)
     out, _ = run([native, '--vm.Xmx1g', programs['command-line'], '--vm.Xmx2g', 'a'])
     check(out == '("--vm.Xmx2g" "a")', f'the arguments after the file should be the program\'s: {out!r}')
     log('--vm.D and --vm.Xss in the process; the program\'s arguments left alone')
