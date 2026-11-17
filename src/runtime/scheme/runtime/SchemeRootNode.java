@@ -103,6 +103,88 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
         super(language, frameDescriptor);
     }
 
+    // ------------------------------------------------------------------------------------------
+    // First descents (plan.md M9-01, design.md "Stack-depth spill")
+
+    /**
+     * As many interpreted frames waiting in calls from one site that has never returned as hold off
+     * the compilation of the procedure the site is in. More than one, so that a procedure whose
+     * first call wraps a whole program ({@code dynamic-wind}'s, {@code with-exception-handler}'s)
+     * still compiles; few enough that a recursion gets there long before a compilation threshold.
+     */
+    static final int FIRST_DESCENT_DEPTH = 8;
+    /**
+     * How long a spill of a first descent holds off compilation at most
+     * ({@link Trampoline#leaveDescent}): long enough for the descent to go on from the frame that
+     * spilled, past {@link #FIRST_DESCENT_DEPTH} frames again, even with a collection or a
+     * synchronous compilation in between (100 ms wasn't, on a loaded CI executor). Anything else
+     * that comes back through the site ends it.
+     */
+    static final long FIRST_DESCENT_HOLD_NANOS = 1_000_000_000L;
+
+    private static final Trampoline[] NO_SITES = new Trampoline[0];
+    /**
+     * The call sites in this procedure that a first descent has gone deep into
+     * ({@link Trampoline#enterDescent}), until one of their calls returns. Copied on write.
+     */
+    private transient volatile Trampoline[] firstDescents = NO_SITES;
+
+    synchronized void registerFirstDescent(Trampoline site) {
+        Trampoline[] sites = firstDescents;
+        int live = 0;
+        Trampoline[] next = new Trampoline[sites.length + 1];
+        for (Trampoline s : sites) {
+            if (!s.firstDescentOver()) {
+                next[live++] = s;
+            }
+        }
+        next[live++] = site;
+        firstDescents = Arrays.copyOf(next, live);
+    }
+
+    /**
+     * Not while a first descent is deep in this procedure (plan.md M9-01): a procedure compiled
+     * while its first recursion descends has never run what follows the recursive call (the base
+     * case's branch, the operation that takes the call's value, the call's return-type profile),
+     * so the first return deoptimizes and invalidates the code, and every compiled frame still on
+     * the stack deoptimizes, one by one, as it is returned to. Truffle retries the compilation
+     * later, and the frames run in the interpreter meanwhile; once a call from the site has
+     * returned, what follows it has run, and the procedure compiles. Inlining it waits too, but not
+     * an on-stack replacement of a loop in it: that runs in an interpreted frame, and returns to
+     * it, so it leaves no compiled frame on the stack (a loop at the bottom of a first descent
+     * would otherwise run in the interpreter until it ends).
+     */
+    @Override
+    protected boolean prepareForCompilation(boolean rootCompilation, int compilationTier, boolean lastTier) {
+        Trampoline[] sites = firstDescents;
+        if (sites.length != 0 && inFirstDescent(sites) && !compilingOnStackReplacement()) {
+            return false;
+        }
+        return super.prepareForCompilation(rootCompilation, compilationTier, lastTier);
+    }
+
+    private static boolean inFirstDescent(Trampoline[] sites) {
+        long now = System.nanoTime();
+        for (Trampoline site : sites) {
+            if (site.blocksCompilation(now)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Truffle prepares an OSR compilation's root, BaseOSRRootNode (internal to Truffle's runtime),
+     * by preparing the root its loop is in: whether that is what calls this, a few frames up.
+     */
+    @TruffleBoundary
+    private static boolean compilingOnStackReplacement() {
+        return STACK_WALKER.walk(frames -> frames.limit(8).anyMatch(f -> OSR_ROOT.equals(f.getClassName())));
+    }
+
+    private static final StackWalker STACK_WALKER = StackWalker.getInstance();
+    private static final String OSR_ROOT = "com.oracle.truffle.runtime.BaseOSRRootNode";
+
     public void setName(String name) {
         this.name = name;
     }
@@ -279,12 +361,21 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
             }
             context.stackUse = nested;
             handOffArguments(context, arguments);
+            boolean descent = trampoline.inFirstDescent();
+            if (descent) {
+                trampoline.enterDescent(caller);
+            }
+            Object result = null;
             try {
-                return tortured(trampoline.run(frame, callNode.call(arguments)), cachedTarget, context);
+                result = trampoline.run(frame, callNode.call(arguments));
+                return tortured(result, cachedTarget, context);
             } catch (SchemeError e) {
                 return raiseHere(e, context, trampoline);
             } finally {
                 context.stackUse = use;
+                if (descent) {
+                    trampoline.leaveDescent(result);
+                }
             }
         }
 
@@ -306,12 +397,21 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
             }
             context.stackUse = nested;
             handOffArguments(context, arguments);
+            boolean descent = trampoline.inFirstDescent();
+            if (descent) {
+                trampoline.enterDescent(caller);
+            }
+            Object result = null;
             try {
-                return tortured(trampoline.run(frame, callNode.call(procedure.callTarget, arguments)), procedure.callTarget, context);
+                result = trampoline.run(frame, callNode.call(procedure.callTarget, arguments));
+                return tortured(result, procedure.callTarget, context);
             } catch (SchemeError e) {
                 return raiseHere(e, context, trampoline);
             } finally {
                 context.stackUse = use;
+                if (descent) {
+                    trampoline.leaveDescent(result);
+                }
             }
         }
 
