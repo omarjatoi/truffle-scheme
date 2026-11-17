@@ -92,12 +92,13 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
     String selfName;
     /**
      * The top level the procedure was compiled in when it isn't the interaction environment: an
-     * isolated program's (design.md D15) or a library's (D7), where code a debugger evaluates in its
-     * frames resolves global names (plan.md M7-07). Opaque here: the compiler's. Transient, so
-     * serialization leaves it out: the prelude image's roots have none, and their frames evaluate in
-     * the interaction environment.
+     * isolated program's (design.md D15), a library's (D7) or an immutable environment's (R7RS
+     * §6.12, for code from {@code eval} and {@code load}), where code a debugger evaluates in its
+     * frames resolves global names (plan.md M7-07). Opaque here: the compiler's, which saves it in
+     * the prelude image as its own kind of value, so the standard libraries' restored roots have
+     * theirs too.
      */
-    transient Object topLevel;
+    Object topLevel;
 
     protected SchemeRootNode(SchemeLanguage language, FrameDescriptor frameDescriptor) {
         super(language, frameDescriptor);

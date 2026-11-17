@@ -22,16 +22,31 @@ final class CompilerState {
      * interaction environment is mutable: definitions and imports in the others are errors.
      */
     record Environment(Scope scope, GlobalEnvironment namespace, boolean mutable) {
+
+        /**
+         * What the roots that {@code eval} and {@code load} compile here record: this environment's
+         * top level, or null for the interaction environment. An immutable environment is closed: its
+         * variables are all imports, which code evaluated in its frames may not assign.
+         */
+        TopLevel topLevel() {
+            return mutable ? null : new TopLevel(scope, namespace, true);
+        }
     }
 
     /**
-     * The top level of an isolated program or a library, which a root compiled there records
-     * ({@code SchemeRootNode.topLevel}): code a debugger evaluates in its frames resolves global
-     * names there (plan.md M6-05, M7-07). A {@code closed} one's variables are assigned only by its
-     * own code (an isolated program's, which its compilation assumes), so that code may not assign
-     * them; a library's may be assigned from another unit by a macro it exports, so it may.
+     * The top level of an isolated program, a library or an immutable {@link Environment}, which a
+     * root compiled there records ({@code SchemeRootNode.topLevel}, saved in the prelude image for
+     * the standard libraries' roots): code a debugger evaluates in its frames resolves global names
+     * there (plan.md M6-05, M7-07). Code evaluated in a {@code closed} one's frames may not assign
+     * its variables: an isolated program's are assigned only by its own code, which its compilation
+     * assumes, and an environment's are immutable (R7RS §6.12). A library's may be assigned from
+     * another unit by a macro it exports, so they may.
      */
     record TopLevel(Scope scope, GlobalEnvironment namespace, boolean closed) {
+    }
+
+    /** A library body that ran while the context was being initialized, and the top level it ran in. */
+    record LibraryBody(Ast.Lambda body, TopLevel topLevel) {
     }
 
     final SyntacticEnvironment top = new SyntacticEnvironment();
@@ -48,7 +63,7 @@ final class CompilerState {
      * While the context is being initialized for {@link PreludeImage}: the library bodies run so
      * far, in order. Otherwise null.
      */
-    List<Ast.Lambda> recordedBodies;
+    List<LibraryBody> recordedBodies;
 
     CompilerState() {
         this(new Scope(), new GlobalEnvironment());

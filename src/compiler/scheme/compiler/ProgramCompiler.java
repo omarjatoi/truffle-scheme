@@ -66,7 +66,7 @@ public final class ProgramCompiler implements SchemeCompiler {
         Source imports = Source.newBuilder(SchemeLanguage.ID, INTERACTION_IMPORTS, "interaction-environment").internal(true).build();
         language.withPrompt(compile(language, context, imports, false)).call();
         if (build) {
-            List<Ast.Lambda> bodies = state.recordedBodies;
+            List<CompilerState.LibraryBody> bodies = state.recordedBodies;
             state.recordedBodies = null;
             PreludeImage.build(context, state, bodies);
         }
@@ -80,7 +80,7 @@ public final class ProgramCompiler implements SchemeCompiler {
     private static Libraries newLibraries(SchemeLanguage language, SchemeContext context, CompilerState state) {
         return new Libraries(context.symbols, state.top, context.globals, (body, topLevel) -> {
             if (state.recordedBodies != null) {
-                state.recordedBodies.add(body);
+                state.recordedBodies.add(new CompilerState.LibraryBody(body, topLevel));
             }
             language.withPrompt(generate(language, body, topLevel)).call();
         }, context.getEnv(), context.getEnv().getOptions().get(SchemeLanguage.LIBRARY_PATH));
@@ -172,7 +172,7 @@ public final class ProgramCompiler implements SchemeCompiler {
         } catch (SchemeError e) {
             throw raisable(e);
         }
-        return new SClosure(generate(language, thunk), NO_CAPTURES);
+        return new SClosure(generate(language, thunk, env.topLevel()), NO_CAPTURES);
     }
 
     @Override
@@ -192,7 +192,7 @@ public final class ProgramCompiler implements SchemeCompiler {
         if (source.hasCharacters() && source.getLength() > 0) {
             thunk.source = source.createSection(0, source.getLength());
         }
-        return new SClosure(generate(language, thunk), NO_CAPTURES);
+        return new SClosure(generate(language, thunk, env.topLevel()), NO_CAPTURES);
     }
 
     @Override
@@ -200,7 +200,7 @@ public final class ProgramCompiler implements SchemeCompiler {
     public SClosure compileInFrame(SchemeLanguage language, SchemeContext context, Source source, String[] names, boolean[] boxed, Object topLevel) {
         CompilerState state = (CompilerState) context.compilerState;
         SourceDir dir = new SourceDir.Files(context.getEnv(), null);
-        // An isolated program's or a library's frame: its own top level.
+        // An isolated program's, a library's or an immutable environment's frame: its own top level.
         CompilerState.TopLevel unit = (CompilerState.TopLevel) topLevel;
         Expander expander = unit != null
                         ? new Expander(context.symbols, unit.namespace(), state.top, unit.scope(), state.libraries, dir)
@@ -289,10 +289,6 @@ public final class ProgramCompiler implements SchemeCompiler {
             }
         }
         return state.interaction.cell(name);
-    }
-
-    private static RootCallTarget generate(SchemeLanguage language, Ast.Lambda program) {
-        return generate(language, program, null);
     }
 
     /** {@code topLevel}: what each root records as the top level it was compiled in, or null for the interaction environment's. */

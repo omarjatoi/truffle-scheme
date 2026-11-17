@@ -99,7 +99,7 @@ final class PreludeImage {
 
     private static final int MAGIC = 0x52375049;
     /** The format's version: change it whenever what the image holds or how it is written changes. */
-    private static final int FORMAT = 1;
+    private static final int FORMAT = 2;
 
     /** Contexts initialized the normal way so far. */
     private static final AtomicInteger NORMAL_INITIALIZATIONS = new AtomicInteger();
@@ -146,6 +146,11 @@ final class PreludeImage {
     /** A {@link Source}, by its index in the image's sources. */
     private static final byte SOURCE = 20;
     private static final byte SECTION = 21;
+    /**
+     * A {@link CompilerState.TopLevel}: the library a root was compiled in (its scope and namespace,
+     * by index), which code a debugger evaluates in the root's frames sees (design.md D13).
+     */
+    private static final byte TOP_LEVEL = 22;
 
     // Bindings.
     private static final byte CORE_FORM = 0;
@@ -259,7 +264,7 @@ final class PreludeImage {
      * (or, in the build step, writes it).
      */
     @TruffleBoundary
-    static void build(SchemeContext context, CompilerState compilerState, List<Ast.Lambda> libraryBodies) {
+    static void build(SchemeContext context, CompilerState compilerState, List<CompilerState.LibraryBody> libraryBodies) {
         PreludeImage built;
         try {
             built = new Writer(context, compilerState).write(libraryBodies);
@@ -514,7 +519,7 @@ final class PreludeImage {
             this.compilerState = compilerState;
         }
 
-        PreludeImage write(List<Ast.Lambda> libraryBodies) throws IOException {
+        PreludeImage write(List<CompilerState.LibraryBody> libraryBodies) throws IOException {
             namespace(context.globals);
             namespace(compilerState.interaction);
             for (GlobalEnvironment namespace : compilerState.top.namespaces().values()) {
@@ -533,8 +538,8 @@ final class PreludeImage {
                 }
             };
             SchemeRootNodeGen.serialize(new DataOutputStream(bytecodeBytes), serializer, b -> {
-                for (Ast.Lambda body : libraryBodies) {
-                    new CodeGenerator(b, null).generate(body);
+                for (CompilerState.LibraryBody body : libraryBodies) {
+                    new CodeGenerator(b, body.topLevel()).generate(body.body());
                 }
             });
 
@@ -863,6 +868,11 @@ final class PreludeImage {
             } else if (o instanceof GlobalCell cell) {
                 values.writeByte(CELL);
                 values.writeInt(cellId(cell));
+            } else if (o instanceof CompilerState.TopLevel topLevel) {
+                values.writeByte(TOP_LEVEL);
+                values.writeInt(scope(topLevel.scope()));
+                values.writeInt(namespaceId(topLevel.namespace()));
+                values.writeBoolean(topLevel.closed());
             } else {
                 throw new IllegalStateException("prelude image: unexpected constant " + o + " (" + o.getClass().getName() + ")");
             }
@@ -1110,6 +1120,8 @@ final class PreludeImage {
                 }
                 case CELL:
                     return cells[in.readInt()];
+                case TOP_LEVEL:
+                    return new CompilerState.TopLevel(scopes[in.readInt()], namespaces[in.readInt()], in.readBoolean());
                 default:
                     throw new IOException("bad value " + kind);
             }
