@@ -550,35 +550,62 @@ full R7RS-small conformance comes first.
   - *Natively, the limit doesn't use more of a known stack.* Since a native
     image reads its stack's depth, its limit could be most of a known stack,
     on the real depth (the launcher's 256 MB less a reserve, 224 MB), and the
-    costs would only say when to read it. Tried and measured (native
-    launcher, Apple M3 Max): a frame that stays on the Java stack costs
-    more than one that spills, unless the whole recursion fits and its code
-    is already stable. A recursion's first deep run is compiled while it
-    descends, before any call has returned, so the first return invalidates
-    the code, and each compiled frame of it still on the stack deoptimizes
-    when it is returned to (`--engine.TraceCompilation` logs an `opt deopt`
-    per frame): 25 to 40 µs a frame, where a spilled frame, which resumes
-    into new code, costs about 1 µs. And every collection scans the whole
-    Java stack, so a deeper stack makes each one slower. Medians of the
-    iterations in one process; the first iteration, then the steady ones:
+    costs would only say when to read it. Measured twice (native launcher,
+    Apple M3 Max), before and after M9-01, and rejected both times: a frame
+    that stays on the Java stack costs a recursion's first run more than one
+    that spills, unless the whole recursion fits; only the later runs of a
+    recursion that then fits gain. The native launcher mostly runs a program
+    once, so the limit stays the costs' 56 MB (about 30 MB of real stack).
+    HotSpot has no equivalent of `StackValue` short of a native call, so the
+    JVM couldn't do it either.
+    - *Before M9-01 (#170):* a recursion's first deep run was compiled while
+      it descended, before any call had returned, so the first return
+      invalidated the code, and each compiled frame of it still on the stack
+      deoptimized when it was returned to (`--engine.TraceCompilation` logs
+      an `opt deopt` per frame): 25 to 40 µs a frame, where a spilled frame,
+      which resumes into new code, costs about 1 µs. Medians of the
+      iterations in one process; the first iteration, then the steady ones:
 
-    | | 56 MB counted (kept) | 224 MB real |
-    |---|---:|---:|
-    | `ack(3,12)` ×4 | 1.20 s, then 1.16 s; no spill; 92 MB | the same |
-    | `divrec`, `primes` (M8-01's counts) | unchanged; no spill | the same |
-    | `count` 300,000 deep ×6 | 0.1 to 5.3 s, then 25 to 150 ms; 13, then 2 to 5 spills | 10 s, then 3 ms; no spill |
-    | build a list and `map` it, 1,000,000 deep, ×6 | 17.7 s, then 0.26 to 0.57 s; 12 to 19 spills; 1.0 GB | 58 to 60 s, then 0.16 to 0.28 s; 0 to 3 spills; 0.9 to 1.1 GB |
-    | `count` 10,000,000 deep ×3 | 15.9 s, then 2.3 to 2.8 s; 65 to 69 spills; 4.3 GB | 72 s, then 3.4 s; 3 to 7 spills; 4.9 GB |
+      | | 56 MB counted (kept) | 224 MB real |
+      |---|---:|---:|
+      | `ack(3,12)` ×4 | 1.20 s, then 1.16 s; no spill; 92 MB | the same |
+      | `divrec`, `primes` (M8-01's counts) | unchanged; no spill | the same |
+      | `count` 300,000 deep ×6 | 0.1 to 5.3 s, then 25 to 150 ms; 13, then 2 to 5 spills | 10 s, then 3 ms; no spill |
+      | build a list and `map` it, 1,000,000 deep, ×6 | 17.7 s, then 0.26 to 0.57 s; 12 to 19 spills; 1.0 GB | 58 to 60 s, then 0.16 to 0.28 s; 0 to 3 spills; 0.9 to 1.1 GB |
+      | `count` 10,000,000 deep ×3 | 15.9 s, then 2.3 to 2.8 s; 65 to 69 spills; 4.3 GB | 72 s, then 3.4 s; 3 to 7 spills; 4.9 GB |
 
-    The list's first iteration, traced: 480,000 deoptimized frames and 6.3 s
-    of collections (308) with the counted limit, 1,530,000 and 19.7 s (314)
-    with the real one. Only a steady recursion that fits the larger stack
-    gains, and every whole run measured took longer; the native launcher
-    mostly runs a program once. So the limit stays the costs' 56 MB (about
-    28 MB of compiled frames, really). HotSpot has no equivalent of
-    `StackValue` short of a native call, so the JVM couldn't do it either.
-    (Measured before M9-01, next item, took the first run's deoptimizations
-    away: a larger limit hasn't been measured again since.)
+      The list's first iteration, traced: 480,000 deoptimized frames and
+      6.3 s of collections (308) with the counted limit, 1,530,000 and
+      19.7 s (314) with the real one.
+    - *After M9-01:* nothing deoptimizes any more (the list's first
+      iteration and the 10M `count`'s run, traced: no `opt deopt` with
+      either limit), but every collection scans the whole Java stack, and a
+      deep recursion's first run allocates as it descends, so its
+      collections run with the stack deep below them. The list's first
+      iteration is two thirds collections, and they take longer the deeper
+      the stack: 1.1 to 1.5 s with the counted limit, 1.5 to 1.6 s with
+      224 MB real, about 0.5 s of the rest either way. The first collection
+      in the 300,000-deep `count`'s descent paused 85 to 89 ms instead of 35
+      to 37 at the same heap size. Medians of 9 interleaved processes; the
+      first iteration, the median of the later ones, the process's wall
+      time:
+
+      | | 56 MB counted (kept) | 224 MB real |
+      |---|---:|---:|
+      | `count` 300,000 deep ×12 | 137 ms, then 34 ms; 0.62 s; 13, 4 to 6, then 1 or 2 spills; 359 MB | 185 ms, then 14 ms; 0.42 s; 1, 0 or 1, then no spill; 448 MB |
+      | build a list and `map` it, 1,000,000 deep, ×6 | 1.72 s, then 451 ms; 4.49 s; 86, 17 to 25, then 12 spills; 1.0 GB | 2.10 s, then 215 ms; 3.67 s; 10, 3 or 4, then no spill; 1.0 GB |
+      | `count` 10,000,000 deep ×3 | 9.9 s, then 4.0 s; 18.0 s; 435, 66 to 71, then 65 spills; 4.7 GB | 11.0 s, then 4.0 s; 19.1 s; 53, 4 to 6, then 3 spills; 5.3 GB |
+      | `ack(3,12)` ×4, `divrec` ×6, `primes` ×5 | 1.14 s, 0.36 s and 0.11 s first; no spill | the same (3 processes) |
+
+      The same 56 MB, but of real depth (the costs count an
+      interpreted frame 2.5 KB, which takes 1.37 KB natively, and a compiled
+      one about twice what it takes, so a recursion goes about twice as deep
+      before it spills), 7 processes each against `main`: first iterations
+      1.01 to 1.06 times `main`'s, whole runs 0.80 (`count` 300,000 deep),
+      1.02 (the list) and 1.03 times (`count` 10,000,000 deep). A sweep of
+      the real limit on the first two: first iterations within 5% of
+      `main`'s up to 64 MB, and 1.03 to 1.3 times from 96 MB up. The patch
+      is on the branch `experiment/native-real-depth-limit-2`, not merged.
   - *A first descent isn't compiled (M9-01).* Why a deep recursion's first
     run deoptimized frame by frame: Truffle compiles a procedure once it has
     been called a few hundred times, which a recursion does on its way down,
