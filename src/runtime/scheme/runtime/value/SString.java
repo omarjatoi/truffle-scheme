@@ -108,6 +108,37 @@ public final class SString implements TruffleObject {
         wide[index] = codePoint;
     }
 
+    /**
+     * Copies {@code from}'s characters from {@code start} to {@code end} into this string from
+     * {@code at} (plan.md M8-04): {@code substring}, {@code string-append} and {@code string-copy!}.
+     * The caller has checked the range against both strings. Between two strings of the same
+     * storage it is one array copy, which, like {@code string-copy!}, is correct for overlapping
+     * ranges of one string; otherwise it copies character by character, from the end if the ranges
+     * overlap so that a later source character is read before it is overwritten.
+     */
+    @TruffleBoundary
+    public void copyFrom(int at, SString from, int start, int end) {
+        if (immutable && end > start) {
+            throw immutableString();
+        }
+        if (start < 0 || end > from.length || start > end || at < 0 || at > length - (end - start)) {
+            throw outOfRange(at);
+        }
+        if (latin1 != null && from.latin1 != null) {
+            System.arraycopy(from.latin1, start, latin1, at, end - start);
+        } else if (wide != null && from.wide != null) {
+            System.arraycopy(from.wide, start, wide, at, end - start);
+        } else if (from == this && at > start) {
+            for (int i = end - 1; i >= start; i--) {
+                set(at + i - start, from.codePointAt(i));
+            }
+        } else {
+            for (int i = start; i < end; i++) {
+                set(at + i - start, from.codePointAt(i));
+            }
+        }
+    }
+
     @TruffleBoundary
     private void widen() {
         int[] cps = new int[length];
