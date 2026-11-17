@@ -1,13 +1,14 @@
-;; R5RS's names (R7RS §5.6), re-exported from the standard libraries that define them. Of the four
-;; that only (scheme r5rs) has, null-environment and scheme-report-environment are primitives of
-;; the eval area (R7RS §6.12); the others are exported as unbound cells until a later task
-;; defines them. R7RS erratum 22 adds syntax-rules and the auxiliary syntax its patterns use: else, ...,
-;; => and _.
+;; R5RS's names (R7RS §5.6, Appendix A), re-exported from the standard libraries that define them.
+;; Of the four that only (scheme r5rs) has, null-environment and scheme-report-environment are
+;; primitives of the eval area (R7RS §6.12), and "the exact and inexact procedures appear under their
+;; R5RS names inexact->exact and exact->inexact respectively" (Appendix A). R7RS erratum 22 adds
+;; syntax-rules and the auxiliary syntax its patterns use: else, ..., => and _.
 (define-library (scheme r5rs)
   (import (scheme base) (scheme case-lambda) (scheme char) (scheme complex) (scheme cxr)
           (scheme eval) (scheme file) (scheme inexact) (scheme lazy) (scheme load) (scheme read)
           (scheme repl) (scheme write)
-          (only (r7rs %primitives) null-environment scheme-report-environment))
+          (only (r7rs %primitives) null-environment scheme-report-environment)
+          (rename (only (scheme base) exact inexact) (exact inexact->exact) (inexact exact->inexact)))
   (export
           ;; erratum 22
           syntax-rules else ... => _

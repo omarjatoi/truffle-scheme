@@ -57,6 +57,21 @@ public class EvalTest {
         check("unbound", "(guard (e (#t 'unbound)) (eval '(car '(1)) (null-environment 5)))");
     }
 
+    /**
+     * (scheme r5rs) exports R5RS's names (R7RS Appendix A): the exact and inexact procedures under
+     * their R5RS names inexact->exact and exact->inexact, and, by erratum 22, "syntax-rules, else,
+     * ..., => and _", so the R5RS environments can define macros.
+     */
+    @Test
+    public void reportEnvironmentsHaveR5rsNames() {
+        check("(0.25 1/2)", "(eval '(list (exact->inexact 1/4) (inexact->exact 0.5)) (scheme-report-environment 5))");
+        check("#t", "(eq? (eval 'exact->inexact (scheme-report-environment 5)) inexact)");
+        check("2", "(eval '(let-syntax ((second (syntax-rules () ((_ a b) b)))) (second 1 2)) (null-environment 5))");
+        check("(3 2 1)", "(eval '(let () (define-syntax rev (syntax-rules () ((_ a ...) (reverse (list a ...))))) (rev 1 2 3)) (scheme-report-environment 5))");
+        check("b", "(eval '(let-syntax ((pick (syntax-rules () ((_ _ b) b)))) (pick a 'b)) (scheme-report-environment 5))");
+        check("2", "(eval '(cond ((assv 1 '((1 . 2))) => cdr) (else 0)) (scheme-report-environment 5))");
+    }
+
     @Test
     public void interactionEnvironmentIsTheProgramsAndPersists() {
         assertEquals("5 6", run("""
