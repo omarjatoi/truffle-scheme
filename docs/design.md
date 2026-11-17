@@ -9,6 +9,11 @@ Agents may change this document, decisions included, in a PR of its own that
 says why (AGENTS.md). Use what GraalVM and Truffle provide wherever it fits;
 full R7RS-small conformance comes first.
 
+docs/truffle-guidance.md checks the runtime against GraalVM's own guidance
+(the Partial Evaluation page, its further reading, and the Bytecode DSL,
+inlining, splitting and OSR guides): what each recommends, and whether we
+follow it or deviate, with the decision below that says why.
+
 ---
 
 ## Architecture
