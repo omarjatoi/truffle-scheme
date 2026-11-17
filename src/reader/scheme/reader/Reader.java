@@ -521,6 +521,17 @@ public final class Reader {
         boolean referenced;
     }
 
+    /** Whether the last datum read has a datum label referring to a datum that contains it. */
+    private boolean circular;
+
+    /**
+     * Whether the last datum read may be circular: one of its datum labels is referred to inside
+     * the datum it labels (R7RS §2.4). Without one, a datum is a tree (or shares structure).
+     */
+    public boolean lastDatumMayBeCircular() {
+        return circular;
+    }
+
     /** The next datum, or {@link SConstant#EOF} at the end of the input. */
     @TruffleBoundary
     public Object read() {
@@ -552,6 +563,7 @@ public final class Reader {
     }
 
     private Object readDatum() {
+        circular = false;
         Deque<Frame> stack = new ArrayDeque<>();
         Map<Integer, Object> labels = null;
         while (true) {
@@ -636,6 +648,7 @@ public final class Reader {
                     }
                     labels.put(l.label, value);
                     if (l.placeholder.referenced) {
+                        circular = true;
                         patch(value, l.placeholder, value);
                     }
                 } else if (top instanceof ListFrame list) {

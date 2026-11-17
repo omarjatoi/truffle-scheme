@@ -550,6 +550,7 @@ public final class Expander {
      * an immutable environment, definitions and imports are errors.
      */
     Lambda expandEval(Object datum, boolean mutable) {
+        checkNotCircular(datum);
         immutableTop = !mutable;
         Lambda thunk = new Lambda(null, false);
         thunk.name = "eval";
@@ -681,6 +682,9 @@ public final class Expander {
         List<Object> forms = new ArrayList<>();
         try {
             for (Object datum = reader.readSyntax(); datum != SConstant.EOF; datum = reader.readSyntax()) {
+                if (reader.lastDatumMayBeCircular()) {
+                    checkNotCircular(datum);
+                }
                 forms.add(datum);
             }
         } catch (SchemeError e) {
@@ -691,6 +695,20 @@ public final class Expander {
             throw SchemeError.syntax("syntax error: " + e.getMessage() + " (" + source.getName() + ")", at, reader.ranIntoEnd());
         }
         return forms;
+    }
+
+    /**
+     * A syntax error if {@code form}'s code is circular (R7RS §2.4, {@link CircularCode}): expanding
+     * it would never end.
+     */
+    @TruffleBoundary
+    private static void checkNotCircular(Object form) {
+        Object cycle = CircularCode.find(form);
+        if (cycle != null) {
+            Syntax at = form instanceof Syntax s && s.source != null ? s : null;
+            throw SchemeError.syntax("syntax error: circular structure in code (outside a literal): " + Printer.print(Syntax.toDatum(cycle), Printer.Mode.WRITE) + location(at),
+                            at == null ? null : at.source, false);
+        }
     }
 
     /** (cond-expand (requirement form ...) ... [(else form ...)]): the forms of the first clause that holds. */

@@ -86,7 +86,8 @@ public final class Syntax {
     /**
      * The datum, with this object's pending scope changes pushed to its children: a list's spine is
      * copied, its elements and dotted tail adjusted; a vector is copied, its elements adjusted. The
-     * same object every time. A circular list in code isn't detected here and doesn't terminate.
+     * same object every time. A circular list in code doesn't terminate here: the compiler rejects
+     * circular code before expanding it (scheme.compiler.CircularCode, design.md D9).
      */
     @TruffleBoundary
     public Object open() {
