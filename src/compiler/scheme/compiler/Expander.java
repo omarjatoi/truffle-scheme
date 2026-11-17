@@ -511,12 +511,17 @@ public final class Expander {
 
     /**
      * Computes the unit's closure conversion facts (M5-05, {@link Closures}), then turns its
-     * escape-only call/cc calls into %call/ec calls (M5-04).
+     * escape-only call/cc calls into %call/ec calls (M5-04), then contifies the loops that only
+     * their non-tail calls of those calls' k kept from being contified (M9-05).
      */
     private Lambda analyzed(Lambda unit, boolean closed) {
-        Closures.analyze(unit, Set.of(primitive("apply"), primitive("call-with-values")));
+        Set<GlobalCell> callers = Set.of(primitive("apply"), primitive("call-with-values"));
+        Closures.analyze(unit, callers);
         Set<GlobalCell> callCC = Set.of(primitive("call/cc"), primitive("call-with-current-continuation"));
-        EscapeAnalysis.rewrite(unit, closed, callCC, primitive("%call/ec"));
+        Set<Var> escapes = EscapeAnalysis.rewrite(unit, closed, callCC, primitive("%call/ec"));
+        if (!escapes.isEmpty()) {
+            Closures.contifyEscapes(unit, callers, escapes);
+        }
         return unit;
     }
 

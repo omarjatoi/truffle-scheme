@@ -49,8 +49,23 @@ final class Closures {
      */
     static void analyze(Lambda unit, Set<GlobalCell> callers) {
         fix(unit);
-        contify(unit, callers);
+        contify(unit, callers, Set.of());
         resolve(unit);
+    }
+
+    /**
+     * After {@link EscapeAnalysis}: contifies the loops whose only non-tail calls of procedures
+     * {@link #contify} can't know are calls of an escape-only k ({@code escapes}, plan.md M9-05),
+     * and resolves the unit again if there are any. A call of k always runs the same escape
+     * procedure, which never returns to the loop, so it is not a call site that goes megamorphic.
+     * Contifying a loop that refers to k moves those references into the root that enters the loop,
+     * so k stays escape-only: a loop is contained, in EscapeAnalysis's sense, when its variable is
+     * only called, which contification requires.
+     */
+    static void contifyEscapes(Lambda unit, Set<GlobalCell> callers, Set<Var> escapes) {
+        if (contify(unit, callers, escapes)) {
+            resolve(unit);
+        }
     }
 
     // ------------------------------------------------------------------------------------------
@@ -143,17 +158,18 @@ final class Closures {
      * calls it, and each call is a jump back to the loop's start with new values for its
      * parameters;</li>
      * <li>the lambda's body makes no non-tail call of a procedure it can't know (a variable that
-     * isn't a fixed {@code letrec*} procedure, a computed procedure, or one of {@code callers}). Such
-     * a call site is the one that goes megamorphic, and a loop that has one stays a procedure of
-     * its own, small enough for Truffle to split it for each caller (map's, for-each's, design.md
-     * "Calls and tail calls"); merged into the root that enters it, that root would often be past
-     * the splitting limit.</li>
+     * isn't a fixed {@code letrec*} procedure or an escape-only k of {@code escapes}, a computed
+     * procedure, or one of {@code callers}). Such a call site is the one that goes megamorphic, and
+     * a loop that has one stays a procedure of its own, small enough for Truffle to split it for
+     * each caller (map's, for-each's, design.md "Calls and tail calls"); merged into the root that
+     * enters it, that root would often be past the splitting limit.</li>
      * </ul>
      *
      * A loop in a loop can be contified too: the inner ones are decided first, and a call of the
-     * outer loop's variable in tail position of a contified inner one is a jump too.
+     * outer loop's variable in tail position of a contified inner one is a jump too. Returns whether
+     * a loop not contified before is now.
      */
-    private static void contify(Lambda unit, Set<GlobalCell> callers) {
+    private static boolean contify(Lambda unit, Set<GlobalCell> callers, Set<Var> escapes) {
         // The candidates in tail position, in pre-order: one inside another comes after it.
         List<Ast.Letrec> candidates = new ArrayList<>();
         Deque<Position> stack = new ArrayDeque<>();
@@ -165,13 +181,16 @@ final class Closures {
             }
             pushPositions(p.e(), p.tail(), stack);
         }
+        boolean more = false;
         for (int i = candidates.size() - 1; i >= 0; i--) {
             Ast.Letrec l = candidates.get(i);
             Lambda fn = (Lambda) l.inits.get(0);
-            if (contifiable(l.vars.get(0), fn, (Ast.Call) l.body, callers)) {
+            if (!fn.contified && contifiable(l.vars.get(0), fn, (Ast.Call) l.body, callers, escapes)) {
                 fn.contified = true;
+                more = true;
             }
         }
+        return more;
     }
 
     /** {@code e} if it is a letrec* of one lambda, entered by a call of it with its arity; else null. */
@@ -184,7 +203,7 @@ final class Closures {
         return null;
     }
 
-    private static boolean contifiable(Var v, Lambda fn, Ast.Call entry, Set<GlobalCell> callers) {
+    private static boolean contifiable(Var v, Lambda fn, Ast.Call entry, Set<GlobalCell> callers, Set<Var> escapes) {
         for (Expr argument : entry.arguments) {
             if (mentions(argument, v)) {
                 return false;
@@ -216,7 +235,7 @@ final class Closures {
                         return false;
                     }
                     jumps++;
-                } else if (!p.tail() && !known(c.procedure, callers)) {
+                } else if (!p.tail() && !known(c.procedure, callers, escapes)) {
                     return false;
                 }
             }
@@ -225,9 +244,12 @@ final class Closures {
         return references == jumps;
     }
 
-    /** Whether a call of {@code procedure} calls the same procedure every time, or a primitive. */
-    private static boolean known(Expr procedure, Set<GlobalCell> callers) {
-        return procedure instanceof Ast.GlobalRef g ? !callers.contains(g.cell) : procedure instanceof Ast.LocalRef r && r.var.fixed;
+    /**
+     * Whether a call of {@code procedure} calls the same procedure every time, or a primitive, or is
+     * an escape (a k of {@code escapes}).
+     */
+    private static boolean known(Expr procedure, Set<GlobalCell> callers, Set<Var> escapes) {
+        return procedure instanceof Ast.GlobalRef g ? !callers.contains(g.cell) : procedure instanceof Ast.LocalRef r && (r.var.fixed || escapes.contains(r.var));
     }
 
     /** Whether {@code e} refers to {@code v}, in it or in a lambda in it. */
