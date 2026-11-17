@@ -10,8 +10,12 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import org.graalvm.polyglot.Context;
@@ -124,10 +128,11 @@ public class HostJitPitfallsTest {
      * A deep recursion that spills to the heap (every 1,000 calls), so the root prompt's driver loop
      * resumes each of its frames, in the one call of {@code PromptDriver.run} of a root that runs
      * once; each frame it resumes calls an escape-only call/cc, whose own driver returns at once.
-     * HotSpot compiles the root prompt's loop by on-stack replacement: it never skips that
-     * compilation because the profile of the short runs left the loop out (#167's "OSR entry point
-     * wasn't parsed"), and it recompiles the driver a bounded number of times (3 to 6 when this
-     * was written).
+     * HotSpot compiles the root prompt's loop by on-stack replacement: at least one OSR compilation
+     * of {@code PromptDriver.run} completes, none is skipped because the profile of the short runs
+     * left the loop out (#167's "OSR entry point wasn't parsed"), and the driver is recompiled a
+     * bounded number of times (3 to 8 when this was written). Other skips are allowed: HotSpot
+     * cancels a queued compilation now and then ("Compilation cancelled"), and asks again.
      */
     @Test
     public void theRootPromptsDriverLoopIsCompiledByOnStackReplacement() throws IOException, InterruptedException {
@@ -141,10 +146,30 @@ public class HostJitPitfallsTest {
                         """, List.of("-XX:+PrintCompilation", "-Dpolyglot.engine.AllowExperimentalOptions=true", "-Dpolyglot.scheme.SpillDepth=1000"));
         assertEquals(run.err(), 0, run.exit());
         List<String> driver = run.out().lines().filter(line -> line.contains("scheme.runtime.PromptDriver::run")).toList();
-        assertEquals(String.join("\n", driver), List.of(), driver.stream().filter(line -> line.contains("COMPILE SKIPPED")).toList());
-        assertTrue(String.join("\n", driver), driver.stream().anyMatch(line -> line.contains("% ")));
-        assertTrue(String.join("\n", driver), driver.stream().filter(line -> line.contains("made not entrant")).count() <= 16);
+        String log = String.join("\n", driver);
+        assertEquals(log, List.of(), driver.stream().filter(line -> line.contains("COMPILE SKIPPED: OSR entry point wasn't parsed")).toList());
+        // -XX:+PrintCompilation prints a compilation's id on its line ("<time> <id> % ...", % for OSR),
+        // and again with "COMPILE SKIPPED: <reason>" if it doesn't complete.
+        Set<String> osr = new HashSet<>();
+        Set<String> skipped = new HashSet<>();
+        for (String line : driver) {
+            Matcher m = COMPILATION.matcher(line);
+            if (!m.find()) {
+                continue;
+            }
+            if (line.contains("COMPILE SKIPPED")) {
+                skipped.add(m.group(1));
+            } else if (m.group(2) != null) {
+                osr.add(m.group(1));
+            }
+        }
+        osr.removeAll(skipped);
+        assertTrue("no OSR compilation of the driver completed:\n" + log, !osr.isEmpty());
+        assertTrue(log, driver.stream().filter(line -> line.contains("made not entrant")).count() <= 16);
     }
+
+    /** A line of {@code -XX:+PrintCompilation}: its time, its compilation id, and % for OSR. */
+    private static final Pattern COMPILATION = Pattern.compile("^\\s*\\d+\\s+(\\d+)\\s+(%)?");
 
     // ------------------------------------------------------------------------------------------
     // Semantics an escape keeps as a returned request
