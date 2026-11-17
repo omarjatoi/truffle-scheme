@@ -109,6 +109,22 @@ public class LauncherTest {
         assertEquals(6, run("", program.toString()).status());
     }
 
+    /** A status a process can't hold is a failure, never 0 (design.md D9). */
+    @Test
+    public void exitStatusOutsideAProcessStatusIsAFailure() throws IOException {
+        Path exits = file("exits-range.scm", """
+                        (import (scheme base) (scheme process-context))
+                        (exit (string->number (cadr (command-line))))
+                        """);
+        assertEquals(255, run("", exits.toString(), "255").status());
+        assertEquals(1, run("", exits.toString(), "256").status());
+        assertEquals(1, run("", exits.toString(), "-1").status());
+        assertEquals(1, run("", exits.toString(), "4294967296").status());
+        assertEquals(1, run("", exits.toString(), "18446744073709551616").status());
+        Path emergency = file("emergency-range.scm", "(import (scheme process-context)) (emergency-exit 256)\n");
+        assertEquals(1, run("", emergency.toString()).status());
+    }
+
     @Test
     public void unreadableFileAndMalformedOptions() {
         Result missing = run("", folder.getRoot().toPath().resolve("missing.scm").toString());
@@ -360,6 +376,10 @@ public class LauncherTest {
         assertEquals(r.err(), 3, r.status());
         assertEquals("(\"3\" \"x\")", r.out());
         assertEquals(0, launch("", exits.toString(), "0").status());
+        // Statuses wrap at 256 in the process: one outside 0-255 is a failure, not 256 -> 0 (D9).
+        assertEquals(255, launch("", exits.toString(), "255").status());
+        assertEquals(1, launch("", exits.toString(), "256").status());
+        assertEquals(1, launch("", exits.toString(), "-1").status());
 
         Path fails = file("fails.scm", "(car 1)\n");
         Result failed = launch("", fails.toString());

@@ -698,6 +698,17 @@ Each entry: the decision, why, and what was rejected.
     chibi's do; R7RS's take none (§4.2.6).
 - `exit` runs all outstanding after-thunks through `rewind`, then exits the
   context through Truffle. `emergency-exit` skips the after-thunks.
+- **Exit statuses.** R7RS §6.14: *"If obj is #f, the exit procedure should
+  communicate to the operating system that the program exited abnormally.
+  Otherwise, exit should translate obj into an appropriate exit value for
+  the operating system, if possible."* No argument and `#t` are 0, an exact
+  integer from 0 to 255 is itself, and everything else is 1: `#f`, other
+  objects, and exact integers outside 0–255, which a process status can't
+  hold (POSIX keeps its low 8 bits, so `(exit 256)` would otherwise succeed
+  with 0, and `(exit -1)` or `(exit 2³²)` would wrap). Embedders see the same
+  status (`PolyglotException.getExitStatus()`, D13) as the process does.
+  *Rejected:* 255 for out-of-range integers (it reads as a status the
+  program chose; 1 is the generic failure `#f` already gives).
 - `delay`, `delay-force` and `make-promise` use the space-safe reference
   implementation from §7.3. A promise is a type of its own (`SPromise`, D1;
   R7RS §3.2 doesn't list promises among the disjoint types, but nothing says

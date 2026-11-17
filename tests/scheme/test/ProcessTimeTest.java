@@ -66,6 +66,27 @@ public class ProcessTimeTest {
         assertEquals(Integer.valueOf(1), run("(emergency-exit #f)").exitStatus());
     }
 
+    /**
+     * An exact integer is the status as is from 0 to 255, what a process status holds; any other
+     * is a failure, 1, so that it can't wrap to 0 (256) or to another status (design.md D9).
+     */
+    @Test
+    public void exitStatusesOutsideAProcessStatusAreFailures() {
+        assertEquals(Integer.valueOf(255), run("(exit 255)").exitStatus());
+        assertEquals(Integer.valueOf(1), run("(exit 256)").exitStatus());
+        assertEquals(Integer.valueOf(1), run("(exit 512)").exitStatus());
+        assertEquals(Integer.valueOf(1), run("(exit 259)").exitStatus());
+        assertEquals(Integer.valueOf(1), run("(exit -1)").exitStatus());
+        assertEquals(Integer.valueOf(1), run("(exit -256)").exitStatus());
+        assertEquals(Integer.valueOf(1), run("(exit 4294967296)").exitStatus());
+        assertEquals(Integer.valueOf(1), run("(exit (expt 2 64))").exitStatus());
+        assertEquals(Integer.valueOf(1), run("(exit (- (expt 2 64)))").exitStatus());
+        assertEquals(Integer.valueOf(1), run("(exit 2.0)").exitStatus());
+        assertEquals(Integer.valueOf(1), run("(emergency-exit 256)").exitStatus());
+        assertEquals(Integer.valueOf(1), run("(emergency-exit -1)").exitStatus());
+        assertEquals(Integer.valueOf(200), run("(emergency-exit 200)").exitStatus());
+    }
+
     @Test
     public void exitIsAnExitThroughInterop() {
         try (Context context = Context.newBuilder("scheme").out(new ByteArrayOutputStream()).build()) {
