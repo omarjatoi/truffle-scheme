@@ -112,6 +112,11 @@
     ((let*-values (binding0 binding1 ...) body0 body1 ...)
      (let-values (binding0) (let*-values (binding1 ...) body0 body1 ...)))))
 
+
+;; §7.3's define-values, except that the values are received by a lambda with the formals, so that
+;; a duplicate variable is a syntax error (R7RS §5.3: "It is an error if a variable appears more
+;; than once in the set of <formals>") at the top level too, where two definitions of one variable
+;; would otherwise be a redefinition.
 (define-syntax define-values
   (syntax-rules ()
     ((define-values () expr)
@@ -120,12 +125,12 @@
      (define var expr))
     ((define-values (var0 var1 ... varn) expr)
      (begin
-       (define var0 (call-with-values (lambda () expr) list))
+       (define var0 (call-with-values (lambda () expr) (lambda (var0 var1 ... varn) (list var0 var1 ... varn))))
        (define var1 (let ((v (cadr var0))) (set-cdr! var0 (cddr var0)) v)) ...
        (define varn (let ((v (cadr var0))) (set! var0 (car var0)) v))))
     ((define-values (var0 var1 ... . varn) expr)
      (begin
-       (define var0 (call-with-values (lambda () expr) list))
+       (define var0 (call-with-values (lambda () expr) (lambda (var0 var1 ... . varn) (cons var0 (append (list var1 ...) varn)))))
        (define var1 (let ((v (cadr var0))) (set-cdr! var0 (cddr var0)) v)) ...
        (define varn (let ((v (cdr var0))) (set! var0 (car var0)) v))))
     ((define-values var expr)

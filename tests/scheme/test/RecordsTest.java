@@ -4,6 +4,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 import java.io.ByteArrayOutputStream;
@@ -12,6 +13,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import org.graalvm.polyglot.Context;
+import org.graalvm.polyglot.PolyglotException;
 import org.graalvm.polyglot.Source;
 import org.graalvm.polyglot.Value;
 import org.junit.Test;
@@ -168,5 +170,30 @@ public class RecordsTest {
             assertFalse(q.getMetaObject().isMetaInstance(p));
             assertNull(q.getMember("z"));
         }
+    }
+
+    /**
+     * R7RS §5.5: "It is an error for the same identifier to occur more than once as a field name.
+     * It is also an error for the same identifier to occur more than once as an accessor or mutator
+     * name." Both are syntax errors, at the top level (where the second definition used to win
+     * silently) as in a body. A field and its accessor may share a name.
+     */
+    @Test
+    public void duplicateFieldAccessorOrModifierNamesAreErrors() {
+        String[] bad = {
+                        "(define-record-type p (mk a) p? (a get-a) (a get-a2))",
+                        "(define-record-type p (mk a b) p? (a get) (b get))",
+                        "(define-record-type p (mk a b) p? (a get-a set!) (b get-b set!))",
+                        "(define-record-type p (mk a b) p? (a get-a same) (b same))",
+        };
+        for (String definition : bad) {
+            for (String program : new String[]{definition, "(let () " + definition + " 1)"}) {
+                try (Context context = Context.newBuilder(SCHEME).out(new ByteArrayOutputStream()).build()) {
+                    PolyglotException e = assertThrows(PolyglotException.class, () -> context.eval(SCHEME, program));
+                    assertTrue(program + ": " + e.getMessage(), e.getMessage().contains("duplicate"));
+                }
+            }
+        }
+        check("(define-record-type p (mk a b) p? (a a) (b b set-b!))", "(1 3)", "(let ((r (mk 1 2))) (set-b! r 3) (list (a r) (b r)))");
     }
 }

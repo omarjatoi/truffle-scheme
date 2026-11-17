@@ -1431,3 +1431,26 @@ Each entry: the decision, why, and what was rejected.
   the platform; a hand-written launcher would have to re-implement or forgo
   all of it.
 
+
+### D18. Syntax errors for R7RS §4–5's "it is an error" cases
+
+Where R7RS §4–5 says a program "is an error" and the expander can tell at
+expansion time, cheaply, it is a syntax error; otherwise the program does
+what its expansion does. Found in the §4–5 audit, against the spec and its
+errata (r7rs.org):
+
+| R7RS | "It is an error ..." | Here |
+|---|---|---|
+| §2.4 | circular references in code, except in literals | syntax error (D9) |
+| §4.1.4, §5.3 | a variable more than once in `lambda`'s or `define-values`' formals | syntax error, at the top level too (`define-values` receives its values with a `lambda` of its formals) |
+| §5.3.2 | defining the same identifier more than once in a body | syntax error |
+| §5.5 | the same identifier as two field names, or as two accessor/modifier names | syntax error, at the top level too (the type's definition holds a never-called `lambda` of each) |
+| §5.5 | a constructor field that isn't a field name | error when the definition runs |
+| §4.3.2 | the same pattern variable twice in a pattern | syntax error |
+| §5.2 | `set!` of an imported binding | syntax error (D7) |
+| §5.4 | a definition that changes the meaning of the forms that determined it (`(define define 3)`, `(begin (define begin list))` in a body) | accepted: the definition binds the identifier for the whole body, the forms already classified keep their meaning |
+| §4.2.2, §5.3.2 | referring to a `letrec`/`letrec*`/internal-definition variable before its init | not checked: the value is the unspecified "undefined" object |
+
+- Why: an error at expansion costs nothing at run time and points at the
+  mistake; the cases left alone would need a run-time check on every
+  reference (`letrec` restriction) or a second classification pass (§5.4).
