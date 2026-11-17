@@ -111,8 +111,10 @@ exit status 3
 ```
 
 The launcher's exit status is the one the program passes to `exit` or
-`emergency-exit`, 0 when it ends, 70 after an uncaught error (whose message
-goes to stderr), 66 if the file can't be read and 64 for a malformed `-I`.
+`emergency-exit` (0 for none or `#t`, the integer for an exact integer from 0
+to 255, and 1 for `#f` or anything else, an integer outside 0–255 among
+them), 0 when it ends, 70 after an uncaught error (whose message goes to
+stderr), 66 if the file can't be read and 64 for a malformed `-I`.
 
 ### The REPL
 

@@ -12,7 +12,6 @@ import scheme.runtime.Features;
 import scheme.runtime.PrimitiveNode;
 import scheme.runtime.PrimitiveSpec;
 import scheme.runtime.SchemeContext;
-import scheme.runtime.value.SBigInteger;
 import scheme.runtime.value.SConstant;
 import scheme.runtime.value.SPair;
 import scheme.runtime.value.SString;
@@ -47,11 +46,15 @@ final class ProcessTimePrimitives {
     /**
      * {@code (emergency-exit [obj])}: exits the context through Truffle at once, without running the
      * after-thunks (design.md D9). Embedders see an exit ({@code PolyglotException.isExit()}, D13)
-     * with status 0 for no argument or #t, 1 for #f, the integer itself (its low 32 bits) for an
-     * exact integer, and 1 for anything else. {@code exit} (process-time.scm) unwinds, then calls
-     * this.
+     * with status 0 for no argument or #t, the integer itself for an exact integer from 0 to 255,
+     * and 1 for #f and anything else: an exact integer a process status can't hold is a failure,
+     * rather than wrapping (256 would otherwise exit with 0). {@code exit} (process-time.scm)
+     * unwinds, then calls this.
      */
     static final class EmergencyExit extends PrimitiveNode {
+        /** The largest status a process can exit with (POSIX keeps a status's low 8 bits). */
+        private static final long MAX_STATUS = 255;
+
         @Override
         public Object invoke(Object[] args) {
             throw exit(this, args.length == 1 ? Boolean.TRUE : args[1]);
@@ -62,10 +65,8 @@ final class ProcessTimePrimitives {
             int status;
             if (obj instanceof Boolean b) {
                 status = b ? 0 : 1;
-            } else if (obj instanceof Long l) {
+            } else if (obj instanceof Long l && l >= 0 && l <= MAX_STATUS) {
                 status = l.intValue();
-            } else if (obj instanceof SBigInteger big) {
-                status = big.value.intValue();
             } else {
                 status = 1;
             }
