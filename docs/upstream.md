@@ -2,8 +2,11 @@
 
 Bugs in Truffle that this implementation works around, each with a minimal
 reproducer that doesn't use Scheme. Filing them at
-<https://github.com/oracle/graal/issues> is a human's call: nothing here has
-been filed. Each section has the issue text, ready to paste.
+<https://github.com/oracle/graal/issues> is a human's call: we haven't filed
+any. Each section has the issue text, ready to paste, and an **Upstream
+status** line: what oracle/graal's issues, pull requests and `master` say
+about it, on the date given. The newest release is still 25.5.5.0.3;
+`master` is 25.6.0-dev.
 
 All six are in Truffle 25.5.5.0.3 (Maven Central), on GraalVM CE 25.5.5.0.3
 (JDK 25.0.5.0.3, `nix develop`).
@@ -40,6 +43,11 @@ instrumentation and one trivial operation (the DSL warns if a root has none).
 ## Nested root source sections
 
 **Found in** M5-05 (#97). **Test:** `UpstreamNestedRootSourceTest`.
+
+**Upstream status** (checked 2026-11-17): still present on `master`, and
+unreported (no issue or pull request found). The search in
+[`BuilderElement`](https://github.com/oracle/graal/blob/cd3747b70d9ece13c37de1471a7917af49652822/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/generator/BuilderElement.java#L2083-L2101)
+is unchanged since the Bytecode DSL landed: the issue text is ready to file.
 
 A Bytecode DSL root built while another root is being built (in Scheme, every
 lambda's root, which is built inside the root that makes its closure) gets its
@@ -169,6 +177,12 @@ outermost `Source` wins. It should stop at the first `Source` it finds.
 
 **Found in** M6-04 (#98), again in #102. **Test:** `UpstreamAsyncStacksTest`.
 
+**Upstream status** (checked 2026-11-17): still present on `master`, and
+unreported (no issue or pull request found).
+[`SuspendedEvent.java`](https://github.com/oracle/graal/blob/cd3747b70d9ece13c37de1471a7917af49652822/truffle/src/com.oracle.truffle.api.debug/src/com/oracle/truffle/api/debug/SuspendedEvent.java#L1020-L1024)
+is unchanged since 25.5 and still tests `size > 0`, which confirms the cause
+above from source: the issue text is ready to file.
+
 When no frame of a suspended program has an asynchronous stack,
 `SuspendedEvent.getAsynchronousStacks()` returns a list whose `size()` is 0
 but whose iterator throws `IndexOutOfBoundsException` from its first
@@ -250,6 +264,17 @@ builds the same list class.
 ## ReportPolymorphism on an operation
 
 **Found in** M5-10 (#92). **Test:** `UpstreamReportPolymorphismTest`.
+
+**Upstream status** (checked 2026-11-17): **fixed on `master`**, not yet
+released. Someone else reported it as
+[oracle/graal#14871](https://github.com/oracle/graal/issues/14871) (a
+regression since 25.1: 25.0 compiles it); GR-81207,
+[oracle/graal#14872](https://github.com/oracle/graal/pull/14872), fixed it in
+[`a9cfb3d`](https://github.com/oracle/graal/commit/a9cfb3d93e9d1e4fb3d910804ecb24089144ff22)
+(2026-11-06), with megamorphic-only reporting covered too. It's in the
+25.6.0-dev snapshots, not in 25.5.5.0.3, and the CHANGELOG doesn't mention
+it. Don't file our issue text. On the upgrade to 25.6, this test fails:
+then put `@ReportPolymorphism.Megamorphic` on `Call` and drop the workaround.
 
 `@ReportPolymorphism` on a Bytecode DSL operation makes the DSL generate code
 that doesn't compile. In the operation's generated node,
@@ -369,6 +394,14 @@ added to `doInt`), where the operation's node isn't a shared singleton.
 the build shows it: drop `bytecode_root = True` from `//src/runtime` and javac
 fails on it.
 
+**Upstream status** (checked 2026-11-17): still present on `master`, and
+unreported (no issue or pull request found). `master`'s
+[`BytecodeNodeElement`](https://github.com/oracle/graal/blob/cd3747b70d9ece13c37de1471a7917af49652822/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/generator/BytecodeNodeElement.java#L2223)
+and `AbstractBytecodeNodeElement` still emit `instanceof ThreadDeath`, and
+[`FixWarningsVisitor`](https://github.com/oracle/graal/blob/cd3747b70d9ece13c37de1471a7917af49652822/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/java/transform/FixWarningsVisitor.java#L101-L107),
+unchanged since 25.5, still adds only `"deprecation"`: the issue text is
+ready to file.
+
 Every class the Bytecode DSL generates for a `@GenerateBytecode` root refers
 to `java.lang.ThreadDeath`, which JDK 20 deprecated for removal, so javac
 warns (`[removal]`) on generated code. The processor's own
@@ -459,6 +492,18 @@ deprecated for removal would fix it.
 ## Interrupting a Bytecode DSL root as it returns
 
 **Found in** M8-06. **Test:** `UpstreamInterruptTest`.
+
+**Upstream status** (checked 2026-11-17): still present on `master` as far
+as the source shows, and unreported (no issue or pull request found).
+`OptimizedCallTarget` still polls with the root as the location
+([L615](https://github.com/oracle/graal/blob/cd3747b70d9ece13c37de1471a7917af49652822/truffle/src/com.oracle.truffle.runtime/src/com/oracle/truffle/runtime/OptimizedCallTarget.java#L615),
+[L905](https://github.com/oracle/graal/blob/cd3747b70d9ece13c37de1471a7917af49652822/truffle/src/com.oracle.truffle.runtime/src/com/oracle/truffle/runtime/OptimizedCallTarget.java#L905)),
+the interrupt exception still takes the poll's location, and the generated
+`findBytecodeIndex` keeps the assertion
+([`BytecodeRootNodeElement`](https://github.com/oracle/graal/blob/cd3747b70d9ece13c37de1471a7917af49652822/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/generator/BytecodeRootNodeElement.java#L1031)).
+GR-72833 (25.6) lets a Truffle exception carry its own bytecode index, which
+`TruffleStackTrace.fillIn` uses before calling `findBytecodeIndex`, but the
+interrupt exception doesn't set one. The issue text is ready to file.
 
 `Context.interrupt` throws Truffle's interrupt exception at the next safepoint
 the interrupted thread polls, with the poll's node as its location. Truffle
@@ -553,6 +598,16 @@ holds the bytecode index), or the poll could pass a location the root's bytecode
 ## Context pre-initialization with synchronous compilation
 
 **Found in** M8-07 (#135). **Test:** `UpstreamPreinitializationDeadlockTest`.
+
+**Upstream status** (checked 2026-11-17): still present on `master` as far
+as the source shows, and unreported (no issue or pull request found).
+[`Engine$ImplHolder`'s initializer](https://github.com/oracle/graal/blob/cd3747b70d9ece13c37de1471a7917af49652822/sdk/src/org.graalvm.polyglot/src/org/graalvm/polyglot/Engine.java#L203-L211),
+[`createPolyglotThreadScope`](https://github.com/oracle/graal/blob/cd3747b70d9ece13c37de1471a7917af49652822/truffle/src/com.oracle.truffle.polyglot/src/com/oracle/truffle/polyglot/EngineAccessor.java#L2143-L2145)
+and `HotSpotTruffleRuntime.ensureInitialized` are unchanged since 25.5. The
+open, work-in-progress
+[oracle/graal#14788](https://github.com/oracle/graal/pull/14788) (GR-79669,
+pre-initialized explicit engines) touches `Engine` but not this path. The
+issue text is ready to file.
 
 On HotSpot, Truffle pre-initializes a context in the first use of the
 polyglot API when the system property
