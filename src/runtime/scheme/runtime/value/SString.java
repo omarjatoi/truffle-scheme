@@ -134,6 +134,62 @@ public final class SString implements TruffleObject {
         return latin1 != null ? latin1[index] & 0xff : wide[index];
     }
 
+    /**
+     * Compares {@code a} and {@code b} by code point, lexicographically: negative, zero or positive
+     * as {@code a} comes before, is equal to or comes after {@code b} ({@code string<?} and the
+     * other comparisons). Each pair of storages has a loop of its own, chosen before it (design.md
+     * "Representations chosen outside loops", plan.md M10-06): a loop of {@link #codePointAt}, which
+     * tests the storage at every character, let Graal's speculative guard movement hoist the null
+     * check of {@code wide} out of the loop, where it ran for Latin-1 strings too, so compiled code
+     * that inlined a comparison deoptimized at its first one. Truffle remembers that speculation
+     * per call target, and a split is one, so each split paid it again.
+     */
+    public static int compare(SString a, SString b) {
+        int n = Math.min(a.length, b.length);
+        byte[] al = a.latin1;
+        byte[] bl = b.latin1;
+        int c;
+        if (al != null) {
+            c = bl != null ? compare(al, bl, n) : compare(al, b.wide, n);
+        } else {
+            c = bl != null ? -compare(bl, a.wide, n) : compare(a.wide, b.wide, n);
+        }
+        return c != 0 ? c : Integer.compare(a.length, b.length);
+    }
+
+    private static int compare(byte[] x, byte[] y, int n) {
+        for (int i = 0; i < n; i++) {
+            int cx = x[i] & 0xff;
+            int cy = y[i] & 0xff;
+            if (cx != cy) {
+                return cx < cy ? -1 : 1;
+            }
+        }
+        return 0;
+    }
+
+    private static int compare(byte[] x, int[] y, int n) {
+        for (int i = 0; i < n; i++) {
+            int cx = x[i] & 0xff;
+            int cy = y[i];
+            if (cx != cy) {
+                return cx < cy ? -1 : 1;
+            }
+        }
+        return 0;
+    }
+
+    private static int compare(int[] x, int[] y, int n) {
+        for (int i = 0; i < n; i++) {
+            int cx = x[i];
+            int cy = y[i];
+            if (cx != cy) {
+                return cx < cy ? -1 : 1;
+            }
+        }
+        return 0;
+    }
+
     public void set(int index, int codePoint) {
         if (immutable) {
             throw immutableString();

@@ -80,7 +80,10 @@ and `engine.TraceAssumptions`; the interpreter's host compilation with
   (an uncommon trap, not an explicit `transferToInterpreter`, so
   `TraceTransferToInterpreter` doesn't show it), and its callers' frames on
   the stack deoptimize with it ("Invalidated false"). It stops after the
-  first iterations: the third has none. A follow-up (below).
+  first iterations: the third has none. Found and fixed in M10-06: a null
+  check that Graal's speculative guard movement hoisted out of `string<?`'s
+  loop, which a split, with a speculation log of its own, failed again
+  (design.md D1, "Representations chosen outside loops").
 - The host compiler's inlining of the bytecode interpreter
   (`SchemeRootNodeGen$CachedBytecodeNode.continueAt`, the method the Bytecode
   DSL marks `@BytecodeInterpreterSwitch`) never ran out of budget and never
@@ -401,8 +404,9 @@ DSL specializations on their Java classes. Follow.
 
 - **Splits that deoptimize once** (`scheme`): each of 8 splits of one closure
   deoptimized once after its first compilation, by an uncommon trap that
-  isn't an explicit `transferToInterpreter`. Needs a graph dump of a split's
-  first compilation (`-Djdk.graal.Dump=Truffle:1`) to see which guard.
+  isn't an explicit `transferToInterpreter`. Done in M10-06 (design.md D1,
+  "Representations chosen outside loops", which also says how to read the
+  graph dump without IGV).
 - **`boolean` boxing elimination**: measured inconclusive here (above); the
   report's interpreter subset and `continueAt`'s host compilation time would
   decide whether to follow GraalVM's advice and drop it.
