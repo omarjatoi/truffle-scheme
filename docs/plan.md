@@ -1028,6 +1028,17 @@ collector); each task measures with interleaved A/B runs.
     compiler"), which per-call savings don't touch: most programs' first
     iterations are 1.5-3 times their later ones. `tak` takes 55-58 s at the
     report's scale and `ack` 53-61 s on this code (a shared machine, load 3-15).
+  - *Not met at M9's exit (2026-11-17).* #187 gave about 3% (the
+    interpreter's geometric mean over the report's subset 0.97 times), and
+    the rest of an interpreted call's cost is blocked by safety properties
+    (the arguments kept alive in the call's Java frames, a spilling
+    recursion's slowdown; above) or is Truffle's (the frame's allocation,
+    dispatch) or the host compiler's (a first run is mostly its work on the
+    interpreter). In the report regenerated at M9's exit, the interpreter's
+    geometric mean ×fastest (without the native column, as M8's report had
+    none) is 42.89 against M8's 43.87, 2% and not 10%; `tak` takes 56.2 s and
+    `ack` 52.2 s, not well inside 60 s. Left unticked: interpreter warm-up
+    and host compilation carries to M10.
 - [x] **M9-04 · Host-JIT pitfalls in run-once loops** *(early)*
   - `PromptDriver.run`'s driver loop is a Java loop in a root that runs once,
     like the trampoline was before #167; `EscapeException` passes through
@@ -1056,3 +1067,34 @@ collector); each task measures with interleaved A/B runs.
 **Exit:** every task above is done; `docs/benchmarks.md` and
 `bench/thresholds.json` are regenerated on the final M9 code; both suites pass
 in every mode, including through the native launcher.
+
+**Exit met** (2026-11-17, at `6a9ff1e99bdc`, #197, locally), with M9-03 not
+met and carried to M10 (its note says why): every other task is ticked;
+`bench/thresholds.json` was re-measured on that code (12 runs, 1-minute load
+3.6-5.9), `startup` 412.8 → 296.6 ms, `quicksort` 34.5 → 26.3, `triangl` 34.0 →
+28.8, `deriv-interpreter` 104.2 → 84.5 (the geometric mean of the 25
+baselines 0.96); `docs/benchmarks.md` was regenerated on it (its commit,
+`4dbb81c16acf`, is that code plus the new thresholds; 1-minute load 3.6 at the
+start, 13 at most). Geometric mean ×fastest against M8's report, without the
+native column (M8's had none, and the native launcher, fastest on 8 programs,
+moves every other ratio): JIT first run 4.14 → 3.92, steady state 1.72 →
+1.67, interpreter 43.87 → 42.89 (54 of 57 within its 60 s limit, as at M8);
+our raw times over M8's: JIT first 0.97, steady 1.00, interpreter 1.005,
+where the other implementations ran 1.00-1.03 (a busier machine). The JIT
+passes 57 of 57 (#191's report lost a line of `scheme`'s, fixed by #195). `puzzle`'s first run 0.37 times
+(M9-04), `mperm`'s 0.52, `conform`'s 0.74; median peak RSS of our JIT 1063 →
+955 MB (#188's 4 compiler threads). The native launcher (with the page's
+columns: first run 3.38, steady 2.28, with startup 3.76) now runs with the
+default heap sizing (#192): its median peak RSS is 182 MB against 484 with
+#189's 1 GB minimum in #191's report, and its time 1.06 times that report's
+(`paraffins` 3.1 times, `mperm`, `nboyer`, `sboyer` and `gcbench` 1.3-1.4,
+collecting more often). #195's cost to apply-heavy programs, interleaved against the
+commit before it (10 iterations, the report's counts): `scheme`'s later
+iterations 1.03 times in 6 rounds at load 3-6 (slower in every round) and 1.09
+in 5 at load 4-12, `compiler`'s 1.02-1.08 within its noise, `peval` and
+`conform` unchanged, first runs within 3%; real for `scheme`, and small.
+The native launcher
+(`bazel-bin/scheme-native`, built on the M3 Max) passes chibi 1225/1225 and
+Larceny 2160/2166 (the six listed exceptions) both interpreted and with
+`--compile`, and `//tests:conformance_native`, `//tests:readme_native` and
+`//tests:space_native` pass. M10 is not drafted here.

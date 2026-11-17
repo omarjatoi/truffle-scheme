@@ -122,10 +122,9 @@ spilled to the heap, are freed as it returns.
 
 The maximum is 2 GB, not 1, because two programs keep about a gigabyte alive:
 ecraven's `earley`, 1.1 GB (47 million pairs: its 2.7 million parses), the
-most of its set (the committed report's live heap; then `mperm`, 0.6 GB, and
-`nboyer`, 0.34 GB; the median is the runtime's 7 MB; `paraffins`, 0.45 GB at
-its own count, now ends at the report's before the first 0.5 s sample, so
-its row there shows 7 MB live beside 379 MB after GC), and Larceny's `nboyer`,
+most of its set (the committed report's live heap; then `paraffins`, 0.49 GB,
+`mperm`, 0.45 GB, and `nboyer`, 0.36 GB; the median is the runtime's 7 MB),
+and Larceny's `nboyer`,
 whose input is larger (size 6), 0.9 GB. `earley` takes as long at `-Xmx2g` as
 with the default heap (4.2 s first, 3.0 s steady, two runs each), with an RSS
 of 2.6 GB against 9.9 GB. A JVM argument after the command's own
@@ -156,9 +155,9 @@ its peak RSS; `nboyer` took 1.7 times as long, with 6 s of single-threaded
 pauses copying its young survivors (design.md has the numbers).
 
 `bench-check`'s thresholds (Thresholds, below) are measured with `-Xmx2g` and
-the serial collector, at M8's exit; those before were G1's with the default
-heap, and that change moved several baselines by half (`tak` 0.46 times its
-M7-03 baseline, `equal` 0.54, `cpstak` 0.57).
+the serial collector, at M9's exit, as at M8's; those of M7-03 were G1's with
+the default heap, and that change moved several baselines by half (`tak` 0.46
+times its M7-03 baseline, `equal` 0.54, `cpstak` 0.57).
 
 How each number is measured:
 
@@ -192,12 +191,6 @@ nix develop .#bench --command bazel run //:r7rs -- bench-report --note "quiet ma
 nix develop .#bench --command bazel run //:r7rs -- bench-report --benchmarks fib,tak --scale 0.1   # a quick look
 bazel run //:r7rs -- bench-report --render-only   # rewrite the page from the JSON
 ```
-
-The page's native columns (at `044778b801f2`, #191) were measured with the
-executable's 1 GB minimum heap of #189, since reverted (design.md D17,
-"Rejected: a 1 GB minimum heap for the native launcher"): its peak memory is
-higher, and deep recursions' first runs faster, than today's executable's,
-until the report is next regenerated.
 
 Each other implementation runs as upstream's `bench` script runs it: the
 program is `cat <Impl>-prelude.scm <program>.scm common.scm
@@ -257,7 +250,7 @@ run it while it is quiet, as for `bench-check` (Thresholds, below), and say
 how loaded it was with `--note`.
 
 How long it takes: the committed report (`--scale 0.1 --interpreter-timeout
-60`, every program) took 83 minutes on a 16-core machine shared with other
+60`, every program) took 84 minutes on a 16-core machine shared with other
 agents (80 on a quiet one, before the native column), most of it chibi's and
 our interpreter's timeouts and the programs whose count is 1;
 twelve programs at the same scale take about 25 minutes. With the programs'
@@ -317,8 +310,8 @@ raises the machine factor, which load would explain too, and is caught only past
 
 The machine is shared with other builds, so measure and check while it is quiet: in a run made at
 a load average of 22 on its 16 cores, most benchmarks took 2 to 4 times as long. Runs with a
-1-minute load above 10 at their start or end are left out; the committed runs (M8's exit) had a load of
-1.8 to 4.9, so none was (the file's note says so).
+1-minute load above 10 at their start or end are left out; the committed runs (M9's exit) had a load of
+3.6 to 5.9, so none was (the file's note says so).
 
 The thresholds apply on the platform they were measured on (`darwin-arm64`, recorded in the
 file). Elsewhere, such as on Linux, `bench-check` still runs everything and prints the table, but
@@ -329,8 +322,8 @@ A benchmark whose runs disagree gets wider thresholds: before M7-03, two of the 
 `cpstak` about 1.3 times slower (adjusted threshold 1.57), since how far background compilation has
 got when the measured iterations start varies between JVMs, as for `peval` and `parsing` on GitHub's
 4-CPU runners before (plan.md M7-01; with `--engine.BackgroundCompilation=false` the same JVMs agree
-within a few percent). In the committed runs, `cpstak` measured 0.84 times its median in two of the
-twelve (adjusted threshold 1.31), and `fft` 1.10-1.14 times in three (1.31); the rest agreed. Small slowdowns are for `benchmark` and the
+within a few percent). In the committed runs, `cpstak` measured 0.83-0.85 times its median in two of
+the twelve (adjusted threshold 1.29); the rest agreed within 10%. Small slowdowns are for `benchmark` and the
 comparative report, A/B on one machine. `thresholds.json` records each
 benchmark's runs, baseline, standard deviation, thresholds
 and the workload it was measured on (a changed workload fails the check until it is measured
