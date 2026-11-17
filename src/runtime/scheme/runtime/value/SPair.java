@@ -34,8 +34,8 @@ public class SPair implements TruffleObject {
     /**
      * Whether {@code x} is a pair made at run time: exactly an {@code SPair}, not a
      * {@link LiteralPair}. Compiled, one compare of {@code x}'s class, after which
-     * {@code CompilerDirectives.castExact(x, SPair.class)} costs nothing and the compiler knows the
-     * exact class, so a later check of the same value folds away.
+     * {@link #asMutable} costs nothing and the compiler knows the exact class, so a later check of
+     * the same value folds away.
      */
     public static boolean isMutable(Object x) {
         return CompilerDirectives.isExact(x, SPair.class);
