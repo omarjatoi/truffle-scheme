@@ -8,7 +8,11 @@ module(name = "truffle_scheme")
 # nixpkgs in flake.lock (the dev shell's GraalVM) together.
 TRUFFLE_VERSION = "25.5.5.0.3"
 
+# apple_support first: its Xcode C++ toolchain must be registered before rules_cc's autodetected one
+# (which rules_java and others bring in), so it is the one a macOS target resolves to.
+bazel_dep(name = "apple_support", version = "2.11.0")
 bazel_dep(name = "platforms", version = "1.1.0")
+bazel_dep(name = "rules_cc", version = "0.2.17")
 bazel_dep(name = "rules_java", version = "9.9.0")
 bazel_dep(name = "toolchains_buildbuddy", version = "0.0.4")
 bazel_dep(name = "rules_jvm_external", version = "7.2")
@@ -18,7 +22,7 @@ bazel_dep(name = "rules_python", version = "2.5.1")
 
 graalvm = use_extension("//bazel:graalvm.bzl", "graalvm")
 graalvm.jdk(version = TRUFFLE_VERSION)
-use_repo(graalvm, "graalvm", "graalvm_linux_aarch64", "graalvm_linux_x64", "graalvm_macos_aarch64")
+use_repo(graalvm, "graalvm", "graalvm_launcher_cc", "graalvm_linux_aarch64", "graalvm_linux_x64", "graalvm_macos_aarch64")
 
 # Runtime toolchains (`--java_runtime_version=graalvm_25`, .bazelrc), then the compilation
 # toolchain that runs javac from the same GraalVM (bazel/toolchains/BUILD.bazel).

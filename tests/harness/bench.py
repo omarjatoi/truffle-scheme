@@ -453,11 +453,11 @@ def _heap_from_gc_log(path):
             'gcs': len(pauses), 'gc_ms': round(sum(p[2] for p in pauses))}
 
 
-# The native launcher's runtime options, which it takes from its command line before the launcher
-# sees it: our JVMs' heap (BENCH_HEAP_VM_ARGS), and a line per collection on its standard error.
-# Its collector is native-image's serial one by default, the only one GraalVM CE has, or G1
-# (`--//:native_gc=G1`, with Oracle GraalVM: design.md D17, "The native image's collector").
-_NATIVE_VM_ARGS = BENCH_HEAP_VM_ARGS + ['-XX:+PrintGC']
+# The native launcher's runtime options, as its `--vm.` options (design.md D17, "VM options"): our
+# JVMs' heap (BENCH_HEAP_VM_ARGS), and a line per collection on its standard error. Its collector is
+# native-image's serial one by default, the only one GraalVM CE has, or G1 (`--//:native_gc=G1`,
+# with Oracle GraalVM: design.md D17, "The native image's collector").
+_NATIVE_VM_ARGS = ['--vm.' + a[1:] for a in BENCH_HEAP_VM_ARGS + ['-XX:+PrintGC']]
 # A pause's line, the serial collector's:
 #   "[0.063s] GC(0) Pause Incremental GC (Collect on allocation) 40.00M->30.00M 20.102ms"
 # or G1's, which adds the log's level and tag, and the committed size, as the JVM's

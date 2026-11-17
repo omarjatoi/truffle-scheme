@@ -8,10 +8,12 @@ prelude_image    the standard libraries expanded and compiled at build time (des
 scheme_runtime   the GraalVM `java` and a module path, as runfiles and a JSON manifest of their
                  runfiles paths (tests/harness/harness.py: Runtime).
 module_dir       a module path's jars in one directory, for running or embedding outside Bazel.
-native_image     a module's main class as a native executable (design.md D17).
-native_setting   a string flag native_image reads: its collector, its GraalVM distribution.
+native_library   a launcher class's module as a shared library, for GraalVM's thin launcher
+                 (design.md D17), on the target's C toolchain's execution platform.
+native_setting   a string flag native_library reads: its collector, its GraalVM distribution.
 """
 
+load("@rules_cc//cc:find_cc_toolchain.bzl", "use_cc_toolchain")
 load("@rules_java//java/common:java_common.bzl", "java_common")
 load("@rules_java//java/common:java_info.bzl", "JavaInfo")
 
@@ -267,12 +269,12 @@ def _native_setting_impl(ctx):
 
 native_setting = rule(
     implementation = _native_setting_impl,
-    doc = "A string flag that configures native_image (`--//:native_gc=...`), one of `values`.",
+    doc = "A string flag that configures native_library (`--//:native_gc=...`), one of `values`.",
     build_setting = config.string(flag = True),
     attrs = {"values": attr.string_list(mandatory = True)},
 )
 
-def _native_image_impl(ctx):
+def _native_library_impl(ctx):
     jdk = ctx.attr.jdk[java_common.JavaRuntimeInfo]
     gc = ctx.attr.gc[NativeSettingInfo].value
     graalvm = ctx.attr.graalvm[NativeSettingInfo].value
@@ -282,47 +284,69 @@ def _native_image_impl(ctx):
         fail(("%s=G1: the G1 collector is in Oracle GraalVM's native-image only, not GraalVM CE's. " +
               "Add %s=oracle (docs/usage.md, \"Choosing a garbage collector\").") %
              (_flag(ctx.attr.gc.label), _flag(ctx.attr.graalvm.label)))
+    linux = ctx.target_platform_has_constraint(ctx.attr._linux[platform_common.ConstraintValueInfo])
+    module_name, launcher_class = ctx.attr.main.split("/")
+
+    # The image as a shared library, as GraalVM builds a language library with launchers
+    # (mx_sdk_vm_impl.py, NativeImageProperties.contents; design.md D17, "VM options"): the
+    # framework creates the launcher class it names, runs the startup hooks once the options are
+    # processed (so not as the isolate is created: -H:-InitializeVM), and handles signals as an
+    # executable does by default. Not -H:-ParseRuntimeOptions, which would ignore the options the
+    # thin launcher creates the isolate with.
+    library = ctx.actions.declare_file("lib%s.%s" % (ctx.label.name, "so" if linux else "dylib"))
     module_path = _module_path([ctx.attr.module])
-    out = ctx.actions.declare_file(ctx.label.name)
     args = ctx.actions.args()
     args.add(jdk.java_home)
-    args.add(out)
+    args.add(library)
     args.add_joined(module_path, join_with = ctx.configuration.host_path_separator)
-    args.add(ctx.attr.main)
-    args.add("--gc=" + gc)
+    args.add(module_name)
+    args.add("lib" + ctx.label.name)
+    args.add_all([
+        "--shared",
+        "-Dorg.graalvm.launcher.class=" + launcher_class,
+        "-H:+UnlockExperimentalVMOptions",
+        "-H:-InitializeVM",
+        "-H:+InstallExitHandlers",
+        "-H:-UnlockExperimentalVMOptions",
+        "-R:+EnableSignalHandling",
+        "-R:+InstallSegfaultHandler",
+        "--gc=" + gc,
+    ])
     args.add_all(ctx.attr.options)
     if gc == "serial":
         args.add_all(ctx.attr.serial_options)
-    linux = ctx.target_platform_has_constraint(ctx.attr._linux[platform_common.ConstraintValueInfo])
     ctx.actions.run_shell(
-        # The image's working files go to a temporary directory; only the executable is the output.
-        command = 'home="$1" out="$2" mp="$3" main="$4"; shift 4; tmp="$(mktemp -d)"; ' +
-                  '"$home/bin/native-image" -p "$mp" -m "$main" -o "$tmp/image" "$@" && cp "$tmp/image" "$out"',
+        # The image's working files (its C headers among them) go to a temporary directory; only
+        # the library is the output. native-image compiles and links with the C compiler on the
+        # action's PATH, on the execution platform the target's C++ toolchain chose (below).
+        command = 'home="$1" out="$2" mp="$3" module="$4" name="$5"; shift 5; tmp="$(mktemp -d)"; ' +
+                  '"$home/bin/native-image" -p "$mp" --add-modules="$module" -o "$tmp/$name" "$@" && ' +
+                  'cp "$tmp/$(basename "$out")" "$out"',
         arguments = [args],
         inputs = depset(transitive = [module_path, jdk.files]),
-        outputs = [out],
+        outputs = [library],
         mnemonic = "NativeImage",
-        progress_message = "Building the native launcher %{label}",
-        # The target's native-image and C toolchain: on the executors for the tests (they target
-        # Linux), here for this machine's `bazel-bin/scheme-native`.
+        progress_message = "Building the native launcher's library %{label}",
         use_default_shell_env = True,
-        execution_requirements = {} if linux else {"no-remote-exec": "1"},
     )
-    return [DefaultInfo(files = depset([out]), executable = out)]
+    return [DefaultInfo(files = depset([library]))]
 
-native_image = rule(
-    implementation = _native_image_impl,
-    doc = "`<name>`: a module's main class as a native executable, by the pinned GraalVM's native-image " +
-          "and the host's C toolchain (design.md D17), with the collector `gc` names (`--gc=`).",
+native_library = rule(
+    implementation = _native_library_impl,
+    doc = "`lib<name>.{so,dylib}`: a launcher class's module as a shared library, by the pinned " +
+          "GraalVM's native-image, with the collector `gc` names (`--gc=`), for GraalVM's thin " +
+          "launcher (design.md D17). It needs the target's C++ toolchain, so it runs on that " +
+          "toolchain's execution platform: the remote executors for Linux, this Mac for macOS " +
+          "(design.md D11, \"Platforms\").",
     attrs = {
         "gc": attr.label(mandatory = True, providers = [NativeSettingInfo], doc = "serial, epsilon or G1"),
         "graalvm": attr.label(mandatory = True, providers = [NativeSettingInfo], doc = "ce or oracle: which `jdk` is"),
         "jdk": attr.label(mandatory = True, providers = [java_common.JavaRuntimeInfo], doc = "whose native-image builds it"),
-        "main": attr.string(mandatory = True, doc = "module/class, as `java -m` takes it"),
+        "main": attr.string(mandatory = True, doc = "module/class: the launcher (an AbstractLanguageLauncher)"),
         "module": attr.label(mandatory = True, providers = [JavaModuleInfo]),
         "options": attr.string_list(),
         "serial_options": attr.string_list(doc = "more options, with the serial collector only"),
         "_linux": attr.label(default = "@platforms//os:linux"),
     },
-    executable = True,
+    toolchains = use_cc_toolchain(mandatory = True),
 )

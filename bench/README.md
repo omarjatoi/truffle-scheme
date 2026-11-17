@@ -222,7 +222,7 @@ the first iteration with its startup and exit ("native with startup": the
 process's wall time, less the later iterations), since it starts in about
 10 ms where the JVM takes over half a second; the others' numbers, like
 ecraven's, leave startup out. It runs with our JVMs' `-Xmx2g` (Heap, above),
-given on its command line, with the collector it was built with:
+given as its option `--vm.Xmx2g`, with the collector it was built with:
 native-image's serial one by default, or G1 (`--//:native_gc=G1`, design.md
 D17). Without the executable, the column says it wasn't run.
 

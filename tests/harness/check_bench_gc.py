@@ -2,8 +2,9 @@
 G1's (bench.py _heap_from_native_gc_lines), and leaves them out of the program's output.
 
 The samples are the standard error of GraalVM 25.5's native launcher (`bazel-bin/scheme-native
--XX:+PrintGC -Xmx160m` on a program that keeps a few lists of 100,000 vectors), built with the
-default collector and with `--//:native_graalvm=oracle --//:native_gc=G1`."""
+-XX:+PrintGC -Xmx160m` before M10-01, `--vm.XX:+PrintGC --vm.Xmx160m` since, which write the same
+lines, on a program that keeps a few lists of 100,000 vectors), built with the default collector
+and with `--//:native_graalvm=oracle --//:native_gc=G1`."""
 
 import unittest
 

@@ -7,7 +7,7 @@ here fails the build. The archives are the same files nixpkgs fetches for
 shell run byte-identical JDKs.
 
 Upgrading: add the new release's URLs and sha256s (published next to each archive as
-`<archive>.sha256`) below, then bump TRUFFLE_VERSION in MODULE.bazel and run
+`<archive>.sha256`) below, and its source tag and launcher.cc's sha256 (_LAUNCHER_SOURCES), then bump TRUFFLE_VERSION in MODULE.bazel and run
 `bazel run @jvm//:pin` (see AGENTS.md).
 
 Oracle GraalVM at the same version is pinned too, for `//:scheme-native` alone, and only when
@@ -19,14 +19,18 @@ next to these archives: the sha256s are of the archives as downloaded from these
 2026-11-17. An upgrade adds the new version's Oracle release too.
 
 Repositories:
-  @graalvm_<platform>   one per platform: the unpacked JDK and its `java_runtime` (`:jdk`)
+  @graalvm_<platform>   one per platform: the unpacked JDK, its `java_runtime` (`:jdk`) and its
+                        JNI headers (`:jni`, a cc_library)
   @oracle_graalvm_<platform>   the same for Oracle GraalVM, fetched only when used
+  @graalvm_launcher_cc  the release's thin launcher source (`//file`: launcher.cc), at its tag,
+                        which //:scheme-native compiles (design.md D17, "VM options")
   @graalvm              the runtime toolchains (`--java_runtime_version=graalvm_25`), an alias
                         `:jdk` for the host platform's JDK, `:oracle_jdk` for the target
-                        platform's Oracle GraalVM, and `:version` (the GraalVM version)
+                        platform's Oracle GraalVM, `:jni` for the target platform's JNI headers,
+                        and the GraalVM version as `:version` and in `:version.bzl` (`VERSION`)
 """
 
-load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive", "http_file")
 load("@rules_java//toolchains:jdk_build_file.bzl", "JDK_BUILD_TEMPLATE")
 
 # Java feature version of the pinned releases: `--java_runtime_version=graalvm_25`.
@@ -64,6 +68,24 @@ _ORACLE_RELEASES = {
         },
     ),
 }
+
+# GraalVM version -> (the release's source tag, sha256 of its thin launcher's C++ source,
+# sdk/src/org.graalvm.launcher.native/src/launcher.cc): //:scheme-native's executable (design.md
+# D17, "VM options"). The release notes name the tag ("Based on the commit").
+_LAUNCHER_SOURCES = {
+    "25.5.5.0.3": ("graal-25.5.5.0.3", "9c8b76ae842fc6f6552fa4c1b523463c4817e7d0d52bd041f9f1dd0e274a9951"),
+}
+
+# The JDK's JNI headers as a C library, for the native launcher (//:scheme-native), which includes
+# jni.h. {os} is the JDK's include directory for its platform's jni_md.h.
+_JNI_BUILD = """
+cc_library(
+    name = "jni",
+    hdrs = ["include/jni.h", "include/{os}/jni_md.h"],
+    includes = ["include", "include/{os}"],
+    visibility = ["//visibility:public"],
+)
+"""
 
 def _hub_impl(rctx):
     lines = [
@@ -109,6 +131,17 @@ def _hub_impl(rctx):
         "    }),",
         ")",
         "",
+        "# The target platform's JNI headers (jni.h, jni_md.h): the native launcher's (//:scheme-native).",
+        "alias(",
+        "    name = \"jni\",",
+        "    actual = select({",
+    ] + [
+        "        \":is_%s\": \"@graalvm_%s//:jni\"," % (name, name)
+        for name in _PLATFORMS
+    ] + [
+        "    }),",
+        ")",
+        "",
         "# The target platform's Oracle GraalVM: //:scheme-native's with --//:native_graalvm=oracle.",
         "alias(",
         "    name = \"oracle_jdk\",",
@@ -124,6 +157,7 @@ def _hub_impl(rctx):
     ]
     rctx.file("BUILD.bazel", "\n".join(lines) + "\n")
     rctx.file("version", rctx.attr.version + "\n")
+    rctx.file("version.bzl", "VERSION = \"%s\"\n" % rctx.attr.version)
 
 _hub = repository_rule(
     implementation = _hub_impl,
@@ -141,14 +175,27 @@ def _graalvm_impl(mctx):
     if version not in _ORACLE_RELEASES:
         fail(("MODULE.bazel pins Truffle %s, but bazel/graalvm.bzl has no Oracle GraalVM %s release " +
               "to match it (design.md D11). Add the release's URLs and sha256s there.") % (version, version))
+    if version not in _LAUNCHER_SOURCES:
+        fail(("MODULE.bazel pins Truffle %s, but bazel/graalvm.bzl has no source of GraalVM %s's thin " +
+              "launcher to match it (design.md D11, D17). Add its tag and sha256 there.") % (version, version))
+    tag, launcher_sha256 = _LAUNCHER_SOURCES[version]
+    http_file(
+        name = "graalvm_launcher_cc",
+        urls = ["https://raw.githubusercontent.com/oracle/graal/%s/sdk/src/org.graalvm.launcher.native/src/launcher.cc" % tag],
+        sha256 = launcher_sha256,
+        downloaded_file_path = "launcher.cc",
+    )
     for prefix, (url_prefix, top, sha256s) in [("graalvm_", _RELEASES[version]), ("oracle_graalvm_", _ORACLE_RELEASES[version])]:
-        for name, (_, _, suffix, home) in _PLATFORMS.items():
+        for name, (os, _, suffix, home) in _PLATFORMS.items():
             http_archive(
                 name = prefix + name,
                 urls = [url_prefix + suffix + "_bin.tar.gz"],
                 sha256 = sha256s[name],
                 strip_prefix = top + home,
-                build_file_content = JDK_BUILD_TEMPLATE.format(RUNTIME_VERSION = JAVA_VERSION),
+                build_file_content = 'load("@rules_cc//cc:defs.bzl", "cc_library")\n' +
+                                     JDK_BUILD_TEMPLATE.format(RUNTIME_VERSION = JAVA_VERSION) + _JNI_BUILD.format(
+                    os = "darwin" if os == "macos" else os,
+                ),
             )
     _hub(name = "graalvm", version = version)
     return mctx.extension_metadata(reproducible = True)

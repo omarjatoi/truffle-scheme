@@ -1,0 +1,57 @@
+load("@apple_support//xcode:xcode_config.bzl", "xcode_config")
+load("@apple_support//xcode:xcode_version.bzl", "xcode_version")
+
+package(default_visibility = ["//visibility:public"])
+
+# The execution platforms (design.md D11, "Platforms"), in .bazelrc's --extra_execution_platforms.
+# An action runs on the first one that has the toolchains it needs: Java, Python, genrules and
+# tests run remotely on Linux; a C or C++ action for a macOS target needs the Xcode toolchain,
+# which only the macOS platform has, and runs on this machine.
+
+# BuildBuddy's Linux x86_64 executors: toolchains_buildbuddy's platform for its Ubuntu 22.04
+# image (MODULE.bazel), with the same constraints and exec_properties, so actions run in the same
+# image. The gcc constraint selects toolchains_buildbuddy's GCC toolchain.
+platform(
+    name = "linux_x86_64",
+    constraint_values = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:linux",
+        "@bazel_tools//tools/cpp:gcc",
+    ],
+    exec_properties = {
+        "OSFamily": "Linux",
+        "Arch": "amd64",
+        "container-image": "docker://gcr.io/flame-public/rbe-ubuntu22-04:latest",
+        "dockerNetwork": "off",
+    },
+)
+
+# This Mac (Apple silicon), for macOS targets: Bazel adds a platform's exec_properties whose value
+# is true-ish to its actions' execution requirements, so `no-remote-exec` keeps them on this
+# machine even with --remote_executor set (they may still be cached remotely). For remote Macs
+# later, replace it with their exec_properties (design.md D11): "OSFamily": "darwin",
+# "Arch": "arm64", and a "Pool" if the executors are in one.
+platform(
+    name = "macos_arm64",
+    exec_properties = {"no-remote-exec": "1"},
+    parents = ["@apple_support//platforms:macos_arm64"],
+)
+
+# The Xcode macOS actions use, pinned (as BuildBuddy's linux-to-mac-rbe-demo does), so builds
+# don't depend on what each machine's Xcode detection finds, and remote Macs later can share the
+# cache. It is the version on the maintainer's Mac; `xcodebuild -version` prints another's.
+xcode_version(
+    name = "xcode",
+    aliases = [
+        "27.2",
+        "27B52",
+    ],
+    default_macos_sdk_version = "27.2",
+    version = "27.2.0.27B52",
+)
+
+xcode_config(
+    name = "xcodes",
+    default = ":xcode",
+    versions = [":xcode"],
+)
