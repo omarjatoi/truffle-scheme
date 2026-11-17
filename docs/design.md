@@ -1465,7 +1465,7 @@ Each entry: the decision, why, and what was rejected.
   the kind of port's own implementation as runtime code. Its virtual
   `isInput`, `isBinary` and operations were calls partial evaluation can't
   inline, a performance warning each (30 in ecraven's `scheme`), and a
-  runtime call for each check (#NNN: ecraven's `cat` and `wc` take 0.84 and
+  runtime call for each check (#208: ecraven's `cat` and `wc` take 0.84 and
   0.83 times as long). *Rejected:* DSL specializations on the four port
   classes: the operation is behind a boundary either way, and the checks
   fold as field reads.

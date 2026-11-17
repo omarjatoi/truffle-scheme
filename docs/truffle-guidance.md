@@ -73,7 +73,7 @@ and `engine.TraceAssumptions`; the interpreter's host compilation with
   primitives: *"Partial evaluation could not inline the virtual runtime call
   Virtual to `SPort.isInput()`"* (and `isBinary`, `isOutput`, `flush`), from
   `IoPrimitives.port`, `textualOutput` and `Flush.invoke`, where the port is
-  not a constant. Fixed in #NNN (Fixes, below): none in `scheme`, `cat`,
+  not a constant. Fixed in #208 (Fixes, below): none in `scheme`, `cat`,
   `wc`, `read1` or `tail` since.
 - `scheme`'s deoptimizations: each of 8 splits of one closure
   (`gen-combination-2`'s lambda) deoptimizes once after its first compilation
@@ -395,7 +395,7 @@ DSL specializations on their Java classes. Follow.
 |---|---|---|
 | #201 | `set!` of a global: a store, with only the first invalidation behind a boundary | A loop of two `set!`s: 0.124 s → 0.071 s an iteration; `puzzle`, `triangl`, `browse` unchanged; `bench-check` within thresholds |
 | #204 | `CompilerAsserts.partialEvaluationConstant` on the three exploded loops' bounds; one `primitive.invoke` call in `IntrinsicNode.generic` | Every unit test under `//tests:unit_compile` (compile immediately, bailouts are errors) |
-| #NNN | A port's direction and kind are `final` fields of `SPort`, and each of its operations a `final` method behind a boundary that calls the kind of port's own (design.md D10, "Ports in compiled code") | Performance warnings, `main` → this: ecraven's `scheme` 30 → 0, `cat` 25 → 0, `wc` 18 → 0, `tail` 24 → 0, `read1` 2 → 0 (`IoTest.portOperationsCompileWithoutPerformanceWarnings`: none for every port operation on every kind of port). Later iterations, interleaved: `cat` 0.84 times as long, `wc` 0.83, `read1` 0.94, `scheme`, `string`, `tail` unchanged; `read-char` from a string 0.57 |
+| #208 | A port's direction and kind are `final` fields of `SPort`, and each of its operations a `final` method behind a boundary that calls the kind of port's own (design.md D10, "Ports in compiled code") | Performance warnings, `main` → this: ecraven's `scheme` 30 → 0, `cat` 25 → 0, `wc` 18 → 0, `tail` 24 → 0, `read1` 2 → 0 (`IoTest.portOperationsCompileWithoutPerformanceWarnings`: none for every port operation on every kind of port). Later iterations, interleaved: `cat` 0.84 times as long, `wc` 0.83, `read1` 0.94, `scheme`, `string`, `tail` unchanged; `read-char` from a string 0.57 |
 
 ## Follow-ups
 
