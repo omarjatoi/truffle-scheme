@@ -129,14 +129,28 @@ public final class Syntax {
      * The plain datum (syntax->datum): every syntax object replaced by its datum. Shared structure and
      * cycles (datum labels) are preserved. No Java recursion (AGENTS.md rule 4).
      */
-    @TruffleBoundary
     public static Object toDatum(Object syntax) {
+        return toDatum(syntax, false);
+    }
+
+    /**
+     * The datum of a literal (quote's datum, a self-evaluating vector, a constant part of a
+     * quasiquote template), made as {@link #toDatum(Object)} makes it but of immutable pairs and
+     * vectors (R7RS §3.4, design.md D1), so even data that {@code eval} quotes is. Strings and
+     * bytevectors aren't copied: the reader makes the program's immutable.
+     */
+    public static Object toLiteral(Object syntax) {
+        return toDatum(syntax, true);
+    }
+
+    @TruffleBoundary
+    private static Object toDatum(Object syntax, boolean literal) {
         IdentityHashMap<Object, Object> copies = new IdentityHashMap<>();
         Deque<Object[]> fills = new ArrayDeque<>();
-        Object result = shell(syntax, copies, fills);
+        Object result = shell(syntax, literal, copies, fills);
         while (!fills.isEmpty()) {
             Object[] fill = fills.pop();
-            Object value = shell(fill[2], copies, fills);
+            Object value = shell(fill[2], literal, copies, fills);
             if (fill[0] instanceof SPair pair) {
                 if ((Integer) fill[1] == 0) {
                     pair.car = value;
@@ -151,7 +165,7 @@ public final class Syntax {
     }
 
     /** The copy of {@code o}, allocated now and filled in later through {@code fills}. */
-    private static Object shell(Object o, IdentityHashMap<Object, Object> copies, Deque<Object[]> fills) {
+    private static Object shell(Object o, boolean literal, IdentityHashMap<Object, Object> copies, Deque<Object[]> fills) {
         Object datum = o;
         while (datum instanceof Syntax s) {
             datum = s.datum;
@@ -159,7 +173,7 @@ public final class Syntax {
         if (datum instanceof SPair p) {
             Object copy = copies.get(p);
             if (copy == null) {
-                SPair pair = new SPair(null, null);
+                SPair pair = new SPair(null, null, literal);
                 copies.put(p, pair);
                 fills.push(new Object[]{pair, 1, p.cdr});
                 fills.push(new Object[]{pair, 0, p.car});
@@ -172,11 +186,11 @@ public final class Syntax {
             if (copy == null) {
                 if (!v.isObjects()) {
                     // Fixnums or flonums (M5-06): no syntax inside, so a copy with the same storage.
-                    copy = v.copy(0, v.length, v.immutable);
+                    copy = v.copy(0, v.length, literal || v.immutable);
                     copies.put(v, copy);
                     return copy;
                 }
-                SVector vector = new SVector(new Object[v.length], v.immutable);
+                SVector vector = new SVector(new Object[v.length], literal || v.immutable);
                 copies.put(v, vector);
                 for (int i = v.length - 1; i >= 0; i--) {
                     fills.push(new Object[]{vector, i, v.get(i)});

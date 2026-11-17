@@ -12,16 +12,30 @@ import com.oracle.truffle.api.library.ExportMessage;
 import scheme.runtime.InteropValues;
 import scheme.runtime.SchemeLanguage;
 
-/** A mutable pair. */
+/**
+ * A pair. Literal pairs are immutable (R7RS §3.4, design.md D1): {@code set-car!}, {@code set-cdr!}
+ * and {@code list-set!} refuse them. Pairs made at run time are mutable. The flag costs no space: a
+ * pair is a 12-byte header and two compressed references, 20 bytes padded to 24, and it fits in the
+ * padding.
+ */
 @ExportLibrary(InteropLibrary.class)
 public final class SPair implements TruffleObject {
 
     public Object car;
     public Object cdr;
+    /** A literal's pair (quote, a self-evaluating vector's elements, quasiquote's constant parts). */
+    public final boolean immutable;
 
     public SPair(Object car, Object cdr) {
         this.car = car;
         this.cdr = cdr;
+        this.immutable = false;
+    }
+
+    public SPair(Object car, Object cdr, boolean immutable) {
+        this.car = car;
+        this.cdr = cdr;
+        this.immutable = immutable;
     }
 
     // A list to interop (design.md D10): iterable, its elements up to the first non-pair (so an

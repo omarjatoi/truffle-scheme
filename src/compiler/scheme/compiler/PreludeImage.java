@@ -99,7 +99,7 @@ final class PreludeImage {
 
     private static final int MAGIC = 0x52375049;
     /** The format's version: change it whenever what the image holds or how it is written changes. */
-    private static final int FORMAT = 1;
+    private static final int FORMAT = 2;
 
     /** Contexts initialized the normal way so far. */
     private static final AtomicInteger NORMAL_INITIALIZATIONS = new AtomicInteger();
@@ -829,6 +829,7 @@ final class PreludeImage {
                 values.writeByte(PAIR);
                 values.writeInt(valueIds.get(p.car));
                 values.writeInt(valueIds.get(p.cdr));
+                values.writeBoolean(p.immutable);
             } else if (o instanceof SVector v && v.isLongs()) {
                 values.writeByte(VECTOR_LONGS);
                 values.writeInt(v.length);
@@ -1075,7 +1076,7 @@ final class PreludeImage {
                     return in.readBoolean() ? SString.literal(s) : SString.of(s);
                 }
                 case PAIR:
-                    return new SPair(values[in.readInt()], values[in.readInt()]);
+                    return new SPair(values[in.readInt()], values[in.readInt()], in.readBoolean());
                 case VECTOR: {
                     Object[] elements = new Object[in.readInt()];
                     for (int i = 0; i < elements.length; i++) {

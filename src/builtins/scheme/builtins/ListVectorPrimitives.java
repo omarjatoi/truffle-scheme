@@ -108,6 +108,9 @@ final class ListVectorPrimitives {
             if (!(args[1] instanceof SPair p)) {
                 throw Lists.notAPair(car ? "set-car!" : "set-cdr!", args[1]);
             }
+            if (p.immutable) {
+                throw immutablePair(car ? "set-car!" : "set-cdr!");
+            }
             if (car) {
                 p.car = args[2];
             } else {
@@ -252,6 +255,12 @@ final class ListVectorPrimitives {
         return new SchemeError(who + ": vector is immutable (a literal)");
     }
 
+    /** A literal pair's car or cdr stored into (R7RS §3.4, design.md D1). */
+    @TruffleBoundary
+    static SchemeError immutablePair(String who) {
+        return new SchemeError(who + ": pair is immutable (a literal)");
+    }
+
     /** {@code (list? obj)}: #t for a proper list, #f for an improper or circular one (tortoise and hare, D9). */
     static final class IsList extends PrimitiveNode {
         @Override
@@ -326,6 +335,9 @@ final class ListVectorPrimitives {
             }
             if (op == REF) {
                 return p.car;
+            }
+            if (p.immutable) {
+                throw immutablePair(who);
             }
             p.car = args[3];
             return SConstant.UNSPECIFIED;
