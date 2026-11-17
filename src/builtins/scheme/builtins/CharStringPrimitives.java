@@ -143,9 +143,13 @@ final class CharStringPrimitives {
 
     // ---- Unicode (design.md D9) ---------------------------------------------------------------
 
-    /** Cherokee: the one script whose case folding maps to upper case (Unicode CaseFolding.txt). */
-    private static boolean isCherokeeLower(int cp) {
-        return (cp >= 0x13f8 && cp <= 0x13fd) || (cp >= 0xab70 && cp <= 0xabbf);
+    /**
+     * Cherokee: the one script whose case folding maps to upper case (Unicode CaseFolding.txt,
+     * since Unicode 8.0; R7RS erratum 25). Its upper case letters fold to themselves, its lower
+     * case ones to their upper case.
+     */
+    private static boolean isCherokee(int cp) {
+        return (cp >= 0x13a0 && cp <= 0x13fd) || (cp >= 0xab70 && cp <= 0xabbf);
     }
 
     /** Simple case folding (Unicode CaseFolding.txt, statuses C and S), for {@code char-foldcase}. */
@@ -158,14 +162,24 @@ final class CharStringPrimitives {
 
     @TruffleBoundary
     private static int foldCharSlow(int cp) {
-        if (cp == 0x130 || cp == 0x131) {
-            // Dotted capital I and dotless small i have no simple folding outside Turkic locales.
-            return cp;
+        switch (cp) {
+            case 0x130, 0x131:
+                // Dotted capital I and dotless small i have no simple folding outside Turkic locales.
+                return cp;
+            case 0x1fd3:
+                // Status S foldings between characters that are canonically equivalent, so that
+                // neither one's upper case maps back to the other.
+                return 0x390;
+            case 0x1fe3:
+                return 0x3b0;
+            case 0xfb05:
+                return 0xfb06;
+            default:
+                if (isCherokee(cp)) {
+                    return Character.toUpperCase(cp);
+                }
+                return Character.toLowerCase(Character.toUpperCase(cp));
         }
-        if (isCherokeeLower(cp)) {
-            return Character.toUpperCase(cp);
-        }
-        return Character.toLowerCase(Character.toUpperCase(cp));
     }
 
     /** Appends the full case folding (statuses C and F) of {@code cp}, for {@code string-foldcase} and {@code string-ci}. */
@@ -175,7 +189,7 @@ final class CharStringPrimitives {
             out.append((char) foldChar(cp));
         } else if (cp == 0x130) {
             out.append("i̇");
-        } else if (cp == 0x131 || isCherokeeLower(cp)) {
+        } else if (cp == 0x131 || isCherokee(cp)) {
             out.appendCodePoint(foldCharSlow(cp));
         } else {
             // One character at a time, so no context (final sigma) applies. Lower case first, so that

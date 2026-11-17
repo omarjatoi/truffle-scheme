@@ -129,6 +129,34 @@ public class CharStringTest {
         assertEquals("\"TITLE\"", write("(string-upcase \"title\")"));
     }
 
+    /**
+     * Case folding is Unicode's CaseFolding.txt, which since Unicode 8.0 folds Cherokee to upper
+     * case: R7RS erratum 25 replaces §6.6's "the result will be either a lowercase letter or the
+     * same as the argument" for char-foldcase with "If the result of folding is not supported by
+     * the implementation, the argument is returned". So an upper case Cherokee letter folds to
+     * itself and a lower case one to its upper case, for characters, strings and the -ci
+     * comparisons alike.
+     */
+    @Test
+    public void cherokeeFoldsToUpperCase() {
+        assertEquals("(5024 5024 5104 5104 5024 5104)",
+                        write("(map char->integer (list (char-foldcase #\\x13a0) (char-foldcase #\\xab70) (char-foldcase #\\x13f0) (char-foldcase #\\x13f8) (char-upcase #\\xab70) (char-upcase #\\x13f8)))"));
+        assertEquals("(43888 5112)", write("(map char->integer (list (char-downcase #\\x13a0) (char-downcase #\\x13f0)))"));
+        assertEquals("(#t #t)", write("(list (equal? (string-foldcase (string #\\x13a0 #\\xab71)) (string #\\x13a0 #\\x13a1)) (string-ci=? (string #\\x13a0) (string #\\xab70)))"));
+    }
+
+    /**
+     * The simple foldings (CaseFolding.txt status S) that lower(upper(c)) misses: Greek small
+     * iota and upsilon with dialytika and tonos have two code points each, and so do the long s
+     * t and s t ligatures; each folds to the other.
+     */
+    @Test
+    public void simpleFoldingOfCanonicalDuplicates() {
+        assertEquals("(912 944 64262 912 944 64262)", write(
+                        "(map char->integer (list (char-foldcase #\\x1fd3) (char-foldcase #\\x1fe3) (char-foldcase #\\xfb05) (char-foldcase #\\x390) (char-foldcase #\\x3b0) (char-foldcase #\\xfb06)))"));
+        assertEquals("(#t #t)", write("(list (char-ci=? #\\x1fd3 #\\x390) (char-ci=? #\\xfb05 #\\xfb06))"));
+    }
+
     @Test
     public void mapAndForEach() {
         assertEquals("\"ABC\"", write("(string-map char-upcase \"abc\")"));
