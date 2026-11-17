@@ -357,6 +357,17 @@ configuration is checked by the tests `//tests:readme_native` (this section's
 commands) and `//tests:conformance_native` (both conformance suites through
 the executable), which are run only when named.
 
+The executable's heap starts at 1 GB, so that its young generation starts at
+384 MB instead of 48 MB: a deep recursion's first run then collects a third
+as often, and each collection scans its whole stack (design.md D17). Only
+what a program allocates takes memory: a program that allocates little runs
+in as little as before, and one that allocates more peaks with those 384 MB
+in use (ecraven's `divrec` at 480 MB instead of 165). `-Xms` (or `-XX:MinHeapSize=`)
+on the executable's command line sets another minimum, such as `-Xms128m`,
+which runs as before; a maximum below 1 GB (`-Xmx512m`) needs a minimum no
+larger than it (`-Xms512m`), or the executable refuses to start. Natively,
+heap sizes are these options, not `--vm.Xmx` or `--vm.Xms`.
+
 ## Performance
 
 [docs/benchmarks.md](benchmarks.md) compares this implementation with

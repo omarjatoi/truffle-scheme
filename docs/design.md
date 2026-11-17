@@ -671,6 +671,13 @@ full R7RS-small conformance comes first.
       the real limit on the first two: first iterations within 5% of
       `main`'s up to 64 MB, and 1.03 to 1.3 times from 96 MB up. The patch
       is on the branch `experiment/native-real-depth-limit-2`, not merged.
+    - *Since then* the native launcher's young generation starts at 384 MB
+      instead of 48 (D17, "The native launcher's young generation"), so a
+      first run collects about a third as often: with the counted limit,
+      the list's first iteration took 0.63 s instead of 1.70, the 10M
+      `count`'s 6.1 s instead of 10.7, and the 300,000-deep `count`'s 86 ms
+      instead of 133. These tables are from before it, and a deeper limit
+      wasn't measured again with it.
   - *A first descent isn't compiled (M9-01).* Why a deep recursion's first
     run deoptimized frame by frame: Truffle compiles a procedure once it has
     been called a few hundred times, which a recursion does on its way down,
@@ -2276,6 +2283,104 @@ Each entry: the decision, why, and what was rejected.
     a dynamically linked executable fails. The baseline target is also what
     nixpkgs' own native-image check builds with, and makes the executable
     run on any x86-64 machine.
+  - **The native launcher's young generation.** The image is built with
+    `-R:MinHeapSize=1g`, a default for the executable's minimum heap, which
+    its own `-Xms` or `-XX:MinHeapSize=` replaces (`--vm.Xms` and the other
+    `--vm.` heap options don't work in a native launcher: the framework
+    rejects the size, and the options can only be set as the process
+    starts). Native-image's serial collector (CE's only one but Epsilon)
+    sizes the young generation with its `Adaptive2` policy, which starts it
+    at a third of the initial heap: 128 MB, or the minimum heap if that is
+    larger. So eden started at 48 MB, and now at 384 MB. The policy grows it
+    later (`nboyer` and `earley` reach about 1 GB either way); a first run
+    is what a small one costs.
+    - *Why.* After M9-01, a deep recursion's first run is mostly collections
+      ("Stack-depth spill", *After M9-01*): each one scans the whole Java
+      stack, up to the spill limit's 30 MB of frames, and copies the frames
+      that the descent keeps live (an interpreted call allocates about 230
+      bytes, and a frame that spills about 100 more: its segment, its list
+      cell, and the call that resumes it). Fewer collections do less of
+      both.
+    - *Measured.* The executable before and after, built from the same
+      commit (`main` at `4ab9edc`), on an Apple M3 Max shared with other
+      agents (load 3 to 12); medians of 5 interleaved processes each: the
+      first iteration, the median of the later ones, the process's wall
+      time, its collections (from `-XX:+PrintGC`) and peak RSS:
+
+      | | Before (eden 48 MB) | After (eden 384 MB) |
+      |---|---:|---:|
+      | `count` 300,000 deep ×12 | 133 ms, then 36 ms; 0.61 s; 11 collections, 393 ms; 359 MB | 86 ms, then 6 ms; 0.30 s; 2, 62 ms; 611 MB |
+      | build a list and `map` it, 1,000,000 deep, ×6 | 1.70 s, then 506 ms; 4.53 s; 24, 3.45 s; 1.0 GB | 0.63 s, then 422 ms; 2.48 s; 8, 1.38 s; 1.0 GB |
+      | `count` 10,000,000 deep ×3 | 10.7 s, then 4.1 s; 19.0 s; 36, 15.5 s; 4.8 GB | 6.1 s, then 3.9 s; 14.0 s; 14, 11.0 s; 5.6 GB |
+      | `nboyer` ×3 | 5.78 s, then 4.17 s; 14.2 s; 52, 8.7 s; 1.7 GB | 4.51 s, then 4.04 s; 12.6 s; 23, 6.8 s; 1.9 GB |
+      | `earley` ×3 | 8.63 s, then 6.96 s; 22.6 s; 41, 17.3 s; 3.7 GB | 7.22 s, then 7.48 s; 22.2 s; 17, 16.9 s; 4.0 GB |
+      | `divrec` ×6 | 367 ms, then 325 ms; 2.03 s; 95, 23 ms; 165 MB | 357 ms, then 312 ms; 1.97 s; 13, 9 ms; 480 MB |
+      | `primes` ×5 | 117 ms, then 74 ms; 0.43 s; 19, 11 ms; 169 MB | 125 ms, then 74 ms; 0.44 s; 3, 3 ms; 479 MB |
+      | `ack(3,12)` ×4, `fib` ×3 | 1.18 s and 1.79 s first; no collection; 73 and 71 MB | 1.17 s and 1.85 s; the same |
+      | A hello-world program (41 runs) | 10.1 ms, 19.1 MB | 9.9 ms, 19.1 MB |
+
+      The spills are the same (`count` 300,000 deep: 13, then 4 to 6, then
+      1 or 2; the list: 86, then 17 to 22, then 12). In the 300,000-deep
+      `count`, a collection while the stack is deep still pauses 30 to 60
+      ms, but the first iteration has none.
+    - *What it costs.* A program that allocates less than eden's 384 MB in
+      all never collects, and one that allocates more peaks with eden full:
+      `divrec` and `primes` at 480 MB instead of 165, the deep recursions
+      and `nboyer` and `earley` 0.1 to 0.8 GB higher (table above).
+      Programs that allocate little are unchanged (a hello-world program
+      19 MB, `fib` and `ack` 72 MB). On this machine the JVM launcher's
+      own young generation (the serial collector, a third of the JVM's
+      initial heap, 1/64 of memory) is larger. An `-Xmx` below 1 GB needs
+      an `-Xms` no larger than it: native-image refuses a minimum heap
+      above a maximum that was given (`The specified minimum heap size (1g)
+      must not be larger than the maximum heap size`). A maximum it
+      chooses itself (from the machine's memory) bounds the minimum
+      instead, and nothing fails.
+    - *The compilation isolates keep their own default.* The JIT compiles
+      in isolates of their own (`CompileInIsolates`), which take the
+      image's option defaults, not the command line's, so the 1 GB minimum
+      gave each one a 384 MB eden too: `divrec` peaked at 787 MB instead of
+      the 476 MB of the same minimum given as `-Xms1g`, with the same
+      collections in the program's heap. The image also passes them
+      `-XX:MinHeapSize=0` (`-R:CompilationIsolateOptions`), the default,
+      and the two agree (480 MB).
+    - *Rejected:* other sizes. The same programs with the minimum given
+      as `-Xms` (5 interleaved processes each, the first iteration, wall
+      time and peak RSS):
+
+      | Minimum heap (eden) | `count` 300,000 deep | the list | `count` 10M | `nboyer` | `earley` | `divrec`, `primes` |
+      |---|---:|---:|---:|---:|---:|---:|
+      | none (48 MB) | 137 ms; 0.63 s; 372 MB | 1.82 s; 4.42 s; 1.0 GB | 11.9 s; 20.7 s | 6.27 s; 15.3 s | 9.01 s; 23.7 s | 168 MB |
+      | 256 MB (96 MB) | 125 ms; 0.50 s; 384 MB | 1.76 s; 4.28 s; 1.1 GB | 8.9 s; 16.7 s | 6.21 s; 15.5 s | 9.52 s; 23.0 s | 190 MB |
+      | 512 MB (192 MB) | 88 ms; 0.40 s; 466 MB | 1.12 s; 3.07 s; 1.0 GB | 7.9 s; 15.6 s | 5.32 s; 13.6 s | 9.61 s; 24.7 s | 285 MB |
+      | 1 GB (384 MB) | 86 ms; 0.29 s; 567 MB | 0.67 s; 2.34 s; 1.0 GB | 6.5 s; 14.3 s | 4.68 s; 12.8 s | 7.46 s; 22.6 s | 477 MB |
+      | 2 GB (768 MB) | 86 ms; 0.29 s; 932 MB | 0.68 s; 1.79 s; 1.2 GB | 7.2 s; 11.8 s | 4.30 s; 11.6 s | 5.95 s; 16.4 s | 868 MB |
+
+      512 MB gets half of what 1 GB does for the list and costs a program
+      that allocates 285 MB; 2 GB gains on the long runs but costs 870 MB.
+      No survivor spaces (`-H:MaxSurvivorSpaces=0`: what survives a young
+      collection goes to the old generation at once, so the descent's
+      frames are copied once, not up to the initial tenuring threshold's 7
+      times)
+      made the list's run 1.3 times as long and `earley`'s first iteration
+      2.9 times (one process each), from the full collections of an old
+      generation that fills with what a later young collection would have
+      freed; one survivor space didn't help either. `-Xmn` and
+      `-XX:MaxNewSize` only bound the young generation, and the launcher
+      can't set any of these options itself: they are fixed when the
+      process starts (`--vm.XX:MinHeapSize` fails, *immutable*).
+    - *Allocation per spilled frame.* Measured with `-XX:+PrintGCSummary`
+      (interpreted only, `scheme.SpillDepth`): an interpreted call of
+      `count` allocates 234 bytes, and one that spills 337. A spill copies
+      no frame: a suspended interpreted frame is already on the heap, and
+      the root prompt resumes its spill's segments in place ("Owned
+      segments"); of the 100 bytes, the segment and its list cell are 40,
+      the rest the call that resumes it (its arguments, the continuation
+      root's frame, the `Resumption`). A compiled frame that spills is
+      materialized then (about 200 to 300 bytes). Taking the 40 bytes off
+      would make 40% fewer of the spill's own allocations, and about a
+      tenth fewer of a deep interpreted descent's, against a third as many
+      collections above, so they stay.
   - Limits: the tools (inspector, DAP, profilers) are only on the JVM
     launcher (`bazel-bin/scheme`); the executable is for the platform that built
     it; and there is no auxiliary engine cache in the image (only the first
