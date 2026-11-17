@@ -351,28 +351,30 @@ the executable), which are run only when named.
 Chez, Racket, Chicken, Guile, Gauche and chibi on
 [ecraven's R7RS benchmarks](https://ecraven.github.io/r7rs-benchmarks/), 57
 programs, run as ecraven's script runs them. The committed report was
-measured on 2026-11-16, at commit `33ab4a03b110` (the final M7 code), on an
-Apple M3 Max shared with other jobs (its own note: "differences under 2x are
-within the noise"), at a tenth of each program's count. Its summary, the
-geometric mean of each implementation's time relative to the fastest, over
-the programs it passed:
+measured on 2026-11-17, on the final M8 code (commit `8ba9552296ee`), on an
+Apple M3 Max with no other jobs running (its own note still says
+"differences under 2x are within the noise"), at a tenth of each program's
+count. Its summary, the geometric mean of each implementation's time relative
+to the fastest, over the programs it passed:
 
 | Implementation | Passed | Geometric mean (× fastest) | Median peak memory |
 |---|--:|--:|--:|
 | Chez | 57/57 | 1.10 | 50 MB |
-| Racket | 57/57 | 1.92 | 150 MB |
-| Ours, JIT, steady state | 57/57 | 2.34 | |
-| Guile | 56/57 | 3.02 | 120 MB |
-| Chicken | 56/57 | 3.82 | 24 MB |
-| Ours, JIT, first run | 57/57 | 5.58 | 1628 MB |
-| Gauche | 57/57 | 10.66 | 44 MB |
-| Ours, interpreter | 52/57 | 49.59 | 1138 MB |
-| Chibi | 52/57 | 58.58 | 9 MB |
+| Ours, JIT, steady state | 57/57 | 1.72 | |
+| Racket | 57/57 | 1.91 | 150 MB |
+| Guile | 56/57 | 3.03 | 120 MB |
+| Chicken | 56/57 | 3.89 | 24 MB |
+| Ours, JIT, first run | 57/57 | 4.14 | 1063 MB |
+| Gauche | 57/57 | 10.84 | 44 MB |
+| Ours, interpreter | 54/57 | 43.87 | 774 MB |
+| Chibi | 52/57 | 58.78 | 9 MB |
 
 "First run" is the number comparable with the others': one run in a fresh
 JVM, startup excluded, as ecraven's tables report. "Steady state" is the best
 later iteration in the same JVM, once the JIT has compiled the program. The
-interpreter's 5 misses are runs stopped at the report's 60 s limit for it.
+interpreter's 3 misses are runs stopped at the report's 60 s limit for it.
+Our peak memory is mostly the JVM's own: the programs' median live heap is
+7 MB (the report's Peak memory table gives each program's).
 [bench/README.md](../bench/README.md) explains how to run the benchmarks and
 what is measured, and its "Thresholds" section how `bench-check` checks a
 subset of them against `bench/thresholds.json`.
