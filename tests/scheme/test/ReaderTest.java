@@ -54,7 +54,7 @@ public class ReaderTest {
         assertEquals("1+2i", roundTrip("#e1+2i"));
         assertEquals("1.5-2.5i", roundTrip("1.5-2.5i"));
         assertEquals("0+i", roundTrip("+i"));
-        assertEquals("1e+21", roundTrip("1e21"));
+        assertEquals("1.0e+21", roundTrip("1e21"));
         assertEquals("2", roundTrip("2@0"));
         assertEquals("+inf.0", roundTrip("+inf.0"));
         assertEquals("-inf.0", roundTrip("#i-inf.0"));

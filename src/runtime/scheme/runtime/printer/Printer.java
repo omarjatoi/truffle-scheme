@@ -392,13 +392,21 @@ public final class Printer {
         return c >= '0' && c <= '9';
     }
 
-    /** chibi-scheme's rule for when a written symbol needs |bars| (any non-ASCII character does). */
+    /**
+     * chibi-scheme's rule for when a written symbol needs |bars| (any non-ASCII character does),
+     * plus the names it writes bare that don't read back as symbols: a dot followed by a digit
+     * (.5 is a number; R7RS §7.1.1 has a dot followed by a &lt;dot subsequent&gt;) and a backquote
+     * (no &lt;subsequent&gt;, and a quasiquote to our reader).
+     */
     private static boolean needsBars(String name) {
         int len = name.length();
         if (len == 0 || name.equals(".") || isAsciiDigit(name.charAt(0))) {
             return true;
         }
         char c0 = name.charAt(0);
+        if (c0 == '.' && isAsciiDigit(name.charAt(1))) {
+            return true;
+        }
         if (len > 1 && (c0 == '+' || c0 == '-')) {
             char c1 = name.charAt(1);
             if (isAsciiDigit(c1) || c1 == '.' || c1 == 'i') {
@@ -410,7 +418,7 @@ public final class Printer {
         }
         for (int i = 0; i < len; i++) {
             char c = name.charAt(i);
-            if (c <= ' ' || c >= 0x80 || c == '\\' || c == '|' || c == '#' || isSeparator(c)) {
+            if (c <= ' ' || c >= 0x80 || c == '\\' || c == '|' || c == '#' || c == '`' || isSeparator(c)) {
                 return true;
             }
         }
@@ -462,8 +470,13 @@ public final class Printer {
     }
 
     /**
-     * chibi-scheme's flonum format: the first of C's {@code %.15g}, {@code %.16g}, {@code %.17g}
-     * that reads back as the same double, with {@code .0} appended if it has no '.' or exponent.
+     * The shortest digits that read back as the same double, with a decimal point (R7RS §6.2.7:
+     * "the result contains a decimal point and is expressed using the minimum number of digits
+     * (exclusive of exponent and trailing zeroes) needed", design.md D9), laid out as chibi-scheme
+     * does: C's {@code %.<p>g} with p the larger of 15 and the number of digits, and a {@code .0}
+     * where that has no '.'. Wherever 15 digits are shortest or too few, the digits are chibi's
+     * (the first of {@code %.15g}, {@code %.16g}, {@code %.17g} that reads back); below 2^-1022,
+     * where fewer than 15 can be enough, they are fewer.
      */
     public static String formatDouble(double d) {
         if (Double.isNaN(d)) {
@@ -471,12 +484,12 @@ public final class Printer {
         } else if (Double.isInfinite(d)) {
             return d > 0 ? "+inf.0" : "-inf.0";
         }
-        String s = formatG(d, 15);
-        if (Double.parseDouble(s) != d) {
-            s = formatG(d, 16);
-            if (Double.parseDouble(s) != d) {
-                s = formatG(d, 17);
-            }
+        String s;
+        if (d == 0) {
+            s = 1 / d < 0 ? "-0" : "0";
+        } else {
+            BigDecimal digits = shortestDigits(Math.abs(d));
+            s = formatG(d < 0 ? "-" : "", digits, Math.max(15, digits.precision()));
         }
         if (s.indexOf('.') < 0 && s.indexOf('e') < 0) {
             s = s + ".0";
@@ -484,17 +497,32 @@ public final class Printer {
         return s;
     }
 
-    /** C's {@code printf("%.<precision>g", d)} for finite d. */
-    static String formatG(double d, int precision) {
-        if (d == 0) {
-            return 1 / d < 0 ? "-0" : "0";
+    /**
+     * The decimal with the fewest significant digits that reads back as {@code d > 0}, and the
+     * closest to it among those. The JDK's {@code Double.toString} gives that, except that it
+     * never gives fewer than two digits: where one is enough (5e-324, which it writes 4.9E-324),
+     * one of the two one-digit neighbours reads back.
+     */
+    private static BigDecimal shortestDigits(double d) {
+        BigDecimal jdk = new BigDecimal(Double.toString(d)).stripTrailingZeros();
+        if (jdk.precision() == 2) {
+            for (RoundingMode mode : new RoundingMode[]{RoundingMode.HALF_EVEN, RoundingMode.FLOOR, RoundingMode.CEILING}) {
+                BigDecimal one = jdk.round(new MathContext(1, mode));
+                if (one.doubleValue() == d) {
+                    return one;
+                }
+            }
         }
-        String sign = d < 0 ? "-" : "";
-        BigDecimal rounded = new BigDecimal(Math.abs(d)).round(new MathContext(precision, RoundingMode.HALF_EVEN));
+        return jdk;
+    }
+
+    /** C's {@code printf("%.<precision>g", d)} for a finite nonzero d, given its digits. */
+    private static String formatG(String sign, BigDecimal rounded, int precision) {
         int exponent = rounded.precision() - rounded.scale() - 1;
         if (exponent < -4 || exponent >= precision) {
             String digits = stripTrailingZeros(rounded.unscaledValue().toString());
-            String mantissa = digits.length() == 1 ? digits : digits.charAt(0) + "." + digits.substring(1);
+            // R7RS §6.2.7: "the result contains a decimal point" (1.0e+21, where C has 1e+21).
+            String mantissa = digits.charAt(0) + "." + (digits.length() == 1 ? "0" : digits.substring(1));
             int abs = Math.abs(exponent);
             return sign + mantissa + "e" + (exponent < 0 ? "-" : "+") + (abs < 10 ? "0" : "") + abs;
         }

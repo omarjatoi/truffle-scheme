@@ -677,9 +677,15 @@ Each entry: the decision, why, and what was rejected.
 - Unicode: use the JDK's tables. Character procedures use simple case
   mapping, string procedures use full case mapping (`(string-upcase "ß")` is
   `"SS"`), and everything uses `Locale.ROOT`, never the default locale.
-- Floating-point output: shortest round-trip digits (the JDK 21+
-  `Double.toString`), rewritten into R7RS syntax (`+inf.0`, `-inf.0`,
-  `+nan.0`). Complex numbers print in rectangular form, `a+bi`.
+- Floating-point output: shortest round-trip digits and always a decimal
+  point (R7RS §6.2.7: *"the result contains a decimal point and is expressed
+  using the minimum number of digits (exclusive of exponent and trailing
+  zeroes) needed"*; the digits are the JDK 21+ `Double.toString`'s, or one
+  where that is enough and the JDK writes two, as for `5.0e-324`), laid out
+  as chibi-scheme does (C's `%g`: `1.5e-07`, `100.0`), except that a
+  one-digit mantissa gets its `.0` (`1.0e+21`, where chibi writes `1e+21`),
+  in R7RS syntax (`+inf.0`, `-inf.0`, `+nan.0`). Complex numbers print in
+  rectangular form, `a+bi`.
 
 ### D10. Platform scope for v1
 

@@ -57,7 +57,14 @@ public class PrinterTest {
         assertEquals("-1/3", write(SRational.make(BigInteger.valueOf(2), BigInteger.valueOf(-6))));
     }
 
-    /** chibi-scheme's flonum format: shortest of %.15g, %.16g, %.17g that reads back, plus ".0". */
+    /**
+     * chibi-scheme's flonum layout (C's %g) with the fewest digits that read back and always a
+     * decimal point: R7RS §6.2.7, number->string of an inexact number in radix 10 "contains a
+     * decimal point and is expressed using the minimum number of digits (exclusive of exponent
+     * and trailing zeroes) needed" to read back as the same number (design.md D9). For subnormals
+     * that's fewer digits than chibi's 15, and chibi's 1e+21 has no decimal point. The chibi
+     * suite's test-precision cases (tests/r7rs/6.13.scm) accept 5.0e-324, not 5e-324.
+     */
     @Test
     public void flonums() {
         assertEquals("1.0", write(1.0));
@@ -65,9 +72,9 @@ public class PrinterTest {
         assertEquals("100.0", write(100.0));
         assertEquals("10000000000.0", write(1e10));
         assertEquals("123456789012345.0", write(123456789012345.0));
-        assertEquals("1e+15", write(1e15));
-        assertEquals("1e+21", write(1e21));
-        assertEquals("1e+22", write(1e22));
+        assertEquals("1.0e+15", write(1e15));
+        assertEquals("1.0e+21", write(1e21));
+        assertEquals("1.0e+22", write(1e22));
         assertEquals("1.5e-07", write(1.5e-7));
         assertEquals("123.456", write(123.456));
         assertEquals("-0.0", write(-0.0));
@@ -77,13 +84,19 @@ public class PrinterTest {
         assertEquals("+nan.0", write(Double.NaN));
         assertEquals("0.3333333333333333", write(1.0 / 3));
         assertEquals("9007199254740992.0", write(9007199254740992.0));
-        assertEquals("1e-05", write(1e-5));
+        assertEquals("1.0e-05", write(1e-5));
         assertEquals("0.0001", write(1e-4));
         assertEquals("-2.5", write(-2.5));
         assertEquals("1.7976931348623157e+308", write(Double.MAX_VALUE));
-        assertEquals("4.94065645841247e-324", write(Double.MIN_VALUE));
+        assertEquals("5.0e-324", write(Double.MIN_VALUE));
+        assertEquals("1.0e-323", write(2 * Double.MIN_VALUE));
+        assertEquals("1.5e-323", write(3 * Double.MIN_VALUE));
+        assertEquals("1.0e-320", write(1e-320));
+        assertEquals("3.335e-321", write(3.335e-321));
+        assertEquals("-1.23456789e-310", write(-1.23456789e-310));
+        assertEquals("2.225073858507201e-308", write(Double.MIN_NORMAL - Double.MIN_VALUE));
         assertEquals("2.2250738585072014e-308", write(Double.MIN_NORMAL));
-        assertEquals("1e+100", write(1e100));
+        assertEquals("1.0e+100", write(1e100));
         assertEquals("-1.5e-300", write(-1.5e-300));
         assertEquals("6.02214076e+23", write(6.02214076e23));
         assertEquals("1234567890123456.0", write(1234567890123456.0));
@@ -152,7 +165,11 @@ public class PrinterTest {
                         {"+nan.0", "|+nan.0|"}, {"+NaN.0", "|+NaN.0|"}, {"+NaN.0abc", "|+NaN.0abc|"},
                         {"hello world", "|hello world|"}, {"123", "|123|"}, {"ABC", "ABC"}, {"#foo", "|#foo|"},
                         {"a(b", "|a(b|"}, {"+", "+"}, {"...", "..."}, {"+a", "+a"}, {"1+", "|1+|"}, {"λ", "|λ|"},
-                        {"a'b", "|a'b|"}, {"a[b", "|a[b|"}, {"a`b", "a`b"}, {"a\u007fb", "a\u007fb"}, {"-", "-"},
+                        {"a'b", "|a'b|"}, {"a[b", "|a[b|"}, {"a\u007fb", "a\u007fb"}, {"-", "-"},
+                        // Not identifiers (R7RS §7.1.1: a leading dot is followed by a <dot
+                        // subsequent>, and ` is no <subsequent>), so they need bars to read back as
+                        // the symbols they are (§6.13.3 write), where chibi writes them bare.
+                        {".5", "|.5|"}, {".5a", "|.5a|"}, {"a`b", "|a`b|"}, {"`", "|`|"}, {".a", ".a"}, {"..", ".."},
         };
         for (String[] c : cases) {
             assertEquals("write of symbol \"" + c[0] + "\"", c[1], write(sym(c[0])));
