@@ -207,6 +207,15 @@ to it as `-Xss` or `--vm.Xss` is the evaluation's too, and
 know, the runtime measures the stack the first time a recursion is more than
 about 50 calls deep.
 
+Standard output is buffered unless stdin and stdout are a terminal, where each
+write shows at once (design.md D10). The buffer is written out when the
+program reads standard input (so a prompt shows before the program waits for
+its answer), writes to standard error (so an error message comes after the
+output before it), calls `flush-output-port`, `exit` or `emergency-exit`, and
+when it ends. `--scheme.BufferOutput=false` writes each write at once
+elsewhere too, for a program whose progress something reads as it runs
+through a pipe; `--scheme.BufferOutput=true` buffers on a terminal too.
+
 `bazel-bin/scheme` starts its JVM with the serial collector
 (`-XX:+UseSerialGC`, design.md D17), which ran most benchmarks faster than the
 JVM's default, G1, in less memory; a collector chosen in `JDK_JAVA_OPTIONS`

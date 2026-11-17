@@ -49,6 +49,8 @@ public final class PromptRootNode extends RootNode {
             return driver.leave(frame, e, outer, context);
         } finally {
             context.setDynamicEnv(outer);
+            // Back to the caller: the output so far is written (design.md D10, "Standard output").
+            context.flushOutput();
         }
     }
 

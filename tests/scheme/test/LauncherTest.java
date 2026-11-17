@@ -7,12 +7,16 @@ import static org.junit.Assert.assertTrue;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import org.junit.Rule;
 import org.junit.Test;
@@ -183,6 +187,32 @@ public class LauncherTest {
         assertTrue(r.err(), r.err().startsWith("ERROR: ") && r.err().contains("car"));
     }
 
+    /**
+     * Standard output is buffered (design.md D10): an uncaught error's message still comes after the
+     * output the program wrote before the error, on a stream that has both.
+     */
+    @Test
+    public void anUncaughtErrorsMessageComesAfterTheOutput() throws IOException {
+        Path program = file("fails-late.scm", """
+                        (import (scheme base) (scheme write))
+                        (display "before")
+                        (newline)
+                        (display "no newline")
+                        (car 1)
+                        """);
+        ByteArrayOutputStream both = new ByteArrayOutputStream();
+        int status = SchemeMain.run(new String[]{program.toString()}, both, both);
+        String text = both.toString(StandardCharsets.UTF_8);
+        assertEquals(text, SchemeMain.EXIT_UNCAUGHT_ERROR, status);
+        assertTrue(text, text.startsWith("before\nno newlineERROR: ") && text.contains("car"));
+        // The REPL's too, and its values and output keep their order.
+        both.reset();
+        status = SchemeMain.run(new String[0], new ByteArrayInputStream("(display \"a\") 1\n(car 1)\n(display \"b\")\n".getBytes(StandardCharsets.UTF_8)), both, both);
+        text = both.toString(StandardCharsets.UTF_8);
+        assertEquals(text, 0, status);
+        assertTrue(text, text.startsWith("a1\nERROR: ") && text.endsWith("\nb"));
+    }
+
     // --- the REPL ----------------------------------------------------------------------------
 
     @Test
@@ -343,8 +373,8 @@ public class LauncherTest {
         return launchWith(List.of(), stdin, args);
     }
 
-    /** {@link #launch} with these JVM options. */
-    private Result launchWith(List<String> jvmArgs, String stdin, String... args) throws IOException, InterruptedException {
+    /** The command that runs {@code scheme args...} in a child JVM with these JVM options. */
+    private static List<String> command(List<String> jvmArgs, String... args) {
         String java = ProcessHandle.current().info().command().orElseThrow();
         String modulePath = System.getProperty("jdk.module.path");
         assertNotNull("the tests run on the module path", modulePath);
@@ -353,6 +383,12 @@ public class LauncherTest {
         command.addAll(List.of("--module-path", modulePath, "--enable-native-access=org.graalvm.truffle", "--sun-misc-unsafe-memory-access=allow",
                         "-m", "scheme.launcher/scheme.launcher.SchemeMain"));
         command.addAll(List.of(args));
+        return command;
+    }
+
+    /** {@link #launch} with these JVM options. */
+    private Result launchWith(List<String> jvmArgs, String stdin, String... args) throws IOException, InterruptedException {
+        List<String> command = command(jvmArgs, args);
         Path out = folder.newFile().toPath();
         Path err = folder.newFile().toPath();
         Path in = folder.newFile().toPath();
@@ -393,6 +429,67 @@ public class LauncherTest {
         Result marked = launch("", "--end-status=99", finishes.toString());
         assertEquals(marked.err(), 99, marked.status());
         assertEquals(0, launch("", "--end-status=99", exits.toString(), "0").status());
+    }
+
+    /**
+     * Standard output is buffered (design.md D10), but where it meets standard error (here, one
+     * file), the program's output comes before the error message, and output written to the error
+     * port stays in order with it.
+     */
+    @Test
+    public void processOutputAndErrorsStayInOrder() throws IOException, InterruptedException {
+        Path program = file("interleaves.scm", """
+                        (import (scheme base) (scheme write))
+                        (display "out 1") (newline)
+                        (display "err 2" (current-error-port)) (newline (current-error-port))
+                        (display "out 3")
+                        (car 1)
+                        """);
+        Path both = folder.newFile().toPath();
+        Process process = new ProcessBuilder(command(List.of(), program.toString())).directory(folder.getRoot()).redirectInput(ProcessBuilder.Redirect.from(folder.newFile())).redirectErrorStream(
+                        true).redirectOutput(both.toFile()).start();
+        assertTrue(process.waitFor(120, TimeUnit.SECONDS));
+        String text = Files.readString(both, StandardCharsets.UTF_8);
+        assertEquals(text, SchemeMain.EXIT_UNCAUGHT_ERROR, process.exitValue());
+        assertTrue(text, text.startsWith("out 1\nerr 2\nout 3ERROR: "));
+    }
+
+    /**
+     * A program's prompt shows before it waits for its answer on a pipe (as a program driving it
+     * would see): reading standard input writes the buffered output first (design.md D10).
+     */
+    @Test
+    public void processShowsAPromptBeforeReadingAPipe() throws IOException, InterruptedException {
+        Path program = file("asks.scm", """
+                        (import (scheme base) (scheme write))
+                        (display "name? ")
+                        (define name (read-line))
+                        (display (string-append "hello " name))
+                        (newline)
+                        """);
+        Process process = new ProcessBuilder(command(List.of(), program.toString())).directory(folder.getRoot()).redirectError(ProcessBuilder.Redirect.DISCARD).start();
+        try {
+            // The prompt, read on another thread so that a prompt that never comes fails the test.
+            CompletableFuture<String> prompt = CompletableFuture.supplyAsync(() -> {
+                try {
+                    return new String(process.getInputStream().readNBytes("name? ".length()), StandardCharsets.UTF_8);
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            });
+            try {
+                assertEquals("name? ", prompt.get(60, TimeUnit.SECONDS));
+            } catch (ExecutionException | TimeoutException e) {
+                throw new AssertionError("no prompt before the read", e);
+            }
+            process.getOutputStream().write("Ada\n".getBytes(StandardCharsets.UTF_8));
+            process.getOutputStream().close();
+            assertEquals("hello Ada\n", new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8));
+            assertTrue(process.waitFor(120, TimeUnit.SECONDS));
+            assertEquals(0, process.exitValue());
+        } finally {
+            process.destroyForcibly();
+        }
     }
 
     @Test

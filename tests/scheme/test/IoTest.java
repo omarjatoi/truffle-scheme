@@ -2,17 +2,24 @@ package scheme.test;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.List;
 import java.util.stream.Stream;
 
 import org.graalvm.polyglot.Context;
+import org.graalvm.polyglot.PolyglotException;
+import org.graalvm.polyglot.Value;
 import org.graalvm.polyglot.io.IOAccess;
 import org.junit.After;
 import org.junit.Before;
@@ -209,5 +216,167 @@ public class IoTest {
         }
         assertEquals("to out", out.toString(StandardCharsets.UTF_8));
         assertEquals("to err", err.toString(StandardCharsets.UTF_8));
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // The console output port is buffered (design.md D10, "Standard output").
+
+    /** A stream that keeps the text of each write that reaches it. */
+    private static final class CountingStream extends ByteArrayOutputStream {
+        final List<String> chunks = new ArrayList<>();
+
+        @Override
+        public synchronized void write(int b) {
+            write(new byte[]{(byte) b}, 0, 1);
+        }
+
+        @Override
+        public synchronized void write(byte[] b, int off, int len) {
+            chunks.add(new String(b, off, len, StandardCharsets.UTF_8));
+            super.write(b, off, len);
+        }
+
+        String text() {
+            return toString(StandardCharsets.UTF_8);
+        }
+    }
+
+    /**
+     * Standard input that serves {@code text}, and records what standard output holds each time it
+     * is read or asked what is available.
+     */
+    private static final class WatchedInput extends InputStream {
+        private final ByteArrayInputStream in;
+        private final ByteArrayOutputStream out;
+        final List<String> seen = new ArrayList<>();
+
+        WatchedInput(String text, ByteArrayOutputStream out) {
+            this.in = new ByteArrayInputStream(text.getBytes(StandardCharsets.UTF_8));
+            this.out = out;
+        }
+
+        @Override
+        public int read() {
+            seen.add(out.toString(StandardCharsets.UTF_8));
+            return in.read();
+        }
+
+        @Override
+        public int read(byte[] b, int off, int len) {
+            seen.add(out.toString(StandardCharsets.UTF_8));
+            return in.read(b, off, len);
+        }
+
+        @Override
+        public int available() {
+            seen.add(out.toString(StandardCharsets.UTF_8));
+            return in.available();
+        }
+    }
+
+    /**
+     * Standard output reaches the context's stream in a few large writes, not one per
+     * {@code display}, and all of it is there when the evaluation returns.
+     */
+    @Test
+    public void standardOutputIsBuffered() {
+        StringBuilder expected = new StringBuilder();
+        for (int i = 0; i < 1000; i++) {
+            expected.append("line ").append(i).append('\n');
+        }
+        CountingStream out = new CountingStream();
+        try (Context context = Context.newBuilder(SCHEME).out(out).build()) {
+            context.eval(SCHEME, "(let loop ((i 0)) (when (< i 1000) (display \"line \") (display i) (newline) (loop (+ i 1))))");
+            assertEquals(expected.toString(), out.text());
+            assertTrue("writes: " + out.chunks.size(), out.chunks.size() < 10);
+        }
+    }
+
+    /** {@code flush-output-port} writes what is buffered at once. */
+    @Test
+    public void flushOutputPortWritesTheBufferedOutput() {
+        CountingStream out = new CountingStream();
+        try (Context context = Context.newBuilder(SCHEME).out(out).build()) {
+            context.eval(SCHEME, "(display \"a\") (display \"b\") (flush-output-port) (display \"c\") (display \"d\")");
+            assertEquals(List.of("ab", "cd"), out.chunks);
+        }
+    }
+
+    /**
+     * A write to the console error port first writes what standard output holds, so the two stay in
+     * order where they meet (a terminal, or both redirected to one file).
+     */
+    @Test
+    public void errorPortWritesComeAfterTheOutputBeforeThem() {
+        ByteArrayOutputStream both = new ByteArrayOutputStream();
+        try (Context context = Context.newBuilder(SCHEME).out(both).err(both).build()) {
+            context.eval(SCHEME, """
+                            (display "1 out ") (display "2 err " (current-error-port))
+                            (display "3 out ") (write-string "4 err " (current-error-port)) (display "5 out")""");
+        }
+        assertEquals("1 out 2 err 3 out 4 err 5 out", both.toString(StandardCharsets.UTF_8));
+    }
+
+    /**
+     * Reading the console input port first writes what standard output holds, so a prompt shows
+     * before the program waits for its answer; so does asking whether a character is ready.
+     */
+    @Test
+    public void readingTheConsoleShowsTheOutputBeforeIt() {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        WatchedInput in = new WatchedInput("Ada\n", out);
+        try (Context context = Context.newBuilder(SCHEME).in(in).out(out).build()) {
+            context.eval(SCHEME, "(display \"name? \") (define name (read-line)) (display (string-append \"hello \" name)) (newline)");
+            assertEquals("name? ", in.seen.get(0));
+            assertEquals("name? hello Ada\n", out.toString(StandardCharsets.UTF_8));
+        }
+        ByteArrayOutputStream polled = new ByteArrayOutputStream();
+        WatchedInput ready = new WatchedInput("", polled);
+        try (Context context = Context.newBuilder(SCHEME).in(ready).out(polled).build()) {
+            context.eval(SCHEME, "(display \"ready? \") (char-ready?)");
+            assertEquals("ready? ", ready.seen.get(0));
+        }
+    }
+
+    /** {@code exit} and {@code emergency-exit} write the buffered output before the context exits. */
+    @Test
+    public void exitWritesTheBufferedOutput() {
+        String[][] cases = {
+                        {"(display \"out\") (exit 3)", "out", "3"},
+                        // emergency-exit runs no after-thunks (R7RS 6.14), but the output is written.
+                        {"(dynamic-wind (lambda () (display \"in \")) (lambda () (display \"during\") (emergency-exit 4)) (lambda () (display \" after\")))", "in during", "4"},
+        };
+        for (String[] c : cases) {
+            CountingStream out = new CountingStream();
+            try (Context context = Context.newBuilder(SCHEME).out(out).build()) {
+                context.eval(SCHEME, c[0]);
+                fail(c[0] + " should exit");
+            } catch (PolyglotException e) {
+                assertTrue(c[0], e.isExit());
+                assertEquals(c[0], Integer.parseInt(c[2]), e.getExitStatus());
+            }
+            assertEquals(c[0], c[1], out.text());
+        }
+    }
+
+    /**
+     * A Scheme procedure called from Java has written its output when the call returns, and so has
+     * an evaluation that ends in an error.
+     */
+    @Test
+    public void outputIsWrittenWhenACallFromJavaReturns() {
+        CountingStream out = new CountingStream();
+        try (Context context = Context.newBuilder(SCHEME).out(out).build()) {
+            Value greet = context.eval(SCHEME, "(lambda (name) (display \"hello \") (display name) 42)");
+            assertEquals(42, greet.execute("Ada").asInt());
+            assertEquals("hello Ada", out.text());
+            try {
+                context.eval(SCHEME, "(display \" bye\") (car 1)");
+                fail("car of a number");
+            } catch (PolyglotException e) {
+                assertTrue(e.isGuestException());
+            }
+            assertEquals("hello Ada bye", out.text());
+        }
     }
 }
