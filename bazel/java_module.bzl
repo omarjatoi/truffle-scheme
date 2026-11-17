@@ -153,24 +153,83 @@ jdk_tree = rule(
     attrs = {"_jdk": _JDK},
 )
 
+# The launcher's AOT cache (design.md D17, "The AOT cache"): a run of the training program with
+# -XX:AOTCacheOutput, on the JVM options the cache needs to match at run time (the collector, the
+# modules, native access; tests/harness/harness.py has the same: LAUNCHER_GC_VM_ARGS,
+# AOT_VM_ARGS, TRUFFLE_VM_ARGS), its logging off. The module path is the jars' real paths: the JVM
+# compares the run's module path with the paths the cache was made with, resolved where it runs (a
+# relative one against the run's directory, a sandbox's after the sandbox is gone). Then the
+# stamp: the size, modification time and real path of each file the JVM checks the cache against
+# (the JDK's modules image and the module path), a line each, which the launcher compares first.
+_AOT_COMMAND = """
+java_home="$1" aot="$2" stamp="$3" training="$4" main="$5"; shift 5
+mp=""
+for f in "$@"; do mp="$mp${mp:+:}$(realpath "$f")"; done
+log="$(mktemp)"
+"$java_home/bin/java" -XX:+UseSerialGC --add-modules=jdk.internal.vm.ci -Xlog:aot=off -Xlog:cds=off \\
+    -XX:AOTCacheOutput="$aot" -p "$mp" --add-modules ALL-MODULE-PATH \\
+    --enable-native-access=org.graalvm.truffle,org.graalvm.shadowed.jline --sun-misc-unsafe-memory-access=allow \\
+    -m "$main" "$training" >"$log" 2>&1 && [ -s "$aot" ] || { cat "$log"; exit 1; }
+for f in "$java_home/lib/modules" "$@"; do
+    echo "$(stat -L -c '%s %Y' "$f" 2>/dev/null || stat -L -f '%z %m' "$f") $(realpath "$f")"
+done >"$stamp"
+"""
+
+def _aot_cache(ctx, jdk, module_path):
+    """`<name>.aot` and `<name>.aot.stamp`, by the target's JDK: here for this machine, where the
+    cache must be built (it names the files' real paths, so the launcher can use it only where it
+    was made), on the executors for a Linux target (the tests'), where it costs one action and
+    the launcher finds it stale."""
+    aot = ctx.actions.declare_file(ctx.label.name + ".aot")
+    stamp = ctx.actions.declare_file(ctx.label.name + ".aot.stamp")
+    args = ctx.actions.args()
+    args.add_all([jdk, aot, stamp, ctx.file.aot_training], expand_directories = False)
+    args.add("scheme.launcher/scheme.launcher.SchemeMain")
+    args.add_all(module_path)
+    linux = ctx.target_platform_has_constraint(ctx.attr._linux[platform_common.ConstraintValueInfo])
+    ctx.actions.run_shell(
+        command = _AOT_COMMAND,
+        arguments = [args],
+        inputs = [jdk, ctx.file.aot_training] + module_path,
+        outputs = [aot, stamp],
+        mnemonic = "AotCache",
+        progress_message = "Training the launcher's AOT cache %{label}",
+        # Neither from nor to the remote cache: a cache names the paths it was made with.
+        execution_requirements = {} if linux else {"no-remote": "1"},
+    )
+    return aot, stamp
+
 def _scheme_runtime_impl(ctx):
     jdk = ctx.file._jdk_tree
     module_path = _module_path([ctx.attr.module] + ctx.attr.extra).to_list()
     manifest = ctx.actions.declare_file(ctx.label.name + ".json")
-    ctx.actions.write(manifest, json.encode_indent({
+    files = [manifest, jdk] + module_path
+    data = {
         "java": _rlocation(ctx, jdk) + "/bin/java",
         "release": _rlocation(ctx, jdk) + "/release",
         "module_path": [_rlocation(ctx, f) for f in module_path],
-    }))
-    return [DefaultInfo(files = depset([manifest]), runfiles = ctx.runfiles(files = [manifest, jdk] + module_path))]
+    }
+    if ctx.file.aot_training:
+        aot, stamp = _aot_cache(ctx, jdk, module_path)
+        data["aot_cache"] = _rlocation(ctx, aot)
+        data["aot_stamp"] = _rlocation(ctx, stamp)
+        files += [aot, stamp]
+    ctx.actions.write(manifest, json.encode_indent(data))
+    return [DefaultInfo(files = depset([manifest]), runfiles = ctx.runfiles(files = files))]
 
 scheme_runtime = rule(
     implementation = _scheme_runtime_impl,
-    doc = "The JDK and a module path (`module` and `extra`), with a JSON manifest `<name>.json`.",
+    doc = "The JDK and a module path (`module` and `extra`), with a JSON manifest `<name>.json`; " +
+          "with `aot_training`, the launcher's AOT cache for them.",
     attrs = {
+        "aot_training": attr.label(
+            allow_single_file = [".scm"],
+            doc = "A program whose run with the launcher trains its AOT cache (design.md D17).",
+        ),
         "extra": attr.label_list(doc = "More modules nothing requires, e.g. the tools.", providers = [JavaInfo]),
         "module": attr.label(mandatory = True, providers = [JavaModuleInfo]),
         "_jdk_tree": attr.label(default = "//bazel:jdk", allow_single_file = True),
+        "_linux": attr.label(default = "@platforms//os:linux"),
     },
 )
 

@@ -40,17 +40,46 @@ TRUFFLE_VM_ARGS = [
     '--sun-misc-unsafe-memory-access=allow',
 ]
 LAUNCHER_MAIN = 'scheme.launcher/scheme.launcher.SchemeMain'
-# The `scheme` launcher's collector (design.md D17, plan.md M8-05): the serial one, unless the JVM
-# options choose another.
+
+# The `scheme` launcher's JVM options (design.md D17), each group unless the JVM options (the
+# command's, JDK_JAVA_OPTIONS or JAVA_TOOL_OPTIONS) already set what it sets.
+# The collector (M8-05): the serial one, unless they choose another (the JVM refuses two).
 LAUNCHER_GC_VM_ARGS = ['-XX:+UseSerialGC']
 _GC_CHOICE = re.compile(r'^-XX:\+Use\w+GC$')
+# The host's JIT compiler threads ("Compiler threads"): 4, where the JVM would start more (with
+# 16 processors or more: it starts 3 with 4 to 7, 4 with 8 to 15, 12 with 16).
+LAUNCHER_COMPILER_VM_ARGS = ['-XX:CICompilerCount=4']
+_COMPILER_CHOICE = re.compile(r'^-XX:(CICompilerCount=|[+-]CICompilerCountPerCPU$)')
+# The AOT cache ("The AOT cache", bazel/java_module.bzl: scheme_runtime): its run-time options, and
+# the logging they turn off, so that a cache the JVM refuses after all costs the start-up it saves
+# and prints nothing. Not with options that choose a cache, an archive or class sharing themselves,
+# nor with a collector the JVM maps none with (ZGC).
+AOT_VM_ARGS = ['--add-modules=jdk.internal.vm.ci']
+_AOT_COLLECTORS = ('-XX:+UseSerialGC', '-XX:+UseParallelGC', '-XX:+UseG1GC')
+_AOT_QUIET_VM_ARGS = ['-Xlog:aot=off', '-Xlog:cds=off']
+_AOT_CHOICE = re.compile(r'^(-Xshare:|-XX:(SharedArchiveFile|AOTCache|AOTCacheOutput|AOTMode|AOTConfiguration|'
+                         r'ArchiveClassesAtExit|[+-]AutoCreateSharedArchive)\b)')
+
+
+def _given_vm_args(jvm_args, env):
+    """The JVM options a launcher's JVM gets besides its defaults: the environment's, then jvm_args."""
+    return ' '.join(env.get(v, '') for v in ('JAVA_TOOL_OPTIONS', 'JDK_JAVA_OPTIONS')).split() + list(jvm_args)
 
 
 def launcher_gc_vm_args(jvm_args, env=os.environ):
     """LAUNCHER_GC_VM_ARGS, unless jvm_args or the JVM's environment variables already choose a
     collector: the JVM refuses to start with two."""
-    chosen = list(jvm_args) + ' '.join(env.get(v, '') for v in ('JDK_JAVA_OPTIONS', 'JAVA_TOOL_OPTIONS')).split()
-    return [] if any(_GC_CHOICE.match(a) for a in chosen) else list(LAUNCHER_GC_VM_ARGS)
+    return [] if any(_GC_CHOICE.match(a) for a in _given_vm_args(jvm_args, env)) else list(LAUNCHER_GC_VM_ARGS)
+
+
+def launcher_vm_args(jvm_args, env=os.environ, cpus=None):
+    """The launcher's default JVM options that jvm_args and the environment's leave to it: the
+    collector and the compiler threads."""
+    given = _given_vm_args(jvm_args, env)
+    args = launcher_gc_vm_args(jvm_args, env)
+    if (cpus or os.cpu_count() or 1) >= 16 and not any(_COMPILER_CHOICE.match(a) for a in given):
+        args += LAUNCHER_COMPILER_VM_ARGS
+    return args
 
 
 def vm_args(compile=False, torture=False):
@@ -108,28 +137,63 @@ def workspace():
 class Runtime:
     """The pinned GraalVM's `java` and a module path (bazel/java_module.bzl: scheme_runtime)."""
 
-    def __init__(self, java, module_path, release=None):
+    def __init__(self, java, module_path, release=None, aot_cache=None, aot_stamp=None):
         self.java = java
         self.module_path = os.pathsep.join(module_path)
         self.release = release
+        self.aot_cache = aot_cache
+        self.aot_stamp = aot_stamp
 
     @staticmethod
     def from_manifest(manifest):
         """From a scheme_runtime's JSON manifest, given as a runfiles path."""
         with open(rlocation(manifest), encoding='utf-8') as f:
             data = json.load(f)
+        aot = [rlocation(data[k]) if data.get(k) else None for k in ('aot_cache', 'aot_stamp')]
         return Runtime(rlocation(data['java']), [rlocation(p) for p in data['module_path']],
-                       rlocation(data['release']) if data['release'] else None)
+                       rlocation(data['release']) if data['release'] else None, *aot)
 
-    def command(self, jvm_args, main):
+    def command(self, jvm_args, main, module_path=None):
         """java, the JVM options, the module path with every module resolved, and `-m main`."""
         tmp = os.environ.get('TEST_TMPDIR')
         return ([self.java] + ([f'-Djava.io.tmpdir={tmp}'] if tmp else []) + list(jvm_args)
-                + ['-p', self.module_path, '--add-modules', 'ALL-MODULE-PATH'] + TRUFFLE_VM_ARGS + ['-m', main])
+                + ['-p', module_path or self.module_path, '--add-modules', 'ALL-MODULE-PATH'] + TRUFFLE_VM_ARGS + ['-m', main])
 
-    def launcher(self, args, jvm_args=()):
-        """The command line that runs the `scheme` launcher with these arguments, with its collector."""
-        return self.command(launcher_gc_vm_args(jvm_args) + list(jvm_args), LAUNCHER_MAIN) + list(args)
+    def aot_module_path(self):
+        """The module path as the AOT cache names it, its jars' real paths, if the cache is the one
+        for these files as they are here; else None. The JVM compares the size, modification time
+        and real path of the JDK's modules image and of each jar with the cache's, and the module
+        path's entries as given with the real paths it was made with; with a cache it can't use,
+        it starts with no class sharing at all, slower than with no cache. A cache made elsewhere
+        (the executors') or before a file was replaced is stale."""
+        if not self.aot_cache or not self.aot_stamp:
+            return None
+        jars = self.module_path.split(os.pathsep)
+        try:
+            with open(self.aot_stamp, encoding='utf-8') as f:
+                stamp = f.read().splitlines()
+            here = []
+            for path in [join(os.path.dirname(os.path.dirname(self.java)), 'lib', 'modules')] + jars:
+                st = os.stat(path)
+                here.append(f'{st.st_size} {int(st.st_mtime)} {os.path.realpath(path)}')
+        except OSError:
+            return None
+        return os.pathsep.join(os.path.realpath(j) for j in jars) if stamp == here else None
+
+    def launcher(self, args, jvm_args=(), env=os.environ):
+        """The command line that runs the `scheme` launcher with these arguments, with its JVM
+        options (launcher_vm_args), and the AOT cache where it is valid and the JVM options
+        choose neither class sharing nor a collector it doesn't map with."""
+        defaults = launcher_vm_args(jvm_args, env)
+        given = _given_vm_args(jvm_args, env)
+        module_path = None
+        if (not any(_AOT_CHOICE.match(a) for a in given)
+                and all(a in _AOT_COLLECTORS for a in given if _GC_CHOICE.match(a))):
+            module_path = self.aot_module_path()
+            if module_path:
+                quiet = [] if any(a.startswith('-Xlog') for a in given) else _AOT_QUIET_VM_ARGS
+                defaults += AOT_VM_ARGS + quiet + [f'-XX:AOTCache={self.aot_cache}']
+        return self.command(defaults + list(jvm_args), LAUNCHER_MAIN, module_path) + list(args)
 
     def run(self, jvm_args, main, args, cwd=None, env=None, timeout=None):
         """Runs java; returns (exit status, stdout, stderr)."""

@@ -4,6 +4,9 @@ load(":java_module.bzl", "jdk_tree")
 
 package(default_visibility = ["//visibility:public"])
 
+# The program that trains the launcher's AOT cache (//:scheme_runtime, design.md D17).
+exports_files(["aot-training.scm"])
+
 # The Truffle DSL annotation processor: one java_plugin per processor in its META-INF/services.
 # Only the projects that need generated code run it (scheme_java_library's truffle_dsl), so edits
 # elsewhere don't re-run it.
