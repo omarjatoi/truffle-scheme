@@ -549,13 +549,57 @@ full R7RS-small conformance comes first.
     and `%call/ec`'s 0.54 s, against 0.19 s for the largest before, and they
     finish at the end of the first iteration (no deoptimization loop: 81
     host deoptimizations in the run against 62). `ctak` has the same shape
-    and has always paid it. Calling `k` throws `EscapeException`, a `ControlFlowException`;
-  a `k` tail-called back to its own prompt returns with no throw. An escape
-  across a change of dynamic environment goes through the prelude's
-  `%escape`, which rewinds first. Captures flatten the prompt into a marker
-  like any other, so `k` works from re-entered copies too.
-  `unwindExceptions` isn't needed: guard is prompt-based (D4), so there are
-  no guest exception handlers for an escape to bypass.
+    and compiles as much (two tier-2 compilations of 0.72 s, 89 and 42
+    targets inlined), but they pay for themselves within its first
+    iteration.
+  - *Not cut at the receiver.* Making `%call/ec`'s calls non-inlinable was
+    measured and rejected: every way of doing it moves the cost from
+    `puzzle`'s first iteration to `ctak`'s and `fibc`'s steady state.
+    Truffle has no per-call-site "don't inline" (`DirectCallNode` can only
+    force inlining), so a cut is an `IndirectCallNode` or a
+    `@TruffleBoundary`, and an `IndirectCallNode` whose target is a
+    partial-evaluation constant is inlined like a direct call (a forwarding
+    root that called `%call/ec`'s root that way didn't help `puzzle`). Fresh JVMs,
+    interleaved with `main`, medians of 2; first iteration and best of the
+    next two, at a tenth of the counts unless said:
+    - *The calls the driver makes after the receiver's (what it tail-calls)
+      indirect:* this cuts the cycle, since `puzzle`'s receiver tail-calls
+      the loop. `puzzle` 0.43 and 0.96 (0.72 and 0.95 at its own count),
+      `ctak` 1.01 and 1.12-1.15, `fibc` 0.95 and 1.11 (1.06 and 1.17 at its
+      own count); `quicksort` and `maze` unchanged; the 24 programs of
+      M8-03, first 0.998 and steady 1.017.
+    - *The receiver's call indirect:* `ctak` 1.00 and 1.06, `fibc` 1.04 and
+      1.12 at its own count. `puzzle`'s 0.44 and 0.99 (0.74 and 0.98 at its
+      own count) isn't a cut: the loop's compilation happened not to inline
+      `%call/ec`, but the driver still inlines the loop, and the cycle is
+      compiled later, in a 13,000-node compilation of `%call/ec`.
+    - *Every call indirect:* `ctak` 1.15 and 1.31, `fibc` 1.01 and 1.28.
+      *Only where `%call/ec` is inlined into another compilation*
+      (`CompilerDirectives.inCompilationRoot()`): `ctak` 1.41 and 1.66,
+      `fibc` 1.10 and 1.67. *A direct call behind a boundary:* `ctak` 1.21
+      and 1.35.
+    - *One call site in the driver for the hot calls*, so that its cache's
+      targets are inlined once rather than at each of the driver's call
+      sites: `fibc`'s steady state 1.44 (the receiver's call, out of the
+      loop, is specialized to the caller's receiver), `puzzle` unchanged.
+
+    What the cut costs `ctak` is the indirect call, not the lost inlining:
+    with `engine.ArgumentTypeSpeculation=false` (one run) its steady state
+    is 1.24 s both ways. Truffle's own size-aware limit is global: half its
+    inlining budget (`compiler.InliningInliningBudget=6000`) gave `puzzle`
+    0.79 and 0.97, `ctak` 0.90 and 0.91, `fibc` 0.97 and 1.10, but a
+    geometric mean of 1.055 over the 24 programs' first iteration (`sumfp`
+    1.88, `fft` 1.33); no recursive inlining
+    (`compiler.InliningRecursionDepth=0`, one run) made `tak` 1.2 times
+    slower.
+  - *Invoking `k`.* Calling `k` throws `EscapeException`, a
+    `ControlFlowException`; a `k` tail-called back to its own prompt
+    returns with no throw. An escape across a change of dynamic
+    environment goes through the prelude's `%escape`, which rewinds first.
+    Captures flatten the prompt into a marker like any other, so `k` works
+    from re-entered copies too. `unwindExceptions` isn't needed: guard is
+    prompt-based (D4), so there are no guest exception handlers for an
+    escape to bypass.
 - **Spilled frames in tools (M6-04).** Pending segments are frames waiting
   for a value on the heap: past the spill depth, or in a resumed
   continuation. Only the running segment's frames are on the Java stack, so
