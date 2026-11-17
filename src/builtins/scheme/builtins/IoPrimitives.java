@@ -1,5 +1,6 @@
 package scheme.builtins;
 
+import java.io.BufferedInputStream;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
@@ -476,7 +477,9 @@ final class IoPrimitives {
         /**
          * Output ports, textual and binary, are buffered, and the context tracks them, to write out
          * what they hold when control returns to the caller, on exit and when the context closes,
-         * even if the program never closes them (design.md D10, "Open file ports").
+         * even if the program never closes them (design.md D10, "Open file ports"). Input ports read
+         * through an 8 KB buffer too: the textual one's {@code BufferedReader}, the binary one's
+         * {@code BufferedInputStream} (the file's stream reads it once per {@code read-u8}).
          */
         @TruffleBoundary
         private static SPort open(SchemeContext context, String who, int mode, SString name) {
@@ -484,7 +487,7 @@ final class IoPrimitives {
             try {
                 return switch (mode) {
                     case TEXT_IN -> SPort.textInput(file.newBufferedReader(StandardCharsets.UTF_8), false);
-                    case BINARY_IN -> SPort.binaryInput(file.newInputStream());
+                    case BINARY_IN -> SPort.binaryInput(new BufferedInputStream(file.newInputStream()));
                     case TEXT_OUT -> context.openFiles().textOutput(file.newOutputStream());
                     default -> context.openFiles().binaryOutput(file.newOutputStream());
                 };

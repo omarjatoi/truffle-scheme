@@ -13,18 +13,33 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.ref.WeakReference;
+import java.net.URI;
+import java.nio.ByteBuffer;
+import java.nio.channels.SeekableByteChannel;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AccessMode;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.OpenOption;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileAttribute;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
+import java.util.Random;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
 import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.PolyglotException;
 import org.graalvm.polyglot.Value;
+import org.graalvm.polyglot.io.FileSystem;
 import org.graalvm.polyglot.io.IOAccess;
 import org.junit.After;
 import org.junit.Before;
@@ -643,5 +658,259 @@ public class IoTest {
                         (close-port p)
                         (write (contents))""".formatted(file("buffered.bin")));
         assertEquals("#<eof>#u8(1 2 3)#u8(1 2 3)#u8(1 2 3 4)", out);
+    }
+
+    /**
+     * The default file system, counting the reads made on the channels it opens: a buffered port
+     * reads its file a buffer at a time, an unbuffered one a byte at a time.
+     */
+    private static final class CountingFileSystem implements FileSystem {
+        private final FileSystem fs = FileSystem.newDefaultFileSystem();
+        final AtomicInteger reads = new AtomicInteger();
+
+        @Override
+        public Path parsePath(URI uri) {
+            return fs.parsePath(uri);
+        }
+
+        @Override
+        public Path parsePath(String path) {
+            return fs.parsePath(path);
+        }
+
+        @Override
+        public void checkAccess(Path path, Set<? extends AccessMode> modes, LinkOption... options) throws IOException {
+            fs.checkAccess(path, modes, options);
+        }
+
+        @Override
+        public void createDirectory(Path path, FileAttribute<?>... attrs) throws IOException {
+            fs.createDirectory(path, attrs);
+        }
+
+        @Override
+        public void delete(Path path) throws IOException {
+            fs.delete(path);
+        }
+
+        @Override
+        public SeekableByteChannel newByteChannel(Path path, Set<? extends OpenOption> options, FileAttribute<?>... attrs) throws IOException {
+            SeekableByteChannel channel = fs.newByteChannel(path, options, attrs);
+            return new SeekableByteChannel() {
+                @Override
+                public int read(ByteBuffer dst) throws IOException {
+                    reads.incrementAndGet();
+                    return channel.read(dst);
+                }
+
+                @Override
+                public int write(ByteBuffer src) throws IOException {
+                    return channel.write(src);
+                }
+
+                @Override
+                public long position() throws IOException {
+                    return channel.position();
+                }
+
+                @Override
+                public SeekableByteChannel position(long newPosition) throws IOException {
+                    channel.position(newPosition);
+                    return this;
+                }
+
+                @Override
+                public long size() throws IOException {
+                    return channel.size();
+                }
+
+                @Override
+                public SeekableByteChannel truncate(long size) throws IOException {
+                    channel.truncate(size);
+                    return this;
+                }
+
+                @Override
+                public boolean isOpen() {
+                    return channel.isOpen();
+                }
+
+                @Override
+                public void close() throws IOException {
+                    channel.close();
+                }
+            };
+        }
+
+        @Override
+        public DirectoryStream<Path> newDirectoryStream(Path dirPath, DirectoryStream.Filter<? super Path> filter) throws IOException {
+            return fs.newDirectoryStream(dirPath, filter);
+        }
+
+        @Override
+        public Path toAbsolutePath(Path path) {
+            return fs.toAbsolutePath(path);
+        }
+
+        @Override
+        public Path toRealPath(Path path, LinkOption... options) throws IOException {
+            return fs.toRealPath(path, options);
+        }
+
+        @Override
+        public Map<String, Object> readAttributes(Path path, String attributes, LinkOption... options) throws IOException {
+            return fs.readAttributes(path, attributes, options);
+        }
+    }
+
+    /** Runs a program in a context whose file system counts the reads made on its files. */
+    private static String runCountingReads(CountingFileSystem fs, String program) {
+        return run(Context.newBuilder(SCHEME).allowIO(IOAccess.newBuilder().fileSystem(fs).build()), program);
+    }
+
+    /**
+     * Binary file input ports read their file through an 8 KB buffer: reading 20,000 bytes with
+     * {@code read-u8} (and {@code peek-u8} before each) reads the file a few times, not once per
+     * byte (design.md D10).
+     */
+    @Test
+    public void binaryFileInputIsBuffered() throws IOException {
+        Files.write(dir.resolve("in.bin"), new byte[20000]);
+        CountingFileSystem fs = new CountingFileSystem();
+        String out = runCountingReads(fs, """
+                        (define p (open-binary-input-file %s))
+                        (let loop ((n 0))
+                          (peek-u8 p)
+                          (if (eof-object? (read-u8 p)) (write n) (loop (+ n 1))))
+                        (close-port p)""".formatted(file("in.bin")));
+        assertEquals("20000", out);
+        assertTrue("reads of the file: " + fs.reads.get(), fs.reads.get() <= 5);
+    }
+
+    /** Textual file input ports read their file through a buffer already (a BufferedReader). */
+    @Test
+    public void textualFileInputIsBuffered() throws IOException {
+        Files.writeString(dir.resolve("in.txt"), "a".repeat(20000));
+        CountingFileSystem fs = new CountingFileSystem();
+        String out = runCountingReads(fs, """
+                        (define p (open-input-file %s))
+                        (let loop ((n 0))
+                          (peek-char p)
+                          (if (eof-object? (read-char p)) (write n) (loop (+ n 1))))
+                        (close-port p)""".formatted(file("in.txt")));
+        assertEquals("20000", out);
+        assertTrue("reads of the file: " + fs.reads.get(), fs.reads.get() <= 5);
+    }
+
+    /**
+     * {@code read-u8}, {@code peek-u8}, {@code u8-ready?}, {@code read-bytevector} and
+     * {@code read-bytevector!} mixed, each across a refill of the port's 8 KB buffer, up to and past
+     * the end of the file. The file's byte {@code i} is {@code expected}'s, a pattern 8 KB doesn't
+     * repeat.
+     */
+    @Test
+    public void binaryFileInputAcrossBufferBoundaries() throws IOException {
+        int size = 2 * 8192 + 100;
+        byte[] bytes = new byte[size];
+        for (int i = 0; i < size; i++) {
+            bytes[i] = (byte) (i * 7 + i / 251);
+        }
+        Files.write(dir.resolve("pattern.bin"), bytes);
+        String out = runWithFiles("""
+                        (define (expected i) (modulo (+ (* i 7) (quotient i 251)) 256))
+                        (define p (open-binary-input-file %s))
+                        (define pos 0)
+                        (define wrong '())
+                        (define (check-byte b)
+                          (unless (eqv? b (expected pos)) (set! wrong (cons pos wrong)))
+                          (set! pos (+ pos 1)))
+                        (define (check-bytes bv start end)
+                          (do ((i start (+ i 1))) ((= i end)) (check-byte (bytevector-u8-ref bv i))))
+                        (define results '())
+                        (define (note x) (set! results (cons x results)))
+                        ;; All but the first buffer's last two bytes.
+                        (let ((bv (read-bytevector 8190 p))) (note (bytevector-length bv)) (check-bytes bv 0 8190))
+                        (note (u8-ready? p))
+                        ;; Peeks and reads over the first refill, at 8192.
+                        (do () ((= pos 8195))
+                          (let* ((a (peek-u8 p)) (b (peek-u8 p)) (c (read-u8 p)))
+                            (unless (and (eqv? a b) (eqv? b c)) (set! wrong (cons (list 'peek pos) wrong)))
+                            (check-byte c)))
+                        (note (u8-ready? p))
+                        ;; Into the middle of a bytevector, over the second refill, at 16384.
+                        (let* ((bv (make-bytevector 8500 0)) (n (read-bytevector! bv p 100 8300)))
+                          (note n)
+                          (check-bytes bv 100 8300)
+                          (note (list (bytevector-u8-ref bv 99) (bytevector-u8-ref bv 8300))))
+                        ;; A peek after a bulk read, then more than is left.
+                        (note (eqv? (peek-u8 p) (expected pos)))
+                        (let ((bv (read-bytevector 1000 p))) (note (bytevector-length bv)) (check-bytes bv 0 (bytevector-length bv)))
+                        ;; The end of the file, every way.
+                        (note (u8-ready? p))
+                        (note (list (eof-object? (peek-u8 p)) (eof-object? (read-u8 p)) (eof-object? (read-u8 p))
+                                    (eof-object? (read-bytevector 10 p)) (eof-object? (read-bytevector! (make-bytevector 4) p))
+                                    (read-bytevector 0 p)))
+                        (close-port p)
+                        (write (list pos (reverse wrong) (reverse results)))""".formatted(file("pattern.bin")));
+        assertEquals("(16484 () (8190 #t #t 8200 (0 0) #t 89 #t (#t #t #t #t #t #u8())))", out);
+    }
+
+    /** An empty file is at its end from the start. */
+    @Test
+    public void emptyBinaryFile() throws IOException {
+        Files.write(dir.resolve("empty.bin"), new byte[0]);
+        String out = runWithFiles("""
+                        (define p (open-binary-input-file %s))
+                        (write (list (u8-ready? p) (eof-object? (peek-u8 p)) (eof-object? (read-u8 p))
+                                     (eof-object? (read-bytevector 1 p)) (eof-object? (read-bytevector! (make-bytevector 1) p))))
+                        (close-port p)""".formatted(file("empty.bin")));
+        assertEquals("(#t #t #t #t #t)", out);
+    }
+
+    private static String md5(byte[] bytes) throws Exception {
+        return HexFormat.of().formatHex(MessageDigest.getInstance("MD5").digest(bytes));
+    }
+
+    /**
+     * A 1 MB file read byte by byte (with a peek every 1,000 bytes), in 1,000-byte
+     * {@code read-bytevector}s and in 3,000-byte {@code read-bytevector!}s, each copied to a file:
+     * every copy has the file's MD5.
+     */
+    @Test
+    public void largeBinaryFileReadsMatchItsContents() throws Exception {
+        byte[] bytes = new byte[(1 << 20) + 17];
+        new Random(199).nextBytes(bytes);
+        Files.write(dir.resolve("large.bin"), bytes);
+        String out = runWithFiles("""
+                        (define in %s)
+                        (call-with-port (open-binary-input-file in)
+                          (lambda (p)
+                            (call-with-port (open-binary-output-file %s)
+                              (lambda (o)
+                                (let loop ((i 0))
+                                  (when (= 0 (modulo i 1000)) (peek-u8 p))
+                                  (let ((b (read-u8 p)))
+                                    (unless (eof-object? b) (write-u8 b o) (loop (+ i 1)))))))))
+                        (call-with-port (open-binary-input-file in)
+                          (lambda (p)
+                            (call-with-port (open-binary-output-file %s)
+                              (lambda (o)
+                                (let loop ()
+                                  (let ((bv (read-bytevector 1000 p)))
+                                    (unless (eof-object? bv) (write-bytevector bv o) (loop))))))))
+                        (call-with-port (open-binary-input-file in)
+                          (lambda (p)
+                            (call-with-port (open-binary-output-file %s)
+                              (lambda (o)
+                                (let ((bv (make-bytevector 3000)))
+                                  (let loop ()
+                                    (let ((n (read-bytevector! bv p)))
+                                      (unless (eof-object? n) (write-bytevector bv o 0 n) (loop)))))))))
+                        (write 'done)""".formatted(file("large.bin"), file("bytes.bin"), file("chunks.bin"), file("into.bin")));
+        assertEquals("done", out);
+        String expected = md5(bytes);
+        for (String copy : new String[]{"bytes.bin", "chunks.bin", "into.bin"}) {
+            assertEquals(copy, expected, md5(Files.readAllBytes(dir.resolve(copy))));
+        }
     }
 }

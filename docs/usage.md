@@ -218,6 +218,8 @@ through a pipe; `--scheme.BufferOutput=true` buffers on a terminal too.
 Output file ports, textual and binary, are always buffered. What they hold is
 written out by `flush-output-port` and `close-port`, and also when the
 program ends, exits or stops with an error, even if it never closes them.
+Input file ports, textual and binary, read their file a buffer (8 KB) at a
+time, so reading one byte or character at a time is cheap.
 
 `bazel-bin/scheme` starts its JVM with the serial collector
 (`-XX:+UseSerialGC`, design.md D17), which ran most benchmarks faster than the
