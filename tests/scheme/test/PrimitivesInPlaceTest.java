@@ -12,6 +12,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.PolyglotException;
@@ -140,6 +142,46 @@ public class PrimitivesInPlaceTest {
     public void primitivesThatTransferControlStillDoSo() {
         check("(define (f . xs) (apply list xs)) (define (g k) (k 'out))", "((1 2) out (1 2) 3)",
                         "(list (f 1 2) (call/cc (lambda (k) (g k))) (call-with-values (lambda () (values 1 2)) list) (eval '(+ 1 2) (environment '(scheme base))))");
+    }
+
+    @Test
+    public void primitivesThatTrampolinesCallRunInPlace() {
+        // apply returns a tail call of its procedure, which the trampoline of the site that called
+        // apply performs: a primitive that only returns values runs there, in place, as at a call
+        // site, without a Truffle call of its root (M10-03). So it has no frame of its own.
+        List<String> nonTail = frames("(define (g x) (+ 1 (apply %raise-uncaught (list x)))) (g 'boom)");
+        assertFalse(nonTail.toString(), nonTail.contains("%raise-uncaught"));
+        assertTrue(nonTail.toString(), nonTail.contains("g"));
+        // apply in tail position: its tail call comes back to g's caller's trampoline, after the first.
+        List<String> tail = frames("(define (f x) (apply %raise-uncaught (list x))) (define (g x) (+ 1 (f x))) (g 'boom)");
+        assertFalse(tail.toString(), tail.contains("%raise-uncaught"));
+        assertTrue(tail.toString(), tail.contains("g"));
+        // A tail site past its cache of primitives (MakeTailCall's) hands every primitive to the
+        // trampoline: each one runs there.
+        String defs = "(define (call f . xs) (f (car xs) (cadr xs))) (define (non-tail f . xs) (list (apply call f xs)))";
+        check(defs, "((3) (-1) (2) (0) ((1 . 2)) (#t) (#(1 2)) (#f) (\"ab\"))",
+                        "(map (lambda (f) (non-tail f 1 2)) (list + - * quotient cons < vector eqv? (lambda (a b) (string-append \"a\" \"b\"))))");
+        // Errors are raised where the trampoline's call site raises them, with the arity checked.
+        String apply = "(define (apply-it f . xs) (apply f xs)) (define (run f . xs) (+ 0 (apply apply-it f xs)))";
+        check(apply, "(\"car: not a pair: 1\" \"car: expected 1 arguments, got 2\" 101)",
+                        "(list (guard (e (#t (error-object-message e))) (run car 1)) (guard (e (#t (error-object-message e))) (run car '(1) 2))" +
+                                        " (+ 100 (call/cc (lambda (k) (with-exception-handler (lambda (e) (k 1)) (lambda () (run car 1)))))))");
+    }
+
+    @Test
+    public void primitivesThatApplyCallsAreNotCalledInCompiledCode() throws IOException {
+        // The trampoline runs them in place: compiled code has no call of their roots to inline
+        // (or not, by the inlining budget, as #195 found string<?'s root cut off from ecraven's
+        // scheme benchmark 251 times), only apply's. step is called often enough to be compiled.
+        String program = "(define (step n) (+ (apply + (list n 1 2)) (if (apply string<? (list \"a\" \"b\" \"c\")) 1 0)" +
+                        " (vector-length (apply vector (list n n)))))" +
+                        "(define (run n acc) (if (= n 0) acc (run (- n 1) (+ acc (step n)))))" +
+                        "(unless (= (run 20000 0) 200130000) (error \"wrong result\"))";
+        String log = engineLog(program, "compiler.TraceInlining", "true");
+        assertTrue(log, Pattern.compile("Inline start step\\b").matcher(log).find());
+        assertTrue(log, Pattern.compile("Inlined\\s+apply\\b").matcher(log).find());
+        Matcher primitive = Pattern.compile("(Inlined|Cutoff|Expanded)\\s+(\\+|string<\\?|vector)\\s").matcher(log);
+        assertFalse(log, primitive.find());
     }
 
     @Test

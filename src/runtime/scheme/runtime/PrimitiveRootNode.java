@@ -14,15 +14,16 @@ import scheme.runtime.value.SClosure;
 /**
  * The root of a primitive procedure. Hand-written rather than a Bytecode DSL root: it only checks the
  * arity and delegates to a {@link PrimitiveNode}, which has no bytecode to interpret. Most calls of
- * a primitive don't reach it: call sites run a node of their own instead (plan.md M5-09). It runs
- * the calls that aren't run in place: from a site that has seen too many procedures, a trampoline
- * or a prompt, and the calls of primitives that transfer control.
+ * a primitive don't reach it: call sites and trampolines run a node of their own instead (plan.md
+ * M5-09, M10-03). It runs the calls that aren't run in place: from a site or a trampoline that has
+ * seen too many procedures, which calls indirectly, and the calls of primitives that transfer
+ * control.
  *
- * <p>It doesn't say it is trivial ({@link RootNode#isTrivial()}): many primitives loop, over their
- * arguments ({@code +}, {@code vector}) or their data ({@code string<?}), and the compiler prints a
- * performance warning on the program's standard error each time it inlines a root that says it is
- * trivial but has a loop after partial evaluation. Calls of primitives through this root, such as
- * {@code apply}'s, are inlined by the usual policy instead.
+ * <p>It doesn't say it is trivial ({@link RootNode#isTrivial()}): Truffle's trivial roots never
+ * contain loops, and many primitives loop, over their arguments ({@code +}, {@code vector}) or their
+ * data ({@code string<?}). The compiler prints a performance warning on the program's standard
+ * error each time it inlines a root that says it is trivial but has a loop after partial
+ * evaluation (#195).
  */
 public final class PrimitiveRootNode extends RootNode {
 

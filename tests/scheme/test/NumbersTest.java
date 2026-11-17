@@ -174,10 +174,14 @@ public class NumbersTest {
      * One fixnum overflow must not cost the fixnum fast path: a primitive's root node is shared by
      * every call that doesn't run the primitive in place (through {@code apply}, {@code map}, a call
      * site that has seen too many procedures), so a specialization excluded by an overflow would slow
-     * all of them down (docs/performance-research.md, section 2, item 3). The calls below go through
-     * {@code apply}, which reaches that node; a call site's own node (plan.md M5-09) is the same
-     * node class.
+     * all of them down (docs/performance-research.md, section 2, item 3). The calls below reach that
+     * node through {@code via-root}'s {@code apply}, whose trampoline has run four other primitives
+     * in place and so calls the root of any other (plan.md M10-03); a call site's own node (plan.md
+     * M5-09) is the same node class.
      */
+    private static final String VIA_ROOT = "(define (via-root f xs) (car (list (apply f xs))))" +
+                    " (via-root max '(1)) (via-root min '(1)) (via-root abs '(1)) (via-root exact '(1))";
+
     @Test
     public void fixnumArithmeticKeepsItsFastPathAfterAnOverflow() {
         String[][] cases = {
@@ -192,10 +196,10 @@ public class NumbersTest {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             try (Context context = Context.newBuilder("scheme").out(out).build()) {
                 ResultProbe probe = context.getEngine().getInstruments().get(ResultProbe.ID).lookup(ResultProbe.class);
-                context.eval("scheme", "(write " + c[1] + ")");
+                context.eval("scheme", VIA_ROOT + " (write " + c[1].replace("(apply ", "(via-root ") + ")");
                 assertEquals(c[1], c[2], out.toString(StandardCharsets.UTF_8));
                 for (int i = 0; i < 3; i++) {
-                    Value small = context.eval("scheme", c[3]);
+                    Value small = context.eval("scheme", c[3].replace("(apply ", "(via-root "));
                     assertTrue(c[3] + " is a fixnum", small.isNumber() && small.fitsInLong());
                     assertEquals(c[3], Long.parseLong(c[4]), small.asLong());
                 }

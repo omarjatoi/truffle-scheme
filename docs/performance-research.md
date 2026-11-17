@@ -315,6 +315,8 @@ vector strategies, M5-07 `equal?`.
 - **Undone.** Applied to every primitive that returns values, it wasn't
   true of those that loop, and Graal prints a performance warning each
   time it inlines such a root (design.md "Primitives run in place").
+  M10-03 won back what that cost (`apply`'s and the trampoline's calls of
+  primitive roots): the trampoline runs those primitives in place.
 
 ### 9. Boxing elimination
 

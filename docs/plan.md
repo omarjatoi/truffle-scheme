@@ -1184,7 +1184,7 @@ measures with interleaved A/B runs.
     native column, improves by at least 10% over M9's report (42.89, so 38.6
     or less, in a report regenerated the same way), or each direction above
     is measured and recorded in design.md with its numbers.
-- [ ] **M10-03 · `apply`'s cost after #195**
+- [x] **M10-03 · `apply`'s cost after #195**
   - #195 stopped marking primitive roots trivial (`PrimitiveRootNode.isTrivial`),
     so that Graal no longer prints *"Root node of target marked trivial but
     not trivial after PE"* into a program's output. Calls of primitives
