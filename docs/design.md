@@ -333,13 +333,7 @@ full R7RS-small conformance comes first.
     and nothing is measured. That is the size less 256 KB (the VM's guard
     zones and the thread's first frames, 118 KB on HotSpot, and the frames
     below the root prompt), at most 64 MB of it as for a measurement, less
-    the same reserve: 56 MB of the launcher's 256 MB. A larger limit isn't
-    safe yet: in the native launcher, a recursion through `apply` that runs
-    while its procedure is being compiled in the background uses up to about
-    twice the stack it counts (it overflows a 64 MB stack, with a limit of
-    56 MB, but not a 128 MB one; interpreted only, or compiled at once, it
-    doesn't), so the 256 MB stack's room beyond the limit is what keeps it
-    from overflowing. The context records that thread, since the option is per
+    the same reserve: 56 MB of the launcher's 256 MB. The context records that thread, since the option is per
     context and a stack size per thread: any other thread that enters the
     context is measured as before. The launcher passes the size it created
     its evaluation thread with (D17), and nothing when it evaluates on its
@@ -348,6 +342,36 @@ full R7RS-small conformance comes first.
     `StackOverflowError` does, and the frames above it return normally:
     unwinding the error through millions of compiled probe frames took
     three quarters of the time (a 16 MB stack: 331 to 75 ms).
+  - *In a native image, calls also check the stack's real depth.* The costs
+    were measured on HotSpot, and they aren't upper bounds in a native
+    image: there, code Truffle compiled at its first tier, which inlines no
+    call, runs each level of a recursion through `apply` as a compiled frame
+    plus the frames of a call between call targets, 530 to 590 bytes where
+    the costs count 420 to 450 (read from the stack pointer: 1.27 to 1.32
+    times). That is more than the reserve's eighth, so such a recursion,
+    reaching the first tier while it runs, overflowed a 64 MB stack (limit
+    56 MB, 74 MB used) and the native launcher's 8 MB main thread; on the
+    JVM, and natively interpreted only (half what the costs count) or once
+    the second tier has inlined the recursion, it fit. A native image can
+    read where its stack is (an address `StackValue` gives in a
+    `@TruffleBoundary` method), so there each root prompt notes where its
+    stack starts, and past half the limit, a call that takes the stack use
+    across a multiple of 64 KB also spills if the stack below it is deeper
+    than the limit: an `xor` and compare on those calls, and a boundary
+    call on one in a hundred or more. Between two checks the stack grows by
+    what 64 KB of costs stand for, which the 256 KB reserve covers 4 times
+    over, whatever the frames are (compiled at either tier, interpreted,
+    OSR, primitives or the trampoline between them). Below half the limit,
+    a call only compares with it, as on HotSpot (where the half is the limit
+    itself), and the costs would have to undercount by more than 2 times to
+    overflow there. Checking from the root prompt on, every 16 KB, made
+    `fib` (40 calls deep) 25% slower natively, and checking past a quarter
+    of the limit, every 16 KB, made the first `ack(3,12)` 40% slower. On
+    HotSpot, Java code can't see its stack's depth; the costs, measured
+    there, bound it, and the stress matrix (`//tests:space`,
+    `StackBudgetTest`) checks they still do. `//tests:space_native` runs the deep recursions through the native
+    launcher on stacks from 256 KB to 256 MB. The limit still counts at most
+    64 MB of a stack; natively it could now use more of a known one.
   - *Spilling is still per frame.* A frame that doesn't fit is materialized
     when it suspends, and until M8's owned segments was also copied when it
     resumed, about 1 KB allocated and 240 ns per frame (`ack`, M8-01);
@@ -1307,10 +1331,10 @@ Each entry: the decision, why, and what was rejected.
     and only the pages a recursion reaches take memory. The spill limit
     uses no more than 64 MB of a thread's stack (56 MB, less the reserve),
     so a larger stack gains nothing today (256 MB and 1 GB measured alike).
-    The rest is margin: in the native launcher, a recursion that runs while
-    it is being compiled can use about twice the stack it counts
-    ("Stack-depth spill"), which overflows a 64 MB stack but not 128 MB.
-    256 MB is the size M8-01 measured `ack` with.
+    The rest is margin. (It was what kept a recursion through `apply` from
+    overflowing the native launcher's stack while it ran at Truffle's first
+    tier, until native calls checked the stack's real depth, "Stack-depth
+    spill".) 256 MB is the size M8-01 measured `ack` with.
   - *What it costs.* Until the launcher passed the size, the stack's
     measurement touched its 64 MB the first time a recursion was
     more than about 50 interpreted calls deep, and they stayed resident.

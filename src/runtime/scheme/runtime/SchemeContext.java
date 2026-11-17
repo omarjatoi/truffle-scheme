@@ -67,6 +67,12 @@ public final class SchemeContext {
     int stackUse;
     /** Past this {@link #stackUse}, a call spills instead ({@link StackBudget}). */
     int stackLimit;
+    /**
+     * In a native image, where the stack was when the root prompt started
+     * ({@link StackBudget#stackPointer}): a call also spills when the stack below it is more than
+     * {@link #stackLimit} deeper ({@link StackBudget#pastLimit}). 0 if not known.
+     */
+    long stackBase;
     /** Whether {@link #stackLimit} is final for this thread: measured, or fixed by an option. */
     boolean stackMeasured;
     /** Whether the {@code scheme.SpillDepth} option fixes the limit as a count of nested calls. */

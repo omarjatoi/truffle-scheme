@@ -2,6 +2,9 @@ package scheme.runtime;
 
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import org.graalvm.nativeimage.ImageInfo;
+import org.graalvm.nativeimage.StackValue;
+import org.graalvm.word.PointerBase;
 
 /**
  * How much Java stack nested non-tail calls may use before a call spills instead (design.md
@@ -28,6 +31,22 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
  * than they count. A frame that deoptimizes becomes interpreter frames while it runs, which the
  * {@link #RESERVE} covers, with whatever runs at the deepest point (primitives, a debugger
  * stopped there, class loading).
+ *
+ * <p>In a native image, the costs are not upper bounds: code that Truffle compiled at its first
+ * tier inlines no call, so each level of a recursion through {@code apply} is a compiled frame and
+ * the frames of a call between compiled call targets, 530 to 590 bytes where the costs count 420 to
+ * 450 (1.3 times, more than the reserve covers on a stack of 64 MB). The image can tell how deep
+ * its stack really is, though ({@link #stackPointer}), so there a call also spills when the stack
+ * below it, from the root prompt, is deeper than the limit. Past half the limit ({@link #checks}),
+ * a call checks each time it takes the stack use across a multiple of {@link #CHECK_INTERVAL}
+ * ({@link #crosses}): an {@code xor} and compare on each such call, and a boundary call on one in
+ * a hundred or more. Below half the limit, a call costs only the comparison with it, as on
+ * HotSpot, and the costs would have to undercount by more than 2 times to overflow there. Checking
+ * from the root prompt on, every 16 KB, made {@code fib} (40 calls deep) 25% slower, and checking
+ * past a quarter, every 16 KB, made the first {@code ack(3,12)} 40% slower. Between two checks, the stack grows
+ * by what 64 KB of costs stand for, which the reserve covers 4 times over. On HotSpot, Java code
+ * can't see its stack's depth, and the costs, measured there, are what bounds it (design.md
+ * "Stack-depth spill").
  *
  * <p>The limit: until a thread first needs more, {@link #FLOOR}, about the 50 interpreted calls
  * that M2-05 found fit in a 256 KB Java stack, the smallest the space tests run with. The first
@@ -64,6 +83,14 @@ final class StackBudget {
      * frames below the root prompt (the embedder's, the polyglot API's).
      */
     static final long THREAD_OVERHEAD = 256 * 1024;
+
+    /**
+     * Whether calls also check how deep the stack really is ({@link #pastLimit}): in a native image,
+     * where it can be read. A constant, so that on HotSpot the checks fold away.
+     */
+    static final boolean READS_STACK = ImageInfo.inImageCode();
+    /** In a native image, a call that takes the stack use across a multiple of this checks the stack's real depth. */
+    static final int CHECK_INTERVAL = 64 * 1024;
 
     /** The measured limit of each thread, once a call on it has passed the floor. */
     private static final ThreadLocal<Integer> MEASURED = new ThreadLocal<>();
@@ -114,9 +141,70 @@ final class StackBudget {
      * A root prompt nested in a call (an embedder's callback) keeps its caller's.
      */
     static void enterRoot(SchemeContext context) {
-        if (context.stackUse == 0 && !context.spillDepthFixed) {
-            setThreadLimit(context);
+        if (context.stackUse == 0) {
+            if (READS_STACK) {
+                context.stackBase = stackPointer();
+            }
+            if (!context.spillDepthFixed) {
+                setThreadLimit(context);
+            }
         }
+    }
+
+    /**
+     * Whether a call to stack use {@code nested} may have to spill: it passes the limit, or, in a
+     * native image, half of it, past which calls check the stack's real depth ({@link #crosses}).
+     * Rarely: compiled code takes it as a slow path, and on HotSpot it is the comparison with the
+     * limit alone.
+     */
+    static boolean checks(SchemeContext context, int nested) {
+        int from = READS_STACK ? context.stackLimit >> 1 : context.stackLimit;
+        return CompilerDirectives.injectBranchProbability(CompilerDirectives.SLOWPATH_PROBABILITY, nested > from);
+    }
+
+    /**
+     * Whether a call from stack use {@code use} to {@code nested} checks the stack's real depth
+     * ({@link #pastLimit}): in a native image, when it takes the stack use across a multiple of
+     * {@link #CHECK_INTERVAL}.
+     */
+    static boolean crosses(int use, int nested) {
+        return READS_STACK && (use ^ nested) >= CHECK_INTERVAL;
+    }
+
+    /**
+     * Whether the stack below the caller, from the root prompt, is deeper than the limit (a native
+     * image; never on HotSpot, where it can't be told). If the thread's stack hasn't been measured
+     * yet, measures it first, as {@link #extend} would.
+     */
+    static boolean pastLimit(SchemeContext context) {
+        return READS_STACK && !context.spillDepthFixed && deeperThanLimit(context);
+    }
+
+    @TruffleBoundary
+    private static boolean deeperThanLimit(SchemeContext context) {
+        long base = context.stackBase;
+        long here = stackPointer();
+        if (base == 0 || here == 0 || base - here <= context.stackLimit) {
+            return false;
+        }
+        if (!context.stackMeasured) {
+            measure(context, 0);
+        }
+        return base - here > context.stackLimit;
+    }
+
+    /**
+     * About where the stack is (an address in the frame of this method, so the caller's stack pointer
+     * less a few words), in a native image at run time; 0 elsewhere. The stack grows down, so the
+     * stack between two calls of this is the difference of what they return.
+     */
+    @TruffleBoundary
+    static long stackPointer() {
+        if (!ImageInfo.inImageRuntimeCode()) {
+            return 0;
+        }
+        PointerBase here = StackValue.get(Long.BYTES);
+        return here.rawValue();
     }
 
     @TruffleBoundary
@@ -169,9 +257,7 @@ final class StackBudget {
      * what a measurement of it would give. The stack less {@link #THREAD_OVERHEAD} is what remains,
      * of which at most {@link #MEASURED_MAX} counts, as a measurement looks no further; the limit is
      * that less the reserve, never below the floor. So the size only spares the measurement, and a
-     * large stack doesn't raise the limit: in a native image, the costs undercount compiled frames
-     * while a recursion is being compiled, by up to about 2 times (design.md "Stack-depth spill"),
-     * which the stack beyond 64 MB covers.
+     * large stack doesn't raise the limit (design.md "Stack-depth spill").
      */
     static int limitFor(long stackSize) {
         long remaining = Math.min(stackSize - THREAD_OVERHEAD, MEASURED_MAX);

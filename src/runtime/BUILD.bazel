@@ -17,6 +17,8 @@ scheme_java_library(
     visibility = ["//visibility:public"],
     deps = [
         "@jvm//:org_graalvm_polyglot_polyglot",
+        "@jvm//:org_graalvm_sdk_nativeimage",
+        "@jvm//:org_graalvm_sdk_word",
         "@jvm//:org_graalvm_truffle_truffle_api",
     ],
 )
