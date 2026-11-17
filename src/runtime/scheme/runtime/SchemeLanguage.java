@@ -131,7 +131,10 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
         return true;
     }
 
-    /** A closing context leaves nothing in standard output's buffer (design.md D10). */
+    /**
+     * A closing context leaves nothing in standard output's buffer or in its open file ports'
+     * (design.md D10). Also called after a hard exit ({@code exit}, {@code emergency-exit}).
+     */
     @Override
     protected void finalizeContext(SchemeContext context) {
         context.flushOutput();
@@ -140,10 +143,12 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
     /**
      * The allocation reporter is the engine's, shared by its contexts: a closed context's listener
      * is removed from it, or an embedder's shared engine would keep every closed context's language
-     * instance, and with it the instance's code (plan.md M8-02).
+     * instance, and with it the instance's code (plan.md M8-02). The file ports the program left
+     * open are closed, releasing their files (design.md D10, "Open file ports").
      */
     @Override
     protected void disposeContext(SchemeContext context) {
+        context.closeFiles();
         context.allocationReporter.removeActiveListener(context.allocationListener);
     }
 

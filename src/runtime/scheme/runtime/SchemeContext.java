@@ -51,6 +51,11 @@ public final class SchemeContext {
     private SPort stderrPort;
     private SPort stdinPort;
     /**
+     * The open output file ports (design.md D10, "Open file ports"), written out with standard
+     * output; null until the first is opened.
+     */
+    private OpenFiles openFiles;
+    /**
      * The compiler's per-context state: libraries, the interaction environment and syntactic
      * bindings, which persist from one program to the next. Owned by the compiler
      * ({@code scheme.compiler.CompilerState}), which sits above the runtime.
@@ -153,11 +158,36 @@ public final class SchemeContext {
 
     /**
      * Writes what standard output holds to the Env's stream, and flushes that (design.md D10,
-     * "Standard output"). Cheap when there is nothing to write.
+     * "Standard output"), and writes out what the open output file ports hold ("Open file ports").
+     * Cheap when there is nothing to write and no file port is open.
      */
     public void flushOutput() {
+        flushStandardOutput();
+        if (openFiles != null && openFiles.count != 0) {
+            openFiles.flush();
+        }
+    }
+
+    /** Standard output only: before a write to standard error or a read of standard input. */
+    private void flushStandardOutput() {
         if (!stdoutBuffer.isEmpty()) {
             flushBuffered();
+        }
+    }
+
+    /** The open output file ports: where a file port is made, so that it is tracked. */
+    @TruffleBoundary
+    public OpenFiles openFiles() {
+        if (openFiles == null) {
+            openFiles = new OpenFiles();
+        }
+        return openFiles;
+    }
+
+    /** Closes the file ports still open: the context is being disposed. */
+    void closeFiles() {
+        if (openFiles != null) {
+            openFiles.close();
         }
     }
 
@@ -287,7 +317,7 @@ public final class SchemeContext {
         @Override
         public void write(int b) throws IOException {
             if (first != null) {
-                first.flushOutput();
+                first.flushStandardOutput();
             }
             target.write(b);
         }
@@ -295,7 +325,7 @@ public final class SchemeContext {
         @Override
         public void write(byte[] b, int off, int len) throws IOException {
             if (first != null) {
-                first.flushOutput();
+                first.flushStandardOutput();
             }
             target.write(b, off, len);
         }
@@ -323,19 +353,19 @@ public final class SchemeContext {
 
         @Override
         public int read() throws IOException {
-            context.flushOutput();
+            context.flushStandardOutput();
             return target.read();
         }
 
         @Override
         public int read(byte[] b, int off, int len) throws IOException {
-            context.flushOutput();
+            context.flushStandardOutput();
             return target.read(b, off, len);
         }
 
         @Override
         public int available() throws IOException {
-            context.flushOutput();
+            context.flushStandardOutput();
             return target.available();
         }
     }

@@ -1392,11 +1392,49 @@ Each entry: the decision, why, and what was rejected.
   line sets it, so a terminal sees partial lines (progress dots) at once;
   with stdout on a terminal but stdin redirected, output is buffered (Java
   can't tell stdout alone is a terminal without a native call). Standard
-  error is never buffered. Textual file output ports were buffered already
-  (`TruffleFile.newBufferedWriter`); binary ones still write each `write-u8`
-  through. Buffering those too would make a binary port the program never
-  closes lose its last output at exit, as an unclosed textual file port
-  already does: the context doesn't track its open file ports to flush them.
+  error is never buffered. File output ports are buffered too, and written
+  out at the same points (next item).
+- **Open file ports are written out with standard output.** Output file
+  ports, textual and binary, write to an 8 KB buffer over the
+  `TruffleFile`'s stream (binary ones wrote each `write-u8` through until
+  then: writing 10 MB with `write-u8` took 18 s, against 0.26 s buffered,
+  and in 16-byte `write-bytevector`s 1.3 s, against 0.22 s). The context
+  tracks the ports it opened (`OpenFiles`), and `flushOutput` writes out what
+  they hold wherever it writes out standard output: when control goes back
+  to the caller (so after a program ends, normally or with an uncaught
+  error), on `exit` and `emergency-exit` (Truffle calls `finalizeContext`
+  after a hard exit too) and when the context closes, which also closes
+  them (`disposeContext`). A program that never closes a port loses none of
+  its output, and an embedder or the REPL finds it in the file when the call
+  returns. R7RS doesn't ask for this: §6.13.1 says only that `close-port`
+  *"closes the resource associated with port, rendering the port incapable
+  of delivering or accepting data"*, nothing of a port never closed, and
+  §6.14's `exit` *"runs all outstanding dynamic-wind after procedures,
+  terminates the running program, and communicates an exit value to the
+  operating system"*, nothing of ports either. It is our choice, what C's
+  `exit` does for its open streams; chibi-scheme writes them out at exit,
+  after an error and at a program's end too (no differential test can
+  show it: they compare standard output). Closing a collected port (below)
+  is what §6.13.1 allows `call-with-port`: a port *"must not be closed
+  automatically unless it is possible to prove that the port will never
+  again be used for a read or write operation"*. An I/O error in these
+  implicit flushes is ignored, as C's `exit` ignores one: `flush-output-port`
+  and `close-port` raise it.
+  - The ports are tracked through weak references, so tracking keeps none
+    alive; each reference holds the port's buffered stream strongly
+    instead. When the program drops a port without closing it, the
+    collector queues its reference, and the next time the context opens a
+    file port or flushes them, it writes out and closes that stream, on the
+    context's thread. Closing a port stops tracking it. A program that opens
+    10,000 files and drops them keeps only the ones not yet collected.
+  - *Rejected:* `Env.registerOnDispose`, Truffle's hook for resources that
+    live as long as the context: it closes them when the context is
+    disposed, but holds them weakly, so a port collected before that loses
+    its buffer, and it doesn't flush on return or on exit. A
+    `java.lang.ref.Cleaner` that flushes a collected port's stream: it runs
+    on the cleaner's thread, outside the context (D10: single-threaded), and
+    would write through an embedder's file system from a thread it doesn't
+    expect.
 - **Interop for embedders (M6-02).** Scheme values answer Truffle's
   `InteropLibrary` as what they are, each with the language `scheme`, its
   `write` syntax as display string (`Value.toString()`), and a meta object:
