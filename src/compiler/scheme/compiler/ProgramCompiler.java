@@ -78,11 +78,11 @@ public final class ProgramCompiler implements SchemeCompiler {
     }
 
     private static Libraries newLibraries(SchemeLanguage language, SchemeContext context, CompilerState state) {
-        return new Libraries(context.symbols, state.top, context.globals, body -> {
+        return new Libraries(context.symbols, state.top, context.globals, (body, topLevel) -> {
             if (state.recordedBodies != null) {
                 state.recordedBodies.add(body);
             }
-            language.withPrompt(generate(language, body)).call();
+            language.withPrompt(generate(language, body, topLevel)).call();
         }, context.getEnv(), context.getEnv().getOptions().get(SchemeLanguage.LIBRARY_PATH));
     }
 
@@ -101,12 +101,12 @@ public final class ProgramCompiler implements SchemeCompiler {
         List<Object> forms = Expander.readForms(source, context.symbols, false);
         SourceDir dir = new SourceDir.Files(context.getEnv(), null).dirOf(source);
         Ast.Lambda program;
-        CompilerState.Environment topLevel = null;
+        CompilerState.TopLevel topLevel = null;
         if (mayBeProgram && Expander.isProgram(forms)) {
             Scope scope = new Scope();
             GlobalEnvironment namespace = new GlobalEnvironment();
             state.top.registerNamespace(scope, namespace);
-            topLevel = new CompilerState.Environment(scope, namespace, false);
+            topLevel = new CompilerState.TopLevel(scope, namespace, true);
             program = new Expander(context.symbols, namespace, state.top, scope, state.libraries, dir).expandIsolatedProgram(forms);
         } else {
             Expander expander = new Expander(context.symbols, state.interaction, state.top, state.interactionScope, state.libraries, dir);
@@ -200,15 +200,16 @@ public final class ProgramCompiler implements SchemeCompiler {
     public SClosure compileInFrame(SchemeLanguage language, SchemeContext context, Source source, String[] names, boolean[] boxed, Object topLevel) {
         CompilerState state = (CompilerState) context.compilerState;
         SourceDir dir = new SourceDir.Files(context.getEnv(), null);
-        // An isolated program's frame: its own top level, whose variables only it assigns.
-        Expander expander = topLevel instanceof CompilerState.Environment program
-                        ? new Expander(context.symbols, program.namespace(), state.top, program.scope(), state.libraries, dir)
+        // An isolated program's or a library's frame: its own top level.
+        CompilerState.TopLevel unit = (CompilerState.TopLevel) topLevel;
+        Expander expander = unit != null
+                        ? new Expander(context.symbols, unit.namespace(), state.top, unit.scope(), state.libraries, dir)
                         : new Expander(context.symbols, state.interaction, state.top, state.interactionScope, state.libraries, dir);
         List<SSymbol> symbols = new ArrayList<>(names.length);
         for (String name : names) {
             symbols.add(context.symbols.intern(name));
         }
-        Ast.Lambda procedure = expander.expandInFrame(Expander.readForms(source, context.symbols, false), symbols, boxed, topLevel != null);
+        Ast.Lambda procedure = expander.expandInFrame(Expander.readForms(source, context.symbols, false), symbols, boxed, unit != null && unit.closed());
         return new SClosure(generate(language, procedure, topLevel), NO_CAPTURES);
     }
 
@@ -294,7 +295,7 @@ public final class ProgramCompiler implements SchemeCompiler {
         return generate(language, program, null);
     }
 
-    /** {@code topLevel}: what each root records as the top level it was compiled in, or null for the interaction environment's or a library's. */
+    /** {@code topLevel}: what each root records as the top level it was compiled in, or null for the interaction environment's. */
     private static RootCallTarget generate(SchemeLanguage language, Ast.Lambda program, Object topLevel) {
         SchemeRootNode[] root = new SchemeRootNode[1];
         // With source information, so guest stack traces and tools see file, line and column (D13).

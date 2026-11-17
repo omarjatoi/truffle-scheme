@@ -978,14 +978,16 @@ Each entry: the decision, why, and what was rejected.
   compiles the code (`parse(InlineParsingRequest)`) as a body whose
   parameters are the frame's variables, and passes a boxed variable as its
   Box. Its global names resolve in the frame's own top level (M7-07): every
-  root of an isolated program (D15) records the program's top-level scope
-  and namespace (`SchemeRootNode.getTopLevel`, transient, so not in the
-  prelude image), and code evaluated in its frames sees exactly the
-  program's imports and definitions; elsewhere, the interaction
+  root of an isolated program (D15) or of a library (D7) records the unit's
+  top-level scope and namespace (`SchemeRootNode.getTopLevel`, transient, so
+  not in the prelude image), and code evaluated in its frames sees exactly
+  the unit's imports and definitions, exported or not; elsewhere (the
+  standard libraries restored from the image among them), the interaction
   environment. Evaluated code may not `set!` an isolated program's own
   variables: the program was compiled as a closed unit, assuming only its
-  own code assigns them (`EscapeAnalysis`). Library frames still use the
-  interaction environment. A procedure's frames are named by its
+  own code assigns them (`EscapeAnalysis`). A library isn't closed (a
+  macro it exports may assign its variables from another unit), so code
+  evaluated in its frames may. A procedure's frames are named by its
   binding (`define`, `let`, `letrec*`, `set!`, through a let body), else by
   its location, `<lambda@file.scm:3:5>`; a record type's procedures are
   primitives named by their bindings (D1), which have no frame when run in

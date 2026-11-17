@@ -7,13 +7,19 @@ import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
 
 import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.Source;
+import org.graalvm.polyglot.io.IOAccess;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 
 import com.oracle.truffle.api.debug.Breakpoint;
 import com.oracle.truffle.api.debug.DebugScope;
@@ -34,6 +40,8 @@ import com.oracle.truffle.api.debug.SuspendedEvent;
  * evaluate in a suspended frame; and every frame has a name.
  */
 public class DebuggerTest {
+
+    @Rule public TemporaryFolder folder = new TemporaryFolder();
 
     private static final String SCHEME = "scheme";
 
@@ -227,6 +235,54 @@ public class DebuggerTest {
             }
         }
         assertEquals(List.of("scale", "(2 10 #t (1 2))", "only-interactive is unbound", "display is unbound", "set! names base"), values);
+    }
+
+    // A library on the library path: it imports only (scheme base), defines factor without
+    // exporting it, and exports scaled, whose body is line 7.
+    private static final String LIBRARY = """
+                    (define-library (debugged lib)
+                      (export scaled)
+                      (import (scheme base))
+                      (begin
+                        (define factor 7)
+                        (define (scaled x)
+                          (* x factor))))
+                    """;
+
+    /**
+     * Code evaluated in a frame of a library's procedure sees that library's top level (its
+     * definitions, exported or not, and its imports), not the interaction environment's that
+     * imported it. Unlike a program's, a library's variables may be assigned from another unit (by
+     * a macro it exports), so the debugger may assign them too.
+     */
+    @Test
+    public void expressionsInALibrarysFrameSeeItsDefinitions() throws IOException {
+        Path dir = folder.newFolder("lib").toPath();
+        Path file = Files.createDirectories(dir.resolve("debugged")).resolve("lib.sld");
+        Files.writeString(file, LIBRARY);
+        List<String> values = new ArrayList<>();
+        try (Context context = Context.newBuilder(SCHEME).allowIO(IOAccess.ALL).option("scheme.LibraryPath", dir.toString()).out(new ByteArrayOutputStream()).build()) {
+            // Defined in the interaction environment only: the library can't see it.
+            context.eval(SCHEME, "(define only-interactive 1)");
+            Debugger debugger = Debugger.find(context.getEngine());
+            try (DebuggerSession session = debugger.startSession(event -> {
+                DebugStackFrame top = event.getTopStackFrame();
+                values.add(top.getName());
+                values.add(top.eval("(list x factor (procedure? scaled))").toDisplayString());
+                for (String name : new String[]{"only-interactive", "display"}) {
+                    DebugException e = assertThrows(DebugException.class, () -> top.eval(name));
+                    values.add(e.getMessage().contains(name) ? name + " is unbound" : e.getMessage());
+                }
+                top.eval("(set! factor 8)");
+                event.prepareContinue();
+            })) {
+                Breakpoint breakpoint = Breakpoint.newBuilder(file.toUri()).lineIs(7).build();
+                session.install(breakpoint);
+                assertEquals(24, context.eval(SCHEME, "(import (debugged lib)) (scaled 3)").asInt());
+                assertEquals(1, breakpoint.getHitCount());
+            }
+        }
+        assertEquals(List.of("scaled", "(3 7 #t)", "only-interactive is unbound", "display is unbound"), values);
     }
 
     // The self tail call evaluates its arguments into unnamed temporaries, and or binds a variable

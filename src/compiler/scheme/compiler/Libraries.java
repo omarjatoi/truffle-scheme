@@ -44,9 +44,9 @@ final class Libraries {
     /** The library of the primitives and the core forms. */
     static final String PRIMITIVES = "(r7rs %primitives)";
 
-    /** Runs an expanded library body (with its prompt, design.md D6). */
+    /** Runs an expanded library body (with its prompt, design.md D6), compiled in {@code topLevel}. */
     interface Runner {
-        void run(Ast.Lambda body);
+        void run(Ast.Lambda body, CompilerState.TopLevel topLevel);
     }
 
     /** An instantiated library. */
@@ -309,7 +309,7 @@ final class Libraries {
         }
         if (!body.isEmpty()) {
             // Most standard libraries only re-export, and have nothing to run.
-            runner.run(program);
+            runner.run(program, new CompilerState.TopLevel(scope, namespace, false));
         }
         Map<SSymbol, Object> exported = new LinkedHashMap<>();
         for (Object[] export : exports) {
