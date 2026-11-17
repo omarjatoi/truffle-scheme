@@ -32,11 +32,13 @@ import scheme.runtime.GlobalCell;
  * </ul>
  * and every lambda the reference is in, inside the variable's own root (each lambda whose closures
  * capture the variable), is contained. A lambda is contained when it is the operator of a call, an
- * argument of a call of a known procedure whose parameter in that position is contained, or the
- * init of a {@code let} or {@code letrec*} variable that is contained: a {@code do} or named
- * {@code let} loop, or a local helper, that is only ever called. A lambda anywhere else (stored,
- * returned, or passed to a procedure the analysis can't see, {@code call/cc}'s receiver among them)
- * is not.
+ * argument of a call of a known procedure whose parameter in that position is contained, the init
+ * of a {@code let} or {@code letrec*} variable that is contained (a {@code do} or named {@code let}
+ * loop, or a local helper, that is only ever called), or the receiver of a {@code call/cc} whose own
+ * k is contained (plan.md M9-05): call/cc calls its receiver once, in the extent of the call/cc, so
+ * an outer k can be used in a nested call/cc's receiver, and then both escape. A lambda anywhere
+ * else (stored, returned, or passed to a procedure the analysis can't see, or to a call/cc whose k
+ * escapes) is not.
  *
  * <p>A known procedure is a lambda whose code the analysis sees at that call: a literal lambda in
  * operator position, an unassigned {@code let} or {@code letrec*} variable (an internal definition)
@@ -256,11 +258,19 @@ final class EscapeAnalysis {
                 work.push(v);
             }
         }
+        Set<Ast.Call> receivers = Collections.newSetFromMap(new IdentityHashMap<>());
+        receivers.addAll(sites);
         for (Map.Entry<Object, List<Use>> entry : uses.entrySet()) {
             Object v = entry.getKey();
             for (Use u : entry.getValue()) {
                 Lambda m = known(u.call().procedure);
-                if (m == null || m.rest != null || m.params.size() != u.call().arguments.size()) {
+                if (receivers.contains(u.call())) {
+                    // A call/cc's receiver (M9-05): called once, in the call/cc's extent. Contained
+                    // when its own k is, so that the nested call/cc escapes too (with a full capture
+                    // there, the receiver still runs in the extent, but the rule stays with escapes
+                    // nested in escapes).
+                    add(dependents, ((Lambda) v).params.get(0), v);
+                } else if (m == null || m.rest != null || m.params.size() != u.call().arguments.size()) {
                     if (not.add(v)) {
                         work.push(v);
                     }

@@ -206,8 +206,9 @@ public class EscapeCallCCTest {
         captures("(call/cc (lambda (k) (apply (lambda (x) (k x)) '(1))))");
         captures("(call/cc (lambda (k) (g (lambda () (k 1)))))");
         captures("(call/cc (lambda (k) (define (h) (k 1)) (g h)))");
-        // Used inside another call/cc's receiver, which call/cc may keep (that j escapes keeps the
-        // inner call/cc from showing %call/ec too).
+        // Used inside another call/cc's receiver whose own k escapes (j is returned): that call/cc
+        // captures in full, and so does this one (M9-05: a receiver counts as only called when its
+        // k is escape-only, NestedEscapeTest).
         captures("(call/cc (lambda (k) (define (h) (k 1)) (call/cc (lambda (j) (h) j))))");
         // A helper that is assigned, or a known procedure whose parameter lets it escape.
         captures("(call/cc (lambda (k) (define (h) (k 1)) (set! h (lambda () 2)) (h)))");
