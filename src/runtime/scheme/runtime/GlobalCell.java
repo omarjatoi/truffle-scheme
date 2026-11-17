@@ -70,7 +70,14 @@ public final class GlobalCell {
         value = newValue;
     }
 
-    @TruffleBoundary
+    /**
+     * {@code set!}. Not a boundary: in compiled code an assignment is a store to the field, and only
+     * invalidating the assumption is runtime code, behind its {@code isValid} test, which compiled
+     * code reads as a constant (design.md D7). The first assignment
+     * invalidates the code that assumed the value, this code too if it reads the variable, and code
+     * compiled after it has no call left. As a boundary, every {@code set!} of a global in compiled
+     * code was a call into the runtime.
+     */
     public void set(Object newValue) {
         if (value == null) {
             throw unbound();
@@ -78,8 +85,15 @@ public final class GlobalCell {
         if (fixed) {
             throw fixedChanged();
         }
-        stable.invalidate("assigned");
+        if (stable.isValid()) {
+            invalidate("assigned");
+        }
         value = newValue;
+    }
+
+    @TruffleBoundary
+    private void invalidate(String reason) {
+        stable.invalidate(reason);
     }
 
     /** An internal error, never a Scheme one (design.md D8): the expander lets no code change it. */
