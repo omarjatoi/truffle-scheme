@@ -82,6 +82,16 @@ full R7RS-small conformance comes first.
   as `eqv?` does, so not a bignum, a ratio or an exact complex number. Calling
   the primitive ran its loop behind a boundary with `eqv?`'s generic
   comparison, once per clause: 57% of `lattice`'s time, which this halved.
+  A call of `assq` or `assv` with a quoted proper alist of at most 16 pairs
+  (for `assv`, no bignum, ratio or exact complex key) is compiled the same way
+  (M9-05), but to one operation, `Assoc`, rather than a chain of `Eq`s: its
+  constant operand is the alist, and its node keeps the keys and entries in
+  compilation-final arrays, so compiled code compares one after another, and
+  the interpreter runs the loop in Java. A chain of `Eq`s, a few instructions
+  an entry, made the interpreter slower than calling the primitive: on a
+  table lookup of 7-8 entries per iteration, 1.10× the time with a chain,
+  0.88× with the operation; JIT, first iteration 0.52× and steady 0.33×.
+  No benchmark program calls either with a quoted alist.
 - **Inline caches for tail calls, and splitting (M5-10).** Each non-tail call
   site (and each prompt) has a trampoline node of its own, `Trampoline`, with
   a 4-entry `DirectCallNode` cache keyed on the tail-called procedure's call
