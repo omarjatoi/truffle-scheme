@@ -210,7 +210,19 @@ about 50 calls deep.
 `bazel-bin/scheme` starts its JVM with the serial collector
 (`-XX:+UseSerialGC`, design.md D17), which ran most benchmarks faster than the
 JVM's default, G1, in less memory; a collector chosen in `JDK_JAVA_OPTIONS`
-(`-XX:+UseG1GC`) replaces it.
+(`-XX:+UseG1GC`) replaces it. On a machine with 16 processors or more it also
+starts the JVM with 4 compiler threads for the host's Java
+(`-XX:CICompilerCount=4`, where the JVM would start 12 or more), which start
+up faster and in less memory; a count in `JDK_JAVA_OPTIONS` replaces it.
+
+`bazel build //:scheme` also trains an AOT cache for `bazel-bin/scheme`
+(JDK 25's `-XX:AOTCache`: the classes the launcher and the language load as
+they start, already parsed and linked), with which a hello-world program
+starts in about half the time (design.md D17). The cache names the real paths
+of the jars in Bazel's output tree, so it is only for the `bazel-bin/scheme`
+of the machine that built it, and the launcher leaves it out when those files
+have changed since (rebuild to train it again), and when the JVM options
+choose class sharing themselves (`-Xshare:off`, `-XX:AOTCache=...`) or ZGC.
 
 `bazel-bin/scheme` runs the launcher in a JVM with the tools below on its
 module path. Without them, it is a `java` command on the jars that

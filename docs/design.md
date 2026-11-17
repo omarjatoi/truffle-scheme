@@ -2015,6 +2015,114 @@ Each entry: the decision, why, and what was rejected.
     uses unless it chooses otherwise, and a program with a large live
     heap and a high allocation rate (`nboyer`) can choose it back
     (`JDK_JAVA_OPTIONS=-XX:+UseG1GC`).
+- **The launcher's JVM: memory and start-up.** Besides the collector, the
+  JVM launcher starts its JVM with 4 host compiler threads and, for
+  `bazel-bin/scheme`, an AOT cache (`tests/harness/harness.py`:
+  `launcher_vm_args`, `Runtime.launcher`). Each is left out when the JVM
+  options (the command's, `JDK_JAVA_OPTIONS`, `JAVA_TOOL_OPTIONS`) set it
+  themselves, as for the collector; `//tests:launcher_vm` checks each.
+  - *Where the memory went.* A hello-world program on an Apple M3 Max with
+    128 GB (16 cores) peaked at about 340 MB of RSS (`ru_maxrss`, which
+    counts the shared libraries' pages too) and 327 MB of physical
+    footprint (`vmmap --summary`, at its end). Of that, the Java heap was
+    about 280 MB: the program allocates about 250 MB as it starts (with
+    `--engine.Compilation=false` too), and the serial collector's young
+    generation is a third of the initial heap, a 64th of the machine's
+    memory (682 MB here), so it runs without a collection and touches every
+    page it allocates. The JVM's own memory (`-XX:NativeMemoryTracking`) was
+    70 MB: code cache 16, metaspace 16, the JDK's CDS archive 14, arenas 8.
+    The Graal compiler's (libgraal, which compiles the host's Java as well
+    as Truffle's) is outside it: each JVMCI compiler thread has its own
+    libgraal isolate (`JVMCIThreadsPerNativeLibraryRuntime=1`), with a 16 MB
+    eden and the free chunks it keeps, and the JVM had started 7 of its 12
+    host compiler threads as JVMCI threads before the program ended: with
+    a 32 MB young generation (`-Xmn32m`) the heap was 35 MB and the
+    footprint still 290 MB. Thread stacks were 2 MB (the evaluation
+    thread's 256 MB is address space). In a benchmark (`fib`, `-Xmx2g`) the
+    young generation (630 MB touched) is most of the 760 MB footprint.
+  - *Compiler threads.* `-XX:CICompilerCount=4` where the JVM would start
+    more (16 processors or more; it starts 3 with 4 to 7, and 4 with 8 to
+    15): fewer libgraal isolates, and fewer host compilations competing with
+    the program and the Truffle compiler for the cores as it starts.
+    On 24 of ecraven's programs at the report's counts (0.1 times their
+    own, `-Xmx2g`, 3 iterations in a fresh JVM; 2-3 interleaved rounds, the
+    medians; an Apple M3 Max shared with other agents), against the JVM's
+    12: the first iteration 0.96 times (geometric mean), the steady state
+    1.00, the whole process 0.93, and peak RSS 0.92 (the median 1050 MB
+    against 1108). Two programs moved in every round, with 2 and 3 threads
+    too: `mperm`'s steady state 0.60 times, `paraffins`' 1.30. With 2
+    threads: 1.03, 1.01, 0.97 and 0.90; with 3: 1.00, 1.02, 0.95 and 0.89.
+    A hello-world program took 321 ms and 233 MB against 398 ms and 342 MB
+    (31 interleaved runs, the medians).
+  - **The AOT cache.** JDK 25's AOT cache (JEPs 483, 514 and 515, the successor
+    of AppCDS): the classes a training run loaded, parsed, verified and
+    linked, the module graph, and their profiles, mapped from a file as the
+    JVM starts. `scheme_runtime` (`bazel/java_module.bzl`) trains it with a
+    small program (`bazel/aot-training.scm`) as a build action, for
+    `bazel-bin/scheme`'s module path, and writes beside it a stamp: the
+    size, modification time and real path of the JDK's modules image and
+    of each jar. The JVM checks those itself and compares the run's module
+    path with the real paths it was trained with, so the action passes it
+    real paths and the launcher passes them too.
+    A hello-world program (31 interleaved runs of the `java` command
+    `bazel-bin/scheme` runs, the medians, load 5-15) took 175 ms and 273 MB
+    against 398 ms and 342 MB without it, and 133 ms and 169 MB with the
+    4 compiler threads too. On the 24 programs above (2 rounds, a cache
+    trained the same way by hand): the first iteration 0.95 times, the
+    steady state 1.00, the whole process 0.85, RSS 0.99. The cache is
+    34 MB and its action takes about 2 s.
+    - *Where it is valid.* The cache names the files' real paths, so it is
+      valid only where it was made: the action runs here for this machine's
+      `bazel-bin/scheme` and neither reads nor writes the remote cache
+      (`no-remote`); for a Linux target (the tests, CI) it runs on the
+      executors, where the launcher finds it stale. A cache the JVM can't
+      use leaves it with no class sharing at all, the JDK's own archive
+      included, which starts slower than no cache (a hello-world program
+      880 ms against 400), so the launcher compares the stamp with the
+      files first (17 `stat`s) and leaves the cache out when they differ
+      (Bazel downloaded a jar again, say), as well as when the JVM options
+      choose class sharing themselves (`-Xshare`, `-XX:SharedArchiveFile`,
+      `-XX:AOTCache`, ...) or ZGC, with which the JVM maps no cache (it does
+      with the serial, parallel and G1 collectors). It also turns the
+      JVM's `aot` and `cds` logging off, unless the options configure
+      logging, so that a cache refused after all prints nothing.
+    - *Why not on the tests' runtime.* `//:launcher_runtime`, which the
+      tests and `bazel run //:r7rs` (the benchmarks) run, has none: every
+      test would wait for the action, and none could use it on the
+      executors. So the benchmarks' and `bench-check`'s start-up don't
+      include it.
+    - *Rejected:* a dynamic archive (`-XX:ArchiveClassesAtExit`, JDK 13's
+      AppCDS for an application's classes on top of the JDK's archive):
+      a hello-world program took about 300 ms against the AOT cache's 190
+      (single runs; 15 interleaved on a loaded machine: 384 against 193
+      and 716 without), since it shares classes but neither links them nor
+      keeps the module graph. Creating the cache as the launcher first
+      runs (`-XX:AOTCacheOutput`, or `-XX:+AutoCreateSharedArchive`): the
+      first run pays 1.5-4 s, and the launcher would write into the user's
+      files.
+  - *Rejected.* A smaller young generation (`-XX:NewSize=64m` or `128m`,
+    `-Xms64m`, `256m`, `512m`), on 13 allocation-heavy programs (`-Xmx2g`,
+    2 rounds): peak RSS 0.70-0.75 times (0.63 on all 24 with `-Xms64m`), but
+    the steady state 1.07-1.09 times: `paraffins` 3.3-4.1 times (its
+    radicals, hundreds of MB that live for an iteration, are copied and
+    promoted instead of dying in a young generation that holds them),
+    `earley` 1.2, `gcbench` 1.1. The serial collector sizes its young
+    generation only at a full collection, so a small one stays small.
+    A default maximum heap: the JVM's (a quarter of the memory) only
+    bounds the heap, and what a program touches is the young generation;
+    a lower one would fail programs that keep a lot alive (`earley`, 1.1
+    GB). `-XX:TieredStopAtLevel=1` (no host compilation by libgraal):
+    a hello-world program starts in 300 ms and 167 MB, but the host's
+    Java runs C1's code: the steady state 1.45 times (`equal` 8.6, `browse`
+    5.5, `fib` 2.6). One libgraal isolate for every compiler thread
+    (`-XX:JVMCIThreadsPerNativeLibraryRuntime=0`): RSS 0.70 times, but the
+    first iteration 1.41 times and the steady state 1.10 (`compiler` 2.2,
+    `parsing` 3.2 first): the compilations wait for each other. A smaller
+    libgraal eden (`-Djdk.graal.internal.ExpectedEdenSize=4m`, `8m`): no
+    change in RSS, the first iteration up to 6% slower.
+    `-XX:ReservedCodeCacheSize`: the code cache's size is reserved address
+    space; what it uses (16 MB for a hello-world program) is what it
+    compiled.
 - The Chrome inspector, DAP and profiler tools are optional modules
   (`//bazel:tools_modules`), which `bazel-bin/scheme` puts on the module
   path, and CI runs a smoke test of each against a Scheme program

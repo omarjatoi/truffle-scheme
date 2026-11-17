@@ -134,6 +134,13 @@ structures (about 5% of the heap), compiled code, class metadata and the Graal
 compiler's own heap (libgraal), and the heap's young generation, which G1
 sizes up to 60% of the heap and touches in full between collections, however
 little survives: so `fib`, with 7 MB live, has an RSS of 1.6 GB at `-Xmx2g`.
+Each of the JVM's JVMCI compiler threads has a libgraal heap of its own, so the
+launcher starts 4 host compiler threads instead of the 12 the JVM would on a
+16-core machine (design.md D17, "The launcher's JVM"), which took the 24
+programs' median peak RSS from 1108 to 1050 MB and their first iteration to
+0.96 times. The benchmarks run `//:launcher_runtime`, without the AOT cache
+`bazel-bin/scheme` starts with, so neither the report nor `bench-check`'s
+`startup` includes it.
 
 The collector is the launcher's, the serial one (`-XX:+UseSerialGC`,
 design.md D17 "The collector", plan.md M8-05), so that the report times what a

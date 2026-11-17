@@ -89,9 +89,11 @@ scheme_runtime(
     module = ":launcher_module",
 )
 
-# The same with GraalVM's tools (--inspect, --dap, --cpusampler, --memtracer).
+# The same with GraalVM's tools (--inspect, --dap, --cpusampler, --memtracer), and the AOT cache
+# that `bazel-bin/scheme` starts with (design.md D17, "The AOT cache").
 scheme_runtime(
     name = "scheme_runtime",
+    aot_training = "//bazel:aot-training.scm",
     extra = ["//bazel:tools_modules"],
     module = ":launcher_module",
 )

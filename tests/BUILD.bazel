@@ -393,11 +393,18 @@ harness_test(
     tags = ["lint"],
 )
 
-# design.md D17 "The collector": the launcher's JVM uses the serial collector unless told otherwise.
+# design.md D17 "The launcher's JVM": its collector, young generation, compiler threads and AOT
+# cache, unless its JVM options say otherwise.
 harness_test(
-    name = "launcher_gc",
-    check = "launcher_gc",
-    args = ["--runtime=$(rlocationpath //:launcher_runtime)"],
-    data = ["//:launcher_runtime"],
+    name = "launcher_vm",
+    check = "launcher_vm",
+    args = [
+        "--runtime=$(rlocationpath //:launcher_runtime)",
+        "--aot-runtime=$(rlocationpath //:scheme_runtime)",
+    ],
+    data = [
+        "//:launcher_runtime",
+        "//:scheme_runtime",
+    ],
     size = "small",
 )
