@@ -180,9 +180,9 @@ How each number is measured:
 implementations nixpkgs has, on ecraven's set, the way his published tables
 do. `nix develop .#bench` is the default shell plus Chez Scheme (with
 chez-srfi), Racket, Chicken (with the r7rs egg), Guile and Gauche; chibi is in
-both. Our native launcher is a column too, so build it first, for this
-machine (it isn't built remotely). One command then runs everything and
-writes the page and its data (`docs/benchmarks.json`):
+both. Our native launcher is a column too, so build it first, here and for
+this machine (design.md D17). One command then runs everything and writes
+the page and its data (`docs/benchmarks.json`):
 
 ```
 bazel build --config=local //:scheme-native
@@ -249,8 +249,9 @@ run it while it is quiet, as for `bench-check` (Thresholds, below), and say
 how loaded it was with `--note`.
 
 How long it takes: the committed report (`--scale 0.1 --interpreter-timeout
-60`, every program) took 80 minutes on a quiet 16-core machine, most of it
-chibi's and our interpreter's timeouts and the programs whose count is 1;
+60`, every program) took 89 minutes on a 16-core machine shared with other
+agents (80 on a quiet one, before the native column), most of it chibi's and
+our interpreter's timeouts and the programs whose count is 1;
 twelve programs at the same scale take about 25 minutes. With the programs'
 own counts, expect several hours. The live-heap run doubles our JIT's share of
 that (with one iteration, both of our JIT's runs of every program took 8
