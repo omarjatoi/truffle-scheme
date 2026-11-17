@@ -125,6 +125,38 @@ full R7RS-small conformance comes first.
   count as iterations of a loop of the root it is in (`LoopNode.reportLoopCount`),
   as a self tail call's jump does, so a procedure called a few times whose sites
   perform many tail calls is compiled.
+- **The trampoline's loop is a Truffle loop.** The tail calls after the first run
+  in a `LoopNode` of the site's (`Trampoline.TailCallLoop`), whose state, the
+  next tail call, is in an auxiliary slot of the frame (a slot the root's
+  trampolines share: one runs at a time in a frame). So a long loop in a
+  procedure entered once, such as a benchmark harness's loop, which performs
+  every tail call of a CPS program, is compiled by Truffle's on-stack
+  replacement once it passes `OSRCompilationThreshold` (100,352 iterations),
+  with the site's caches inlined, and its iterations count toward compiling the
+  root as before. A call outside the site's own (`raise` for an error) still
+  trampolines in a Java loop.
+  - *Why.* As a Java loop in the call operation, it ran in host code for as long
+    as the procedure did, as fast as HotSpot had compiled it, and that depended
+    on the host profile. The JIT warm-up (D17) ran `Trampoline.run` thousands of
+    times with no tail call ever coming back, so HotSpot compiled it with the
+    loop pruned; in `cpstak`, whose first iteration performs its 815 million
+    tail calls in one call of the harness's trampoline, which started in
+    HotSpot's interpreter, every OSR compilation of the loop HotSpot then asked
+    for failed ("OSR entry point wasn't parsed", 505,507 times in 67 s), and the
+    loop stayed interpreted: the first iteration took 72 s instead of 15.
+  - *What it gives.* `cpstak` (its own count, 3 iterations in a fresh JVM,
+    `-Xmx2g`, the serial collector, an Apple M3 Max; 2 interleaved rounds):
+    11.2-11.4, 10.7-10.8 and 10.5 s an iteration, 33 s in all, against 71-89,
+    18.4-18.5 and 10.1 s, 100-118 s in all (15.2 s first without the warm-up).
+    The second iteration was still `main`'s host-run loop, after the warm-up's
+    profile, and is compiled now. Before the later tail calls' cache held 8
+    (M8-05), the compiled loop called `cpstak`'s five procedures indirectly at
+    16-19 s an iteration. On the 24 programs of M8-03 with `takl` and `graphs`
+    (the report's counts, G1, 3 interleaved rounds, medians), with that cache at
+    8 on both sides, the first iteration's geometric mean was 1.013 times, the
+    steady state's 0.997, whole processes' 1.004 (at 4: 0.980, 0.995, 0.994):
+    noise. In the interpreter (7 programs, 5 rounds), 1.002 times: a root whose
+    trampolines loop has an auxiliary slot, an array more in each of its frames.
 - **No uncached interpreter (M8-04).** *Rejected:* the Bytecode DSL's uncached
   tier (`enableUncachedInterpreter`), which runs a root without allocating the
   cached tier's nodes or quickening until it has been entered or looped 16 times.
@@ -192,6 +224,10 @@ full R7RS-small conformance comes first.
     gets its value in a `Resumption` that its `Resumed` empties: the driver's
     Java frames and the continuation root's arguments stay on the stack while
     the program goes on.
+  - *The trampoline's loop.* The next tail call waits in the frame's auxiliary
+    slot ("The trampoline's loop is a Truffle loop", above), which the loop
+    clears as it makes the call, and `Trampoline.run` lets go of it once it is
+    there.
   - Not covered: an operand already on the operand stack (the procedure of a
     call that runs) stays there until the call returns.
 
@@ -1437,6 +1473,18 @@ Each entry: the decision, why, and what was rejected.
     state). A larger warm-up (20,000 calls of two procedures, to reach the
     second tier too) did less (0.955 times against 0.925): it holds a core
     longer.
+  - *Its host profile.* The warm-up runs the interpreter's host code in the
+    program's JVM, so HotSpot can compile a method from the warm-up's profile
+    before the program uses it its own way. A Java loop that the warm-up never
+    iterated, entered once by the program for a long time, then couldn't be
+    OSR-compiled: the trampoline's loop, which made `cpstak`'s first iteration
+    five times as slow (72 s instead of 15) until it became a Truffle loop
+    ("Calls and tail calls"). It was the only program found: across 31 others
+    (the 24 above, `takl`, `graphs`, `ack`, `divrec`, `primes`, `nqueens`,
+    `destruc`; 2 interleaved rounds, the warm-up on against off), none had a
+    slower first iteration beyond noise, and the warm-up's geometric means were
+    0.947 times (first iteration), 1.006 (steady state) and 0.975 (whole
+    process).
 - **The collector (M8-05).** The JVM launcher (`bazel-bin/scheme`, and so the
   benchmark harness, which runs it) starts the JVM with the serial collector,
   `-XX:+UseSerialGC`, unless its JVM options already choose one (`tests/harness/harness.py`,

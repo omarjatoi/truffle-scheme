@@ -266,6 +266,7 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
                         @Cached("procedure.callTarget") RootCallTarget cachedTarget,
                         @Cached("create(cachedTarget)") DirectCallNode callNode,
                         @Bind SchemeRootNode caller,
+                        @Bind VirtualFrame frame,
                         @Shared @Cached InlinedBranchProfile checked,
                         @Shared @Cached InlinedBranchProfile spilled) {
             arguments[0] = procedure;
@@ -278,7 +279,7 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
             context.stackUse = nested;
             handOffArguments(context, arguments);
             try {
-                return tortured(trampoline.run(callNode.call(arguments)), cachedTarget, context);
+                return tortured(trampoline.run(frame, callNode.call(arguments)), cachedTarget, context);
             } catch (SchemeError e) {
                 return raiseHere(e, context, trampoline);
             } finally {
@@ -292,6 +293,7 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
                         @Shared @Cached Trampoline trampoline,
                         @Cached("trampoline.megamorphic()") IndirectCallNode callNode,
                         @Bind SchemeRootNode caller,
+                        @Bind VirtualFrame frame,
                         @Shared @Cached InlinedBranchProfile checked,
                         @Shared @Cached InlinedBranchProfile spilled) {
             arguments[0] = procedure;
@@ -304,7 +306,7 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
             context.stackUse = nested;
             handOffArguments(context, arguments);
             try {
-                return tortured(trampoline.run(callNode.call(procedure.callTarget, arguments)), procedure.callTarget, context);
+                return tortured(trampoline.run(frame, callNode.call(procedure.callTarget, arguments)), procedure.callTarget, context);
             } catch (SchemeError e) {
                 return raiseHere(e, context, trampoline);
             } finally {
