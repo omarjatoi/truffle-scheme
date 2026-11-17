@@ -764,7 +764,13 @@ Each entry: the decision, why, and what was rejected.
     0–255); literal ones are read-only (R7RS §3.4). Zero or several values
     are a read-only array. Lists are iterables (`hasIterator`), walked lazily
     up to the first non-pair; `'()` is null *and* an empty iterable, the
-    unspecified value is null. Records are objects with their fields as
+    unspecified value is null. A pair is also an object with the members
+    `car` and `cdr` (`hasMembers` *and* `hasIterator`), so Java sees an
+    improper list's last cdr, which the iterator leaves out. They are
+    writable, since `set-car!` and `set-cdr!` can write any pair: pairs carry
+    no literal flag (D1). Having members, a pair converts to a `Map` (of the
+    two) where the host asks for an `Object`; `as(Iterable.class)` still
+    gives its elements. Records are objects with their fields as
     read-only members.
   - Procedures are executables. Each `execute` runs the procedure under a
     root prompt of its own, as a program or REPL input runs (D6), so tail

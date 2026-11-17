@@ -14,6 +14,8 @@ import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.PolyglotException;
@@ -160,6 +162,45 @@ public class EmbeddingTest {
             assertEquals(1, it.getIteratorNextElement().asInt());
             eval(context, "(set-car! (cdr mutable) 20)");
             assertEquals(20, it.getIteratorNextElement().asInt());
+        }
+    }
+
+    /**
+     * A pair is also an object whose members are car and cdr, so Java sees an improper list's last
+     * cdr, which the iterator leaves out; both are writable, as set-car! and set-cdr! write them.
+     */
+    @Test
+    public void pairsHaveCarAndCdrMembers() {
+        try (Context context = context()) {
+            Value improper = eval(context, "'(1 2 . 3)");
+            assertTrue(improper.hasIterator());
+            assertTrue(improper.hasMembers());
+            assertEquals(Set.of("car", "cdr"), improper.getMemberKeys());
+            assertEquals(1, improper.getMember("car").asInt());
+            Value second = improper.getMember("cdr");
+            assertEquals(2, second.getMember("car").asInt());
+            assertEquals(3, second.getMember("cdr").asInt());
+            assertFalse(improper.hasMember("cadr"));
+            assertNull(improper.getMember("cadr"));
+            // Neither 3 nor the empty list is a pair: no members.
+            assertFalse(second.getMember("cdr").hasMembers());
+            assertFalse(eval(context, "'()").hasMembers());
+            // Writable, and Scheme sees the writes.
+            Value pair = eval(context, "(define p (list 1 2)) p");
+            pair.putMember("car", "one");
+            pair.getMember("cdr").putMember("cdr", 3);
+            assertEquals("(\"one\" 2 . 3)", eval(context, "p").toString());
+            assertThrows(UnsupportedOperationException.class, () -> pair.putMember("cadr", 1));
+            // As a Java Object (a host method's Object parameter), a pair is a Map of its members,
+            // as any object with members is; as an Iterable, it is its elements.
+            Value list = eval(context, "(list 1 2)");
+            assertTrue(list.as(Object.class) instanceof Map<?, ?> map && map.keySet().equals(Set.of("car", "cdr")));
+            List<Long> items = new ArrayList<>();
+            for (Long item : list.as(new TypeLiteral<Iterable<Long>>() {
+            })) {
+                items.add(item);
+            }
+            assertEquals(List.of(1L, 2L), items);
         }
     }
 

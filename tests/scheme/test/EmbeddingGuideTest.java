@@ -119,6 +119,8 @@ public class EmbeddingGuideTest {
                 items.add(iterator.getIteratorNextElement().asInt());
             }
             assertEquals(List.of(1, 2, 3), items);
+            Value improper = context.eval("scheme", "'(1 2 . 3)");
+            assertEquals(3, improper.getMember("cdr").getMember("cdr").asInt());
 
             Value point = context.eval("scheme", """
                             (define-record-type point (make-point x y) point? (x point-x) (y point-y))
