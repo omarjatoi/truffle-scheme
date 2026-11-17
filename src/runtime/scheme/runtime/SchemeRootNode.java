@@ -603,8 +603,17 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
      * code releases. A call whose array no compiled prologue releases leaves a stale one, which the
      * next call replaces; one that isn't this call's is left alone (clearing a stale one is
      * harmless: its call is past its prologue).
+     *
+     * <p>Only in the root of a compilation: only an interpreted caller hands an array over, and its
+     * call enters the callee's compiled code at its root. A prologue inlined into compiled code was
+     * called from compiled code, whose arguments are its own, and its check of the hand-off would
+     * be a load and a branch on every inlined call that the compiler can't remove: it made
+     * {@code quicksort} 1.36 times and {@code triangl} 1.21 times slower (plan.md M9-02).
      */
     static void releaseArguments(SchemeContext context, Object[] arguments) {
+        if (!CompilerDirectives.inCompilationRoot()) {
+            return;
+        }
         Object[] original = context.callArguments;
         if (original != null) {
             context.callArguments = null;
