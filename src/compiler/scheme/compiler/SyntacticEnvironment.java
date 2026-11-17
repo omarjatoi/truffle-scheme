@@ -88,6 +88,17 @@ public final class SyntacticEnvironment {
         list.add(new Entry(scopes, binding));
     }
 
+    /** The symbol's binding with exactly these scopes, or null. */
+    @TruffleBoundary
+    Object bindingWith(SSymbol name, ScopeSet scopes) {
+        for (Entry entry : candidates(name)) {
+            if (entry.scopes().equals(scopes)) {
+                return entry.binding();
+            }
+        }
+        return null;
+    }
+
     /** Every symbol's bindings, for {@link PreludeImage}. */
     Map<SSymbol, List<Entry>> entries() {
         return entries;

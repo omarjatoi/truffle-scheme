@@ -93,6 +93,8 @@ public final class Expander {
     private boolean frozenTop;
     /** The scopes of an identifier written at this unit's top level, not introduced by a macro. */
     private final ScopeSet unitScopes;
+    /** The cells this unit's top-level definitions bind. */
+    private final Set<GlobalCell> defined = new HashSet<>();
 
     Expander(SymbolTable symbols, GlobalEnvironment namespace, SyntacticEnvironment top, Scope topScope, Libraries libraries, SourceDir dir) {
         this.symbols = symbols;
@@ -621,9 +623,31 @@ public final class Expander {
         List<Object> f = list(form);
         for (Object set : f.subList(1, f.size())) {
             for (Map.Entry<SSymbol, Object> e : libraries.importSet(set, this).entrySet()) {
-                top.bind(e.getKey(), ScopeSet.EMPTY.add(topScope), e.getValue());
+                bindImport(e.getKey(), e.getValue(), set);
             }
         }
+    }
+
+    /**
+     * Binds an imported name at this unit's top level. R7RS §5.2: "In a program or library
+     * declaration, it is an error to import the same identifier more than once with different
+     * bindings ... However, a REPL should permit these actions": a syntax error, except in the
+     * interaction environment, where the last import wins (design.md D18).
+     */
+    void bindImport(SSymbol name, Object binding, Object set) {
+        ScopeSet scopes = ScopeSet.EMPTY.add(topScope);
+        if (!top.isInteraction(namespace)) {
+            Object old = top.bindingWith(name, scopes);
+            if (old != null && old != binding) {
+                throw syntax("imports " + name + (old instanceof GlobalCell c && namespace.owns(c) ? ", which it defines" : " twice, with different bindings"), set);
+            }
+        }
+        top.bind(name, scopes, binding);
+    }
+
+    /** Whether a top-level definition of this unit binds the cell (a library's exports, R7RS §5.6.1). */
+    boolean defines(GlobalCell cell) {
+        return defined.contains(cell);
     }
 
     /**
@@ -928,6 +952,11 @@ public final class Expander {
                 throw syntax("syntax-rules is only allowed as a transformer", form);
             case SYNTAX_ERROR:
                 throw syntaxErrorForm(f, form);
+            case ELSE:
+            case ARROW:
+            case ELLIPSIS:
+            case UNDERSCORE:
+                throw syntax(c.keyword + " is auxiliary syntax, which only a macro's pattern can use", form);
             default:
                 throw new IllegalStateException("unhandled core form " + c);
         }
@@ -1510,6 +1539,7 @@ public final class Expander {
                             top.bind(name, scopes(def.id()), cell);
                         }
                     }
+                    defined.add(cell);
                     items.add(new Object[]{cell, def.value(), name.toString()});
                 } else if (binding == CoreForm.DEFINE_SYNTAX) {
                     Object[] def = parseDefineSyntax(form);
