@@ -415,9 +415,9 @@ final class ListVectorPrimitives {
      * {@code (memq obj list)}, {@code memv}, and {@code member} without a predicate ({@code %member},
      * lists-vectors.scm); with {@code alist}, {@code assq}, {@code assv} and {@code assoc}'s
      * {@code %assoc}. The first sublist (or pair) whose element (or key) is the same as obj, or #f.
-     * As before, an improper list ends the search. A circular list without obj is an error (R7RS
-     * §6.4: the argument is a list), raised instead of searching forever: Floyd's cycle check, as in
-     * {@link Length}.
+     * The argument is a list (R7RS §6.4), so one without obj that is improper or circular is an error
+     * (design.md D9): raised at the tail, or, for a cycle, instead of searching forever (Floyd's cycle
+     * check, as in {@link Length}).
      */
     static final class Member extends PrimitiveNode {
         static final int EQ = 0;
@@ -462,6 +462,9 @@ final class ListVectorPrimitives {
                         throw Lists.notAProperList(who, list);
                     }
                 }
+            }
+            if (rest != SConstant.EMPTY_LIST) {
+                throw Lists.notAProperList(who, list);
             }
             return false;
         }

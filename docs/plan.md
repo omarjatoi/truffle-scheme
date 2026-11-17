@@ -50,7 +50,7 @@ listed in `tests/r7rs-larceny/README.md`.
 | (scheme cxr) | 28 | 28 | 0 |
 | (scheme eval) | 5 | 5 | 0 |
 | (scheme file) | 75 | 75 | 0 |
-| (scheme inexact) | 592 | 592 | 0 |
+| (scheme inexact) | 590 | 592 | 2 |
 | (scheme lazy) | 33 | 33 | 0 |
 | (scheme load) | 4 | 4 | 0 |
 | (scheme read) | 44 | 44 | 0 |
@@ -63,7 +63,7 @@ listed in `tests/r7rs-larceny/README.md`.
 | (scheme process-context) --test-emergency-exit 37 | 3 | 3 | 0 |
 | (scheme process-context) --test-exit | 3 | 3 | 0 |
 | (scheme process-context) --test-exit 46 | 3 | 3 | 0 |
-| **Total** | **2162** | **2166** | **4** |
+| **Total** | **2160** | **2166** | **6** |
 <!-- status:end -->
 
 ---

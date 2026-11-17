@@ -81,6 +81,8 @@ fails for any other reason is a bug.
 | `base` | `a` | `#(1 2 1 2 3)`, the vector after that truncated copy (we leave it unchanged) | the same |
 | `base` | `(bytevector-u8-ref (make-bytevector 10 -1) 9)` | 255: the fill is taken modulo 256 | §6.9: "A byte is an exact integer in the range from 0 to 255 inclusive", and `make-bytevector`'s fill is a byte; §1.3.3: "it is an error for a procedure to be presented with an argument that it is not specified to handle" |
 | `base` | `(bytevector-u8-ref (make-bytevector 10 -128) 9)` | 128, the same way | the same |
+| `inexact` | `(/ 1.0 0)` | `+inf.0`: IEEE division by the zero made inexact | §6.2.6 `/`: "It is an error if any argument of / other than the first is an exact zero." (here 0) |
+| `inexact` | `(/ 0.0 0)` | `+nan.0`, the same way | the same |
 
 ## Re-vendoring
 

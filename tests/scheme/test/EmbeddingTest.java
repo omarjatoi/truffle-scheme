@@ -93,7 +93,7 @@ public class EmbeddingTest {
             assertFalse(complex.isNumber());
             assertEquals("1+2i", complex.toString());
             assertEquals("number", complex.getMetaObject().getMetaSimpleName());
-            assertEquals("+inf.0", eval(context, "(/ 1.0 0)").toString());
+            assertEquals("+inf.0", eval(context, "(/ 1.0 0.)").toString());
             assertEquals("-0.0", eval(context, "-0.0").toString());
         }
     }

@@ -46,6 +46,55 @@ public class NumbersTest {
         assertEquals("#t", write("(= 1/2 0.5)"));
     }
 
+    /**
+     * R7RS §6.2.6: "It is an error if any argument of / other than the first is an exact zero", an
+     * inexact other argument included (the §6 audit's follow-up; design.md D9). A zero that is
+     * inexact divides as IEEE does, and an exact zero dividend is fine.
+     */
+    @Test
+    public void divisionByAnExactZeroRaises() {
+        String[] errors = {"(/ 1. 0)", "(/ 0. 0)", "(/ -inf.0 0)", "(/ +nan.0 0)", "(/ 1 2. 0)", "(/ 1. 2 0 3)", "(/ 1.5+2i 0)", "(/ 3 0)", "(/ 0)", "(apply / '(1. 0))"};
+        for (String e : errors) {
+            assertEquals(e, "(\"/: division by zero\" ())", write("(guard (e ((error-object? e) (list (error-object-message e) (error-object-irritants e)))) " + e + ")"));
+        }
+        assertEquals("(+inf.0 -inf.0 +nan.0 0.0 0 +inf.0 -inf.0 0.5)", write("(list (/ 1. 0.) (/ -1 0.) (/ 0 0.) (/ 0 2.) (/ 0 5) (/ 0.) (/ 1. 0.25 -0.) (/ 1 2.))"));
+    }
+
+    /**
+     * The typed {@code Div} operation's flonum path (M7-03) is untouched by that check: an exact zero
+     * divisor is a fixnum, which only the generic path (the primitive's) takes. A site that has seen
+     * only flonums keeps only its flonum specialization, and raises at an exact zero.
+     */
+    @Test
+    public void flonumDivisionKeepsItsFastPath() {
+        try (Context context = Context.newBuilder("scheme").build()) {
+            ResultProbe probe = context.getEngine().getInstruments().get(ResultProbe.ID).lookup(ResultProbe.class);
+            context.eval("scheme", "(define (site a b) (car (list (/ a b))))");
+            for (int i = 0; i < 3; i++) {
+                assertEquals(0.75, context.eval("scheme", "(site 1.5 2.)").asDouble(), 0);
+                assertEquals(Double.POSITIVE_INFINITY, context.eval("scheme", "(site 1.5 0.)").asDouble(), 0);
+            }
+            context.eval(Source.newBuilder("scheme", "site", ResultProbe.SOURCE).buildLiteral());
+            BytecodeRootNode root = (BytecodeRootNode) ((SClosure) probe.last).callTarget.getRootNode();
+            assertEquals(List.of("c.Div$Double"), divisions(root));
+            assertEquals("error", context.eval("scheme", "(guard (e ((error-object? e) 'error)) (site 1.5 0))").toString());
+            // The exact zero took the generic path: the site now has both.
+            assertEquals(List.of("c.Div"), divisions(root));
+            assertEquals(0.75, context.eval("scheme", "(site 1.5 2.)").asDouble(), 0);
+        }
+    }
+
+    /** The names of {@code root}'s {@code Div} instructions, as the interpreter has quickened them. */
+    private static List<String> divisions(BytecodeRootNode root) {
+        List<String> names = new ArrayList<>();
+        for (Instruction instruction : root.getBytecodeNode().getInstructions()) {
+            if (instruction.getName().startsWith("c.Div")) {
+                names.add(instruction.getName());
+            }
+        }
+        return names;
+    }
+
     @Test
     public void predicates() {
         assertEquals("(#t #t #f #t #t #f)", write("(list (integer? 2) (integer? 2.0) (integer? 1/2) (rational? 1/2) (real? 1.5) (exact? 1.5))"));
