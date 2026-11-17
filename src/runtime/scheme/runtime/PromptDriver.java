@@ -85,14 +85,17 @@ final class PromptDriver extends Node {
     }
 
     /**
-     * Continues a prompt with {@code tag}: {@code first} is what its body produced, and
+     * Continues a prompt with {@code tag}: {@code value} is what its body produced, and
      * {@code initialPending} the segments still to resume. Returns the prompt's value.
      * {@code frame} is the prompt root's: the driver keeps the pending segments in it for tools.
+     *
+     * <p>No Java local keeps what the program has gone on with (design.md "Tail calls keep nothing
+     * alive"): {@code value} is overwritten by each step's result, a capture's value is taken from
+     * it, and a resumed frame gets its value in a {@link Resumption}, which it empties.
      */
-    Object run(VirtualFrame frame, Object tag, Object first, SegmentList initialPending, SchemeContext context) {
+    Object run(VirtualFrame frame, Object tag, Object value, SegmentList initialPending, SchemeContext context) {
         DynEnv promptEnv = context.getDynamicEnv();
         SegmentList pending = initialPending;
-        Object value = first;
         while (true) {
             try {
                 if (value instanceof PendingRaise r) {
@@ -116,7 +119,7 @@ final class PromptDriver extends Node {
                         case REINSTATE: {
                             // Composable continuation: its segments go on top of the invoker's.
                             pending = SegmentList.concat(capture.continuation.segments, capture.segmentsBefore(pending));
-                            value = capture.value;
+                            value = capture.takeValue();
                             continue;
                         }
                         case TORTURE: {
@@ -133,7 +136,7 @@ final class PromptDriver extends Node {
                                 context.shareSegments();
                             }
                             pending = capture.segmentsBefore(pending);
-                            value = capture.value;
+                            value = capture.takeValue();
                             continue;
                         }
                         case SPILL: {
@@ -146,7 +149,7 @@ final class PromptDriver extends Node {
                             // Only this driver holds the spilled frames: it resumes them in place.
                             capture.claim(context);
                             pending = capture.segmentsBefore(pending);
-                            Object[] arguments = (Object[]) capture.value;
+                            Object[] arguments = (Object[]) capture.takeValue();
                             frame.setObject(PENDING_SLOT, pending);
                             value = callWithProcedure(arguments[0], arguments);
                             continue;
@@ -227,7 +230,9 @@ final class PromptDriver extends Node {
                     pending = pending.tail;
                     if (head instanceof Capture.Segment segment) {
                         frame.setObject(PENDING_SLOT, pending);
-                        value = resume(segment, value, context);
+                        Resumption resumption = new Resumption(value);
+                        value = null;
+                        value = resume(segment, resumption, context);
                     }
                     // A PromptMarker: that prompt returns the value normally.
                 }
@@ -277,7 +282,7 @@ final class PromptDriver extends Node {
      * own one-shot resume does: nothing can reach the segment any more, so it is never resumed
      * again, and the frame goes on to suspend into a new segment if it suspends again.
      */
-    private Object resume(Capture.Segment segment, Object value, SchemeContext context) {
+    private Object resume(Capture.Segment segment, Resumption value, SchemeContext context) {
         if (segment.isOwned(context)) {
             context.inPlaceResumes++;
             if (SchemeRootNode.TORTURE) {
@@ -523,17 +528,17 @@ final class PromptDriver extends Node {
     /** Resumes a segment through a DirectCallNode cache keyed on its ContinuationRootNode (M0-02, M0-03). */
     @GenerateInline(false)
     abstract static class ResumeNode extends Node {
-        abstract Object execute(ContinuationRootNode root, MaterializedFrame frame, Object value);
+        abstract Object execute(ContinuationRootNode root, MaterializedFrame frame, Resumption value);
 
         @Specialization(guards = "root == cachedRoot", limit = "8")
-        static Object doDirect(@SuppressWarnings("unused") ContinuationRootNode root, MaterializedFrame frame, Object value,
+        static Object doDirect(@SuppressWarnings("unused") ContinuationRootNode root, MaterializedFrame frame, Resumption value,
                         @Cached("root") ContinuationRootNode cachedRoot,
                         @Cached("create(cachedRoot.getCallTarget())") DirectCallNode callNode) {
             return callNode.call(frame, value);
         }
 
         @Specialization(replaces = "doDirect")
-        static Object doIndirect(ContinuationRootNode root, MaterializedFrame frame, Object value,
+        static Object doIndirect(ContinuationRootNode root, MaterializedFrame frame, Resumption value,
                         @Cached IndirectCallNode callNode) {
             return callNode.call(root.getCallTarget(), frame, value);
         }

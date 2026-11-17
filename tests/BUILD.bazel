@@ -156,11 +156,42 @@ space_test(
     module = "//:launcher_module",
 )
 
+# R7RS §3.5: tail loops over a lazily built list (or a stream of promises) under a heap the list
+# would overflow, so a tail call must keep nothing of the frames it replaces: the first call's
+# arguments, the variables of a let it is in tail position of, the frame on-stack replacement
+# entered from. Compiled at once and under both kinds of torture too, whose captures must keep
+# nothing either.
+[space_test(
+    name = "space_tail_lazy_" + shape,
+    src = "space/tail-lazy-%s.scm" % shape,
+    expect = "3000000",
+    limits = "-Xss256k -Xmx32m",
+    module = "//:launcher_module",
+    all_modes = True,
+) for shape in ["loop", "mutual", "paths", "promise", "self", "spill"]]
+
+# The same, with the procedures called (and compiled) before, and through apply and call/cc.
+space_test(
+    name = "space_tail_lazy_warm",
+    src = "space/tail-lazy-warm.scm",
+    expect = "12000000",
+    limits = "-Xss256k -Xmx32m",
+    module = "//:launcher_module",
+    all_modes = True,
+)
+
 test_suite(
     name = "space",
     tests = [
         ":space_deep_recursion_1m",
         ":space_loop_10m",
+        ":space_tail_lazy_loop",
+        ":space_tail_lazy_mutual",
+        ":space_tail_lazy_paths",
+        ":space_tail_lazy_promise",
+        ":space_tail_lazy_self",
+        ":space_tail_lazy_spill",
+        ":space_tail_lazy_warm",
     ],
 )
 

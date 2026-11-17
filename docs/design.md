@@ -148,6 +148,52 @@ full R7RS-small conformance comes first.
   profile, so a fixnum parameter is an unboxed `long` as with a `StoreLocal`.
   It replaces `CheckArity` and a load and a store per parameter. A rest
   parameter, or more than 31 parameters, keeps those.
+- **Tail calls keep nothing alive.** A tail call replaces the frame it is made
+  from (R7RS §3.5), so nothing of that frame may stay reachable while the call
+  runs: not its variables, nor the arguments it was called with. A tail loop
+  over a lazily built list (a stream of promises, SRFI 45's traversal) would
+  otherwise keep every element it has forced, and run out of heap. What kept
+  them, and what doesn't any more (`tests/space/tail-lazy-*`, under a 32 MB
+  heap, interpreted, compiled and under both tortures):
+  - *The first call's arguments.* A procedure's argument array is its
+    caller's: a call site's variadic array, a trampoline's or a driver's
+    `TailCall`, which their Java frames hold until the procedure returns, and a
+    loop (a self tail call's jump, a contified loop) never does. The prologue
+    clears each argument once bound (`BindArguments`, `ReleaseArguments`); only
+    the closure, argument 0, is read after it, and tools read the parameters'
+    locals. Compiled code works on a copy of the array (Truffle's argument type
+    profile), so an interpreted call site or trampoline also hands the array
+    over in `SchemeContext.callArguments`, and a compiled prologue clears that
+    one too if its arguments were copied from it. A compiled caller's frame
+    keeps nothing it no longer uses, and storing the array from compiled code
+    would make it escape where it can otherwise stay virtual (that made `fib`
+    2.4 times slower); an interpreted prologue's array is the caller's. A
+    control primitive that returns a `TailCall` (`apply`'s list) clears its
+    arguments the same way. In the interpreter alone, this costs `fib` about 5%.
+  - *The variables of the lets a call is in tail position of.* In
+    `(display (let ((h (from 0))) (walk h n)))`, `(walk h n)` is a non-tail call
+    of the root but a tail call of the let's body, made from inside the let's
+    block: its last operand clears `h` once evaluated (`ThenClear`). Entering a
+    contified loop, whose `While` runs inside the blocks of the lets around it,
+    clears their variables, and the root's parameters, that the loop's body
+    doesn't use. (A jump back to a loop's start leaves the blocks of the lets
+    it is in, and the Bytecode DSL clears a block's locals when it is left, so
+    an earlier iteration's are gone even if no later one binds them again:
+    `tail-lazy-paths`.) A cleared variable is gone from the debugger's view of
+    the frame, as it is dead.
+  - *The frame on-stack replacement started from.* OSR runs a loop in a copy of
+    the interpreter's frame, which Truffle keeps, unchanged, until the loop
+    ends. The loop's condition, `LoopHead`, clears it on the compiled loop's
+    first iteration: the OSR frame's arguments end with it. (OSR runs in the
+    frame itself once the frame has been materialized, as torture does.)
+  - *What a prompt's driver holds.* A capture's value is taken from it
+    (`Capture.takeValue`), and its segment list let go once handed over: a
+    suspended frame's stale operand slot may hold the capture. A resumed frame
+    gets its value in a `Resumption` that its `Resumed` empties: the driver's
+    Java frames and the continuation root's arguments stay on the stack while
+    the program goes on.
+  - Not covered: an operand already on the operand stack (the procedure of a
+    call that runs) stays there until the call returns.
 
 ### Continuations: a segmented stack
 
