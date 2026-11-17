@@ -1,11 +1,11 @@
 """The repository's commands: `bazel run //:r7rs -- <command> ...` (AGENTS.md "Commands").
 
-  test [section] [--suite S] [--compile] [--torture] [--native FILE] [-v] [--markdown FILE]
+  test [section] [--suite S] [--compile] [--torture|--torture-owned] [--native FILE] [-v] [--markdown FILE]
                      the conformance suites, per section (ad hoc; the checks are the tests)
   conformance-report [--markdown FILE]
                      the conformance tests' last results, a table per suite
   status [--check]   rewrite (or check) the status block in docs/plan.md
-  diff FILE [--compile] [--torture]
+  diff FILE [--compile] [--torture|--torture-owned]
                      a program under chibi-scheme and under ours: same stdout and exit status?
   format             the Eclipse formatter over src/ and tests/
   tools NAME         one of the tools' smoke tests (tools.py), e.g. terminal
@@ -54,8 +54,8 @@ def _diff_text(expected, actual, from_name, to_name):
 
 
 def diff(o):
-    """A program under chibi-scheme and under ours, interpreted (and under torture with --torture):
-    stdout and exit status must be the same. The tests are tests/driver's Diff."""
+    """A program under chibi-scheme and under ours, interpreted (and under torture with --torture or
+    --torture-owned): stdout and exit status must be the same. The tests are tests/driver's Diff."""
     file = resolve(o.file)
     check(exists(file), f'no such file: {file}')
     chibi_rc, chibi_out, chibi_err = harness.run_chibi(rlocation(o.chibi), file)
@@ -75,7 +75,7 @@ def diff(o):
 
 
 # The conformance tests' modes (tests/harness/defs.bzl conformance_tests).
-_MODES = ('interpreter', 'compile', 'torture')
+_MODES = ('interpreter', 'compile', 'torture', 'torture_owned')
 
 
 def conformance_report(o):
@@ -139,7 +139,8 @@ def test(o):
     native = resolve(o.native) if o.native else None
     results = harness.run_conformance(Runtime.from_manifest(o.runtime), sections, compile=o.compile, torture=o.torture,
                                       jobs=1 if o.section else 4, native=native)
-    mode = ', '.join(m for m, on in (('--compile', o.compile), ('--torture', o.torture)) if on) or 'interpreter only'
+    mode = ', '.join(m for m, on in (('--compile', o.compile), ('--torture', o.torture is True), ('--torture-owned', o.torture == 'owned'))
+                     if on) or 'interpreter only'
     mode += ', native launcher' if native else ''
     markdown = []
     for suite in all_suites:
@@ -222,6 +223,7 @@ def main():
     p.add_argument('file')
     p.add_argument('--compile', action='store_true')
     p.add_argument('--torture', action='store_true')
+    p.add_argument('--torture-owned', dest='torture', action='store_const', const='owned', default=False)
     p = sub.add_parser('tools')
     p.add_argument('--programs', help='a program in tests/tools (default: the checkout\'s)')
     p.add_argument('name', choices=list(tools.SMOKE_TESTS))
@@ -231,6 +233,8 @@ def main():
     p.add_argument('--suite', choices=['all', 'chibi', 'larceny'], default='all')
     p.add_argument('--compile', action='store_true', help='compile immediately; compilation failures are errors')
     p.add_argument('--torture', action='store_true', help='capture + resume at every non-tail call')
+    p.add_argument('--torture-owned', dest='torture', action='store_const', const='owned', default=False,
+                   help='the same, but the captured frames stay owned, resumed in place (design.md "Owned segments")')
     p.add_argument('--native', metavar='FILE', help='through this native launcher (native-image)')
     p.add_argument('-v', '--verbose', action='store_true', help='also list failing tests')
     p.add_argument('--markdown', metavar='FILE', help='append a Markdown table to FILE')

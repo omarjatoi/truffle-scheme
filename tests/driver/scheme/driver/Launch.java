@@ -33,6 +33,8 @@ final class Launch {
                     "-Dpolyglot.engine.AllowExperimentalOptions=true",
                     "-Dpolyglot.engine.Compilation=false");
     static final String TORTURE_VM_ARG = "-Dscheme.torture=true";
+    /** With torture: its captures stay owned, so their frames are resumed in place (design.md "Owned segments"). */
+    static final String TORTURE_OWNED_VM_ARG = "-Dscheme.torture.owned=true";
     static final String LAUNCHER_MAIN = "scheme.launcher/scheme.launcher.SchemeMain";
 
     final String modulePath;
@@ -71,10 +73,6 @@ final class Launch {
         return value;
     }
 
-    boolean flag(String name) {
-        return "true".equals(options.get(name));
-    }
-
     /** A runfiles path, as `$(rlocationpath ...)` gives it. */
     static Path runfile(String path) {
         return Path.of(System.getenv("TEST_SRCDIR"), path);
@@ -84,11 +82,20 @@ final class Launch {
         return Files.readString(path, StandardCharsets.UTF_8);
     }
 
-    /** The JVM options of a mode: interpreted unless compiled, and under torture. */
-    static List<String> vmArgs(boolean compile, boolean torture) {
+    /**
+     * The JVM options of a mode: interpreted unless compiled, and under {@code torture}: null (none),
+     * "torture" (every capture shared) or "torture_owned" (captures owned, resumed in place).
+     */
+    static List<String> vmArgs(boolean compile, String torture) {
         List<String> args = new ArrayList<>(compile ? COMPILE_VM_ARGS : INTERPRETER_VM_ARGS);
-        if (torture) {
+        if (torture != null) {
             args.add(TORTURE_VM_ARG);
+            switch (torture) {
+                case "torture" -> {
+                }
+                case "torture_owned" -> args.add(TORTURE_OWNED_VM_ARG);
+                default -> throw fail("unknown torture mode " + torture);
+            }
         }
         return args;
     }

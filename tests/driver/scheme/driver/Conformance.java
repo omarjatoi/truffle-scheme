@@ -12,13 +12,14 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Test: one section of a conformance suite, interpreted, compiled or under torture, passes every
+ * Test: one section of a conformance suite, interpreted, compiled or under torture (either kind:
+ * {@link Launch#vmArgs}), passes every
  * test but the ones the suite lists as exceptions (tests/r7rs-larceny/README.md), and those fail.
  * Writes its counts to result.json among the test's outputs ({@code r7rs -- conformance-report}).
  *
  * <p>
  * {@code --module-path=JARS --suite=chibi|larceny --suite-dir=DIR --lib=DIR --section=ID
- * --mode=interpreter|compile|torture}
+ * --mode=interpreter|compile|torture|torture_owned}
  */
 public final class Conformance {
 
@@ -60,7 +61,7 @@ public final class Conformance {
         }
         runner.add(section.file().toString());
         boolean jit = suite.equals("larceny") && LARCENY_JIT.contains(section.id());
-        Launch.Result r = launch.run(Launch.vmArgs(mode.equals("compile") || jit, mode.equals("torture")),
+        Launch.Result r = launch.run(Launch.vmArgs(mode.equals("compile") || jit, mode.startsWith("torture") ? mode : null),
                         "scheme.launcher/scheme.launcher.ConformanceRunner", runner, null, Map.of(), 900);
         String output = r.out() + r.err();
 

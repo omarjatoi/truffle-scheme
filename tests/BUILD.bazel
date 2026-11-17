@@ -80,8 +80,9 @@ java_module_jar(
 )
 
 # `unit_<mode>_<Class>` for every *Test.java, in the modes jit (the Graal JIT in the background),
-# compile (compile immediately, failures are errors) and torture; `unit_<mode>` and `unit` group
-# them. Each class is its own library and module, so an edit to it reruns only its tests.
+# compile (compile immediately, failures are errors), torture and torture_owned (torture whose
+# captured frames stay owned, so they are resumed in place); `unit_<mode>` and `unit` group them.
+# Each class is its own library and module, so an edit to it reruns only its tests.
 unit_tests(
     name = "unit",
     kinds = {
@@ -117,7 +118,8 @@ scheme_java_library(
     spotbugs = False,
 )
 
-# tests/diff: `diff_<program>` and `diff_torture_<program>`, against chibi-scheme.
+# tests/diff: `diff_<program>`, `diff_torture_<program>` and `diff_torture_owned_<program>`, against
+# chibi-scheme.
 diff_tests(
     name = "diff",
     srcs = glob(["diff/*.scm"]),
@@ -200,10 +202,10 @@ LARCENY_SECTIONS = [
     "process-context-exit-46",
 ]
 
-# `conformance_<suite>_<section>`, `conformance_compile_<suite>_<section>` and
-# `conformance_torture_<suite>_<section>`: each section passes, interpreted, compiled and under
-# torture, but for the listed exceptions. `conformance_status`: docs/plan.md's status block is
-# what they check.
+# `conformance_<suite>_<section>`, `conformance_compile_<suite>_<section>`,
+# `conformance_torture_<suite>_<section>` and `conformance_torture_owned_<suite>_<section>`: each
+# section passes, interpreted, compiled and under both tortures, but for the listed exceptions.
+# `conformance_status`: docs/plan.md's status block is what they check.
 conformance_tests(
     name = "conformance",
     module = "//:launcher_module",

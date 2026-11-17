@@ -16,6 +16,9 @@ _UNIT_MODES = {
         "-Dpolyglot.engine.CompilationFailureAction=Throw",
     ], "large", []),
     "torture": (["-Dscheme.torture=true"], "medium", ["cpu:2"]),
+    # Torture whose captures stay owned, so the frames are resumed in place (design.md "Owned
+    # segments"); what a continuation reaches is still copied and checked.
+    "torture_owned": (["-Dscheme.torture=true", "-Dscheme.torture.owned=true"], "medium", ["cpu:2"]),
 }
 
 def unit_tests(name, tests, support, kinds, resources = {}, extra_srcs = {}):

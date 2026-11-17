@@ -83,18 +83,19 @@ bazel test --test_tag_filters=lint //...  # just the static checks (CI: checks)
 bazel build //...                         # build everything (javac, warnings are errors)
 bazel test //tests:unit_jit               # JUnit in tests/scheme/test, Graal JIT in the background (a test per class)
 bazel test //tests:unit_compile           # same, compile immediately; failures are errors
-bazel test //tests:unit_torture           # same, capture + resume at every non-tail call
+bazel test //tests:unit_torture           # same, capture + resume (from copies) at every non-tail call
+bazel test //tests:unit_torture_owned     # same, but the captured frames stay owned: resumed in place
 bazel test //tests:unit_jit_ReaderTest    # one class in one mode
-bazel test //tests:conformance            # every suite section, interpreted, compiled and under torture; the status block
-bazel test //tests:conformance_larceny_base   # one section (conformance_compile_..., conformance_torture_... for the other modes)
-bazel test //tests:diff //tests:spec      # tests/diff vs chibi-scheme (and under torture); tests/spec
+bazel test //tests:conformance            # every suite section, interpreted, compiled and under both tortures; the status block
+bazel test //tests:conformance_larceny_base   # one section (conformance_compile_..., conformance_torture_..., conformance_torture_owned_...)
+bazel test //tests:diff //tests:spec      # tests/diff vs chibi-scheme (and under both tortures); tests/spec
 bazel test //tests:space //tests:tools    # tail loop and deep recursion under -Xss256k; the tools' smoke tests
 bazel test //src/runtime:all              # one project's static checks (format, checkstyle, ecj, spotbugs)
 bazel build //:scheme                     # the launcher: bazel-bin/scheme [-I dir]... [file.scm [arg]...]
 bazel-bin/scheme --dap file.scm           # with GraalVM's tools: --inspect, --dap, --cpusampler, --memtracer
 bazel run //:r7rs -- test                 # both conformance suites, interpreter only, a line per section
 bazel run //:r7rs -- test -v 6.10         # one section (chibi's 6.10, Larceny's base, ...), listing failing tests
-bazel run //:r7rs -- test --compile       # Graal JIT, compile immediately (also --torture, --suite larceny)
+bazel run //:r7rs -- test --compile       # Graal JIT, compile immediately (also --torture, --torture-owned, --suite larceny)
 bazel run //:r7rs -- status               # regenerate the status block in docs/plan.md
 bazel run //:r7rs -- conformance-report   # the conformance tests' last results, a table per suite
 bazel run //:r7rs -- diff path/to/file.scm   # run under chibi and under us; compare stdout + exit status
@@ -148,7 +149,9 @@ Benchmarks, the threshold check and the native image are local commands.
    continuation can reach is copied on every resume (`PromptDriver.resume`);
    only a segment the driver alone owns is resumed in place, once (design.md
    "Owned segments"). When in doubt, a segment is shared. Check: torture mode
-   resumes every shared segment twice.
+   resumes every shared segment twice; owned torture keeps its captures'
+   segments owned, so every non-tail call resumes in place, and fails if a
+   segment resumed in place is ever resumed again.
 4. **No Java recursion proportional to Scheme depth.** This includes the
    reader, printer, `equal?`, and the expander: use explicit stacks. Check:
    `tests/spec/deep-*`.

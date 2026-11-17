@@ -26,7 +26,9 @@ import com.oracle.truffle.api.library.ExportMessage;
  * reach the frames that suspended, so it resumes them in place until something shares them
  * ({@link Owner}, design.md "Owned segments").</li>
  * <li>{@link Kind#TORTURE}: torture mode (M2-06). A call returned {@link #value} normally; capture
- * up to the root prompt anyway, which resumes every frame from a copy with that value.</li>
+ * up to the root prompt anyway, which resumes every frame from a copy with that value. Under owned
+ * torture ({@link SchemeRootNode#TORTURE_OWNED}) the root prompt claims the frames as it claims a
+ * spill's, and resumes them in place until something shares them.</li>
  * </ul>
  *
  * <p>A procedure whose frame suspends returns it, so tools may see it as a return value; they show
@@ -61,10 +63,29 @@ public final class Capture implements TruffleObject {
     /**
      * One suspended frame: resumed by calling {@code root} with {@code frame}, or with a copy of it
      * once it is shared (design.md "Owned segments", AGENTS.md rule 3). {@code owner} is the token
-     * of the spill that suspended it, or null: a segment of any other capture is shared from the
-     * start.
+     * of the spill (or owned torture capture, {@link SchemeRootNode#TORTURE_OWNED}) that suspended
+     * it, or null: a segment of any other capture is shared from the start.
      */
-    public record Segment(ContinuationRootNode root, MaterializedFrame frame, Owner owner) {
+    public static final class Segment {
+        private final ContinuationRootNode root;
+        private final MaterializedFrame frame;
+        private final Owner owner;
+        /** Torture mode: whether a driver has resumed the original frame: then never again (rule 3). */
+        private boolean resumedInPlace;
+
+        Segment(ContinuationRootNode root, MaterializedFrame frame, Owner owner) {
+            this.root = root;
+            this.frame = frame;
+            this.owner = owner;
+        }
+
+        public ContinuationRootNode root() {
+            return root;
+        }
+
+        public MaterializedFrame frame() {
+            return frame;
+        }
 
         /**
          * Whether only the prompt driver that holds it can reach this segment, so that it may resume
@@ -80,6 +101,26 @@ public final class Capture implements TruffleObject {
             if (owner != null) {
                 owner.epoch = Owner.SHARED;
             }
+        }
+
+        /**
+         * Torture mode (AGENTS.md rule 3): the driver is about to resume this segment, from its
+         * original frame if {@code inPlace}, else from a copy. Once the original has been resumed,
+         * the segment must never be resumed again, either way: that would mean that something else
+         * (a continuation) could reach a segment the driver took for owned.
+         */
+        void checkResume(boolean inPlace) {
+            if (resumedInPlace) {
+                throw resumedAgain(inPlace);
+            }
+            resumedInPlace = inPlace;
+        }
+
+        @TruffleBoundary
+        private static IllegalStateException resumedAgain(boolean inPlace) {
+            // An internal error, never a Scheme error (design.md D8).
+            return new IllegalStateException("torture: a continuation segment resumed in place was resumed again, " + (inPlace ? "in place" : "from a copy") +
+                            " (AGENTS.md rule 3)");
         }
     }
 
@@ -123,7 +164,10 @@ public final class Capture implements TruffleObject {
     private SegmentList last;
     /** Whether {@link #segmentsBefore} has handed the list over: nothing may be added after. */
     private boolean handedOver;
-    /** For SPILL: the token of the segments its frames suspend into ({@link Segment#owner}). */
+    /**
+     * For SPILL, and TORTURE under owned torture: the token of the segments its frames suspend into
+     * ({@link Segment#isOwned}).
+     */
     private final Owner owner;
 
     private Capture(Kind kind, Object tag, Object receiver, DynEnv dynEnv, Continuation continuation, Object value) {
@@ -133,7 +177,7 @@ public final class Capture implements TruffleObject {
         this.dynEnv = dynEnv;
         this.continuation = continuation;
         this.value = value;
-        this.owner = kind == Kind.SPILL ? new Owner() : null;
+        this.owner = kind == Kind.SPILL || (kind == Kind.TORTURE && SchemeRootNode.TORTURE_OWNED) ? new Owner() : null;
     }
 
     public static Capture full(Object receiver, DynEnv dynEnv) {
@@ -201,8 +245,8 @@ public final class Capture implements TruffleObject {
     }
 
     /**
-     * A SPILL capture is complete at the root prompt, whose driver now alone holds its segments:
-     * they are owned until the epoch changes (design.md "Owned segments").
+     * A SPILL capture (or an owned torture one) is complete at the root prompt, whose driver now
+     * alone holds its segments: they are owned until the epoch changes (design.md "Owned segments").
      */
     void claim(SchemeContext context) {
         owner.epoch = context.sharingEpoch;
