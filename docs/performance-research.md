@@ -308,6 +308,9 @@ vector strategies, M5-07 `equal?`.
 - **Evidence.** Tier-1 `fib` inlined nothing (`0Y 5N`).
 - **Note.** This is a one-line stopgap. Item 3 makes it moot for call
   sites that see a primitive.
+- **Undone.** Applied to every primitive that returns values, it wasn't
+  true of those that loop, and Graal prints a performance warning each
+  time it inlines such a root (design.md "Primitives run in place").
 
 ### 9. Boxing elimination
 

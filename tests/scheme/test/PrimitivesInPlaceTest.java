@@ -6,12 +6,16 @@ import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
 import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.PolyglotException;
+import org.junit.Assume;
 import org.junit.Test;
 
 /**
@@ -136,5 +140,51 @@ public class PrimitivesInPlaceTest {
     public void primitivesThatTransferControlStillDoSo() {
         check("(define (f . xs) (apply list xs)) (define (g k) (k 'out))", "((1 2) out (1 2) 3)",
                         "(list (f 1 2) (call/cc (lambda (k) (g k))) (call-with-values (lambda () (values 1 2)) list) (eval '(+ 1 2) (environment '(scheme base))))");
+    }
+
+    @Test
+    public void primitivesCalledThroughTheirRootsCompileWithoutPerformanceWarnings() throws IOException {
+        // apply calls a primitive through its root (from the trampoline's inline cache), so a
+        // compiled caller inlines that root. A root that says it is trivial but has a loop after
+        // partial evaluation (a variadic primitive's loop over its arguments, string<?'s over the
+        // characters) makes the compiler print a performance warning to the engine's log, the
+        // program's standard error: ecraven's scheme benchmark printed about 200, and when one
+        // landed in the middle of its first "Elapsed time" line, the benchmark driver saw an
+        // iteration fewer than it ran.
+        String program = "(define (run n acc) (if (= n 0) acc" +
+                        " (run (- n 1) (+ acc (apply + (list n 1 2)) (if (apply string<? (list \"a\" \"b\" \"c\")) 1 0)" +
+                        " (vector-length (apply vector (list n n)))))))" +
+                        "(unless (= (run 20000 0) 200130000) (error \"wrong result\"))";
+        for (String multiTier : new String[]{"false", "true"}) {
+            String log = engineLog(program, "engine.MultiTier", multiTier);
+            assertFalse(log, log.contains("perf warn"));
+        }
+    }
+
+    /** The engine's log while {@code program} runs with the JIT, compiling in the foreground. */
+    private static String engineLog(String program, String... options) throws IOException {
+        Path log = Files.createTempFile("primitives-in-place", ".log");
+        Context.Builder builder = Context.newBuilder(SCHEME).allowExperimentalOptions(true).option("log.file", log.toString()).out(new ByteArrayOutputStream());
+        builder.option("engine.Compilation", "true").option("engine.CompileImmediately", "false").option("engine.BackgroundCompilation", "false");
+        builder.option("engine.SingleTierCompilationThreshold", "100").option("engine.FirstTierCompilationThreshold", "100");
+        builder.option("engine.LastTierCompilationThreshold", "500");
+        for (int i = 0; i < options.length; i += 2) {
+            builder.option(options[i], options[i + 1]);
+        }
+        Context context;
+        try {
+            context = builder.build();
+        } catch (IllegalArgumentException e) {
+            Assume.assumeNoException("no optimizing Truffle runtime", e);
+            throw e;
+        }
+        try (Context c = context) {
+            c.eval(SCHEME, program);
+        }
+        try {
+            return Files.readString(log);
+        } finally {
+            Files.delete(log);
+        }
     }
 }

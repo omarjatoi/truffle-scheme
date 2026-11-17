@@ -16,6 +16,12 @@ import scheme.runtime.value.SClosure;
  * a primitive don't reach it: call sites run a node of their own instead (plan.md M5-09). It runs
  * the calls that aren't run in place: from a site that has seen too many procedures, a trampoline
  * or a prompt, and the calls of primitives that transfer control.
+ *
+ * <p>It doesn't say it is trivial ({@link RootNode#isTrivial()}): many primitives loop, over their
+ * arguments ({@code +}, {@code vector}) or their data ({@code string<?}), and the compiler prints a
+ * performance warning on the program's standard error each time it inlines a root that says it is
+ * trivial but has a loop after partial evaluation. Calls of primitives through this root, such as
+ * {@code apply}'s, are inlined by the usual policy instead.
  */
 public final class PrimitiveRootNode extends RootNode {
 
@@ -66,12 +72,6 @@ public final class PrimitiveRootNode extends RootNode {
     /** A new node for {@code spec}'s primitive, for a call site of its own; null if there is no spec. */
     static PrimitiveNode createNode(PrimitiveSpec spec) {
         return spec == null ? null : spec.createNode();
-    }
-
-    /** A primitive that only returns values is a leaf: inlined in every tier when it is called. */
-    @Override
-    public boolean isTrivial() {
-        return spec.returnsValue();
     }
 
     @Override
