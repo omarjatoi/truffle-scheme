@@ -492,13 +492,15 @@ def _run_measured(argv, cwd, stdin_path, env, timeout, gc_log=None, live_every=N
     measures the live heap of that JVM (argv[0] is its java) every live_every seconds
     (_live_heap_mb), each time a full collection, so the times it prints are not to be used; with
     native_gc, reads the lines that the native launcher's -XX:+PrintGC writes to its standard
-    error (_NATIVE_VM_ARGS), which is kept apart from its standard output for that, so that
-    they can't split one of the program's lines."""
+    error (_NATIVE_VM_ARGS). The output is the standard output followed by the standard error:
+    kept apart while it runs, so that nothing written to the standard error (those lines, or the
+    engine's log, such as a compiler's performance warning) can split one of the program's
+    lines."""
     jcmd = join(os.path.dirname(argv[0]), 'jcmd') if live_every else None
     live = []
     with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err, open(stdin_path or os.devnull, 'rb') as stdin:
         start = time.monotonic()
-        process = subprocess.Popen(argv, cwd=cwd, stdin=stdin, stdout=out, stderr=err if native_gc else subprocess.STDOUT,
+        process = subprocess.Popen(argv, cwd=cwd, stdin=stdin, stdout=out, stderr=err,
                                    env=env, start_new_session=True)
         # A thread waits for the process, so that its wall time is exact (the native launcher
         # starts in about 10 ms) while this one keeps the deadline and takes the samples.
@@ -540,8 +542,8 @@ def _run_measured(argv, cwd, stdin_path, env, timeout, gc_log=None, live_every=N
     heap = _heap_from_gc_log(gc_log) if gc_log else None
     if native_gc:
         heap = _heap_from_native_gc_lines(errors)
-        rest = _NATIVE_GC_LINE.sub('', errors)
-        output += ('\n' if rest and output and not output.endswith('\n') else '') + rest
+        errors = _NATIVE_GC_LINE.sub('', errors)
+    output += ('\n' if errors and output and not output.endswith('\n') else '') + errors
     if live_every:
         heap = dict(heap or {}, live_mb=round(max(live), 1) if live else None, live_samples=len(live))
     return _Measured(process.returncode, output, timed_out, rss, heap, reaped['end'] - start)
@@ -1503,5 +1505,5 @@ def _run_benchmark(bench_set, program, mode, jvm_args, iterations, options):
         return f'exit {p.rc}:\n{tail(p.output)}', [], {}
     times = [float(m.group(1)) * 1000 for m in _ELAPSED_LINE.finditer(p.output)]
     if len(times) != iterations:
-        return f'{len(times)} "Elapsed time" lines for {iterations} iterations', [], {}
+        return f'{len(times)} "Elapsed time" lines for {iterations} iterations:\n{tail(p.output)}', [], {}
     return None, times, dict({'rss_mb': round(p.rss_bytes / 2**20, 1)}, **(p.heap or {}))

@@ -28,7 +28,13 @@ full R7RS-small conformance comes first.
   call site, with a node of the site's own and no Truffle call, `TailCall` or
   argument copy; its errors are raised in the calling frame (D8). Only the
   primitives that transfer control (`apply`, `call/cc`, `eval`, `load`, and
-  the continuation internals) are still called.
+  the continuation internals) are still called. A primitive that `apply`
+  calls, or a site past its cache, calls the primitive's own root, which
+  doesn't say it is trivial (`RootNode.isTrivial`): many primitives loop
+  (`+` and `vector` over their arguments, `string<?` over the characters),
+  and Graal prints a performance warning on the program's standard error each
+  time it inlines a root that says so but has a loop: about 200 in a run of
+  ecraven's `scheme`.
 - **The hottest primitives are operations of their own (M7-03).** A call of
   `car`, `cdr`, `cons`, `null?`, `pair?`, `eq?`, `not`, `+`, `-`, `*`, `/`,
   `quotient`, `remainder`, `modulo`, `=`, `<`, `>`, `<=`, `>=`, `zero?`,

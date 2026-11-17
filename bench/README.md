@@ -81,7 +81,9 @@ such a run aren't comparable.
 
 A benchmark fails when the JVM exits nonzero, prints `ERROR:` (a failed
 check, or an uncaught Scheme error), or prints fewer `Elapsed time` lines than
-iterations. The command then names it and exits 1, after running the rest.
+iterations. Its standard error is read apart from its standard output, so
+that nothing written there (such as the engine's log) can split one of the
+harness's lines. The command then names it and exits 1, after running the rest.
 
 ## Heap
 
