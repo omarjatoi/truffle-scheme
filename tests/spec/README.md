@@ -39,6 +39,7 @@ and removes the entry.
 | `tail-derived` | the tail positions of R7RS §3.5 in derived syntax: `cond` (and `=>`), `case`, `and`, `or`, `when`, `unless`, `let`, `let*`, `letrec`, `letrec*`, named `let`, `let-values`, `let*-values`, `do`, `case-lambda` |
 | `tail-promise` | R7RS §4.2.5's `delay-force` loop and `stream-filter`, SRFI 45's `stream-ref`, and a `make-promise` chain, each forcing a million promises |
 | `tail-apply` | `apply` and the consumer of `call-with-values` in tail position |
+| `tail-lazy` | tail loops over a 3M-cell lazily built list under a 32 MB heap: a self tail loop, mutual tail calls and a named let, the last two entered from the body of a let holding the head |
 | `cont-escape` | escapes out of non-tail recursion |
 | `cont-reentry` | re-entry with pending operands; re-entry of a top-level form carries on through the following forms (design.md D6) |
 | `cont-multishot` | one continuation re-entered many times; frames are copies, assigned variables are shared |
