@@ -167,6 +167,38 @@ public class StackBudgetTest {
     }
 
     @Test
+    public void recursionThroughProceduresNeverOverflowsAKnownStack() throws InterruptedException {
+        // Recursions whose levels nest through apply, map, call-with-values, dynamic-wind and guard
+        // are a different mix of frames per level from a plain recursion's, and run while their
+        // procedures are being compiled. On stacks of known sizes, 300,000 levels spill and never
+        // overflow the stack. (In the native launcher, the one through apply overflowed 8 and 64 MB
+        // stacks; //tests:space_native.)
+        String program = """
+                        (define (applied i) (if (= i 0) 0 (+ 1 (apply applied (list (- i 1))))))
+                        (define (mixed i)
+                          (if (= i 0)
+                              0
+                              (case (modulo i 5)
+                                ((0) (+ 1 (apply mixed (list (- i 1)))))
+                                ((1) (+ 1 (car (map mixed (list (- i 1))))))
+                                ((2) (+ 1 (call-with-values (lambda () (mixed (- i 1))) (lambda (x) x))))
+                                ((3) (+ 1 (dynamic-wind (lambda () #f) (lambda () (mixed (- i 1))) (lambda () #f))))
+                                (else (+ 1 (guard (e (#t 0)) (mixed (- i 1))))))))
+                        """;
+        for (long size : new long[]{512L << 10, 2L << 20, 16L << 20}) {
+            long[] result = onThread(size, () -> {
+                try (Context context = Context.newBuilder(SCHEME).option("scheme.StackSize", Long.toString(size)).build()) {
+                    context.eval(SCHEME, program);
+                    return new long[]{spills(context, "(applied 300000)", 300_000), spills(context, "(mixed 300000)", 300_000)};
+                }
+            });
+            // (Under torture, each call's frame goes to the heap when it returns, so nothing nests
+            // deep enough to spill.)
+            assertTrue(size + " bytes, spills: " + result[0] + ", " + result[1], Boolean.getBoolean("scheme.torture") || result[0] > 0 && result[1] > 0);
+        }
+    }
+
+    @Test
     public void stackSizeOptionNeedsASize() {
         for (String bad : new String[]{"lots", "-1m", "12q", ""}) {
             try (Context context = Context.newBuilder(SCHEME).option("scheme.StackSize", bad).build()) {

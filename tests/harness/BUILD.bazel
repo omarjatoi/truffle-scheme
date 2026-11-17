@@ -6,6 +6,7 @@ exports_files([
     "check_launcher_gc.py",
     "check_readme.py",
     "check_rules.py",
+    "check_space_native.py",
     "check_status.py",
     "check_tools.py",
     "check_versions.py",

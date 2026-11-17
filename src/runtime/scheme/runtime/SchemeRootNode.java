@@ -266,12 +266,13 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
                         @Cached("procedure.callTarget") RootCallTarget cachedTarget,
                         @Cached("create(cachedTarget)") DirectCallNode callNode,
                         @Bind SchemeRootNode caller,
+                        @Shared @Cached InlinedBranchProfile checked,
                         @Shared @Cached InlinedBranchProfile spilled) {
             arguments[0] = procedure;
             SchemeContext context = SchemeContext.get(node);
             int use = context.stackUse;
             int nested = use + StackBudget.callCost(context, caller.getFrameDescriptor().getNumberOfSlots());
-            if (nested > context.stackLimit && spills(node, spilled, nested, context)) {
+            if (StackBudget.checks(context, nested) && spills(node, checked, spilled, use, nested, context)) {
                 return Capture.spill(arguments, context.getDynamicEnv());
             }
             context.stackUse = nested;
@@ -291,12 +292,13 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
                         @Shared @Cached Trampoline trampoline,
                         @Cached("trampoline.megamorphic()") IndirectCallNode callNode,
                         @Bind SchemeRootNode caller,
+                        @Shared @Cached InlinedBranchProfile checked,
                         @Shared @Cached InlinedBranchProfile spilled) {
             arguments[0] = procedure;
             SchemeContext context = SchemeContext.get(node);
             int use = context.stackUse;
             int nested = use + StackBudget.callCost(context, caller.getFrameDescriptor().getNumberOfSlots());
-            if (nested > context.stackLimit && spills(node, spilled, nested, context)) {
+            if (StackBudget.checks(context, nested) && spills(node, checked, spilled, use, nested, context)) {
                 return Capture.spill(arguments, context.getDynamicEnv());
             }
             context.stackUse = nested;
@@ -316,16 +318,27 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
         }
 
         /**
-         * The call would take the stack use past the limit: whether it spills (returns a spill
-         * capture instead of calling). Not if this is the first time on the thread, and the
-         * thread's stack, once measured, has room ({@link StackBudget#extend}). Behind a branch
-         * profile (plan.md M7-01): most call sites never spill, and in compiled code the capture
-         * (with the argument array it materializes) was most of the code of every non-tail call
-         * site, so every compilation was about three times the size, and compilation fell behind.
+         * The call would take the stack use past the limit, or, in a native image, past half of
+         * it ({@link StackBudget#checks}): whether it spills (returns a spill capture instead of
+         * calling). Within the limit, only if the call is one that checks the stack's real depth
+         * ({@link StackBudget#crosses}) and the stack below it is deeper than the limit
+         * ({@link StackBudget#pastLimit}). Past it, unless this is the first time on the thread and
+         * the thread's stack, once measured, has room ({@link StackBudget#extend}), and the stack
+         * below isn't deeper than the new limit. The check is behind a branch profile
+         * ({@code checked}), so that compiled code of a site that never checks has none of it, and a
+         * spill behind another (plan.md M7-01): most call sites never spill, and in compiled code the
+         * capture (with the argument array it materializes) was most of the code of every non-tail
+         * call site, so every compilation was about three times the size, and compilation fell
+         * behind.
          */
-        private static boolean spills(Node node, InlinedBranchProfile spilled, int nested, SchemeContext context) {
+        private static boolean spills(Node node, InlinedBranchProfile checked, InlinedBranchProfile spilled, int use, int nested, SchemeContext context) {
+            checked.enter(node);
+            if (nested <= context.stackLimit ? !StackBudget.crosses(use, nested) || !StackBudget.pastLimit(context)
+                            : StackBudget.extend(context, nested) && !StackBudget.pastLimit(context)) {
+                return false;
+            }
             spilled.enter(node);
-            return !StackBudget.extend(context, nested);
+            return true;
         }
 
         static PrimitiveSpec inPlace(RootCallTarget target) {

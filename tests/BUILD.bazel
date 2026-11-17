@@ -180,9 +180,29 @@ space_test(
     all_modes = True,
 )
 
+# 1M-deep non-tail recursions through `apply`, and through `apply`, `map`, `call-with-values`,
+# `dynamic-wind`, `guard` and `with-exception-handler`, under a 256k Java stack.
+space_test(
+    name = "space_deep_apply_1m",
+    src = "space/deep-apply-1m.scm",
+    expect = "1000000",
+    limits = "-Xss256k -Xmx512m",
+    module = "//:launcher_module",
+)
+
+space_test(
+    name = "space_deep_mixed_1m",
+    src = "space/deep-mixed-1m.scm",
+    expect = "1000000",
+    limits = "-Xss256k -Xmx2g",
+    module = "//:launcher_module",
+)
+
 test_suite(
     name = "space",
     tests = [
+        ":space_deep_apply_1m",
+        ":space_deep_mixed_1m",
         ":space_deep_recursion_1m",
         ":space_loop_10m",
         ":space_tail_lazy_loop",
@@ -192,6 +212,30 @@ test_suite(
         ":space_tail_lazy_self",
         ":space_tail_lazy_spill",
         ":space_tail_lazy_warm",
+    ],
+)
+
+# The deep recursions through the native launcher (//:scheme-native), only when named: on stacks
+# from 256 KB to the launcher's 256 MB, with the JIT, and interpreted only and compiled at once on
+# two of them, none overflows the stack.
+_SPACE_NATIVE_PROGRAMS = [
+    "space/deep-apply-1m.scm",
+    "space/deep-mixed-1m.scm",
+    "space/deep-recursion-1m.scm",
+]
+
+harness_test(
+    name = "space_native",
+    check = "space_native",
+    args = [
+        "--native=$(rlocationpath //:scheme-native)",
+        "--expect=1000000",
+    ] + ["$(rlocationpath %s)" % p for p in _SPACE_NATIVE_PROGRAMS],
+    data = _SPACE_NATIVE_PROGRAMS + ["//:scheme-native"],
+    size = "large",
+    tags = [
+        "cpu:2",
+        "manual",
     ],
 )
 
