@@ -11,6 +11,7 @@ import scheme.runtime.PrimitiveSpec;
 import scheme.runtime.PrimitiveSpec.Result;
 import scheme.runtime.SchemeError;
 import scheme.runtime.printer.Printer;
+import scheme.runtime.value.LiteralPair;
 import scheme.runtime.value.SChar;
 import scheme.runtime.value.SConstant;
 import scheme.runtime.value.SPair;
@@ -220,8 +221,12 @@ final class ListVectorPrimitives {
 
         @Override
         public Object invoke(Object[] args) {
-            if (!(args[1] instanceof SPair p)) {
-                throw Lists.notAPair(car ? "set-car!" : "set-cdr!", args[1]);
+            // One class compare: a pair made at run time. A literal's pair (a LiteralPair) is an
+            // error to store into (R7RS §3.4, design.md D1), as anything else is.
+            SPair p = SPair.mutable(args[1]);
+            if (p == null) {
+                String who = car ? "set-car!" : "set-cdr!";
+                throw args[1] instanceof LiteralPair ? immutablePair(who) : Lists.notAPair(who, args[1]);
             }
             if (car) {
                 p.car = args[2];
@@ -367,6 +372,12 @@ final class ListVectorPrimitives {
         return new SchemeError(who + ": vector is immutable (a literal)");
     }
 
+    /** A literal pair's car or cdr stored into (R7RS §3.4, design.md D1). */
+    @TruffleBoundary
+    static SchemeError immutablePair(String who) {
+        return new SchemeError(who + ": pair is immutable (a literal)");
+    }
+
     /** {@code (list? obj)}: #t for a proper list, #f for an improper or circular one (tortoise and hare, D9). */
     static final class IsList extends PrimitiveNode {
         @Override
@@ -441,6 +452,9 @@ final class ListVectorPrimitives {
             }
             if (op == REF) {
                 return p.car;
+            }
+            if (p instanceof LiteralPair) {
+                throw immutablePair(who);
             }
             p.car = args[3];
             return SConstant.UNSPECIFIED;
