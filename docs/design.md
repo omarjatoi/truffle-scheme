@@ -508,9 +508,15 @@ Each entry: the decision, why, and what was rejected.
   flag shows only to mutation: `eq?`, `eqv?`, `equal?` and printing don't
   see it. It costs a pair no space on HotSpot: a 12-byte header and two
   compressed references are 20 bytes, padded to 24, and the boolean fits
-  in the padding. The check is a field load and a branch in `set-car!`,
-  which isn't a typed operation (M7-03); `car`, `cdr` and `pair?` don't
-  change.
+  in the padding (with `-XX:+UseCompactObjectHeaders`, which we don't use,
+  the header is 8 bytes and the flag would take a pair from 16 to 24). The
+  check is a field load and a branch in `set-car!`, `set-cdr!` and
+  `list-set!` (none of them a typed operation, M7-03); `cons`, `car`,
+  `cdr` and `pair?` don't change. It costs destruc, whose loops are mostly
+  `set-car!` and `set-cdr!`, 3-4% (2,080 to 2,160 ms a run); nboyer and
+  deriv, which allocate pairs but never mutate them, are unchanged. Marking
+  the throwing path slow, or deoptimizing on the first literal pair
+  instead of compiling the path, didn't take that back.
 - **Records (M7-04)** are static objects (Truffle's Static Object Model):
   their fields are fields of the object itself, so a record is one
   allocation and a field access is a field load. A language has one
