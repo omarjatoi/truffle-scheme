@@ -1,5 +1,6 @@
 package scheme.runtime;
 
+import com.oracle.truffle.api.CompilerAsserts;
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.bytecode.ConstantOperand;
 import com.oracle.truffle.api.bytecode.OperationProxy;
@@ -96,14 +97,19 @@ public final class Intrinsics {
          * error, or the capture {@code raise} came back with ({@link AbandonedFrame}). In tail
          * position the error leaves the frame, for the call site that called it to raise, as from
          * a primitive {@code MakeTailCall} runs in place: the frame has nothing left to do.
+         *
+         * <p>One call of the primitive for both: {@code tail} is a constant operand, which folds in
+         * partial evaluation but not in the host compilation of the interpreter, where a call in
+         * each branch was two call sites (GraalVM's Host Compilation guide, "Deduplicating calls
+         * from branches that fold during partial evaluation").
          */
         static Object generic(boolean tail, PrimitiveNode primitive, Object[] args, Node node, Trampoline trampoline) {
-            if (tail) {
-                return primitive.invoke(args);
-            }
             try {
                 return primitive.invoke(args);
             } catch (SchemeError e) {
+                if (tail) {
+                    throw e;
+                }
                 Object result = SchemeRootNode.raiseHere(e, SchemeContext.get(node), trampoline);
                 if (result instanceof Capture capture) {
                     throw new AbandonedFrame(capture);
@@ -277,6 +283,8 @@ public final class Intrinsics {
         static Object doMatch(@SuppressWarnings("unused") Object alist, Object key,
                         @Cached(value = "keys(alist)", dimensions = 1) Object[] keys,
                         @Cached(value = "entries(alist)", dimensions = 1) Object[] entries) {
+            // Unrolled: a compilation bails out if the bound isn't a constant (GraalVM's PartialEvaluation guide).
+            CompilerAsserts.partialEvaluationConstant(keys.length);
             for (int i = 0; i < keys.length; i++) {
                 if (eq(key, keys[i])) {
                     return entries[i];
