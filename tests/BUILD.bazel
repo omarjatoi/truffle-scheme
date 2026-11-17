@@ -317,3 +317,12 @@ harness_test(
     size = "small",
     tags = ["lint"],
 )
+
+# design.md D17 "The collector": the launcher's JVM uses the serial collector unless told otherwise.
+harness_test(
+    name = "launcher_gc",
+    check = "launcher_gc",
+    args = ["--runtime=$(rlocationpath //:launcher_runtime)"],
+    data = ["//:launcher_runtime"],
+    size = "small",
+)

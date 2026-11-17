@@ -184,7 +184,8 @@ def r7rs_vendor_benchmarks(args):
 
 # The heap our benchmark JVMs run with (bench/README.md "Heap", plan.md M8-02): a fixed maximum,
 # the same on every machine, rather than the JVM's default of a quarter of the machine's memory,
-# with which G1 grows the heap to tens of GB for programs that keep a few hundred MB alive.
+# with which G1 grew the heap to tens of GB for programs that keep a few hundred MB alive. Their
+# collector is the launcher's, the serial one (harness.LAUNCHER_GC_VM_ARGS, plan.md M8-05).
 BENCH_HEAP_VM_ARGS = ['-Xmx2g']
 
 _BENCH_MODES = {
@@ -673,7 +674,7 @@ def r7rs_bench_report(args):
             report['implementations'][impl.key] = info
             if impl.name is None:
                 info['version'] = f'truffle-scheme {report["commit"]}, GraalVM {graalvm_version(RUNTIME[0].release)}'
-                info['command'] = ('java ' + ' '.join(_BENCH_MODES[impl.key][0] + _gc_log_vm_args('{gc.log}'))
+                info['command'] = ('java ' + ' '.join(harness.LAUNCHER_GC_VM_ARGS + _BENCH_MODES[impl.key][0] + _gc_log_vm_args('{gc.log}'))
                                    + (' (Graal JIT, background compilation)' if impl.key == 'jit' else '')
                                    + ' -m scheme.launcher/scheme.launcher.SchemeMain {src} < {input}')
                 info['notes'].append('`bench/postlude.scm` as the postlude')

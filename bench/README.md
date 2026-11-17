@@ -87,8 +87,8 @@ iterations. The command then names it and exits 1, after running the rest.
 
 Our benchmark JVMs (`benchmark`, `bench-report` and `bench-check`, all but its
 `startup`, which runs the launcher as a user does) run with `-Xmx2g`
-(`BENCH_HEAP_VM_ARGS` in `tests/harness/bench.py`), with the JVM's default
-collector, G1 (plan.md M8-02).
+(`BENCH_HEAP_VM_ARGS` in `tests/harness/bench.py`), and the launcher's
+collector, the serial one (below; plan.md M8-02, M8-05).
 
 Why a fixed maximum: without one, the JVM's is a quarter of the machine's
 memory (32 GB on the 128 GB machine of the M7 report), and G1 grows the heap
@@ -133,15 +133,22 @@ compiler's own heap (libgraal), and the heap's young generation, which G1
 sizes up to 60% of the heap and touches in full between collections, however
 little survives: so `fib`, with 7 MB live, has an RSS of 1.6 GB at `-Xmx2g`.
 
-The collector stays G1, the JVM's default and the launcher's, so that the
-report times what a user runs. Others were faster on some programs and slower
-on others (`-Xmx2g`, steady state): the serial collector ran `graphs` in 2.6 s
-against G1's 4.2 and `paraffins` in 1.5 s against 1.9, but `nboyer` in 8.6 s
-against 7.0, with 10 s of single-threaded pauses copying its young survivors;
-the parallel collector ran `ack` in 24 s against 28.
+The collector is the launcher's, the serial one (`-XX:+UseSerialGC`,
+design.md D17 "The collector", plan.md M8-05), so that the report times what a
+user runs; a JVM argument that chooses another (`-XX:+UseG1GC`) replaces it.
+Until M8-05 it was G1, the JVM's default, which the table above measured:
+with the serial collector the young generation is a third of the heap, so
+`fib`'s RSS at `-Xmx2g` is about 0.9 GB instead of 1.6. On 24 of ecraven's
+programs at the report's counts the serial collector took 0.82 times G1's
+time (geometric mean, first iteration and steady state alike) and 0.70 times
+its peak RSS; `nboyer` took 1.7 times as long, with 6 s of single-threaded
+pauses copying its young survivors (design.md has the numbers).
 
 `bench-check`'s thresholds (Thresholds, below) were measured with the default
-heap, before M8-02; every benchmark is within them at `-Xmx2g`.
+heap and G1, before M8-02; every benchmark is within them at `-Xmx2g` and with
+the serial collector, several far below (`tak` at 0.48 times its baseline,
+`fibc` 0.64, `parsing` and `equal` 0.66, `mazefun` 0.72), so they are due to be
+measured again.
 
 How each number is measured:
 

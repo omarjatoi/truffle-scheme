@@ -207,6 +207,11 @@ to it as `-Xss` or `--vm.Xss` is the evaluation's too, and
 know, the runtime measures the stack the first time a recursion is more than
 about 50 calls deep.
 
+`bazel-bin/scheme` starts its JVM with the serial collector
+(`-XX:+UseSerialGC`, design.md D17), which ran most benchmarks faster than the
+JVM's default, G1, in less memory; a collector chosen in `JDK_JAVA_OPTIONS`
+(`-XX:+UseG1GC`) replaces it.
+
 `bazel-bin/scheme` runs the launcher in a JVM with the tools below on its
 module path. Without them, it is a `java` command on the jars that
 `bazel build //:scheme_jars` puts in `bazel-bin/scheme_jars/`:

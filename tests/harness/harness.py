@@ -40,6 +40,17 @@ TRUFFLE_VM_ARGS = [
     '--sun-misc-unsafe-memory-access=allow',
 ]
 LAUNCHER_MAIN = 'scheme.launcher/scheme.launcher.SchemeMain'
+# The `scheme` launcher's collector (design.md D17, plan.md M8-05): the serial one, unless the JVM
+# options choose another.
+LAUNCHER_GC_VM_ARGS = ['-XX:+UseSerialGC']
+_GC_CHOICE = re.compile(r'^-XX:\+Use\w+GC$')
+
+
+def launcher_gc_vm_args(jvm_args, env=os.environ):
+    """LAUNCHER_GC_VM_ARGS, unless jvm_args or the JVM's environment variables already choose a
+    collector: the JVM refuses to start with two."""
+    chosen = list(jvm_args) + ' '.join(env.get(v, '') for v in ('JDK_JAVA_OPTIONS', 'JAVA_TOOL_OPTIONS')).split()
+    return [] if any(_GC_CHOICE.match(a) for a in chosen) else list(LAUNCHER_GC_VM_ARGS)
 
 
 def vm_args(compile=False, torture=False):
@@ -117,8 +128,8 @@ class Runtime:
                 + ['-p', self.module_path, '--add-modules', 'ALL-MODULE-PATH'] + TRUFFLE_VM_ARGS + ['-m', main])
 
     def launcher(self, args, jvm_args=()):
-        """The command line that runs the `scheme` launcher with these arguments."""
-        return self.command(jvm_args, LAUNCHER_MAIN) + list(args)
+        """The command line that runs the `scheme` launcher with these arguments, with its collector."""
+        return self.command(launcher_gc_vm_args(jvm_args) + list(jvm_args), LAUNCHER_MAIN) + list(args)
 
     def run(self, jvm_args, main, args, cwd=None, env=None, timeout=None):
         """Runs java; returns (exit status, stdout, stderr)."""
