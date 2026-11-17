@@ -2,6 +2,7 @@ package scheme.compiler;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
@@ -13,9 +14,13 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import scheme.reader.ScopeSet;
 import scheme.reader.Syntax;
 import scheme.runtime.printer.Printer;
+import scheme.runtime.value.SBigInteger;
+import scheme.runtime.value.SBytevector;
 import scheme.runtime.value.SChar;
+import scheme.runtime.value.SComplex;
 import scheme.runtime.value.SConstant;
 import scheme.runtime.value.SPair;
+import scheme.runtime.value.SRational;
 import scheme.runtime.value.SString;
 import scheme.runtime.value.SSymbol;
 import scheme.runtime.value.SVector;
@@ -500,6 +505,11 @@ final class SyntaxRules implements Transformer {
         return true;
     }
 
+    /**
+     * Whether input {@code b} matches pattern datum {@code a}: {@code (equal? a b)} (R7RS §4.3.2).
+     * A pattern datum is an atom (lists and vectors are subpatterns): a string, character,
+     * boolean, number, or, by erratum 10, a bytevector.
+     */
     private static boolean datumEquals(Object a, Object b) {
         if (a == b) {
             return true;
@@ -512,6 +522,18 @@ final class SyntaxRules implements Transformer {
         }
         if (a instanceof SString) {
             return b instanceof SString && Printer.print(a, Printer.Mode.WRITE).equals(Printer.print(b, Printer.Mode.WRITE));
+        }
+        if (a instanceof SBigInteger x) {
+            return b instanceof SBigInteger y && x.value.equals(y.value);
+        }
+        if (a instanceof SRational x) {
+            return b instanceof SRational y && x.numerator.equals(y.numerator) && x.denominator.equals(y.denominator);
+        }
+        if (a instanceof SComplex x) {
+            return b instanceof SComplex y && datumEquals(x.real, y.real) && datumEquals(x.imag, y.imag);
+        }
+        if (a instanceof SBytevector x) {
+            return b instanceof SBytevector y && Arrays.equals(x.bytes, y.bytes);
         }
         return false;
     }
