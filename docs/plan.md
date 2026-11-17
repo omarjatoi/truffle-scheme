@@ -869,6 +869,28 @@ load rule.
     in one JVM ran no faster, but after itself, in a fresh context, in 0.45 s
     instead of 0.71 (`browse`). An interpreted call costs about 48 ns before
     its arguments; a third of `tak`'s samples are the frame's allocation.
+  - *Second attempt (not done).* With the serial collector (M8-05), `tak`
+    takes 56 s and `ack` 52-59 s, so 54 of 57 programs finish within 60 s,
+    but so did the code before the first attempt (same JVM options: `tak`
+    56 s, `ack` 60 s), and today's code is 1.064 times slower than it over 54
+    programs (one run each, interleaved): `puzzle` 2.2 times since the
+    trampoline's Truffle loop, which changed the host JIT's inlining so that
+    `call/cc`'s escape, an exception, passes a call whose exception handler
+    the host compiler left out; the compiled interpreter loop is thrown away
+    every 250 ms (`not_compiled_exception_handler` in
+    `OptimizedDirectCallNode.call`). `-Djdk.graal.UseExceptionProbability=false`
+    ends that (`puzzle` 0.57 times) but slows most short first runs by 10-30%
+    (1.013 times overall, 44 programs), so it isn't used. A loop branches once per iteration
+    (design.md "Calls and tail calls"): 0.985 on the six longest programs. What
+    an interpreted call costs, from builds with a piece removed (`tak` and
+    `fib` with small inputs, 3 interleaved runs): the capture check after it
+    (`dup`, `IsValue`, the short circuit's branch) 11-13% of the time, though
+    removing the yield alone or simplifying `IsValue` changes nothing, and a
+    `TryCatch` storing the value in a local instead, with captures thrown,
+    would save 3-6%; `Call.doDirect`'s stack accounting, argument hand-off and
+    error handler 6-7%; each frame slot about 1% (8 more slots made `fib`
+    10% slower). Removing `LoopHead` and a branch per call (above) saved
+    nothing on `tak`.
 - [ ] **M8-05 · Steady-state outliers** *(needs M8-01)*
   - Profile the remaining steady-state outliers after M8-01 (`graphs`,
     `sboyer`, `cpstak`, `paraffins`, `lattice`, `pi`) and fix what the

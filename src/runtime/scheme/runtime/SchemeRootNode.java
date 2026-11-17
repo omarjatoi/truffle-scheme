@@ -673,13 +673,18 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
     public static final class LoopHead {
         @Specialization
         static boolean doHead(int argumentCount, @Bind VirtualFrame frame) {
+            releaseOSRParent(argumentCount, frame);
+            return true;
+        }
+
+        /** Clears and drops the frame on-stack replacement started from, if this is the first iteration of an OSR-compiled loop. */
+        static void releaseOSRParent(int argumentCount, VirtualFrame frame) {
             Object[] arguments = frame.getArguments();
             int last = arguments.length - 1;
             if ((argumentCount < 0 ? last >= 0 : last == argumentCount) && arguments[last] instanceof MaterializedFrame parent) {
                 arguments[last] = null;
                 clearOSRParent(parent);
             }
-            return true;
         }
 
         @TruffleBoundary
@@ -690,6 +695,32 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
                     parent.clear(i);
                 }
             }
+        }
+    }
+
+    /**
+     * The condition of the {@code While} of a loop whose body is an {@code if} with the loop's jumps
+     * in one branch only (plan.md M8-04): the {@code if}'s test, so the loop goes on while it takes
+     * that branch ({@code loopsWhen} is the test's truth for it), and leaves for the other, which
+     * follows the loop. It replaces {@link LoopHead} and the {@code if}'s own branch: two
+     * instructions fewer on every iteration and every call of a self-tail-calling procedure. It
+     * releases the frame on-stack replacement started from, as {@code LoopHead} does.
+     */
+    @Operation(storeBytecodeIndex = false)
+    @ConstantOperand(type = int.class)
+    @ConstantOperand(type = boolean.class)
+    public static final class LoopTest {
+        @Specialization
+        static boolean doBoolean(int argumentCount, boolean loopsWhen, boolean test, @Bind VirtualFrame frame) {
+            LoopHead.releaseOSRParent(argumentCount, frame);
+            return test == loopsWhen;
+        }
+
+        /** Anything but a boolean is true (Scheme truth, as {@link Truthy}). */
+        @Fallback
+        static boolean doOther(int argumentCount, boolean loopsWhen, @SuppressWarnings("unused") Object test, @Bind VirtualFrame frame) {
+            LoopHead.releaseOSRParent(argumentCount, frame);
+            return loopsWhen;
         }
     }
 
