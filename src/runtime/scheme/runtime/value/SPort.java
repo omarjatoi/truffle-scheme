@@ -30,10 +30,17 @@ import scheme.runtime.SchemeLanguage;
  * <p>The builtins check a port's direction, kind and openness before calling the matching methods
  * here; calling, say, {@link #readChar()} on an output port is an internal error. I/O failures are
  * {@link SchemeError}s of kind {@code FILE} (design.md D8).
+ *
+ * <p>Compiled code reaches a port without knowing its class, so nothing it calls here is virtual
+ * (design.md D10, "Ports in compiled code"): a port's direction and kind are {@code final} fields,
+ * and each operation is a {@code final} method behind a {@link TruffleBoundary}, since it is I/O,
+ * which calls the kind of port's own implementation, a {@code do}-method, as runtime code.
  */
 @ExportLibrary(InteropLibrary.class)
 public abstract class SPort implements TruffleObject {
 
+    private final boolean input;
+    private final boolean binary;
     private boolean open = true;
     /**
      * The datum reader that {@code read} keeps for this textual input port, so that
@@ -42,16 +49,25 @@ public abstract class SPort implements TruffleObject {
      */
     public Object datumReader;
 
-    public abstract boolean isInput();
-
-    public final boolean isOutput() {
-        return !isInput();
+    protected SPort(boolean input, boolean binary) {
+        this.input = input;
+        this.binary = binary;
     }
 
-    public abstract boolean isBinary();
+    public final boolean isInput() {
+        return input;
+    }
+
+    public final boolean isOutput() {
+        return !input;
+    }
+
+    public final boolean isBinary() {
+        return binary;
+    }
 
     public final boolean isTextual() {
-        return !isBinary();
+        return !binary;
     }
 
     public final boolean isOpen() {
@@ -82,50 +98,99 @@ public abstract class SPort implements TruffleObject {
     }
 
     // ------------------------------------------------------------------------------------------
-    // Operations, each overridden by the kinds of port that support it.
+    // Operations: what compiled code calls, each a boundary around the kind of port's own.
 
     /** Textual output. */
-    public void write(String text) {
-        throw unsupported();
+    @TruffleBoundary
+    public final void write(String text) {
+        doWrite(text);
     }
 
     /** Binary output: the low 8 bits of {@code b}. */
-    public void writeByte(int b) {
-        throw unsupported();
+    @TruffleBoundary
+    public final void writeByte(int b) {
+        doWriteByte(b);
     }
 
     /** Binary output. */
-    public void writeBytes(byte[] bytes, int start, int end) {
-        throw unsupported();
+    @TruffleBoundary
+    public final void writeBytes(byte[] bytes, int start, int end) {
+        doWriteBytes(bytes, start, end);
     }
 
     /** Output. */
-    public void flush() {
-        throw unsupported();
+    @TruffleBoundary
+    public final void flush() {
+        doFlush();
     }
 
     /** Textual input: the next code point, or -1 at the end. */
-    public int readChar() {
-        throw unsupported();
+    @TruffleBoundary
+    public final int readChar() {
+        return doReadChar();
     }
 
     /** Textual input: the next code point without consuming it, or -1 at the end. */
-    public int peekChar() {
-        throw unsupported();
+    @TruffleBoundary
+    public final int peekChar() {
+        return doPeekChar();
     }
 
     /** Binary input: the next byte (0-255), or -1 at the end. */
-    public int readByte() {
-        throw unsupported();
+    @TruffleBoundary
+    public final int readByte() {
+        return doReadByte();
     }
 
     /** Binary input: the next byte without consuming it, or -1 at the end. */
-    public int peekByte() {
-        throw unsupported();
+    @TruffleBoundary
+    public final int peekByte() {
+        return doPeekByte();
     }
 
     /** Input: whether the next read won't block ({@code char-ready?}, {@code u8-ready?}). */
-    public boolean ready() {
+    @TruffleBoundary
+    public final boolean ready() {
+        return doReady();
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // The operations of each kind of port, each overridden by the kinds that support it: runtime
+    // code, called only from the boundaries above.
+
+    protected void doWrite(String text) {
+        throw unsupported();
+    }
+
+    protected void doWriteByte(int b) {
+        throw unsupported();
+    }
+
+    protected void doWriteBytes(byte[] bytes, int start, int end) {
+        throw unsupported();
+    }
+
+    protected void doFlush() {
+        throw unsupported();
+    }
+
+    protected int doReadChar() {
+        throw unsupported();
+    }
+
+    protected int doPeekChar() {
+        throw unsupported();
+    }
+
+    protected int doReadByte() {
+        throw unsupported();
+    }
+
+    protected int doPeekByte() {
+        throw unsupported();
+    }
+
+    protected boolean doReady() {
         throw unsupported();
     }
 
@@ -177,24 +242,24 @@ public abstract class SPort implements TruffleObject {
     }
 
     /** Whether this is a string output port ({@code get-output-string}). */
-    public boolean isStringPort() {
+    public final boolean isStringPort() {
         return this instanceof TextOutput t && t.sink instanceof StringBuilder;
     }
 
     /** Whether this is a bytevector output port ({@code get-output-bytevector}). */
-    public boolean isBytevectorPort() {
+    public final boolean isBytevectorPort() {
         return this instanceof BinaryOutput b && b.out instanceof ByteArrayOutputStream;
     }
 
     /** A string port's characters so far. */
     @TruffleBoundary
-    public String contents() {
+    public final String contents() {
         return ((TextOutput) this).sink.toString();
     }
 
     /** A bytevector port's bytes so far. */
     @TruffleBoundary
-    public byte[] bytes() {
+    public final byte[] bytes() {
         return ((ByteArrayOutputStream) ((BinaryOutput) this).out).toByteArray();
     }
 
@@ -206,23 +271,13 @@ public abstract class SPort implements TruffleObject {
         private final boolean ownsSink;
 
         TextOutput(Appendable sink, boolean ownsSink) {
+            super(false, false);
             this.sink = sink;
             this.ownsSink = ownsSink;
         }
 
         @Override
-        public boolean isInput() {
-            return false;
-        }
-
-        @Override
-        public boolean isBinary() {
-            return false;
-        }
-
-        @Override
-        @TruffleBoundary
-        public void write(String text) {
+        protected void doWrite(String text) {
             try {
                 sink.append(text);
             } catch (IOException e) {
@@ -231,8 +286,7 @@ public abstract class SPort implements TruffleObject {
         }
 
         @Override
-        @TruffleBoundary
-        public void flush() {
+        protected void doFlush() {
             if (sink instanceof Flushable f) {
                 try {
                     f.flush();
@@ -257,22 +311,12 @@ public abstract class SPort implements TruffleObject {
         final OutputStream out;
 
         BinaryOutput(OutputStream out) {
+            super(false, true);
             this.out = out;
         }
 
         @Override
-        public boolean isInput() {
-            return false;
-        }
-
-        @Override
-        public boolean isBinary() {
-            return true;
-        }
-
-        @Override
-        @TruffleBoundary
-        public void writeByte(int b) {
+        protected void doWriteByte(int b) {
             try {
                 out.write(b);
             } catch (IOException e) {
@@ -281,8 +325,7 @@ public abstract class SPort implements TruffleObject {
         }
 
         @Override
-        @TruffleBoundary
-        public void writeBytes(byte[] bytes, int start, int end) {
+        protected void doWriteBytes(byte[] bytes, int start, int end) {
             try {
                 out.write(bytes, start, end - start);
             } catch (IOException e) {
@@ -291,8 +334,7 @@ public abstract class SPort implements TruffleObject {
         }
 
         @Override
-        @TruffleBoundary
-        public void flush() {
+        protected void doFlush() {
             try {
                 out.flush();
             } catch (IOException e) {
@@ -317,32 +359,21 @@ public abstract class SPort implements TruffleObject {
         private int peeked = NONE;
 
         TextInput(Reader in, boolean neverBlocks, boolean ownsReader) {
+            super(true, false);
             this.in = in;
             this.neverBlocks = neverBlocks;
             this.ownsReader = ownsReader;
         }
 
         @Override
-        public boolean isInput() {
-            return true;
-        }
-
-        @Override
-        public boolean isBinary() {
-            return false;
-        }
-
-        @Override
-        @TruffleBoundary
-        public int readChar() {
-            int c = peekChar();
+        protected int doReadChar() {
+            int c = doPeekChar();
             peeked = NONE;
             return c;
         }
 
         @Override
-        @TruffleBoundary
-        public int peekChar() {
+        protected int doPeekChar() {
             if (peeked == NONE) {
                 peeked = decode();
             }
@@ -367,8 +398,7 @@ public abstract class SPort implements TruffleObject {
         }
 
         @Override
-        @TruffleBoundary
-        public boolean ready() {
+        protected boolean doReady() {
             if (neverBlocks || peeked != NONE) {
                 return true;
             }
@@ -394,30 +424,19 @@ public abstract class SPort implements TruffleObject {
         private int peeked = NONE;
 
         BinaryInput(InputStream in) {
+            super(true, true);
             this.in = in;
         }
 
         @Override
-        public boolean isInput() {
-            return true;
-        }
-
-        @Override
-        public boolean isBinary() {
-            return true;
-        }
-
-        @Override
-        @TruffleBoundary
-        public int readByte() {
-            int b = peekByte();
+        protected int doReadByte() {
+            int b = doPeekByte();
             peeked = NONE;
             return b;
         }
 
         @Override
-        @TruffleBoundary
-        public int peekByte() {
+        protected int doPeekByte() {
             if (peeked == NONE) {
                 try {
                     peeked = in.read();
@@ -430,7 +449,7 @@ public abstract class SPort implements TruffleObject {
 
         /** Bytevectors and files never block. */
         @Override
-        public boolean ready() {
+        protected boolean doReady() {
             return true;
         }
 
@@ -463,7 +482,7 @@ public abstract class SPort implements TruffleObject {
     }
 
     @ExportMessage
-    Object toDisplayString(@SuppressWarnings("unused") boolean allowSideEffects) {
+    Object toDisplayString(boolean allowSideEffects) {
         return InteropValues.display(this);
     }
 }

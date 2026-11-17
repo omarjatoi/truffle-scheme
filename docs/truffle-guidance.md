@@ -73,7 +73,8 @@ and `engine.TraceAssumptions`; the interpreter's host compilation with
   primitives: *"Partial evaluation could not inline the virtual runtime call
   Virtual to `SPort.isInput()`"* (and `isBinary`, `isOutput`, `flush`), from
   `IoPrimitives.port`, `textualOutput` and `Flush.invoke`, where the port is
-  not a constant. A follow-up for the I/O area (below).
+  not a constant. Fixed in #208 (Fixes, below): none in `scheme`, `cat`,
+  `wc`, `read1` or `tail` since.
 - `scheme`'s deoptimizations: each of 8 splits of one closure
   (`gen-combination-2`'s lambda) deoptimizes once after its first compilation
   (an uncommon trap, not an explicit `transferToInterpreter`, so
@@ -394,15 +395,10 @@ DSL specializations on their Java classes. Follow.
 |---|---|---|
 | #201 | `set!` of a global: a store, with only the first invalidation behind a boundary | A loop of two `set!`s: 0.124 s → 0.071 s an iteration; `puzzle`, `triangl`, `browse` unchanged; `bench-check` within thresholds |
 | #204 | `CompilerAsserts.partialEvaluationConstant` on the three exploded loops' bounds; one `primitive.invoke` call in `IntrinsicNode.generic` | Every unit test under `//tests:unit_compile` (compile immediately, bailouts are errors) |
+| #208 | A port's direction and kind are `final` fields of `SPort`, and each of its operations a `final` method behind a boundary that calls the kind of port's own (design.md D10, "Ports in compiled code") | Performance warnings, `main` → this: ecraven's `scheme` 30 → 0, `cat` 25 → 0, `wc` 18 → 0, `tail` 24 → 0, `read1` 2 → 0 (`IoTest.portOperationsCompileWithoutPerformanceWarnings`: none for every port operation on every kind of port). Later iterations, interleaved: `cat` 0.84 times as long, `wc` 0.83, `read1` 0.94, `scheme`, `string`, `tail` unchanged; `read-char` from a string 0.57 |
 
 ## Follow-ups
 
-- **Ports' virtual calls in compiled code** (the I/O area): `SPort.isInput`,
-  `isBinary`, `isOutput` and `flush` are virtual calls partial evaluation
-  can't inline where the port isn't a constant (`IoPrimitives.port`,
-  `textualOutput`, `Flush.invoke`): 30 performance warnings in ecraven's
-  `scheme`. A port's kind as `final` fields, or a DSL specialization on its
-  class, would fold them.
 - **Splits that deoptimize once** (`scheme`): each of 8 splits of one closure
   deoptimized once after its first compilation, by an uncommon trap that
   isn't an explicit `transferToInterpreter`. Needs a graph dump of a split's
