@@ -361,7 +361,7 @@ final class Closures {
     // ------------------------------------------------------------------------------------------
 
     /** Pushes the subexpressions of {@code e}, lambda bodies included. */
-    private static void pushChildren(Expr e, Deque<Expr> stack) {
+    static void pushChildren(Expr e, Deque<Expr> stack) {
         if (e instanceof Ast.LocalSet s) {
             stack.push(s.value);
         } else if (e instanceof Ast.GlobalSet s) {

@@ -1,6 +1,9 @@
 package scheme.runtime;
 
+import java.util.Arrays;
+
 import com.oracle.truffle.api.Assumption;
+import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.RootCallTarget;
 import com.oracle.truffle.api.bytecode.BytecodeNode;
@@ -8,6 +11,7 @@ import com.oracle.truffle.api.bytecode.BytecodeRootNode;
 import com.oracle.truffle.api.bytecode.ConstantOperand;
 import com.oracle.truffle.api.bytecode.ContinuationRootNode;
 import com.oracle.truffle.api.bytecode.GenerateBytecode;
+import com.oracle.truffle.api.bytecode.LocalAccessor;
 import com.oracle.truffle.api.bytecode.LocalRangeAccessor;
 import com.oracle.truffle.api.bytecode.Operation;
 import com.oracle.truffle.api.bytecode.OperationProxy;
@@ -22,6 +26,7 @@ import com.oracle.truffle.api.dsl.Cached.Shared;
 import com.oracle.truffle.api.dsl.Fallback;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.frame.FrameDescriptor;
+import com.oracle.truffle.api.frame.FrameSlotKind;
 import com.oracle.truffle.api.frame.MaterializedFrame;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.ControlFlowException;
@@ -270,6 +275,7 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
                 return Capture.spill(arguments, context.getDynamicEnv());
             }
             context.stackUse = nested;
+            handOffArguments(context, arguments);
             try {
                 return tortured(trampoline.run(callNode.call(arguments)), cachedTarget, context);
             } catch (SchemeError e) {
@@ -294,6 +300,7 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
                 return Capture.spill(arguments, context.getDynamicEnv());
             }
             context.stackUse = nested;
+            handOffArguments(context, arguments);
             try {
                 return tortured(trampoline.run(callNode.call(procedure.callTarget, arguments)), procedure.callTarget, context);
             } catch (SchemeError e) {
@@ -428,10 +435,16 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
      * instead is an uncaught error unwinding through the frame (plan.md M6-04, {@code PromptDriver}):
      * the frame throws it from its call site, so the error's guest stack trace has the frame. An
      * error is never a Scheme value, so no call returns one. The frame's location is its call's,
-     * whose bytecode index the call stored.
+     * whose bytecode index the call stored. A prompt's driver passes the value in a
+     * {@link Resumption}, which this empties.
      */
     @Operation(storeBytecodeIndex = false)
     public static final class Resumed {
+        @Specialization
+        static Object doResume(Resumption resumption) {
+            return resumption.take();
+        }
+
         @Specialization
         static Object doUnwind(SchemeError error) {
             throw error;
@@ -506,6 +519,12 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
      * the local's boxing-elimination profile, as a {@code StoreLocal} would, so a parameter that is
      * always a fixnum stays an unboxed {@code long}. Stores the bytecode index: its arity error names
      * this location (design.md D13).
+     *
+     * <p>It clears each argument once bound, and releases the caller's array
+     * ({@link #releaseArguments}): the caller's Java frames (a call site, a trampoline, a prompt's
+     * driver) may hold that until this procedure returns, and a tail loop in it may run for ever
+     * (R7RS §3.5, design.md "Tail calls keep nothing alive"). Nothing reads an argument but the
+     * closure after the prologue: tools read the parameters' locals.
      */
     @Operation(storeBytecodeIndex = true)
     @ConstantOperand(type = LocalRangeAccessor.class)
@@ -522,6 +541,59 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
             for (int i = 0; i < n; i++) {
                 Object value = arguments[i + 1];
                 parameters.setObject(bytecode, frame, i, (boxed & (1 << i)) != 0 ? new Box(value) : value);
+                arguments[i + 1] = null;
+            }
+            if (CompilerDirectives.inCompiledCode()) {
+                releaseArguments(SchemeContext.get(bytecode), arguments);
+            }
+        }
+    }
+
+    /**
+     * The end of the prologue of a procedure that doesn't start with {@link BindArguments} (a rest
+     * parameter, or more than 31 parameters): it clears the arguments, which are bound by now, and
+     * releases the caller's array, as {@code BindArguments} does.
+     */
+    @Operation(storeBytecodeIndex = false)
+    public static final class ReleaseArguments {
+        @Specialization
+        static void doRelease(@Bind VirtualFrame frame, @Bind Node node) {
+            Object[] arguments = frame.getArguments();
+            if (CompilerDirectives.inCompiledCode()) {
+                releaseArguments(SchemeContext.get(node), arguments);
+            }
+            Arrays.fill(arguments, 1, arguments.length, null);
+        }
+    }
+
+    /**
+     * Hands {@code arguments} over to the callee's prologue ({@link #releaseArguments}), from a
+     * call site or a trampoline about to call with them. Only from the interpreter: a compiled
+     * caller's frame doesn't keep what it no longer uses, and storing the array would make it escape
+     * where it can otherwise stay virtual (on {@code fib}, the store made every call allocate its
+     * array: 2.4 times slower).
+     */
+    static void handOffArguments(SchemeContext context, Object[] arguments) {
+        if (CompilerDirectives.inInterpreter()) {
+            context.callArguments = arguments;
+        }
+    }
+
+    /**
+     * From compiled code: clears the caller's argument array of the call that is running
+     * ({@link SchemeContext#callArguments}) but its procedure, if {@code arguments} were copied
+     * from it. The arguments are bound, and nothing reads them again. The prologue clears
+     * {@code arguments} itself, which in the interpreter is the caller's array: so only compiled
+     * code releases. A call whose array no compiled prologue releases leaves a stale one, which the
+     * next call replaces; one that isn't this call's is left alone (clearing a stale one is
+     * harmless: its call is past its prologue).
+     */
+    static void releaseArguments(SchemeContext context, Object[] arguments) {
+        Object[] original = context.callArguments;
+        if (original != null) {
+            context.callArguments = null;
+            if (original != arguments && original.length == arguments.length && original[0] == arguments[0]) {
+                Arrays.fill(original, 1, original.length, null);
             }
         }
     }
@@ -550,6 +622,61 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
 
     // ------------------------------------------------------------------------------------------
     // Variables
+
+    /**
+     * {@code value}, once {@code local} is cleared: the last operand of a non-tail call in tail
+     * position of the let that binds {@code local} (design.md "Tail calls keep nothing alive"). The
+     * call replaces the let's frame (R7RS §3.5), so nothing reads the variable after it, and the
+     * value must not stay reachable while the call runs.
+     */
+    @Operation(storeBytecodeIndex = false)
+    @ConstantOperand(type = LocalAccessor.class)
+    public static final class ThenClear {
+        @Specialization
+        static Object doClear(LocalAccessor local, Object value, @Bind VirtualFrame frame, @Bind BytecodeNode bytecode) {
+            local.clear(bytecode, frame);
+            return value;
+        }
+    }
+
+    /**
+     * The condition of the {@code While} a self tail call or a contified loop loops in: true.
+     * {@code argumentCount} is the length of the root's argument array, or -1 if it varies (a rest
+     * parameter).
+     *
+     * <p>On-stack replacement enters the compiled loop here, with a copy of the interpreter's frame,
+     * and Truffle keeps the original until the loop is done: its locals (the loop's variables when
+     * it was entered) would keep what they refer to reachable for as long as the loop runs, which
+     * a loop over a lazily built list can't afford (R7RS §3.5). The OSR frame's arguments end with
+     * that frame ({@code BytecodeOSRNode#storeParentFrameInArguments}), so the first iteration
+     * clears it and drops it from the arguments: Truffle restores it from the OSR frame when the
+     * loop is done. A call's arguments are never a frame. With a materialized frame, OSR
+     * runs in it, and there is no copy.
+     */
+    @Operation(storeBytecodeIndex = false)
+    @ConstantOperand(type = int.class)
+    public static final class LoopHead {
+        @Specialization
+        static boolean doHead(int argumentCount, @Bind VirtualFrame frame) {
+            Object[] arguments = frame.getArguments();
+            int last = arguments.length - 1;
+            if ((argumentCount < 0 ? last >= 0 : last == argumentCount) && arguments[last] instanceof MaterializedFrame parent) {
+                arguments[last] = null;
+                clearOSRParent(parent);
+            }
+            return true;
+        }
+
+        @TruffleBoundary
+        private static void clearOSRParent(MaterializedFrame parent) {
+            int slots = parent.getFrameDescriptor().getNumberOfSlots();
+            for (int i = 0; i < slots; i++) {
+                if (parent.getTag(i) == FrameSlotKind.Object.tag) {
+                    parent.clear(i);
+                }
+            }
+        }
+    }
 
     @Operation
     public static final class MakeBox {

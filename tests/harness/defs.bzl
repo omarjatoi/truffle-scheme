@@ -90,12 +90,14 @@ def spec_tests(name, srcs, module):
         tests.append(test)
     native.test_suite(name = name, tests = tests)
 
-def space_test(name, src, expect, limits, module):
-    """A program that must print `expect` under the JVM `limits`, interpreted and with the JIT."""
+def space_test(name, src, expect, limits, module, all_modes = False):
+    """A program that must print `expect` under the JVM `limits`, interpreted and with the JIT, and
+    with `all_modes`, compiled at once and under both kinds of torture too."""
     java_driver_test(
         name = name,
         # Quoted: Bazel splits `args` like a shell.
-        args = ["--kind=space", "--file=$(rlocationpath %s)" % src, "--expect=" + expect, "'--limits=%s'" % limits],
+        args = ["--kind=space", "--file=$(rlocationpath %s)" % src, "--expect=" + expect, "'--limits=%s'" % limits] +
+               (["--all-modes=true"] if all_modes else []),
         data = [src],
         main = "Program",
         module = module,

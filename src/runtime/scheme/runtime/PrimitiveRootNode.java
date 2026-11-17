@@ -1,5 +1,8 @@
 package scheme.runtime;
 
+import java.util.Arrays;
+
+import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.RootCallTarget;
 import com.oracle.truffle.api.frame.VirtualFrame;
@@ -31,7 +34,16 @@ public final class PrimitiveRootNode extends RootNode {
     public Object execute(VirtualFrame frame) {
         Object[] args = frame.getArguments();
         spec.checkArity(args.length - 1);
-        return body.invoke(args);
+        Object result = body.invoke(args);
+        if (!spec.returnsValue() && result instanceof TailCall tail && tail.arguments != args) {
+            // apply's list, say: the caller may hold the array while the tail call it asks for
+            // runs, which may be for ever (R7RS §3.5, design.md "Tail calls keep nothing alive").
+            if (CompilerDirectives.inCompiledCode()) {
+                SchemeRootNode.releaseArguments(SchemeContext.get(this), args);
+            }
+            Arrays.fill(args, 1, args.length, null);
+        }
+        return result;
     }
 
     /**

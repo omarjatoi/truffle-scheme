@@ -81,6 +81,15 @@ public final class SchemeContext {
     int interpretedCallCost;
     int compiledCallCost;
     int compiledSlotCost;
+    /**
+     * The argument array of the call being made, from the call site (or trampoline) until the
+     * callee's prologue releases it ({@link SchemeRootNode#releaseArguments}). Compiled code gets a
+     * copy of the array (Truffle's argument type profile), while the caller's Java frames may keep
+     * the original for as long as the callee runs: this is how the callee finds the original to
+     * clear (design.md "Tail calls keep nothing alive"). Possibly stale: a primitive's call doesn't
+     * release it, so a release checks that the array is its own.
+     */
+    Object[] callArguments;
     /** Stack-depth spills completed, for tests (plan.md M8-01). */
     public long spills;
     /** Measurements of a thread's stack ({@link StackBudget#remainingStack}), for tests. */

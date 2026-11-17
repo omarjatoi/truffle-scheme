@@ -1,5 +1,6 @@
 package scheme.runtime;
 
+import com.oracle.truffle.api.dsl.Bind;
 import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.Fallback;
 import com.oracle.truffle.api.dsl.GenerateInline;
@@ -130,14 +131,19 @@ public final class Trampoline extends Node {
 
         @Specialization(guards = "procedure.callTarget == cachedTarget", limit = "limit")
         static Object doDirect(@SuppressWarnings("unused") SClosure procedure, Object[] arguments,
+                        @Bind Node node,
                         @Cached("procedure.callTarget") @SuppressWarnings("unused") RootCallTarget cachedTarget,
                         @Cached("create(cachedTarget)") DirectCallNode callNode) {
+            // The callee's prologue releases it (SchemeRootNode.releaseArguments).
+            SchemeRootNode.handOffArguments(SchemeContext.get(node), arguments);
             return callNode.call(arguments);
         }
 
         @Specialization(replaces = "doDirect")
         static Object doIndirect(SClosure procedure, Object[] arguments,
+                        @Bind Node node,
                         @Cached("megamorphic()") IndirectCallNode callNode) {
+            SchemeRootNode.handOffArguments(SchemeContext.get(node), arguments);
             return callNode.call(procedure.callTarget, arguments);
         }
 

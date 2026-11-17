@@ -154,7 +154,8 @@ public final class Capture implements TruffleObject {
     public final DynEnv dynEnv;
     /** For REINSTATE. */
     public final Continuation continuation;
-    public final Object value;
+    /** The value to go on with (REINSTATE, TORTURE), or the spilled call's arguments (SPILL). */
+    private Object value;
     /**
      * Segments and prompt markers, innermost first: the cells of the list {@link #segmentsBefore}
      * hands over, built front to back as the frames suspend, outward (plan.md M8-01: no array to
@@ -178,6 +179,17 @@ public final class Capture implements TruffleObject {
         this.continuation = continuation;
         this.value = value;
         this.owner = kind == Kind.SPILL || (kind == Kind.TORTURE && SchemeRootNode.TORTURE_OWNED) ? new Owner() : null;
+    }
+
+    /**
+     * Takes {@link #value}, for the driver that handles the capture: it is the capture's alone,
+     * and the capture may stay reachable (from a driver's or a prompt's Java frame) while the
+     * program goes on with it (design.md "Tail calls keep nothing alive").
+     */
+    Object takeValue() {
+        Object v = value;
+        value = null;
+        return v;
     }
 
     public static Capture full(Object receiver, DynEnv dynEnv) {
@@ -255,18 +267,23 @@ public final class Capture implements TruffleObject {
     /**
      * This capture's segments, innermost first, followed by {@code outer}: the list its frames
      * suspended into, now linked to {@code outer}, and so handed over once, by the driver that
-     * completes the capture.
+     * completes the capture. The capture lets go of it: a suspended frame's stale operand slot may
+     * keep the capture while the program goes on without those frames (design.md "Tail calls keep
+     * nothing alive").
      */
     public SegmentList segmentsBefore(SegmentList outer) {
         if (handedOver) {
             throw handedOver();
         }
         handedOver = true;
+        SegmentList list = first;
         if (last == null) {
             return outer;
         }
         last.tail = outer;
-        return first;
+        first = null;
+        last = null;
+        return list;
     }
 
     /** eq? on tags: identity, fixnums and characters by value (design.md D1). */

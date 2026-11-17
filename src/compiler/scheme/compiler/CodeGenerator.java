@@ -7,6 +7,7 @@ import java.util.IdentityHashMap;
 import java.util.Set;
 import java.util.Deque;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -102,11 +103,23 @@ final class CodeGenerator {
      * another file (include, a library) opens that file's Source first.
      */
     private Runnable gen(Expr e, Ctx ctx) {
+        return gen(e, ctx, List.of());
+    }
+
+    /**
+     * {@link #gen(Expr, Ctx)} for an expression in tail position of the lets (and letrec*s, and
+     * contified loops, and the root's body) that bind {@code dying}, in this root: a non-tail call
+     * there, or the entry of a contified loop, replaces their frames (R7RS §3.5), so it clears
+     * their variables first (design.md "Tail calls keep nothing alive"). A tail call of the root
+     * returns, and its frame goes with it; a jump back to a loop's start leaves their blocks, whose
+     * locals the Bytecode DSL clears.
+     */
+    private Runnable gen(Expr e, Ctx ctx, List<Var> dying) {
         return () -> {
             Class<?>[] tags = tags(e, ctx);
             SourceSection section = usable(e.source);
             if (section == null && tags.length == 0) {
-                push(expand(e, ctx));
+                push(expand(e, ctx, dying));
                 return;
             }
             State st = state();
@@ -125,7 +138,7 @@ final class CodeGenerator {
                     b.beginTag(tags);
                 }
             });
-            seq.addAll(expand(e, ctx));
+            seq.addAll(expand(e, ctx, dying));
             seq.add(() -> {
                 if (tags.length > 0) {
                     b.endTag(tags);
@@ -247,11 +260,14 @@ final class CodeGenerator {
                     if (fn.rest != null) {
                         store(fn.rest, () -> b.emitRestList(n + 1));
                     }
+                    if (n > 0 || fn.rest != null) {
+                        b.emitReleaseArguments();
+                    }
                 }
             }
             if (loops) {
                 b.beginWhile();
-                b.emitLoadConstant(true);
+                b.emitLoopHead(argumentCount(fn));
                 b.beginBlock();
                 st.loop = b.createLabel();
             }
@@ -262,7 +278,8 @@ final class CodeGenerator {
         if (!(fn.body instanceof Ast.Seq)) {
             statements.add(fn.body);
         }
-        seq.add(gen(fn.body, fn.program ? Ctx.VALUE : Ctx.TAIL));
+        // The parameters die at a loop the body enters in tail position, if it doesn't use them.
+        seq.add(fn.program ? gen(fn.body, Ctx.VALUE) : gen(fn.body, Ctx.TAIL, fn.rest == null ? fn.params : plus(fn.params, List.of(fn.rest))));
         seq.add(() -> {
             State st = states.pop();
             if (fn.program) {
@@ -284,6 +301,38 @@ final class CodeGenerator {
             holder.root = root;
         });
         push(seq);
+    }
+
+    /** The length of a call's argument array for {@code fn}'s root, or -1 if it varies. */
+    private static int argumentCount(Lambda fn) {
+        return fn.program || fn.rest != null ? -1 : fn.params.size() + 1;
+    }
+
+    /** The variables {@code e} refers to or assigns, in lambdas in it too. */
+    private static Set<Var> referenced(Expr e) {
+        Set<Var> vars = new HashSet<>();
+        Deque<Expr> todo = new ArrayDeque<>();
+        todo.push(e);
+        while (!todo.isEmpty()) {
+            Expr x = todo.pop();
+            if (x instanceof Ast.LocalRef r) {
+                vars.add(r.var);
+            } else if (x instanceof Ast.LocalSet s) {
+                vars.add(s.var);
+            }
+            Closures.pushChildren(x, todo);
+        }
+        return vars;
+    }
+
+    /** {@code vars} and then {@code more}. */
+    private static List<Var> plus(List<Var> vars, List<Var> more) {
+        if (vars.isEmpty()) {
+            return more;
+        }
+        List<Var> all = new ArrayList<>(vars);
+        all.addAll(more);
+        return all;
     }
 
     /**
@@ -441,7 +490,7 @@ final class CodeGenerator {
         return wrapped;
     }
 
-    private List<Runnable> expand(Expr e, Ctx ctx) {
+    private List<Runnable> expand(Expr e, Ctx ctx, List<Var> dying) {
         if (e instanceof Ast.Const c) {
             return leaf(() -> b.emitLoadConstant(c.value), ctx);
         } else if (e instanceof Ast.LocalRef r) {
@@ -488,25 +537,26 @@ final class CodeGenerator {
                 return List.of(() -> {
                     b.beginConditional();
                     beginTest.run();
-                }, gen(i.test, Ctx.VALUE), endTest, gen(i.consequent, Ctx.VALUE), gen(i.alternative, Ctx.VALUE), b::endConditional);
+                }, gen(i.test, Ctx.VALUE), endTest, gen(i.consequent, Ctx.VALUE, dying), gen(i.alternative, Ctx.VALUE, dying), b::endConditional);
             }
             return List.of(() -> {
                 b.beginIfThenElse();
                 beginTest.run();
-            }, gen(i.test, Ctx.VALUE), endTest, gen(i.consequent, Ctx.TAIL), gen(i.alternative, Ctx.TAIL), b::endIfThenElse);
+            }, gen(i.test, Ctx.VALUE), endTest, gen(i.consequent, Ctx.TAIL, dying), gen(i.alternative, Ctx.TAIL, dying), b::endIfThenElse);
         } else if (e instanceof Ast.Seq s) {
             List<Runnable> seq = new ArrayList<>();
             seq.add(b::beginBlock);
             for (int k = 0; k < s.body.size(); k++) {
                 statements.add(s.body.get(k));
-                seq.add(gen(s.body.get(k), k == s.body.size() - 1 ? ctx : Ctx.VALUE));
+                boolean last = k == s.body.size() - 1;
+                seq.add(gen(s.body.get(k), last ? ctx : Ctx.VALUE, last ? dying : List.of()));
             }
             seq.add(b::endBlock);
             return seq;
         } else if (e instanceof Ast.Let l) {
-            return let(l, ctx);
+            return let(l, ctx, dying);
         } else if (e instanceof Ast.Letrec l && contified(l) instanceof Lambda loop) {
-            return contifiedLoop(loop, (Ast.Call) l.body, ctx);
+            return contifiedLoop(loop, (Ast.Call) l.body, ctx, dying);
         } else if (e instanceof Ast.Letrec l) {
             List<Runnable> seq = new ArrayList<>();
             seq.add(() -> {
@@ -536,7 +586,7 @@ final class CodeGenerator {
                     seq.add(() -> patch(l, j));
                 }
             }
-            seq.add(gen(l.body, ctx));
+            seq.add(gen(l.body, ctx, plus(dying, l.vars)));
             seq.add(b::endBlock);
             return seq;
         } else if (e instanceof Lambda fn) {
@@ -549,7 +599,7 @@ final class CodeGenerator {
                 b.endMakeClosure();
             }), ctx);
         } else if (e instanceof Ast.Call c) {
-            return call(c, ctx);
+            return call(c, ctx, dying);
         }
         throw new IllegalStateException("unknown AST node " + e);
     }
@@ -575,11 +625,11 @@ final class CodeGenerator {
      * boxed variable gets its box once every init has returned: an init's continuation invoked
      * again binds a fresh one, as a call of the lambda would.
      */
-    private List<Runnable> let(Ast.Let l, Ctx ctx) {
+    private List<Runnable> let(Ast.Let l, Ctx ctx, List<Var> dying) {
         List<Runnable> seq = new ArrayList<>();
         seq.add(b::beginBlock);
         bind(l.vars, l.inits, seq);
-        seq.add(gen(l.body, ctx));
+        seq.add(gen(l.body, ctx, plus(dying, l.vars)));
         seq.add(b::endBlock);
         return seq;
     }
@@ -626,8 +676,12 @@ final class CodeGenerator {
      * parameters are bound as a let's variables are, then its body runs in a {@code While} of this
      * root, in tail position. A call of the loop's variable stores the new arguments in the
      * parameters (a boxed one in a fresh box, as a call would) and jumps back ({@link #call}).
+     * Entering it is a tail call of the lets around it, and of the root's body ({@code dying}):
+     * their variables that its body doesn't use are cleared once the parameters are bound. They
+     * would stay set while it loops: it runs in their blocks. In its body, its parameters die at the
+     * entry of another loop.
      */
-    private List<Runnable> contifiedLoop(Lambda loop, Ast.Call entry, Ctx ctx) {
+    private List<Runnable> contifiedLoop(Lambda loop, Ast.Call entry, Ctx ctx, List<Var> dying) {
         if (ctx != Ctx.TAIL) {
             throw new IllegalStateException("a contified loop not in tail position");
         }
@@ -638,12 +692,21 @@ final class CodeGenerator {
             statements.add(loop.body);
         }
         seq.add(() -> {
+            if (!dying.isEmpty()) {
+                // The loop's body may use a variable from outside it: that one stays.
+                Set<Var> used = referenced(loop.body);
+                for (Var v : dying) {
+                    if (!used.contains(v)) {
+                        b.emitClearLocal(state().locals.get(v));
+                    }
+                }
+            }
             b.beginWhile();
-            b.emitLoadConstant(true);
+            b.emitLoopHead(argumentCount(state().lambda));
             b.beginBlock();
             state().loops.put(loop, b.createLabel());
         });
-        seq.add(gen(loop.body, Ctx.TAIL));
+        seq.add(gen(loop.body, Ctx.TAIL, loop.params));
         seq.add(() -> {
             b.emitLabel(state().loops.get(loop));
             b.endBlock();
@@ -653,7 +716,7 @@ final class CodeGenerator {
         return seq;
     }
 
-    private List<Runnable> call(Ast.Call c, Ctx ctx) {
+    private List<Runnable> call(Ast.Call c, Ctx ctx, List<Var> dying) {
         List<SPair> pairs = ConstantMember.pairs(c);
         if (pairs != null) {
             return constantMember(c.arguments.get(0), pairs, ctx);
@@ -674,7 +737,16 @@ final class CodeGenerator {
             return valued(seq, ctx);
         }
         if (ctx == Ctx.VALUE || state().lambda.program) {
-            return valued(CallSiteEmitter.nonTailCall(b, gen(c.procedure, Ctx.VALUE), arguments), ctx);
+            Runnable procedure = gen(c.procedure, Ctx.VALUE);
+            if (!dying.isEmpty()) {
+                // The variables die once the operands are evaluated: the last one clears them.
+                if (arguments.isEmpty()) {
+                    procedure = thenClear(procedure, dying);
+                } else {
+                    arguments.set(arguments.size() - 1, thenClear(arguments.get(arguments.size() - 1), dying));
+                }
+            }
+            return valued(CallSiteEmitter.nonTailCall(b, procedure, arguments), ctx);
         }
         State st = state();
         if (c.procedure instanceof Ast.LocalRef r && r.var.self != null && r.var.self.contified) {
@@ -743,6 +815,19 @@ final class CodeGenerator {
             b.endBlock();
         });
         return seq;
+    }
+
+    /** {@code operand}, then the locals of {@code dying} cleared, with the operand's value. */
+    private Runnable thenClear(Runnable operand, List<Var> dying) {
+        return () -> push(List.of(() -> {
+            for (Var v : dying) {
+                b.beginThenClear(state().locals.get(v));
+            }
+        }, operand, () -> {
+            for (int k = 0; k < dying.size(); k++) {
+                b.endThenClear();
+            }
+        }));
     }
 
     /**

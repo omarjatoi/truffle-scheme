@@ -15,7 +15,9 @@ import java.util.regex.Pattern;
  * <p>
  * {@code --kind=spec}: a tests/spec case, with its {@code ;; limits:} and {@code ;; exit:} headers
  * and its .out file (tests/spec/README.md). {@code --kind=space --expect=LINE --limits=OPTIONS}:
- * one line of stdout expected under those limits.
+ * one line of stdout expected under those limits; with {@code --all-modes=true}, also compiled at
+ * once and under both kinds of torture (interpreted), whose captures and resumes must stay within
+ * them too.
  */
 public final class Program {
 
@@ -48,12 +50,19 @@ public final class Program {
             String name = file.getFileName().toString();
             expected = Launch.read(file.resolveSibling(name.substring(0, name.length() - ".scm".length()) + ".out"));
         }
+        List<String> modes = new ArrayList<>(List.of("interpreter", "JIT"));
+        if (Boolean.parseBoolean(launch.options.getOrDefault("all-modes", "false"))) {
+            modes.addAll(List.of("compile", "torture", "torture_owned"));
+        }
         List<String> problems = new ArrayList<>();
-        for (boolean interpreted : new boolean[]{true, false}) {
-            String label = interpreted ? "interpreter" : "JIT";
+        for (String label : modes) {
             List<String> jvmArgs = new ArrayList<>(limits);
-            if (interpreted) {
-                jvmArgs.addAll(Launch.INTERPRETER_VM_ARGS);
+            switch (label) {
+                case "interpreter" -> jvmArgs.addAll(Launch.INTERPRETER_VM_ARGS);
+                case "JIT" -> {
+                }
+                case "compile" -> jvmArgs.addAll(Launch.vmArgs(true, null));
+                default -> jvmArgs.addAll(Launch.vmArgs(false, label));
             }
             long start = System.nanoTime();
             Launch.Result r = launch.run(jvmArgs, Launch.LAUNCHER_MAIN, List.of(file.toString()), null, Map.of(), 900);
