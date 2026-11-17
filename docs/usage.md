@@ -500,9 +500,9 @@ D17, "The collector").
 and as the native launcher, with Chez, Racket, Chicken, Guile, Gauche and
 chibi on [ecraven's R7RS benchmarks](https://ecraven.github.io/r7rs-benchmarks/),
 57 programs, run as ecraven's script runs them. The committed report was
-measured on 2026-11-17, on the code of M9-03 and the launcher changes after it
-(#187-#190), on an Apple M3 Max shared with other agents' builds and
-benchmarks (a 1-minute load average of 4.3 at the start, 5.8 at most, 3.6 at
+measured on 2026-11-17, on the final M9 code (#197 and the thresholds
+re-measured on it), on an Apple M3 Max shared with other agents' builds and
+benchmarks (a 1-minute load average of 3.6 at the start, 13 at most, 3.8 at
 the end; its own note says "differences under 2x are within the noise"), at a
 tenth of each program's count. Its summary, the geometric mean of each
 implementation's time relative to the fastest, over the programs it passed:
@@ -510,17 +510,17 @@ implementation's time relative to the fastest, over the programs it passed:
 | Implementation | Passed | Geometric mean (× fastest) | Median peak memory |
 |---|--:|--:|--:|
 | Chez | 57/57 | 1.20 | 50 MB |
-| Ours, JIT, steady state | 56/57 | 1.81 | |
-| Racket | 57/57 | 2.07 | 150 MB |
-| Ours, native, steady state | 57/57 | 2.20 | |
-| Ours, native, first run | 57/57 | 3.27 | 484 MB |
-| Guile | 56/57 | 3.34 | 120 MB |
-| Ours, native, first run with startup | 57/57 | 3.59 | |
-| Chicken | 56/57 | 4.15 | 24 MB |
-| Ours, JIT, first run | 56/57 | 4.24 | 958 MB |
-| Gauche | 57/57 | 11.78 | 44 MB |
-| Ours, interpreter | 54/57 | 47.23 | 712 MB |
-| Chibi | 52/57 | 64.46 | 9 MB |
+| Ours, JIT, steady state | 57/57 | 1.82 | |
+| Racket | 57/57 | 2.08 | 150 MB |
+| Ours, native, steady state | 57/57 | 2.28 | |
+| Guile | 56/57 | 3.29 | 120 MB |
+| Ours, native, first run | 57/57 | 3.38 | 182 MB |
+| Ours, native, first run with startup | 57/57 | 3.76 | |
+| Chicken | 56/57 | 4.14 | 24 MB |
+| Ours, JIT, first run | 57/57 | 4.27 | 955 MB |
+| Gauche | 57/57 | 11.77 | 44 MB |
+| Ours, interpreter | 54/57 | 46.93 | 708 MB |
+| Chibi | 52/57 | 64.26 | 9 MB |
 
 "First run" is the number comparable with the others': one run in a fresh
 process, startup excluded, as ecraven's tables report. "Steady state" is the
@@ -530,11 +530,11 @@ JIT, so it is measured the same way; "with startup" adds its startup and exit
 to its first run, which the others' numbers leave out. Its first run is faster
 than the JVM's, since its interpreter was compiled ahead of time where the
 JVM's starts out interpreted itself, but its steady state is slower, most of
-all on `earley`, which keeps a gigabyte alive (8.9 s against 2.9). The JIT's
-miss is `scheme`, whose run ended after two of its three iterations, without
-an error; the interpreter's 3 are runs stopped at the report's 60 s limit for
-it. Our JVM's peak memory is mostly the JVM's own: the programs' median live
-heap is 8 MB (the report's Peak memory table gives each program's).
+all on `earley`, which keeps a gigabyte alive (8.6 s against 3.0). The
+interpreter's 3 misses are runs stopped at the report's 60 s limit for it
+(`takl`, `ntakl`, `cpstak`). Our JVM's peak memory is mostly the JVM's own: the
+programs' median live heap is 7 MB (the report's Peak memory table gives each
+program's).
 [bench/README.md](../bench/README.md) explains how to run the benchmarks and
 what is measured, and its "Thresholds" section how `bench-check` checks a
 subset of them against `bench/thresholds.json`.
