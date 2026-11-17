@@ -2406,8 +2406,102 @@ Each entry: the decision, why, and what was rejected.
       creates the VM (the language's shared library, `JNI_CreateJavaVM`)
       with them, then runs the launcher, which restarts it with the right
       ones in `GRAALVM_LANGUAGE_LAUNCHER_VMARGS_<n>` if it guessed wrong.
-      That is the way to have both here too: a second file beside the
-      executable, and a design change of its own.
+      That is the way to have both here too (below).
+  - **Decision (M10-01): the native launcher is GraalVM's thin launcher in
+    front of the image as a shared library**, as GraalVM's language
+    standalones ship (the maintainer's choice of #206's follow-up (b)). It
+    replaces the restart above (#203). Sources are 25.5's, at the tag
+    `graal-25.5.5.0.3` that the GraalVM CE release names.
+    - *The executable* (`bazel-bin/scheme-native`) is
+      `sdk/src/org.graalvm.launcher.native/src/launcher.cc`, unmodified,
+      fetched at that tag with a pinned sha256 and compiled with the defines
+      `NativeLibraryLauncherProject.cflags` gives it
+      (`sdk/mx.sdk/mx_sdk_vm_impl.py`): `LAUNCHER_CLASS`
+      (`scheme.launcher.SchemeMain`), `LAUNCHER_MAIN_MODULE`,
+      `LIBLANG_RELPATH` (the library, beside it), `GRAALVM_VERSION`,
+      `DIR_SEP`, `CP_SEP`, and `LIBJVM_RELPATH` and, on macOS, `LIBJLI_RELPATH`,
+      which only its JVM mode uses (there is no JVM here: it is the mode it
+      falls back to when the library is missing); with `-ObjC++` and
+      Foundation on macOS. Without `LAUNCHER_MODULE_PATH`, `LANGUAGES_DIR`
+      and the other JVM-mode defines.
+    - *What it does* (`launcher.cc`, `main` and `jvm_main_thread`): it
+      takes every `--vm.<option>` on the command line as the VM option
+      `-<option>` (`--vm.cp=` and the other path options it keeps for JVM
+      mode), loads the library from `LIBLANG_RELPATH` relative to its own
+      real path, and creates the isolate with `JNI_CreateJavaVM` and those
+      options, on a thread of its own (on macOS always, where the first
+      thread runs the Cocoa event loop; elsewhere when `--vm.Xss` exceeds
+      the main thread's stack). Then it calls the framework's JNI entry
+      point, `AbstractLanguageLauncher.runLauncher(byte[][], byte[][], int,
+      long, boolean)` (`launcher-common`, whose `jni-config.json` registers
+      it and `RelaunchException.vmArgs`), with the arguments. The framework
+      creates the launcher from the build-time property
+      `org.graalvm.launcher.class`, and after `preprocessArguments` checks
+      (`validateVmArguments`) that the `--vm.` arguments the launcher
+      returned are the ones the C part took. If not (a `--vm.` argument
+      after the program file is the program's), it throws
+      `RelaunchException` with the right ones, and the C part puts them in
+      `GRAALVM_LANGUAGE_LAUNCHER_VMARGS` and `_<n>` and `execve`s itself,
+      which then takes those instead of the command line's. In the
+      process, the framework sets none of them (`maybeExec` with the thin
+      launcher): the isolate was created with them.
+    - *The library* (`libschemevm`, `lib<language>vm` as GraalVM names it) is
+      built as `mx_sdk_vm_impl.py` builds a `LanguageLibraryConfig` with
+      launchers (`NativeImageProperties.contents`): `--shared`,
+      `-Dorg.graalvm.launcher.class=<the launcher>`, `-H:-InitializeVM` (the
+      framework's `maybeExec` runs the startup hooks, `VMRuntime.initialize`,
+      once the options are processed), and `-R:+EnableSignalHandling`,
+      `-R:+InstallSegfaultHandler` and `-H:+InstallExitHandlers`, which an
+      executable has by default and a shared library doesn't. The language
+      macro (`--macro:truffle-language-library-community`, which adds polyglot
+      isolates' guest feature) and the monitoring features aren't taken:
+      neither is in what the executable has today. `//:scheme-native`'s
+      options stay (the pre-initialized context, native access for JLine,
+      `-march=compatibility`, `--//:native_gc`, `--//:native_graalvm`).
+    - *Without `-H:-ParseRuntimeOptions`*, unlike GraalVM's executables: mx
+      adds it for a `LauncherConfig` only, and adds `-H:-InitializeVM` to a
+      `LanguageLibraryConfig` instead (`mx_sdk_vm_impl.py`, the
+      `is_sdk_launcher` branch). The switch gates every source of runtime
+      options, `JNI_CreateJavaVM`'s included (`IsolateArgumentParser.shouldParseArguments`
+      → `GuestStagingDependencyBridgeImpl.shouldParseRuntimeOptions`):
+      a prototype library built with it ignored the thin launcher's options
+      (`--vm.Xmx64m` let a program keep 200 MB alive, and `--vm.XX:+VerboseGC`
+      printed nothing), while built without it, `--vm.Xmx64m` ended that
+      program with *"Garbage-collected heap size exceeded"*, and `--vm.Xms1g
+      --vm.XX:InitialCollectionPolicy=BySpaceAndTime` gave *"GC policy: by
+      space and time"*, *"Minimum heap size: 1024M"*. It isn't needed
+      either: an isolate that `JNI_CreateJavaVM` creates parses only the
+      `JavaVMOption`s it is given (`JNIInvocationInterface.JNICreateJavaVMPrologue`,
+      with no program name), never the process's command line. So
+      `scheme-native prog.scm a -Xmx3g -XX:+Foo -Dx=y b` gives the program
+      all six arguments (the prototype did).
+    - *The executable's own options are `--vm.` ones only*, as for GraalVM's
+      launchers: a `-X...`, `-XX:...` or `-D...` before the program file is
+      an error that names the `--vm.` form (`-Xmx2g`: use `--vm.Xmx2g`).
+      `bench.py`'s native options and docs/usage.md's commands take that form.
+    - *Costs.* A second file: the executable finds the library beside its
+      real path, so the two go together. A `--vm.` argument after the
+      program file costs a second start (the relaunch). A collector option
+      (`--vm.XX:+UseG1GC`) reaches `JNI_CreateJavaVM`, which rejects it as
+      any option it doesn't know (*"Could not find option 'UseG1GC'"*, then
+      the launcher's *"JNI_CreateJavaVM() failed."*, status 255) before the
+      launcher's Java code runs, so the launcher's own message for it (#203)
+      can't be shown without changing `launcher.cc`; docs/usage.md says the
+      collector is chosen when the executable is built. `--vm.cp=` still
+      reaches the launcher, and its error stays.
+    - *Building it.* The executable is compiled with the C++ compiler that
+      native-image links with, in an action of its own: on the executors for
+      a Linux target, on this machine for a macOS one, as `native_image` and
+      `bazel/chibi.bzl` run theirs.
+    - *Rejected.* Building the executable with `-H:-ParseRuntimeOptions`
+      alone (#206's (a)): it loses the startup-only options (above). Launcher
+      logic of our own (#203's restart, or parsing in C): GraalVM's mechanism
+      does the job, and is what its standalones are tested with. `cc_binary`
+      for the executable: for a macOS target under `--config=remote` its
+      compile went to a Linux executor with the autodetected
+      `@local_config_cc`, which on a Mac in `nix develop` is Nix's clang
+      wrapper (`clang: not found` there); the C++ compiler native-image
+      already uses is the one that builds on both.
   - `//tests:launcher_vm` checks the JVM launcher's, and the local
     `//tests:launcher_vm_native` the native launcher's (the heap's sizes
     from `-XX:+VerboseGC`, a maximum that a program exceeds, the errors).
