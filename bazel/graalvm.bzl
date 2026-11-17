@@ -10,10 +10,20 @@ Upgrading: add the new release's URLs and sha256s (published next to each archiv
 `<archive>.sha256`) below, then bump TRUFFLE_VERSION in MODULE.bazel and run
 `bazel run @jvm//:pin` (see AGENTS.md).
 
+Oracle GraalVM at the same version is pinned too, for `//:scheme-native` alone, and only when
+`--//:native_graalvm=oracle` asks for it (design.md D17, "The native image's collector"): its
+native-image also has the G1 collector. Bazel downloads it only then. It is released under the
+GraalVM Free Terms and Conditions (its LICENSE.txt), which allow using it, and redistributing it
+unmodified at no charge; its download asks for no license acceptance. Oracle publishes no checksum
+next to these archives: the sha256s are of the archives as downloaded from these URLs on
+2026-11-17. An upgrade adds the new version's Oracle release too.
+
 Repositories:
   @graalvm_<platform>   one per platform: the unpacked JDK and its `java_runtime` (`:jdk`)
+  @oracle_graalvm_<platform>   the same for Oracle GraalVM, fetched only when used
   @graalvm              the runtime toolchains (`--java_runtime_version=graalvm_25`), an alias
-                        `:jdk` for the host platform's JDK, and `:version` (the GraalVM version)
+                        `:jdk` for the host platform's JDK, `:oracle_jdk` for the target
+                        platform's Oracle GraalVM, and `:version` (the GraalVM version)
 """
 
 load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
@@ -38,6 +48,19 @@ _RELEASES = {
             "linux_x64": "c6438dee6c3ade2220d40b7ccdcad24b512d30e233e61bb4fc70519522de34ef",
             "linux_aarch64": "41741c0650ae7564a78335f9e4fc353a902e6ff1d4140f2e4fabd1c55d5cce66",
             "macos_aarch64": "54369d4a5931a5a2101c7c52444a4e7e6647a3a4e041335053cda6fd22295e0c",
+        },
+    ),
+}
+
+# The same for Oracle GraalVM (https://www.graalvm.org/downloads/, its "script-friendly URLs").
+_ORACLE_RELEASES = {
+    "25.5.5.0.3": (
+        "https://gds.oracle.com/download/graal/25i5/archive/graalvm-jdk-25i5-25.0.5.0.3_",
+        "graalvm-25.5.5.0.3+1.1",
+        {
+            "linux_x64": "90582f405cb89a825a43297cdacc7f427ce04039a249f5f0fc75c95b50600b08",
+            "linux_aarch64": "c4e423cdbf21963329d4fb7846fdc2236dcd9cb3e996484d06c3b6d363b58a83",
+            "macos_aarch64": "3c51d8ef62c63eb8454727f32d67aaff39afabe4c90b3c811c11547029c10819",
         },
     ),
 }
@@ -86,6 +109,17 @@ def _hub_impl(rctx):
         "    }),",
         ")",
         "",
+        "# The target platform's Oracle GraalVM: //:scheme-native's with --//:native_graalvm=oracle.",
+        "alias(",
+        "    name = \"oracle_jdk\",",
+        "    actual = select({",
+    ] + [
+        "        \":is_%s\": \"@oracle_graalvm_%s//:jdk\"," % (name, name)
+        for name in _PLATFORMS
+    ] + [
+        "    }),",
+        ")",
+        "",
         "exports_files([\"version\"])",
     ]
     rctx.file("BUILD.bazel", "\n".join(lines) + "\n")
@@ -104,15 +138,18 @@ def _graalvm_impl(mctx):
     if version not in _RELEASES:
         fail(("MODULE.bazel pins Truffle %s, but bazel/graalvm.bzl has no GraalVM CE %s release to " +
               "match it (design.md D11). Add the release's URLs and sha256s there.") % (version, version))
-    url_prefix, top, sha256s = _RELEASES[version]
-    for name, (_, _, suffix, home) in _PLATFORMS.items():
-        http_archive(
-            name = "graalvm_" + name,
-            urls = [url_prefix + suffix + "_bin.tar.gz"],
-            sha256 = sha256s[name],
-            strip_prefix = top + home,
-            build_file_content = JDK_BUILD_TEMPLATE.format(RUNTIME_VERSION = JAVA_VERSION),
-        )
+    if version not in _ORACLE_RELEASES:
+        fail(("MODULE.bazel pins Truffle %s, but bazel/graalvm.bzl has no Oracle GraalVM %s release " +
+              "to match it (design.md D11). Add the release's URLs and sha256s there.") % (version, version))
+    for prefix, (url_prefix, top, sha256s) in [("graalvm_", _RELEASES[version]), ("oracle_graalvm_", _ORACLE_RELEASES[version])]:
+        for name, (_, _, suffix, home) in _PLATFORMS.items():
+            http_archive(
+                name = prefix + name,
+                urls = [url_prefix + suffix + "_bin.tar.gz"],
+                sha256 = sha256s[name],
+                strip_prefix = top + home,
+                build_file_content = JDK_BUILD_TEMPLATE.format(RUNTIME_VERSION = JAVA_VERSION),
+            )
     _hub(name = "graalvm", version = version)
     return mctx.extension_metadata(reproducible = True)
 
