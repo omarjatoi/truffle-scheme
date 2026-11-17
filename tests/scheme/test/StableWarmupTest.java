@@ -132,6 +132,19 @@ public class StableWarmupTest {
     }
 
     @Test
+    public void theTailCallsAfterTheFirstHaveALargerCache() {
+        // M8-05: continuation-passing code (cpstak, graphs) returns every call of a continuation to
+        // one trampoline, after its first tail call: here p1's tail call of p2 is the first, and p3
+        // to p8, six procedures, come after it. Up to eight are each called directly (and can be
+        // inlined); past four, the site called them all indirectly, with Truffle's argument
+        // profiling on every call.
+        String chain = "(define (p1 x) (p2 x)) (define (p2 x) (p3 x)) (define (p3 x) (p4 x)) (define (p4 x) (p5 x))" +
+                        "(define (p5 x) (p6 x)) (define (p6 x) (p7 x)) (define (p7 x) (p8 x)) (define (p8 x) (+ x 1))" +
+                        "(define (site x) (* 2 (p1 x)))";
+        assertEquals(List.of(1, 6), tailCallCaches(chain + "(let loop ((i 0)) (if (< i 10) (begin (site i) (loop (+ i 1)))))", "site"));
+    }
+
+    @Test
     public void onlyMegamorphicSitesSplitTheCaller() throws IOException {
         // The first procedure a callee tail-calls can depend on the caller: here run tail-calls the
         // procedure twice was given, so twice's site sees a different one for each caller of twice.

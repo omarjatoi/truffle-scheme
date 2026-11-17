@@ -91,6 +91,11 @@ full R7RS-small conformance comes first.
   (`map` → its loop → `reverse`) is compiled once per site, not twice. A call
   site that goes megamorphic (its own procedure, or the first tail call)
   reports polymorphism, so Truffle splits the procedure it is in per caller;
+  the cache of the tail calls after the first holds 8 (M8-05; it never
+  reports, so it causes no splits): continuation-passing code returns every
+  call of a continuation to one site's trampoline, and `cpstak`'s five
+  procedures there were all called indirectly, with Truffle's argument
+  profiling on each call, past a cache of 4;
   up to the cache limit the site inlines what it has seen and doesn't report,
   since each split is another compilation (25.5's Bytecode DSL can't compile
   `@ReportPolymorphism` on an operation, so the cache initializer reports).
