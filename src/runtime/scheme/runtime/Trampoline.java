@@ -28,8 +28,9 @@ import scheme.runtime.value.SClosure;
  * the {@link TailCall}s that come back, until a value does (plan.md M5-10). Each call site has its
  * own, with inline caches of {@link DirectCallNode}s keyed on the tail-called procedure's call
  * target, so a procedure reached by a tail call can be inlined into the site, and its
- * {@code TailCall} and argument array can be scalar-replaced. Past {@link #CACHE_LIMIT} targets
- * ({@link #REST_CACHE_LIMIT} for the tail calls after the first) a cache calls indirectly.
+ * {@code TailCall} and argument array can be scalar-replaced. A primitive that only returns values
+ * runs in place instead, with a node of the cache's own (plan.md M10-03). Past {@link #CACHE_LIMIT}
+ * targets ({@link #REST_CACHE_LIMIT} for the tail calls after the first) a cache calls indirectly.
  *
  * <p>There are two caches (plan.md M7-01): one for the first tail call that comes back, and one for
  * the tail calls after it. A procedure's tail calls form a chain ({@code map} tail-calls its
@@ -303,11 +304,26 @@ public final class Trampoline extends Node {
             return IndirectCallNode.create();
         }
 
+        /**
+         * Calls the cached target. A primitive that only returns values runs in place instead, as at
+         * a call site (design.md "Primitives run in place"): with a node of this entry's own, and
+         * no Truffle call of its root, which compiled code would have to inline or not by the
+         * inlining budget (plan.md M10-03). Its errors leave the trampoline for the call site, as
+         * from its root. One specialization for both, so that a tail call of a closure checks no
+         * more entries than before: each entry's {@code primitive} is a constant, and partial
+         * evaluation keeps one of the branches.
+         */
         @Specialization(guards = "procedure.callTarget == cachedTarget", limit = "limit")
         static Object doDirect(@SuppressWarnings("unused") SClosure procedure, Object[] arguments,
                         @Bind Node node,
-                        @Cached("procedure.callTarget") @SuppressWarnings("unused") RootCallTarget cachedTarget,
-                        @Cached("create(cachedTarget)") DirectCallNode callNode) {
+                        @Cached("procedure.callTarget") RootCallTarget cachedTarget,
+                        @Cached("inPlace(cachedTarget)") PrimitiveSpec spec,
+                        @Cached("createNode(spec)") PrimitiveNode primitive,
+                        @Cached("createCall(cachedTarget, spec)") DirectCallNode callNode) {
+            if (primitive != null) {
+                spec.checkArity(arguments.length - 1);
+                return SchemeRootNode.inPlaceResult(primitive.invoke(arguments));
+            }
             // The callee's prologue releases it (SchemeRootNode.releaseArguments).
             SchemeRootNode.handOffArguments(SchemeContext.get(node), arguments);
             return callNode.call(arguments);
@@ -324,6 +340,19 @@ public final class Trampoline extends Node {
         @Fallback
         static Object doNotAProcedure(Object procedure, @SuppressWarnings("unused") Object[] arguments) {
             throw SchemeRootNode.notAProcedure(procedure);
+        }
+
+        static PrimitiveSpec inPlace(RootCallTarget target) {
+            return PrimitiveRootNode.inPlace(target);
+        }
+
+        static PrimitiveNode createNode(PrimitiveSpec spec) {
+            return PrimitiveRootNode.createNode(spec);
+        }
+
+        /** The call node of a target whose primitive doesn't run in place; null if it does. */
+        static DirectCallNode createCall(RootCallTarget target, PrimitiveSpec spec) {
+            return spec == null ? DirectCallNode.create(target) : null;
         }
     }
 }

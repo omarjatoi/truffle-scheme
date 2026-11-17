@@ -33,13 +33,42 @@ follow it or deviate, with the decision below that says why.
   call site, with a node of the site's own and no Truffle call, `TailCall` or
   argument copy; its errors are raised in the calling frame (D8). Only the
   primitives that transfer control (`apply`, `call/cc`, `eval`, `load`, and
-  the continuation internals) are still called. A primitive that `apply`
-  calls, or a site past its cache, calls the primitive's own root, which
-  doesn't say it is trivial (`RootNode.isTrivial`): many primitives loop
+  the continuation internals) are still called. A trampoline's caches run
+  them in place too (M10-03): the tail call that `apply` returns, and one
+  that a tail site past its own cache returns, which the trampoline used to
+  call through the primitive's root. An entry of the trampoline's cache holds
+  either a call node or, for such a primitive, a node of its own, so a tail
+  call of a closure checks no more entries than before. Only a site that
+  has cached four primitives, or a trampoline past its cache, calls the
+  primitive's root. That root doesn't say it is trivial
+  (`RootNode.isTrivial`): many primitives loop
   (`+` and `vector` over their arguments, `string<?` over the characters),
   and Graal prints a performance warning on the program's standard error each
   time it inlines a root that says so but has a loop: about 200 in a run of
   ecraven's `scheme`.
+  - *Why in the trampoline (M10-03).* Truffle defines a trivial root as one
+    that *"never contains loops"* (`RootNode.isTrivial`'s Javadoc), so the
+    flag was wrong for those primitives (#195 removed it). But Graal's
+    inlining policy expands and inlines a trivial callee outside both its
+    exploration and inlining budgets (`DefaultInliningPolicy`), and tier 1
+    inlines only those; without the flag, the trampoline's direct calls of
+    `string<?` in ecraven's `scheme` (its interpreter's `((oper rte) a b)`,
+    past `MakeTailCall`'s cache) competed for the budget: in a run's tier-2
+    compilations, `string<?` was cut off 251 times and inlined 68 (with the
+    flag, 214 inlined, none cut off), so each cut-off one was a Truffle call
+    from compiled code. Run in place, it is no call at all: the call trees
+    have no `string<?` node, and a traced run's tier-2 code was 1.7 MB
+    against 3.4 MB (101 compilations against 129). Interleaved, 5 rounds of
+    10 iterations at the report's counts (load 5-8, medians): `scheme`'s
+    iterations 6-10 took 368 ms, against 414 before M10-03 and 391 before
+    #195 (`e70adbb`), and its iterations 2-3 488 against 571 and 545;
+    `compiler`, `peval` and `conform` within 1% of before M10-03; a loop of
+    `(apply + args)` and `(apply vector args)` the same once compiled, its
+    iterations 2-3 1.06 times (as before #195).
+    *Rejected:* trivial for loop-free primitives only (a `PrimitiveSpec`
+    flag): `string<?` loops, so `scheme` gains nothing; `forceInlining()` on
+    the trampoline's calls of primitive roots (#195): it restored the
+    inlining but not the time.
 - **The hottest primitives are operations of their own (M7-03).** A call of
   `car`, `cdr`, `cons`, `null?`, `pair?`, `eq?`, `not`, `+`, `-`, `*`, `/`,
   `quotient`, `remainder`, `modulo`, `=`, `<`, `>`, `<=`, `>=`, `zero?`,
