@@ -11,6 +11,10 @@ The version is pinned (design.md D11): GraalVM CE 25.5, Truffle
 feature exists only in 25.6, this document says so. It is not available to
 us without a version bump, which is a separate decision.
 
+docs/truffle-guidance.md (November 2026) audits the runtime against
+GraalVM's Truffle guidance, with traces of performance warnings,
+deoptimizations and host inlining on representative programs.
+
 Nothing here changes a decision in design.md. Items that would touch a
 decision (D1, D2, D5, D13) or an AGENTS.md rule say which one.
 
@@ -436,11 +440,12 @@ JVM, then any engine or compiler option as `-Dpolyglot.<option>=…`:
 | What compiles, when, how big; deopts and invalidations | `engine.TraceCompilation=true` (`opt done`, `opt deopt`, `opt inv.`) |
 | What got inlined and why not | `compiler.TraceInlining=true` (`Inlined`/`Expanded`/`Cutoff`/`Indirect`) |
 | Where code is still generic | `engine.TraceCompilationPolymorphism=true` |
-| Calls, `instanceof`, stores PE couldn't resolve | `engine.TracePerformanceWarnings=all` |
+| Calls, `instanceof`, stores PE couldn't resolve | `compiler.TracePerformanceWarnings=all` (25.5 deprecates the `engine.` name) |
 | Who invalidated an assumption (global redefinition) | `engine.TraceAssumptions=true` |
-| Deopt loops | `engine.TraceTransferToInterpreter=true`, `engine.TraceBytecodeTransition=transferToInterpreter` (25.1) |
+| Deopt loops | `engine.CompilationFailureAction=Print` (deoptimization-cycle detection, on by default since 25); `engine.TraceTransferToInterpreter=true` as a system property (`--vm.Dpolyglot.engine.TraceTransferToInterpreter=true`: the launcher ignores the option), `engine.TraceBytecodeTransition=transferToInterpreter` (25.1) |
 | Splitting | `engine.TraceSplitting=true` |
-| Boundaries hit from compiled code | `engine.InstrumentBoundaries=true` |
+| Boundaries hit from compiled code | `compiler.InstrumentBoundaries=true` (printed nothing through the launcher in the Truffle guidance audit) |
+| Host inlining of the bytecode interpreter | `-Djdk.graal.Log=HostInliningPhase,~CanonicalizerPhase,~GraphBuilderPhase -Djdk.graal.LogFile=FILE`, with `engine.Compilation=false` |
 | Interpreter instruction mix | `engine.BytecodeHistogram=true` (25.1; the place to look before BE or quickening) |
 | Hot guest procedures | `--cpusampler --cpusampler.Delay=<ms> --cpusampler.ShowTiers=true` (needs the tools on the module path, D17) |
 | Compiled graphs | `-Djdk.graal.Dump=Truffle:1` (`:2` for every phase), then open `graal_dumps/` in IGV and look at "After TruffleTier" |
