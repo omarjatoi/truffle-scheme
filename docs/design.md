@@ -1164,6 +1164,14 @@ Each entry: the decision, why, and what was rejected.
   are cells, and exports map names to cells. Assigning to an imported binding
   is an error.
 - Every global cell has an `Assumption` that is invalidated on redefinition.
+  An assignment (`set!`) is a store to the cell; only invalidating the
+  assumption, the first time, is runtime code (`@TruffleBoundary`), behind an
+  `isValid()` test that compiled code reads as a constant: the pattern of
+  GraalVM's partial evaluation paper (Würthinger et al., PLDI 2017, §3.3,
+  Figure 5). The whole assignment was a boundary until the Truffle guidance
+  audit, a runtime call on every `set!` of a global in compiled code: a
+  compiled loop of two `set!`s took 1.75 times as long (0.124 s against 0.071
+  s an iteration, 3 interleaved JVMs each).
 - Standard libraries are `.sld` files under `src/prelude/`, built on an
   internal primitive library `(r7rs %primitives)`. User libraries are found on
   a search path (`-I dir`).
