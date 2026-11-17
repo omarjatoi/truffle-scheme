@@ -245,7 +245,13 @@ full R7RS-small conformance comes first.
     locals. Compiled code works on a copy of the array (Truffle's argument type
     profile), so an interpreted call site or trampoline also hands the array
     over in `SchemeContext.callArguments`, and a compiled prologue clears that
-    one too if its arguments were copied from it. A compiled caller's frame
+    one too if its arguments were copied from it. Only the prologue at the
+    root of a compilation does (`CompilerDirectives.inCompilationRoot()`): an
+    interpreted call enters compiled code there, and a prologue inlined into
+    compiled code was called from compiled code. Checking the hand-off in every
+    inlined prologue too, a load and a branch on every call that the compiler
+    can't remove, made `quicksort` 1.36 times, `triangl` 1.21 times and
+    `fibfp` 1.15 times slower than without it (plan.md M9-02). A compiled caller's frame
     keeps nothing it no longer uses, and storing the array from compiled code
     would make it escape where it can otherwise stay virtual (that made `fib`
     2.4 times slower); an interpreted prologue's array is the caller's. A
