@@ -197,8 +197,8 @@ runtime the thread's size (the `scheme.StackSize` option), so the runtime
 doesn't have to measure the stack, which would touch up to 64 MB of it.
 `--stack-size=<size>` sets the thread's stack (`512k`, `64m`, `1g`), and
 `--stack-size=default` evaluates on the launcher's own thread, with the
-JVM's default stack (1 or 2 MB). A stack size given to the JVM (`-Xss`, also
-through `JDK_JAVA_OPTIONS`) is the evaluation's: the launcher's own thread
+JVM's default stack (1 or 2 MB). A stack size given to the JVM (`--vm.Xss`,
+or `-Xss` through `JDK_JAVA_OPTIONS`) is the evaluation's: the launcher's own thread
 has it. The tests that check deep recursion run the launcher with
 `-Xss256k`. The native launcher takes the same options; a stack size given
 to it as `-Xss` or `--vm.Xss` is the evaluation's too, and
@@ -221,13 +221,33 @@ program ends, exits or stops with an error, even if it never closes them.
 Input file ports, textual and binary, read their file a buffer (8 KB) at a
 time, so reading one byte or character at a time is cheap.
 
+As GraalVM's language launchers do, the launcher takes the JVM's own options
+as `--vm.<option>`, among its options (before the program file): `--vm.Xmx2g`,
+`--vm.XX:+UseG1GC`, `--vm.Dname=value`, and `--vm.cp=<path>` (or
+`--vm.classpath=<path>`) for the class path. `bazel-bin/scheme` starts the
+JVM with each one as `-<option>` (design.md D17, "VM options"). After the
+program file, `--vm.` arguments are the program's. The launcher run with
+`java` (below) has no JVM to start: it rejects a `--vm.` option, saying to
+give it to `java` itself. `JDK_JAVA_OPTIONS` works too.
+
+<!-- readme: run -->
+```sh
+bazel-bin/scheme --vm.Xmx512m --vm.XX:+UseG1GC docs/examples/hello.scm
+```
+
+<!-- readme: output -->
+```text
+Hello, world! Arguments: ()
+```
+
 `bazel-bin/scheme` starts its JVM with the serial collector
 (`-XX:+UseSerialGC`, design.md D17), which ran most benchmarks faster than the
-JVM's default, G1, in less memory; a collector chosen in `JDK_JAVA_OPTIONS`
-(`-XX:+UseG1GC`) replaces it. On a machine with 16 processors or more it also
-starts the JVM with 4 compiler threads for the host's Java
-(`-XX:CICompilerCount=4`, where the JVM would start 12 or more), which start
-up faster and in less memory; a count in `JDK_JAVA_OPTIONS` replaces it.
+JVM's default, G1, in less memory; a collector chosen with `--vm.` or in
+`JDK_JAVA_OPTIONS` (`--vm.XX:+UseG1GC`) replaces it. On a machine with 16
+processors or more it also starts the JVM with 4 compiler threads for the
+host's Java (`-XX:CICompilerCount=4`, where the JVM would start 12 or more),
+which start up faster and in less memory; a count given with `--vm.` or in
+`JDK_JAVA_OPTIONS` replaces it.
 
 `bazel build //:scheme` also trains an AOT cache for `bazel-bin/scheme`
 (JDK 25's `-XX:AOTCache`: the classes the launcher and the language load as
@@ -375,13 +395,21 @@ The executable sizes its heap as native-image does by default: its young
 generation starts at 48 MB, and grows as a program allocates. A program whose
 first run is a deep recursion collects often then, and each collection scans
 its whole stack (design.md D17). For such programs, a minimum heap of 1 GB
-starts the young generation at 384 MB: pass `-Xms1g` (or
+starts the young generation at 384 MB: pass `-Xms1g` (or `--vm.Xms1g`, or
 `-XX:MinHeapSize=1g`) on the executable's command line, before the program.
 A 1,000,000-deep recursion's first run then takes about 0.6 s instead of 1.7,
 but a program that allocates more than 384 MB peaks with them in use
 (ecraven's `divrec` at 480 MB instead of 165), and a maximum below it
-(`-Xmx512m`) needs a minimum no larger than it. Natively, heap sizes are
-these options, not `--vm.Xmx` or `--vm.Xms`.
+(`-Xmx512m`) needs a minimum no larger than it.
+
+The executable's `--vm.<option>`s are its own `-<option>`s, as in GraalVM's
+native launchers (design.md D17, "VM options"). A native image sets its heap's
+sizes, and its other `-X` and `-XX:` options, only as it starts, so for those
+the launcher runs itself again, at once, with them on its command line, which
+adds a few milliseconds to its start; `--vm.D<name>=<value>` and `--vm.Xss`
+it sets as it is. Its collector is chosen when it is built (below), so
+`--vm.XX:+UseG1GC` is an error that says so, and so is `--vm.cp`: it has no
+class path.
 
 ### Choosing a garbage collector
 
@@ -414,17 +442,20 @@ builds it for macOS on AArch64, and the native tests pass with it on Linux
 x86-64.
 
 The collector's run-time options are the executable's own `-X` and `-XX:`
-options, before the program: `-Xmx512m`, `-Xms`, `-Xmn`, `-XX:+PrintGC`, and
-G1's (`-XX:MaxGCPauseMillis=`, ...) in a G1 executable.
-`-XX:PrintFlags=` lists the ones an executable takes.
+options, before the program, or the same as `--vm.` options: `-Xmx512m`
+(`--vm.Xmx512m`), `-Xms`, `-Xmn`, `-XX:+PrintGC`, and G1's
+(`-XX:MaxGCPauseMillis=`, ...) in a G1 executable. `-XX:PrintFlags=` lists the
+ones an executable takes.
 
 <!-- readme: run native -->
 ```sh
 bazel-bin/scheme-native -Xmx512m docs/examples/hello.scm
+bazel-bin/scheme-native --vm.Xmx512m docs/examples/hello.scm
 ```
 
 <!-- readme: output -->
 ```text
+Hello, world! Arguments: ()
 Hello, world! Arguments: ()
 ```
 
@@ -448,10 +479,10 @@ it grows the heap freely up to its maximum, so give it one (`-Xmx2g`: 9.8 s
 in 2.2 GB).
 
 The JVM launcher, `bazel-bin/scheme`, runs on whatever collector its JVM is
-given: it starts the JVM with the serial one unless `JDK_JAVA_OPTIONS` (or
-`JAVA_TOOL_OPTIONS`) chooses another, such as `-XX:+UseG1GC`,
-`-XX:+UseParallelGC` or `-XX:+UseZGC` (design.md D17, "The collector"). Its
-`--vm.` options are not applied: `bazel-bin/scheme` doesn't relaunch its JVM.
+given: it starts the JVM with the serial one unless a `--vm.` option or
+`JDK_JAVA_OPTIONS` (or `JAVA_TOOL_OPTIONS`) chooses another, such as
+`--vm.XX:+UseG1GC`, `--vm.XX:+UseParallelGC` or `--vm.XX:+UseZGC` (design.md
+D17, "The collector").
 
 ## Performance
 
