@@ -954,3 +954,53 @@ passes chibi 1225/1225 and Larceny 2162/2166 (the four listed exceptions)
 both interpreted and with `--compile`, and `//tests:conformance_native`,
 `//tests:readme_native` and `//tests:space_native` pass. No later milestone is
 written yet: the next one needs drafting.
+
+## M9 · Performance III
+
+What M8's exit report (`docs/benchmarks.md`, at `8ba9552296ee`) and its
+follow-ups left: deep recursion's first run, the baselines that got slower,
+the interpreter's per-call cost, and the remaining host-JIT pitfalls.
+Benchmarks are local (bench/README.md: the load rule, `-Xmx2g`, the serial
+collector); each task measures with interleaved A/B runs.
+
+- [ ] **M9-01 · Deep recursion's first run** *(early)*
+  - A deep recursion's first JIT run deoptimizes frame by frame: its code is
+    compiled while it descends, the first return invalidates it (traced to
+    `SchemeRootNode.releaseArguments`, #165), and every compiled frame still on
+    the stack deoptimizes as it is returned to (#170: natively a 300k-deep
+    count takes 4.8–5.1 s with the JIT against 0.12 s without). Remove the
+    invalidation at its source, or spill early while the code is new.
+  - **Done when** a deep recursion's first run deoptimizes O(1) frames (a test
+    counts them), and its time improves on the JVM and natively.
+- [ ] **M9-02 · Baselines that got slower** *(early)*
+  - M8's threshold measure found `quicksort` 1.29×, `triangl` 1.19×, `fib`
+    1.14×, `fibfp` 1.13× and `startup` 1.08× slower than M7's baselines.
+    Bisect each over M8's merges and fix what isn't an accepted trade-off.
+  - **Done when** each is back within noise of its M7 baseline, or the
+    trade-off that costs it is recorded in design.md.
+- [ ] **M9-03 · The interpreter's per-call cost** *(needs M9-01)*
+  - M8-04's profile: Truffle's call path and frame allocation are about 34% of
+    an interpreted call, bytecode dispatch about 25%, the capture check after
+    every call 11–13% (a `TryCatch` that stores the result and throws captures
+    would save 3–6%, revisiting a rejected design), `Call.doDirect`'s overhead
+    6–7%. Cut it.
+  - **Done when** the interpreter's geometric mean improves by at least 10%
+    over M8's report, and `tak`/`ack` finish well inside the 60 s timeout.
+- [ ] **M9-04 · Host-JIT pitfalls in run-once loops** *(early)*
+  - `PromptDriver.run`'s driver loop is a Java loop in a root that runs once,
+    like the trampoline was before #167; `EscapeException` passes through
+    `OptimizedDirectCallNode.call` like `InvokeContinuation` did before #172.
+    Check both for HotSpot deopt loops, and fix them the way #167 and #172 did.
+  - **Done when** a program shaped to stress each shows no host deopt loop
+    (`-Xlog:exceptions`/deopt counts) and benchmarks are unchanged.
+- [ ] **M9-05 · Smaller compiler wins** *(early)*
+  - `assq`/`assv` of quoted lists compiled like M8-05's `memv` (#140);
+    contify loops whose only unknown non-tail call is an escape-only `k`
+    (#173); let a `call/cc` receiver count as "only called" so an outer `k`
+    can be used inside a nested `call/cc` (#173).
+  - **Done when** each has a test and the programs that use them improve or
+    stay within noise.
+
+**Exit:** every task above is done; `docs/benchmarks.md` and
+`bench/thresholds.json` are regenerated on the final M9 code; both suites pass
+in every mode, including through the native launcher.
