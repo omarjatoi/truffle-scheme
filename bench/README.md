@@ -249,7 +249,7 @@ run it while it is quiet, as for `bench-check` (Thresholds, below), and say
 how loaded it was with `--note`.
 
 How long it takes: the committed report (`--scale 0.1 --interpreter-timeout
-60`, every program) took 89 minutes on a 16-core machine shared with other
+60`, every program) took 83 minutes on a 16-core machine shared with other
 agents (80 on a quiet one, before the native column), most of it chibi's and
 our interpreter's timeouts and the programs whose count is 1;
 twelve programs at the same scale take about 25 minutes. With the programs'
