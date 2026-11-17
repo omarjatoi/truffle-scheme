@@ -5,15 +5,19 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.PrintStream;
+import java.lang.management.ManagementFactory;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 import org.graalvm.launcher.AbstractLanguageLauncher;
+import org.graalvm.nativeimage.ProcessProperties;
 import org.graalvm.options.OptionCategory;
 import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.Engine;
@@ -76,8 +80,12 @@ public final class SchemeMain extends AbstractLanguageLauncher {
     private static final String BUFFER_OUTPUT_OPTION = "scheme.BufferOutput";
     private static final String END_STATUS_OPTION = "--end-status=";
     private static final String STACK_SIZE_OPTION = "--stack-size=";
+    /** GraalVM's launchers' option for the host VM's options: {@code --vm.<option>}. */
+    private static final String VM_OPTION = "--vm.";
     /** The native launcher's stack size option, which the framework also applies to new threads. */
     private static final String VM_STACK_SIZE_OPTION = "--vm.Xss";
+    /** An option that chooses a collector, which a native image has from its build. */
+    private static final Pattern NATIVE_GC_CHOICE = Pattern.compile("XX:[+-]Use\\w*GC");
     /** The prompts, shown only when stdin and stdout are a terminal. */
     private static final String PROMPT = "> ";
     private static final String CONTINUATION_PROMPT = "  ";
@@ -144,6 +152,11 @@ public final class SchemeMain extends AbstractLanguageLauncher {
     @Override
     protected List<String> preprocessArguments(List<String> arguments, Map<String, String> polyglotOptions) {
         List<String> unrecognized = new ArrayList<>();
+        // The native launcher's --vm. options that it can only take as it starts, and the
+        // arguments without them.
+        List<String> startupOptions = new ArrayList<>();
+        List<String> unmoved = new ArrayList<>(arguments);
+        int moved = 0;
         int i = 0;
         while (i < arguments.size()) {
             String arg = arguments.get(i);
@@ -162,11 +175,10 @@ public final class SchemeMain extends AbstractLanguageLauncher {
             } else if (arg.startsWith(STACK_SIZE_OPTION)) {
                 stackSize = stackSize(arg.substring(STACK_SIZE_OPTION.length()));
                 i++;
-            } else if (arg.startsWith(VM_STACK_SIZE_OPTION)) {
-                // The framework takes it too: the native launcher applies it to its new threads
-                // (and reports a malformed size), the JVM launcher ignores it.
-                vmStackSize = EvaluationThread.parseSize(arg.substring(VM_STACK_SIZE_OPTION.length()));
-                unrecognized.add(arg);
+            } else if (arg.startsWith(VM_OPTION) && arg.length() > VM_OPTION.length()) {
+                if (vmOption(arg, unrecognized, startupOptions)) {
+                    unmoved.remove(i - moved++);
+                }
                 i++;
             } else if (arg.equals("--version")) {
                 versionAction = VersionAction.PrintAndExit;
@@ -184,11 +196,75 @@ public final class SchemeMain extends AbstractLanguageLauncher {
                 break;
             }
         }
+        if (!startupOptions.isEmpty()) {
+            restart(startupOptions, unmoved);
+        }
         if (i < arguments.size()) {
             file = arguments.get(i);
             programArguments = arguments.subList(i + 1, arguments.size()).toArray(new String[0]);
         }
         return unrecognized;
+    }
+
+    /**
+     * A {@code --vm.<option>} among the launcher's options, as GraalVM's language launchers take
+     * them (design.md D17, "VM options"). On the JVM, the script that starts it
+     * ({@code bazel-bin/scheme}) has given them to the JVM as its own options and taken them out,
+     * so one that reaches the launcher was never applied: an error, rather than ignoring it as
+     * the framework would. In the native launcher, the framework sets system properties and the
+     * stack size of new threads in this process; the other {@code -X} and {@code -XX:} options
+     * (the heap's sizes among them) can only be set as the process starts, so they go into
+     * {@code startupOptions}, for {@link #restart}. Returns whether it went there.
+     */
+    private boolean vmOption(String arg, List<String> unrecognized, List<String> startupOptions) {
+        String option = arg.substring(VM_OPTION.length());
+        if (option.equals("cp") || option.equals("classpath")) {
+            throw abort("'" + arg + "' argument must be of the form '" + arg + "=<classpath>', not two separate arguments", EXIT_USAGE);
+        }
+        boolean classPath = option.startsWith("cp=") || option.startsWith("classpath=");
+        if (!isAOT()) {
+            String java = classPath ? "-cp " + option.substring(option.indexOf('=') + 1) : "-" + option;
+            throw abort(arg + " is an option of the JVM, which has already started without it: give it to java itself (" + java +
+                            ", before -m), or run the launcher with bazel-bin/scheme, which starts the JVM with its --vm. options", EXIT_USAGE);
+        }
+        if (classPath) {
+            throw abort(arg + ": the native launcher has no class path; the JVM launcher, bazel-bin/scheme, takes " + arg, EXIT_USAGE);
+        }
+        if (NATIVE_GC_CHOICE.matcher(option).matches()) {
+            throw abort(arg + ": the native launcher's collector is chosen when it is built (bazel build --//:native_gc=serial|epsilon|G1 //:scheme-native, " +
+                            "docs/usage.md, \"Choosing a garbage collector\"); the JVM launcher, bazel-bin/scheme, takes " + arg, EXIT_USAGE);
+        }
+        if (arg.startsWith(VM_STACK_SIZE_OPTION)) {
+            // The framework takes it too: it applies it to new threads (and reports a malformed
+            // size).
+            vmStackSize = EvaluationThread.parseSize(arg.substring(VM_STACK_SIZE_OPTION.length()));
+            unrecognized.add(arg);
+            return false;
+        } else if (option.startsWith("X")) {
+            startupOptions.add("-" + option);
+            return true;
+        }
+        // -D, and the framework's errors for the others.
+        unrecognized.add(arg);
+        return false;
+    }
+
+    /**
+     * Runs the native launcher again, in this process ({@code execv}), with {@code startupOptions}
+     * as its own options on its command line ({@code -Xmx2g}, {@code -XX:MinHeapSize=1g}), after
+     * the ones it was given there, and before {@code arguments}: what the framework's native
+     * launchers do with the {@code --vm.} options they can't set once they have started (their
+     * native part starts the VM with them). Doesn't return.
+     */
+    private void restart(List<String> startupOptions, List<String> arguments) {
+        String executable = ProcessProperties.getExecutableName();
+        List<String> argv = new ArrayList<>();
+        argv.add(ProcessProperties.getArgumentVectorBlockSize() > 0 ? ProcessProperties.getArgumentVectorProgramName() : executable);
+        argv.addAll(ManagementFactory.getRuntimeMXBean().getInputArguments());
+        argv.addAll(startupOptions);
+        argv.addAll(arguments);
+        ProcessProperties.exec(Path.of(executable), argv.toArray(new String[0]));
+        throw abort("cannot run " + executable + " again with " + String.join(" ", startupOptions), EXIT_USAGE);
     }
 
     /** An {@code --end-status} value: an exit status, 0 to 255. */

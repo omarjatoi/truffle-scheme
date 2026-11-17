@@ -13,6 +13,8 @@ scheme_java_library(
     deps = [
         "@jvm//:org_graalvm_polyglot_polyglot",
         "@jvm//:org_graalvm_sdk_launcher_common",
+        # The native launcher's restart with its --vm. heap options (SchemeMain.restart).
+        "@jvm//:org_graalvm_sdk_nativeimage",
         # Line editing and history in the REPL (M7-07).
         "@jvm//:org_graalvm_shadowed_jline",
     ],

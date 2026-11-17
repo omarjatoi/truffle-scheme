@@ -1,7 +1,8 @@
 """The `scheme` launcher (//:scheme): `bazel-bin/scheme [option...] [-I dir]... [file.scm [arg...]]`.
 
 Runs scheme.launcher.SchemeMain on the pinned GraalVM with the language and GraalVM's tools on the
-module path (--inspect, --dap, --cpusampler and --memtracer work). With no file, a REPL. Under
+module path (--inspect, --dap, --cpusampler and --memtracer work). With no file, a REPL. Its
+`--vm.<option>`s start the JVM with `-<option>` (harness.split_vm_options). Under
 `bazel run //:scheme --`, paths are relative to where it ran.
 """
 

@@ -61,6 +61,35 @@ _AOT_CHOICE = re.compile(r'^(-Xshare:|-XX:(SharedArchiveFile|AOTCache|AOTCacheOu
                          r'ArchiveClassesAtExit|[+-]AutoCreateSharedArchive)\b)')
 
 
+def split_vm_options(args):
+    """The `scheme` launcher's arguments, its `--vm.<option>`s taken out as JVM options, as GraalVM's
+    launcher scripts take them (the framework ignores them in a JVM, which has already started):
+    `--vm.cp=<path>` and `--vm.classpath=<path>` are the class path, any other the JVM's
+    `-<option>`. Only the launcher's options are: they end where SchemeMain.preprocessArguments
+    ends them, at `--` or the program file, and the program's arguments are left alone. Returns
+    (the JVM options, the other arguments)."""
+    jvm_args, rest = [], []
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == '-I':
+            rest += args[i:i + 2]
+            i += 2
+            continue
+        if arg == '--' or not arg.startswith('-') or len(arg) == 1:
+            break
+        option = arg[len('--vm.'):] if arg.startswith('--vm.') else ''
+        # A bare --vm.cp or --vm.classpath stays, for the launcher to reject.
+        if option.startswith(('cp=', 'classpath=')):
+            jvm_args += ['-cp', option.split('=', 1)[1]]
+        elif option and option not in ('cp', 'classpath'):
+            jvm_args.append('-' + option)
+        else:
+            rest.append(arg)
+        i += 1
+    return jvm_args, rest + list(args[i:])
+
+
 def _given_vm_args(jvm_args, env):
     """The JVM options a launcher's JVM gets besides its defaults: the environment's, then jvm_args."""
     return ' '.join(env.get(v, '') for v in ('JAVA_TOOL_OPTIONS', 'JDK_JAVA_OPTIONS')).split() + list(jvm_args)
@@ -183,7 +212,10 @@ class Runtime:
     def launcher(self, args, jvm_args=(), env=os.environ):
         """The command line that runs the `scheme` launcher with these arguments, with its JVM
         options (launcher_vm_args), and the AOT cache where it is valid and the JVM options
-        choose neither class sharing nor a collector it doesn't map with."""
+        choose neither class sharing nor a collector it doesn't map with. The arguments' `--vm.`
+        options are JVM options (split_vm_options), after jvm_args."""
+        vm_options, args = split_vm_options(args)
+        jvm_args = list(jvm_args) + vm_options
         defaults = launcher_vm_args(jvm_args, env)
         given = _given_vm_args(jvm_args, env)
         module_path = None

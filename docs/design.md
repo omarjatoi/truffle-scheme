@@ -2094,12 +2094,10 @@ Each entry: the decision, why, and what was rejected.
   benchmark harness, which runs it) starts the JVM with the serial collector,
   `-XX:+UseSerialGC`, unless its JVM options already choose one (`tests/harness/harness.py`,
   `launcher_gc_vm_args`: the JVM refuses to start with two; `JDK_JAVA_OPTIONS`
-  counts). The native launcher uses it by default too: it is native-image's
+  counts, and so do its `--vm.` options, "VM options" below). The native
+  launcher uses it by default too: it is native-image's
   default (CE has no other but Epsilon), and a build flag chooses another
   ("The native image's collector", below). An embedder chooses its own JVM's.
-  `bazel-bin/scheme` doesn't apply `--vm.` options (the framework would need to
-  relaunch the JVM): `--vm.XX:+UseG1GC` and even `--vm.Xmx2m` run as without
-  them, so a collector is chosen in `JDK_JAVA_OPTIONS`.
   - *Why.* Measured on 24 of ecraven's programs at the report's counts (0.1
     times their own, `-Xmx2g`, 3 iterations per JVM; 2 interleaved rounds,
     the medians; an Apple M3 Max shared with other agents, runs whose load
@@ -2303,6 +2301,45 @@ Each entry: the decision, why, and what was rejected.
     `-XX:ReservedCodeCacheSize`: the code cache's size is reserved address
     space; what it uses (16 MB for a hello-world program) is what it
     compiled.
+- **VM options.** Both launchers take the host VM's options as
+  `--vm.<option>` among their options (before the program file; after it,
+  they are the program's arguments), as GraalVM's language launchers do,
+  and with GraalVM's mechanisms. The framework (`AbstractLanguageLauncher`)
+  applies none of them in a JVM, which has already started: in GraalVM, the
+  launcher that starts the JVM does (its launcher scripts, and the native
+  thin launchers' C part, which starts the JVM with them and restarts it if
+  the Java side finds it guessed them wrong). In a native image, it sets
+  them in the process (`RuntimeOptions`).
+  - *The JVM launcher.* `bazel-bin/scheme` is that script
+    (`tests/harness/scheme.py`): `Runtime.launcher` takes each `--vm.` option
+    before the program file out (`split_vm_options`, which parses as
+    `SchemeMain.preprocessArguments` does) and starts the JVM with it as
+    `-<option>` (`--vm.cp=` and `--vm.classpath=` as `-cp`), as GraalVM's
+    launcher scripts do (the framework expects them to have taken the
+    options out: `Launcher.parsePolyglotOption`). They are JVM options like the command's, so
+    the launcher's own (the collector, the compiler threads, the AOT cache)
+    give way to them the same way. One that reaches `SchemeMain` in a JVM
+    wasn't applied (the launcher started with `java`), and is an error that
+    names the JVM option to give `java` instead; before, the framework ignored
+    it, so `--vm.XX:+UseG1GC` and even `--vm.Xmx2m` ran as without them.
+  - *The native launcher.* The framework's `RuntimeOptions.set` can't set
+    the heap's sizes once the process has started (`--vm.Xmx512m` failed as
+    "does not specify a valid number", `--vm.XX:MinHeapSize=1g` as
+    *immutable*), and nothing tells which options can. So `SchemeMain` runs
+    the executable again (`ProcessProperties.exec`, as the framework's own
+    native launchers re-exec themselves) with its `--vm.X...` and
+    `--vm.XX:...` options as its own `-X...` and `-XX:...` options, which
+    native-image takes as the process starts, after the ones it was given
+    there (`RuntimeMXBean.getInputArguments`) and before the rest of its
+    arguments. That costs a second start, a few milliseconds, only when such
+    an option is given. `--vm.D...` and `--vm.Xss` stay with the framework,
+    which sets them in the process (`--vm.Xss` is also the evaluation
+    thread's stack, "The evaluation thread"). A collector is chosen when the
+    image is built ("The native image's collector"), so `--vm.XX:+Use...GC`
+    is an error saying so, and so is `--vm.cp=` (there is no class path).
+  - `//tests:launcher_vm` checks the JVM launcher's, and the local
+    `//tests:launcher_vm_native` the native launcher's (the heap's sizes
+    from `-XX:+VerboseGC`, a maximum that a program exceeds, the errors).
 - The Chrome inspector, DAP and profiler tools are optional modules
   (`//bazel:tools_modules`), which `bazel-bin/scheme` puts on the module
   path, and CI runs a smoke test of each against a Scheme program
@@ -2582,11 +2619,11 @@ Each entry: the decision, why, and what was rejected.
       `primes` at 480 MB instead of 165, and the comparative report's
       native median peak RSS was 484 MB instead of 181.
       A user whose programs are deep recursions can pass `-Xms1g` (or
-      `-XX:MinHeapSize=1g`) to the executable, which gives the same first
-      runs (docs/usage.md, "Native image"). `--vm.Xms` and the other `--vm.`
-      heap options don't work in a native launcher: the framework rejects
-      the size, and the options can only be set as the process starts, so
-      the launcher can't choose a minimum itself either.
+      `--vm.Xms1g`, or `-XX:MinHeapSize=1g`) to the executable, which gives
+      the same first runs (docs/usage.md, "Native image"). The options can
+      only be set as the process starts, so the launcher could choose a
+      minimum itself only by running itself again ("VM options"), at the
+      cost of a second start for every program.
     - *What it was for.* After M9-01, a deep recursion's first run is mostly
       collections ("Stack-depth spill", *After M9-01*): each one scans the
       whole Java stack, up to the spill limit's 30 MB of frames, and copies
@@ -2654,8 +2691,9 @@ Each entry: the decision, why, and what was rejected.
       generation that fills with what a later young collection would have
       freed; one survivor space didn't help either. `-Xmn` and
       `-XX:MaxNewSize` only bound the young generation, and the launcher
-      can't set any of these options itself: they are fixed when the
-      process starts (`--vm.XX:MinHeapSize` fails, *immutable*).
+      can't set any of these options in the process: they are fixed when
+      it starts (the framework's `--vm.XX:MinHeapSize` failed, *immutable*,
+      until the launcher ran itself again with them, "VM options").
     - *Allocation per spilled frame.* Measured with `-XX:+PrintGCSummary`
       (interpreted only, `scheme.SpillDepth`): an interpreted call of
       `count` allocates 234 bytes, and one that spills 337. A spill copies

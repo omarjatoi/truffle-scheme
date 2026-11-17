@@ -395,7 +395,7 @@ harness_test(
 )
 
 # design.md D17 "The launcher's JVM": its collector, young generation, compiler threads and AOT
-# cache, unless its JVM options say otherwise.
+# cache, unless its JVM options (its --vm. options among them) say otherwise; "VM options".
 harness_test(
     name = "launcher_vm",
     check = "launcher_vm",
@@ -408,4 +408,14 @@ harness_test(
         "//:scheme_runtime",
     ],
     size = "small",
+)
+
+# design.md D17 "VM options": the native launcher's --vm. options take effect, or are errors that
+# say what to do instead. Only when named, like the other native tests.
+harness_test(
+    name = "launcher_vm_native",
+    check = "launcher_vm_native",
+    args = ["--native=$(rlocationpath //:scheme-native)"],
+    data = ["//:scheme-native"],
+    tags = ["manual"],
 )
