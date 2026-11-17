@@ -3,6 +3,7 @@ package scheme.runtime;
 import java.util.Arrays;
 
 import com.oracle.truffle.api.Assumption;
+import com.oracle.truffle.api.CompilerAsserts;
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.RootCallTarget;
@@ -652,6 +653,9 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
         static void doBind(LocalRangeAccessor parameters, int boxed, @Bind VirtualFrame frame, @Bind BytecodeNode bytecode) {
             Object[] arguments = frame.getArguments();
             int n = parameters.getLength();
+            // Unrolled: a compilation bails out if the bound isn't a constant (GraalVM's PartialEvaluation guide).
+            CompilerAsserts.partialEvaluationConstant(n);
+            CompilerAsserts.partialEvaluationConstant(boxed);
             if (arguments.length - 1 != n) {
                 throw arityError(n, n, arguments.length - 1);
             }

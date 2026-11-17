@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Supplier;
 
+import com.oracle.truffle.api.CompilerAsserts;
 import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.nodes.ExplodeLoop;
@@ -817,6 +818,9 @@ final class ControlPrimitives {
         @Override
         @ExplodeLoop
         public Object invoke(Object[] args) {
+            // Unrolled: a compilation bails out if a bound isn't a constant (GraalVM's PartialEvaluation guide).
+            CompilerAsserts.partialEvaluationConstant(given.length);
+            CompilerAsserts.partialEvaluationConstant(unset.length);
             SRecord record = factory.create(type);
             for (int i = 0; i < given.length; i++) {
                 given[i].setObject(record, args[i + 1]);
