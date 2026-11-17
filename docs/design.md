@@ -2008,8 +2008,12 @@ Each entry: the decision, why, and what was rejected.
   benchmark harness, which runs it) starts the JVM with the serial collector,
   `-XX:+UseSerialGC`, unless its JVM options already choose one (`tests/harness/harness.py`,
   `launcher_gc_vm_args`: the JVM refuses to start with two; `JDK_JAVA_OPTIONS`
-  counts). The native launcher has always used it: it is native-image's
-  default (CE has no other but Epsilon). An embedder chooses its own JVM's.
+  counts). The native launcher uses it by default too: it is native-image's
+  default (CE has no other but Epsilon), and a build flag chooses another
+  ("The native image's collector", below). An embedder chooses its own JVM's.
+  `bazel-bin/scheme` doesn't apply `--vm.` options (the framework would need to
+  relaunch the JVM): `--vm.XX:+UseG1GC` and even `--vm.Xmx2m` run as without
+  them, so a collector is chosen in `JDK_JAVA_OPTIONS`.
   - *Why.* Measured on 24 of ecraven's programs at the report's counts (0.1
     times their own, `-Xmx2g`, 3 iterations per JVM; 2 interleaved rounds,
     the medians; an Apple M3 Max shared with other agents, runs whose load
@@ -2343,6 +2347,132 @@ Each entry: the decision, why, and what was rejected.
     a dynamically linked executable fails. The baseline target is also what
     nixpkgs' own native-image check builds with, and makes the executable
     run on any x86-64 machine.
+  - **The native image's collector.** It is a build-time choice,
+    native-image's own `--gc=`, which the flag `--//:native_gc` sets
+    (`serial`, the default, `epsilon` or `G1`; `native_setting` in
+    `bazel/java_module.bzl`). `--//:native_graalvm=oracle` builds the
+    executable with Oracle GraalVM's native-image instead of GraalVM CE's,
+    at the pinned version (`bazel/graalvm.bzl` downloads it then, and only
+    then; D11's one version holds for both), and G1 needs it: with GraalVM
+    CE the build fails at analysis, naming the flag to add. Options that
+    only the serial collector takes go in the target's `serial_options`,
+    which are passed with `--gc=serial` only (there are none today). The
+    collector's run-time options are the executable's `-X` and `-XX:`
+    options, which SubstrateVM reads before the launcher sees the command
+    line, so the launcher has nothing to pass on: G1's `-XX:MaxGCPauseMillis=`
+    and `-Xmx512m` run a G1 executable as they should. No collector of our
+    own, and no change to what the runtime allocates.
+    - *What GraalVM says, and what 25.5 does.* The documentation
+      ([Memory Management](https://www.graalvm.org/latest/reference-manual/native-image/optimizations-and-performance/MemoryManagement/),
+      "latest", whose version selector lists 25.5 first): *"The Serial GC is
+      the default GC in GraalVM Native Image"*; *"Oracle GraalVM also
+      provides the Garbage-First (G1) garbage collector, which is based on
+      the G1 GC from the Java HotSpot VM"*, *"(Not available in GraalVM
+      Community Edition.)"*, *"Currently, G1 Garbage Collector can be used
+      with Native Image on the Linux AMD64 and AArch64 architectures"*, and
+      *"To enable it, pass the option `--gc=G1` to the `native-image`
+      builder"*; *"To enable the Epsilon GC, specify the option
+      `--gc=epsilon` at image build time"*. [Native Image Build
+      Options](https://www.graalvm.org/latest/reference-manual/native-image/overview/Options/):
+      `--gc`: *"select native-image garbage collector implementation.
+      Allowed values: 'epsilon', 'serial', 'G1'"*, and *"At run time, the
+      default prefix is `-XX:`"*. Checked against 25.5.5.0.3 itself: CE's
+      `native-image --help` lists only `'epsilon'` and `'serial'` for
+      `--gc=`, and `--gc=G1` fails with *"Error: Invalid option '--gc'.
+      'G1' is not an accepted value. Accepted values are 'epsilon',
+      'serial'."*; Oracle GraalVM's lists `'G1'` too. Its builder accepts G1
+      on more than the documentation says (*"The G1 garbage collector
+      ('--gc=G1') is currently only supported on Linux/amd64,
+      Linux/aarch64, macOS/aarch64, and Windows/amd64."*, `G1Feature` in
+      25.5's `svm.src.zip`), and builds and runs `//:scheme-native` with G1
+      on macOS AArch64; on Linux x86-64 (the executors) the native tests
+      (`conformance_native`, `readme_native`, `space_native`) pass with it.
+      G1 needs no isolated compilation (it turns `SupportCompileInIsolates`
+      off itself), and neither of our options conflicts with it.
+    - *Oracle GraalVM's terms.* Its archives (the downloads page's
+      "script-friendly URLs", no license to accept on download) carry the
+      GraalVM Free Terms and Conditions (their `LICENSE.txt`, and
+      https://www.oracle.com/downloads/licenses/graal-free-license.html),
+      which grant the right to *"internally use the unmodified Programs"*
+      and to *"redistribute the unmodified Program ... provided that You do
+      not charge Your licensees any fees"*; the [downloads
+      page](https://www.graalvm.org/downloads/): *"Oracle GraalVM is free
+      to use in production and free to redistribute, at no cost, under the
+      GraalVM Free Terms and Conditions."* Oracle publishes no checksum
+      beside these archives, so the pinned sha256s are of the files as
+      downloaded.
+    - *Epsilon* never collects (its use is *"very short running
+      applications that only allocate a small amount of memory"*, on the
+      Memory Management page): a hello-world program or `fib` run as with the
+      serial collector, `primes` peaks at about 1 GB, and with `-Xmx512m`
+      it ends with an `OutOfMemoryError`.
+    - *The serial collector's policies.* SubstrateVM 25.5's serial
+      collector sizes its generations with a policy, chosen at run time by
+      `-XX:InitialCollectionPolicy=` (`-XX:PrintFlags=`: *"The garbage
+      collection policy. Default: 'Adaptive2'. Former default: 'Adaptive'
+      (deprecated). Serial GC only."*; the documentation names only the
+      pre-22 `BySpaceAndTime`). `Adaptive2`, ported from HotSpot's parallel
+      collector, starts eden at 48 MB, grows it at most 10% a collection,
+      tenures after 7 young collections at first and never fewer, and
+      aims at a GC time ratio of 1, *"i.e., 50%"* of the time in collection
+      (`GC_TIME_RATIO`, `AdaptiveCollectionPolicy2.java`). With a large live
+      set that is where it stays: `earley` (1.2 GB live) and `nboyer` (350
+      MB) spent 60 to 77% of their time collecting, `paraffins` and `mperm`
+      85 to 90%. The native layout isn't the difference: a pair is 16 bytes
+      natively (`-XX:+PrintGCSummary`, a loop that conses a million: 16.0
+      bytes each, nothing else), against the JVM's 24.
+    - *Measured.* The executable at this commit, serial with its default
+      policy, with each other policy (`-XX:InitialCollectionPolicy=`), and
+      built with G1 (Oracle GraalVM); no `-Xmx`, as a user runs it; ecraven's
+      programs at the report's counts, 3 iterations in one process (as
+      `bench-report` runs them), and the deep recursions of "Rejected: a 1
+      GB minimum heap" (`count` 300,000 deep ×12, a list built and mapped
+      1,000,000 deep ×6). Medians of 3 interleaved processes, an Apple M3
+      Max shared with other agents, load 3 to 5: the process's wall time, the
+      first iteration, peak RSS:
+
+      | | Serial, `Adaptive2` (default) | `Proportionate` | `BySpaceAndTime` | G1 |
+      |---|---:|---:|---:|---:|
+      | `earley` | 22.7 s; 8.6 s; 3.7 GB | 16.7 s; 7.2 s; 1.4 GB | 15.6 s; 5.9 s; 1.4 GB | 9.8 s; 4.0 s; 10.8 GB |
+      | `nboyer` | 13.7 s; 5.7 s; 1.7 GB | 16.8 s; 6.4 s; 0.7 GB | 15.1 s; 5.2 s; 0.8 GB | 6.5 s; 2.2 s; 5.3 GB |
+      | `sboyer` | 10.2 s; 3.3 s; 384 MB | 8.0 s; 2.7 s; 339 MB | 6.8 s; 2.4 s; 701 MB | 6.9 s; 2.3 s; 3.6 GB |
+      | `paraffins` | 4.4 s; 1.9 s; 1.3 GB | 3.9 s; 1.7 s; 1.0 GB | 1.9 s; 0.38 s; 1.0 GB | 1.2 s; 0.45 s; 1.6 GB |
+      | `mperm` | 6.4 s; 1.9 s; 1.3 GB | 5.1 s; 2.1 s; 1.1 GB | 3.5 s; 0.94 s; 1.2 GB | 3.8 s; 1.1 s; 2.4 GB |
+      | `graphs` | 9.4 s; 3.2 s; 308 MB | 9.4 s; 3.2 s; 304 MB | 8.7 s; 3.0 s; 532 MB | 9.1 s; 3.1 s; 6.3 GB |
+      | `count` 300,000 deep | 0.68 s; 127 ms; 377 MB | 1.10 s; 140 ms; 355 MB | 0.29 s; 81 ms; 492 MB | 0.54 s; 171 ms; 806 MB |
+      | the list, 1,000,000 deep | 4.3 s; 1.7 s; 1.0 GB | 5.7 s; 2.0 s; 0.9 GB | 2.4 s; 0.98 s; 0.7 GB | 3.2 s; 1.3 s; 2.2 GB |
+      | `divrec` | 1.04 s; 164 MB | 1.03 s; 148 MB | 1.01 s; 371 MB | 1.02 s; 558 MB |
+      | `primes` | 0.27 s; 169 MB | 0.27 s; 130 MB | 0.28 s; 351 MB | 0.25 s; 317 MB |
+      | `fib` | 1.09 s; 71 MB | 1.06 s; 71 MB | 1.08 s; 71 MB | 1.08 s; 81 MB |
+
+      (`divrec`, `primes` and `fib`: wall time and RSS; their iterations
+      are alike.) With a fixed maximum heap, `-Xmx2g` as the comparative
+      report runs it (2 interleaved processes), G1 keeps its speed in
+      bounded memory: `earley` 9.8 s and 2.2 GB against the default's 26.8
+      s and 1.6 GB (its steady state 2.9 s against 8.6), `nboyer` 6.3 s
+      and 1.2 GB against 14.4 s and 1.0 GB, `paraffins` 1.6 s against 4.5,
+      `graphs` 9.8 s against 9.0 (1.6 GB against 311 MB), `divrec` 367 MB
+      against 166. A hello-world program (41 interleaved runs): 8.4 ms and
+      19.2 MB with the serial collector (the same as before `--gc=serial`
+      was passed), 8.3 ms and 18.9 MB with Epsilon, 9.6 ms and 25.0 MB with
+      G1; with `-Xmx512m` alone each runs as without it.
+    - *So the default stays.* `Proportionate` (HotSpot's serial
+      collector's sizing: the young generation half the old one, a tenuring
+      age that falls when survivors overflow) keeps less memory everywhere,
+      but makes deep recursions and `nboyer` slower. `BySpaceAndTime` (a
+      fixed young generation, a tenth of the maximum heap up to 256 MB,
+      and no survivor spaces) is faster on all but `nboyer`, but a program
+      that allocates a few hundred MB peaks 200 MB higher (`divrec` 371 MB
+      instead of 164): what #189's minimum heap cost, which the constraint
+      on a default rules out. G1 is the fastest on large live sets, the
+      native `earley` steady state (2.8 s) as fast as the JIT's on the JVM,
+      but by growing the heap (its default maximum is a quarter of memory):
+      `earley` peaked at 10.8 GB and `graphs`, whose live heap is 56 MB, at
+      6.3 GB. None is a default; each is an option a user can pass or build
+      (docs/usage.md, "Choosing a garbage collector"). `-XX:+CollectYoungGenerationSeparately`
+      did nothing (`earley` 23.0 s, `nboyer` 15.7 s, one process each), and
+      the old `Adaptive` policy was slower (`earley` 26.4 s, `nboyer` 19.2
+      s) in less memory.
   - **Rejected: a 1 GB minimum heap for the native launcher (#189).** The
     image was built for a while with `-R:MinHeapSize=1g`, a default for the
     executable's minimum heap that its own `-Xms` or `-XX:MinHeapSize=`

@@ -369,6 +369,76 @@ but a program that allocates more than 384 MB peaks with them in use
 (`-Xmx512m`) needs a minimum no larger than it. Natively, heap sizes are
 these options, not `--vm.Xmx` or `--vm.Xms`.
 
+### Choosing a garbage collector
+
+The executable's collector is chosen when it is built, by native-image's
+`--gc=` option, which the build flag `--//:native_gc` sets (design.md D17,
+"The native image's collector"):
+
+| `--//:native_gc=` | Built with | |
+|---|---|---|
+| `serial` (the default) | GraalVM CE or Oracle GraalVM | Generational, on one thread. The maximum heap is 80% of the machine's memory unless `-Xmx` says otherwise. |
+| `epsilon` | GraalVM CE or Oracle GraalVM | Never collects. For programs that allocate little and end soon: one that allocates more than the maximum heap ends with an `OutOfMemoryError`. |
+| `G1` | Oracle GraalVM only | HotSpot's G1, with its own threads. Its default maximum heap is 25% of memory. |
+
+<!-- readme: run native -->
+```sh
+bazel build --//:native_gc=epsilon //:scheme-native
+bazel build --//:native_graalvm=oracle --//:native_gc=G1 //:scheme-native
+```
+
+`--//:native_graalvm=oracle` builds the executable with Oracle GraalVM's
+native-image, at the same version as the pinned GraalVM CE
+(`bazel/graalvm.bzl`), which Bazel downloads the first time it is asked for
+(about 370 MB); everything else still builds and runs on GraalVM CE. Oracle
+GraalVM is free to use and to redistribute unmodified, at no charge, under the
+GraalVM Free Terms and Conditions (its `LICENSE.txt`). GraalVM CE's
+native-image has no G1, so `--//:native_gc=G1` without
+`--//:native_graalvm=oracle` fails the build, saying so. GraalVM's
+documentation lists G1 for Linux on x86-64 and AArch64; the 25.5 builder also
+builds it for macOS on AArch64, and the native tests pass with it on Linux
+x86-64.
+
+The collector's run-time options are the executable's own `-X` and `-XX:`
+options, before the program: `-Xmx512m`, `-Xms`, `-Xmn`, `-XX:+PrintGC`, and
+G1's (`-XX:MaxGCPauseMillis=`, ...) in a G1 executable.
+`-XX:PrintFlags=` lists the ones an executable takes.
+
+<!-- readme: run native -->
+```sh
+bazel-bin/scheme-native -Xmx512m docs/examples/hello.scm
+```
+
+<!-- readme: output -->
+```text
+Hello, world! Arguments: ()
+```
+
+The serial collector's default policy suits programs that keep little alive,
+and lets programs that keep hundreds of MB alive spend most of their time
+collecting (`earley`, with 1.2 GB live, three quarters). Two other policies,
+`-XX:InitialCollectionPolicy=<name>` on the executable's command line, trade
+differently (design.md D17 has the measurements):
+
+- `BySpaceAndTime` keeps a fixed young generation (a tenth of the maximum
+  heap, at most 256 MB): ecraven's `paraffins` and `mperm` ran in half the
+  time and `earley` in two thirds, but a program that allocates a few hundred
+  MB peaks about 200 MB higher, and `nboyer` was 10% slower.
+- `Proportionate` sizes the young generation as HotSpot's serial collector
+  does: `earley` and `nboyer` peaked at 1.4 GB and 0.7 GB instead of 3.7 and
+  1.7, but deep recursions and `nboyer` were 20 to 60% slower.
+
+For programs with a large live heap, G1 (above) was the fastest: `earley`
+in 9.8 s instead of 22.7 (its later iterations as fast as on the JVM), but
+it grows the heap freely up to its maximum, so give it one (`-Xmx2g`: 9.8 s
+in 2.2 GB).
+
+The JVM launcher, `bazel-bin/scheme`, runs on whatever collector its JVM is
+given: it starts the JVM with the serial one unless `JDK_JAVA_OPTIONS` (or
+`JAVA_TOOL_OPTIONS`) chooses another, such as `-XX:+UseG1GC`,
+`-XX:+UseParallelGC` or `-XX:+UseZGC` (design.md D17, "The collector"). Its
+`--vm.` options are not applied: `bazel-bin/scheme` doesn't relaunch its JVM.
+
 ## Performance
 
 [docs/benchmarks.md](benchmarks.md) compares this implementation, on the JVM

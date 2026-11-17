@@ -9,6 +9,7 @@ scheme_runtime   the GraalVM `java` and a module path, as runfiles and a JSON ma
                  runfiles paths (tests/harness/harness.py: Runtime).
 module_dir       a module path's jars in one directory, for running or embedding outside Bazel.
 native_image     a module's main class as a native executable (design.md D17).
+native_setting   a string flag native_image reads: its collector, its GraalVM distribution.
 """
 
 load("@rules_java//java/common:java_common.bzl", "java_common")
@@ -250,8 +251,37 @@ module_dir = rule(
     },
 )
 
+NativeSettingInfo = provider(
+    doc = "A native_setting's value.",
+    fields = {"value": "string"},
+)
+
+def _flag(label):
+    return "--//%s:%s" % (label.package, label.name)
+
+def _native_setting_impl(ctx):
+    value = ctx.build_setting_value
+    if value not in ctx.attr.values:
+        fail("%s=%s: expected one of %s" % (_flag(ctx.label), value, ", ".join(ctx.attr.values)))
+    return [NativeSettingInfo(value = value)]
+
+native_setting = rule(
+    implementation = _native_setting_impl,
+    doc = "A string flag that configures native_image (`--//:native_gc=...`), one of `values`.",
+    build_setting = config.string(flag = True),
+    attrs = {"values": attr.string_list(mandatory = True)},
+)
+
 def _native_image_impl(ctx):
-    jdk = ctx.attr._jdk[java_common.JavaRuntimeInfo]
+    jdk = ctx.attr.jdk[java_common.JavaRuntimeInfo]
+    gc = ctx.attr.gc[NativeSettingInfo].value
+    graalvm = ctx.attr.graalvm[NativeSettingInfo].value
+    if gc == "G1" and graalvm != "oracle":
+        # GraalVM CE's native-image says only "'G1' is not an accepted value. Accepted values
+        # are 'epsilon', 'serial'."
+        fail(("%s=G1: the G1 collector is in Oracle GraalVM's native-image only, not GraalVM CE's. " +
+              "Add %s=oracle (docs/usage.md, \"Choosing a garbage collector\").") %
+             (_flag(ctx.attr.gc.label), _flag(ctx.attr.graalvm.label)))
     module_path = _module_path([ctx.attr.module])
     out = ctx.actions.declare_file(ctx.label.name)
     args = ctx.actions.args()
@@ -259,7 +289,10 @@ def _native_image_impl(ctx):
     args.add(out)
     args.add_joined(module_path, join_with = ctx.configuration.host_path_separator)
     args.add(ctx.attr.main)
+    args.add("--gc=" + gc)
     args.add_all(ctx.attr.options)
+    if gc == "serial":
+        args.add_all(ctx.attr.serial_options)
     linux = ctx.target_platform_has_constraint(ctx.attr._linux[platform_common.ConstraintValueInfo])
     ctx.actions.run_shell(
         # The image's working files go to a temporary directory; only the executable is the output.
@@ -280,12 +313,15 @@ def _native_image_impl(ctx):
 native_image = rule(
     implementation = _native_image_impl,
     doc = "`<name>`: a module's main class as a native executable, by the pinned GraalVM's native-image " +
-          "and the host's C toolchain (design.md D17).",
+          "and the host's C toolchain (design.md D17), with the collector `gc` names (`--gc=`).",
     attrs = {
+        "gc": attr.label(mandatory = True, providers = [NativeSettingInfo], doc = "serial, epsilon or G1"),
+        "graalvm": attr.label(mandatory = True, providers = [NativeSettingInfo], doc = "ce or oracle: which `jdk` is"),
+        "jdk": attr.label(mandatory = True, providers = [java_common.JavaRuntimeInfo], doc = "whose native-image builds it"),
         "main": attr.string(mandatory = True, doc = "module/class, as `java -m` takes it"),
         "module": attr.label(mandatory = True, providers = [JavaModuleInfo]),
         "options": attr.string_list(),
-        "_jdk": _JDK,
+        "serial_options": attr.string_list(doc = "more options, with the serial collector only"),
         "_linux": attr.label(default = "@platforms//os:linux"),
     },
     executable = True,

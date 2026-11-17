@@ -1,5 +1,5 @@
 load("@rules_python//python:defs.bzl", "py_binary")
-load("//bazel:java_module.bzl", "java_module_jar", "module_dir", "native_image", "prelude_image", "scheme_runtime")
+load("//bazel:java_module.bzl", "java_module_jar", "module_dir", "native_image", "native_setting", "prelude_image", "scheme_runtime")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -126,12 +126,21 @@ filegroup(
 # built only when named: a minute and a few GB, with a pre-initialized context (design.md D17,
 # plan.md M8-07). The native-image build gets a large executor. On
 # x86-64 Linux the baseline CPU target keeps the JDK's libsimdsort (and its static libm) out of it.
+# Its collector is native-image's `--gc=`, from --//:native_gc, and --//:native_graalvm=oracle
+# builds it with Oracle GraalVM's native-image, which also has G1 (design.md D17, "The native
+# image's collector"; docs/usage.md, "Choosing a garbage collector").
 native_image(
     name = "scheme-native",
     exec_properties = {
         "EstimatedCPU": "8",
         "EstimatedMemory": "12GB",
     },
+    gc = ":native_gc",
+    graalvm = ":native_graalvm",
+    jdk = select({
+        ":oracle_graalvm": "@graalvm//:oracle_jdk",
+        "//conditions:default": "@bazel_tools//tools/jdk:current_java_runtime",
+    }),
     main = "scheme.launcher/scheme.launcher.SchemeMain",
     module = ":launcher_module",
     # A context pre-initialized at build time, which the launcher's context takes over
@@ -146,6 +155,33 @@ native_image(
         "//conditions:default": [],
     }),
     tags = ["manual"],
+)
+
+# `--//:native_gc=serial|epsilon|G1`: //:scheme-native's collector. G1 needs Oracle GraalVM.
+native_setting(
+    name = "native_gc",
+    build_setting_default = "serial",
+    values = [
+        "serial",
+        "epsilon",
+        "G1",
+    ],
+)
+
+# `--//:native_graalvm=ce|oracle`: whose native-image builds //:scheme-native, at the pinned
+# version (bazel/graalvm.bzl). Everything else runs on GraalVM CE either way.
+native_setting(
+    name = "native_graalvm",
+    build_setting_default = "ce",
+    values = [
+        "ce",
+        "oracle",
+    ],
+)
+
+config_setting(
+    name = "oracle_graalvm",
+    flag_values = {":native_graalvm": "oracle"},
 )
 
 # `bazel run //:r7rs -- <command>`: the repository's commands (tests/harness/main.py, AGENTS.md).
