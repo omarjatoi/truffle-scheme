@@ -11,6 +11,9 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
+import java.util.function.Predicate;
+import java.util.function.Supplier;
 
 import com.oracle.truffle.api.bytecode.BytecodeLabel;
 import com.oracle.truffle.api.bytecode.BytecodeLocal;
@@ -115,11 +118,20 @@ final class CodeGenerator {
      * locals the Bytecode DSL clears.
      */
     private Runnable gen(Expr e, Ctx ctx, List<Var> dying) {
+        return inSection(e, () -> tags(e, ctx), () -> expand(e, ctx, dying));
+    }
+
+    /**
+     * The task that emits {@code expansion}'s tasks for {@code e}, wrapped in {@code e}'s source
+     * section and in {@code tags}: both are taken when the task runs, as {@link #statements} is
+     * filled in by the enclosing expressions' expansions.
+     */
+    private Runnable inSection(Expr e, Supplier<Class<?>[]> tagsOf, Supplier<List<Runnable>> expansion) {
         return () -> {
-            Class<?>[] tags = tags(e, ctx);
+            Class<?>[] tags = tagsOf.get();
             SourceSection section = usable(e.source);
             if (section == null && tags.length == 0) {
-                push(expand(e, ctx, dying));
+                push(expansion.get());
                 return;
             }
             State st = state();
@@ -138,7 +150,7 @@ final class CodeGenerator {
                     b.beginTag(tags);
                 }
             });
-            seq.addAll(expand(e, ctx, dying));
+            seq.addAll(expansion.get());
             seq.add(() -> {
                 if (tags.length > 0) {
                     b.endTag(tags);
@@ -265,12 +277,6 @@ final class CodeGenerator {
                     }
                 }
             }
-            if (loops) {
-                b.beginWhile();
-                b.emitLoopHead(argumentCount(fn));
-                b.beginBlock();
-                st.loop = b.createLabel();
-            }
             if (fn.program) {
                 b.beginReturn();
             }
@@ -278,17 +284,21 @@ final class CodeGenerator {
         if (!(fn.body instanceof Ast.Seq)) {
             statements.add(fn.body);
         }
-        // The parameters die at a loop the body enters in tail position, if it doesn't use them.
-        seq.add(fn.program ? gen(fn.body, Ctx.VALUE) : gen(fn.body, Ctx.TAIL, fn.rest == null ? fn.params : plus(fn.params, List.of(fn.rest))));
+        if (fn.program) {
+            seq.add(gen(fn.body, Ctx.VALUE));
+        } else {
+            // The parameters die at a loop the body enters in tail position, if it doesn't use them.
+            List<Var> dying = fn.rest == null ? fn.params : plus(fn.params, List.of(fn.rest));
+            if (loops) {
+                seq.addAll(loop(fn.body, argumentCount(fn), c -> mayLoop(fn, c), label -> state().loop = label, () -> state().loop, dying));
+            } else {
+                seq.add(gen(fn.body, Ctx.TAIL, dying));
+            }
+        }
         seq.add(() -> {
-            State st = states.pop();
+            states.pop();
             if (fn.program) {
                 b.endReturn();
-            }
-            if (loops) {
-                b.emitLabel(st.loop);
-                b.endBlock();
-                b.endWhile();
             }
             if (sections[0] != null) {
                 b.endSourceSection();
@@ -341,30 +351,118 @@ final class CodeGenerator {
      * of a contified loop (which jumps to that loop's start).
      */
     private static boolean selfTailCalls(Lambda fn) {
-        int n = fn.params.size();
+        return tailCall(fn.body, c -> mayLoop(fn, c));
+    }
+
+    /** Whether {@code c}, a tail call in {@code fn}'s body, may be a self tail call ({@link #selfTailCalls}). */
+    private static boolean mayLoop(Lambda fn, Ast.Call c) {
+        return !(c.procedure instanceof Ast.LocalRef r && r.var.self != null && r.var.self.contified) &&
+                        c.arguments.size() == fn.params.size() && !Intrinsic.isIntrinsic(c) && !ConstantMember.isConstantMember(c);
+    }
+
+    /**
+     * Whether {@code e} has a call in tail position (of {@code e}, or of a contified loop entered in
+     * tail position) that {@code p} accepts.
+     */
+    private static boolean tailCall(Expr e, Predicate<Ast.Call> p) {
         Deque<Expr> tail = new ArrayDeque<>();
-        tail.push(fn.body);
+        tail.push(e);
         while (!tail.isEmpty()) {
-            Expr e = tail.pop();
-            if (e instanceof Ast.If i) {
+            Expr x = tail.pop();
+            if (x instanceof Ast.If i) {
                 tail.push(i.consequent);
                 tail.push(i.alternative);
-            } else if (e instanceof Ast.Seq s && !s.body.isEmpty()) {
+            } else if (x instanceof Ast.Seq s && !s.body.isEmpty()) {
                 tail.push(s.body.get(s.body.size() - 1));
-            } else if (e instanceof Ast.Let l) {
+            } else if (x instanceof Ast.Let l) {
                 tail.push(l.body);
-            } else if (e instanceof Ast.Letrec l) {
+            } else if (x instanceof Ast.Letrec l) {
                 if (contified(l) instanceof Lambda loop) {
                     tail.push(loop.body);
                 } else {
                     tail.push(l.body);
                 }
-            } else if (e instanceof Ast.Call c && !(c.procedure instanceof Ast.LocalRef r && r.var.self != null && r.var.self.contified) &&
-                            c.arguments.size() == n && !Intrinsic.isIntrinsic(c) && !ConstantMember.isConstantMember(c)) {
+            } else if (x instanceof Ast.Call c && p.test(c)) {
                 return true;
             }
         }
         return false;
+    }
+
+    /**
+     * An {@code if}'s test with the {@code not}s around it taken off, and its branches in the order
+     * the test's truth takes them: {@code (if (not x) a b)} branches on {@code x} to {@code b} or
+     * {@code a}, one instruction fewer (plan.md M8-04). {@code not} is its primitive's operation
+     * ({@link Intrinsic}), which nothing can redefine.
+     */
+    private record Test(Expr test, Expr whenTrue, Expr whenFalse) {
+        static Test of(Ast.If i) {
+            Expr test = i.test;
+            Expr whenTrue = i.consequent;
+            Expr whenFalse = i.alternative;
+            while (test instanceof Ast.Call c && Intrinsic.of(c) == Intrinsic.NOT) {
+                test = c.arguments.get(0);
+                Expr t = whenTrue;
+                whenTrue = whenFalse;
+                whenFalse = t;
+            }
+            return new Test(test, whenTrue, whenFalse);
+        }
+    }
+
+    /**
+     * The loop of a root with self tail calls, or of a contified loop, whose body is {@code body},
+     * in tail position: a {@code While} whose body jumps to its end ({@code label}, set by
+     * {@code setLabel} when the loop's body begins) to loop again; {@code jumps} accepts the tail
+     * calls that may jump.
+     *
+     * <p>When {@code body} is an {@code if} with jumps in one branch only, the loop is rotated (plan.md
+     * M8-04): the {@code if}'s test is the {@code While}'s condition ({@code LoopTest}),
+     * its body that branch, and the other branch follows the loop. So an iteration, and a call that
+     * returns from the other branch at once, branches once, where {@code LoopHead}'s condition and the
+     * {@code if} branched twice. The {@code if}'s tags (a statement's) go around the test: a
+     * breakpoint on it is hit once per iteration, as before.
+     */
+    private List<Runnable> loop(Expr body, int argumentCount, Predicate<Ast.Call> jumps, Consumer<BytecodeLabel> setLabel, Supplier<BytecodeLabel> label,
+                    List<Var> dying) {
+        if (body instanceof Ast.If i) {
+            Test t = Test.of(i);
+            boolean whenTrue = tailCall(t.whenTrue, jumps);
+            if (whenTrue != tailCall(t.whenFalse, jumps)) {
+                Expr looping = whenTrue ? t.whenTrue : t.whenFalse;
+                Expr exit = whenTrue ? t.whenFalse : t.whenTrue;
+                Class<?>[][] tags = new Class<?>[1][];
+                return List.of(inSection(i, () -> new Class<?>[0], () -> List.of(() -> {
+                    b.beginWhile();
+                    b.beginLoopTest(argumentCount, whenTrue);
+                    tags[0] = tags(i, Ctx.TAIL);
+                    if (tags[0].length > 0) {
+                        b.beginTag(tags[0]);
+                    }
+                }, gen(t.test, Ctx.VALUE), () -> {
+                    if (tags[0].length > 0) {
+                        b.endTag(tags[0]);
+                    }
+                    b.endLoopTest();
+                    b.beginBlock();
+                    setLabel.accept(b.createLabel());
+                }, gen(looping, Ctx.TAIL, dying), () -> {
+                    b.emitLabel(label.get());
+                    b.endBlock();
+                    b.endWhile();
+                }, gen(exit, Ctx.TAIL, dying))));
+            }
+        }
+        return List.of(() -> {
+            b.beginWhile();
+            b.emitLoopHead(argumentCount);
+            b.beginBlock();
+            setLabel.accept(b.createLabel());
+        }, gen(body, Ctx.TAIL, dying), () -> {
+            b.emitLabel(label.get());
+            b.endBlock();
+            b.endWhile();
+        });
     }
 
     /** The loop {@code l} binds if it is a contified loop's letrec* (Closures), else null. */
@@ -527,8 +625,9 @@ final class CodeGenerator {
                 b.endBlock();
             }), ctx);
         } else if (e instanceof Ast.If i) {
+            Test t = Test.of(i);
             // A predicate's operation gives the branch its boolean as it is (plan.md M7-03).
-            boolean truthy = !Intrinsic.isPredicate(i.test);
+            boolean truthy = !Intrinsic.isPredicate(t.test);
             Runnable beginTest = truthy ? b::beginTruthy : () -> {
             };
             Runnable endTest = truthy ? b::endTruthy : () -> {
@@ -537,12 +636,12 @@ final class CodeGenerator {
                 return List.of(() -> {
                     b.beginConditional();
                     beginTest.run();
-                }, gen(i.test, Ctx.VALUE), endTest, gen(i.consequent, Ctx.VALUE, dying), gen(i.alternative, Ctx.VALUE, dying), b::endConditional);
+                }, gen(t.test, Ctx.VALUE), endTest, gen(t.whenTrue, Ctx.VALUE, dying), gen(t.whenFalse, Ctx.VALUE, dying), b::endConditional);
             }
             return List.of(() -> {
                 b.beginIfThenElse();
                 beginTest.run();
-            }, gen(i.test, Ctx.VALUE), endTest, gen(i.consequent, Ctx.TAIL, dying), gen(i.alternative, Ctx.TAIL, dying), b::endIfThenElse);
+            }, gen(t.test, Ctx.VALUE), endTest, gen(t.whenTrue, Ctx.TAIL, dying), gen(t.whenFalse, Ctx.TAIL, dying), b::endIfThenElse);
         } else if (e instanceof Ast.Seq s) {
             List<Runnable> seq = new ArrayList<>();
             seq.add(b::beginBlock);
@@ -701,18 +800,10 @@ final class CodeGenerator {
                     }
                 }
             }
-            b.beginWhile();
-            b.emitLoopHead(argumentCount(state().lambda));
-            b.beginBlock();
-            state().loops.put(loop, b.createLabel());
         });
-        seq.add(gen(loop.body, Ctx.TAIL, loop.params));
-        seq.add(() -> {
-            b.emitLabel(state().loops.get(loop));
-            b.endBlock();
-            b.endWhile();
-            b.endBlock();
-        });
+        seq.add(() -> push(loop(loop.body, argumentCount(state().lambda), c -> c.procedure instanceof Ast.LocalRef r && r.var.self == loop,
+                        label -> state().loops.put(loop, label), () -> state().loops.get(loop), loop.params)));
+        seq.add(b::endBlock);
         return seq;
     }
 

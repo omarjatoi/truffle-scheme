@@ -108,6 +108,24 @@ full R7RS-small conformance comes first.
 - Self tail calls in named `let` and `do` compile to loops (back-edges, OSR).
   A root has the `While` they loop in only if its body has a tail call that
   can be one (M7-02): it costs two instructions per call.
+- **A loop branches once per iteration (M8-04).** When a loop's body (a
+  root's with self tail calls, or a contified loop's) is an `if` whose jumps
+  back are all in one branch, the `if`'s test is the `While`'s condition
+  (`LoopTest`, which also does `LoopHead`'s work), that branch its body, and
+  the other branch follows the loop: `(if (< i n) (loop (+ i 1)) acc)` is
+  `while (i < n) { i = i + 1 } return acc`. An iteration, and a call that
+  returns from the other branch at once (`tak`'s leaves), branch once instead
+  of twice. A statement's tags go around the test, so a breakpoint on the `if`
+  is hit once per iteration, as before. An `if` whose test is `not`'s operation
+  branches on its operand, with the branches swapped.
+  It is worth less than the instruction count suggests: in the interpreter
+  (`engine.Compilation=false`, the report's interpreter counts, a fresh JVM
+  per run, interleaved), the six programs that run longest took 0.985 times as
+  long (`cpstak` 0.96, `takl` 0.975, `tak` 1.005, one run each) and 45 shorter
+  ones 0.996 times (2 rounds, noise); with the JIT, 20 programs' first
+  iterations 1.006 times and steady states 1.002 (2 rounds, noise). `tak`'s
+  leaves run 8 instructions instead of 11 and take as long: an instruction the
+  host compiler predicts well costs next to nothing beside the call.
 - **Loops of the root that enters them (M7-02).** A named `let`, a `do`, or a
   body's one internal procedure, entered in tail position, whose variable is
   only ever called, in tail position of its own body, is *contified*
