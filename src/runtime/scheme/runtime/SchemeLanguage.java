@@ -66,6 +66,14 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
     @Option(name = "StackSize", help = "The Java stack size of the thread the context is created on, such as 256m (0: unknown, measured when needed).", category = OptionCategory.EXPERT, stability = OptionStability.STABLE, usageSyntax = "<size>") //
     public static final OptionKey<Long> STACK_SIZE = new OptionKey<>(0L, new OptionType<>("size", StackBudget::parseStackSize));
 
+    /**
+     * Whether standard output is buffered (design.md D10, "Standard output"). The launcher turns it
+     * off when stdin and stdout are a terminal, where each write then shows at once, as before.
+     */
+    @Option(name = "BufferOutput", help = "Buffer standard output; it is written when Scheme reads standard input, writes to standard error, flushes or exits, and when control returns to the caller (false: each write at once).", //
+                    category = OptionCategory.USER, stability = OptionStability.STABLE) //
+    public static final OptionKey<Boolean> BUFFER_OUTPUT = new OptionKey<>(true);
+
     private SchemeCompiler compiler;
     /** What runs a procedure called through interop (design.md D10): see {@link #interopCallTarget}. */
     @CompilationFinal private RootCallTarget interopCall;
@@ -121,6 +129,12 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
         }
         compiler().patchContext(context);
         return true;
+    }
+
+    /** A closing context leaves nothing in standard output's buffer (design.md D10). */
+    @Override
+    protected void finalizeContext(SchemeContext context) {
+        context.flushOutput();
     }
 
     /**

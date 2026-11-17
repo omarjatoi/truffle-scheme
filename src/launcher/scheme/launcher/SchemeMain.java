@@ -72,6 +72,8 @@ public final class SchemeMain extends AbstractLanguageLauncher {
     private static final String LIBRARY_PATH_OPTION = "scheme.LibraryPath";
     /** The evaluation thread's stack size, for the runtime (StackBudget). */
     private static final String STACK_SIZE_RUNTIME_OPTION = "scheme.StackSize";
+    /** Whether the runtime buffers standard output (design.md D10). */
+    private static final String BUFFER_OUTPUT_OPTION = "scheme.BufferOutput";
     private static final String END_STATUS_OPTION = "--end-status=";
     private static final String STACK_SIZE_OPTION = "--stack-size=";
     /** The native launcher's stack size option, which the framework also applies to new threads. */
@@ -94,6 +96,8 @@ public final class SchemeMain extends AbstractLanguageLauncher {
     private Long vmStackSize;
     /** False when {@code --engine.Compilation=false} (or its system property) turns the JIT off. */
     private boolean compilation = true;
+    /** Whether the command line sets {@value #BUFFER_OUTPUT_OPTION}. */
+    private boolean bufferOutputGiven;
 
     private static final String COMPILATION_OPTION = "engine.Compilation";
     /** The warm-up takes a core of its own: below this, it would take the program's. */
@@ -228,6 +232,7 @@ public final class SchemeMain extends AbstractLanguageLauncher {
     @Override
     protected void validateArguments(Map<String, String> polyglotOptions) {
         compilation = !"false".equals(polyglotOptions.getOrDefault(COMPILATION_OPTION, System.getProperty("polyglot." + COMPILATION_OPTION)));
+        bufferOutputGiven = polyglotOptions.containsKey(BUFFER_OUTPUT_OPTION) || System.getProperty("polyglot." + BUFFER_OUTPUT_OPTION) != null;
         String given = polyglotOptions.remove(LIBRARY_PATH_OPTION);
         if (given != null && !given.isEmpty()) {
             libraryPath.addAll(0, Arrays.asList(given.split(File.pathSeparator)));
@@ -258,9 +263,15 @@ public final class SchemeMain extends AbstractLanguageLauncher {
             // size instead of measuring the stack (design.md "Stack-depth spill").
             builder.option(STACK_SIZE_RUNTIME_OPTION, Long.toString(threadStack));
         }
+        boolean tty = isTTY();
+        if (tty && !bufferOutputGiven) {
+            // On a terminal, each write shows at once; elsewhere the runtime buffers standard
+            // output (design.md D10, "Standard output").
+            builder.option(BUFFER_OUTPUT_OPTION, "false");
+        }
         int status;
         if (file == null) {
-            TerminalInput terminal = isTTY() ? TerminalInput.open(CONTINUATION_PROMPT) : null;
+            TerminalInput terminal = tty ? TerminalInput.open(CONTINUATION_PROMPT) : null;
             if (terminal != null) {
                 builder.in(terminal);
             }

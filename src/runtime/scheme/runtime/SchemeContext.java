@@ -1,5 +1,6 @@
 package scheme.runtime;
 
+import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -38,6 +39,13 @@ public final class SchemeContext {
     private final ConsoleOutput stdout;
     private final ConsoleOutput stderr;
     private final ConsoleInput stdin;
+    /**
+     * Standard output's buffer (design.md D10, "Standard output"): {@link #flushOutput} writes it
+     * out when control returns to the embedder, before a write to standard error or a read of
+     * standard input, and when the context closes; {@code flush-output-port} and {@code exit} flush
+     * it too.
+     */
+    private final OutputBuffer stdoutBuffer;
     private final PrintStream out;
     private SPort stdoutPort;
     private SPort stderrPort;
@@ -134,11 +142,29 @@ public final class SchemeContext {
     SchemeContext(TruffleLanguage.Env env) {
         this.env = env;
         StackBudget.initialize(this, env.getOptions().get(SchemeLanguage.SPILL_DEPTH), env.getOptions().get(SchemeLanguage.STACK_SIZE));
-        this.stdout = new ConsoleOutput(env.out());
-        this.stderr = new ConsoleOutput(env.err());
-        this.stdin = new ConsoleInput(env.in());
-        this.out = new PrintStream(stdout, false, StandardCharsets.UTF_8);
+        this.stdout = new ConsoleOutput(env.out(), null);
+        this.stdoutBuffer = new OutputBuffer(stdout);
+        this.stdoutBuffer.writeThrough = !env.getOptions().get(SchemeLanguage.BUFFER_OUTPUT);
+        this.out = new PrintStream(stdoutBuffer, false, StandardCharsets.UTF_8);
+        this.stderr = new ConsoleOutput(env.err(), this);
+        this.stdin = new ConsoleInput(env.in(), this);
         this.allocationReporter = env.lookup(AllocationReporter.class);
+    }
+
+    /**
+     * Writes what standard output holds to the Env's stream, and flushes that (design.md D10,
+     * "Standard output"). Cheap when there is nothing to write.
+     */
+    public void flushOutput() {
+        if (!stdoutBuffer.isEmpty()) {
+            flushBuffered();
+        }
+    }
+
+    @TruffleBoundary
+    private void flushBuffered() {
+        // PrintStream: an I/O error is kept for checkError, as for every write to standard output.
+        out.flush();
     }
 
     /**
@@ -153,6 +179,7 @@ public final class SchemeContext {
     void patch(TruffleLanguage.Env newEnv) {
         out.flush();
         this.env = newEnv;
+        stdoutBuffer.writeThrough = !newEnv.getOptions().get(SchemeLanguage.BUFFER_OUTPUT);
         stdout.target = newEnv.out();
         stderr.target = newEnv.err();
         stdin.target = newEnv.in();
@@ -210,21 +237,66 @@ public final class SchemeContext {
         return stdinPort;
     }
 
-    /** An Env's output stream, which {@link #patch} replaces. */
+    /**
+     * Standard output's buffer: a {@link BufferedOutputStream} that tells whether it holds anything,
+     * and that writes each write through at once when {@link #writeThrough} (the launcher on a
+     * terminal: {@code scheme.BufferOutput} false).
+     */
+    private static final class OutputBuffer extends BufferedOutputStream {
+        boolean writeThrough;
+
+        OutputBuffer(OutputStream out) {
+            super(out);
+        }
+
+        /** Read on the context's thread, the only one that writes (D10: single-threaded). */
+        boolean isEmpty() {
+            return count == 0;
+        }
+
+        @Override
+        public synchronized void write(int b) throws IOException {
+            super.write(b);
+            if (writeThrough) {
+                flush();
+            }
+        }
+
+        @Override
+        public synchronized void write(byte[] b, int off, int len) throws IOException {
+            super.write(b, off, len);
+            if (writeThrough) {
+                flush();
+            }
+        }
+    }
+
+    /**
+     * An Env's output stream, which {@link #patch} replaces. Standard error's flushes standard
+     * output ({@code first}) before each write, so the two stay in order where they meet.
+     */
     private static final class ConsoleOutput extends OutputStream {
         OutputStream target;
+        private final SchemeContext first;
 
-        ConsoleOutput(OutputStream target) {
+        ConsoleOutput(OutputStream target, SchemeContext first) {
             this.target = target;
+            this.first = first;
         }
 
         @Override
         public void write(int b) throws IOException {
+            if (first != null) {
+                first.flushOutput();
+            }
             target.write(b);
         }
 
         @Override
         public void write(byte[] b, int off, int len) throws IOException {
+            if (first != null) {
+                first.flushOutput();
+            }
             target.write(b, off, len);
         }
 
@@ -234,26 +306,36 @@ public final class SchemeContext {
         }
     }
 
-    /** An Env's input stream, which {@link #patch} replaces. */
+    /**
+     * An Env's input stream, which {@link #patch} replaces. It flushes standard output before it
+     * reads, or tells what is available, so that a prompt shows before the program waits for its
+     * answer. The console port reads it only when its own buffer runs out, which is when a read
+     * may block.
+     */
     private static final class ConsoleInput extends InputStream {
         InputStream target;
+        private final SchemeContext context;
 
-        ConsoleInput(InputStream target) {
+        ConsoleInput(InputStream target, SchemeContext context) {
             this.target = target;
+            this.context = context;
         }
 
         @Override
         public int read() throws IOException {
+            context.flushOutput();
             return target.read();
         }
 
         @Override
         public int read(byte[] b, int off, int len) throws IOException {
+            context.flushOutput();
             return target.read(b, off, len);
         }
 
         @Override
         public int available() throws IOException {
+            context.flushOutput();
             return target.available();
         }
     }

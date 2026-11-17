@@ -1358,6 +1358,45 @@ Each entry: the decision, why, and what was rejected.
   `singleThreaded`.
 - **All I/O goes through `TruffleLanguage.Env`**: `TruffleFile` and the Env's
   streams, never `java.io` or `java.nio` directly.
+- **Standard output is buffered.** The console output port writes to a
+  `BufferedOutputStream` (8 KB) over the Env's `out()`, not straight through:
+  through, every `display` was a write to the stream, which the launcher's
+  `System.out` passes on as a system call (printing a million short lines
+  took 3.2 s to `/dev/null` and 6.3 s to a file, against 0.5 s buffered),
+  and another stream could split a line of it (#195). The buffer is written
+  out, and the Env's stream flushed (`SchemeContext.flushOutput`, which costs
+  a field read when the buffer is empty):
+  - when control goes back to the caller: as a program, a REPL input or an
+    interop call leaves its root prompt (`PromptRootNode`,
+    `InteropCallRootNode`), normally, with an error or with an exit or
+    interrupt (so the launcher's error message comes after the output, and
+    an embedder finds the output in its stream when `eval` or `execute`
+    returns);
+  - before a write to the console error port, so the two stay in order
+    where they meet (a terminal, or `2>&1`);
+  - before the console input port reads the Env's `in()` or asks what is
+    available (`char-ready?`): it does only when its own buffer runs out,
+    which is when a read may block, so a prompt shows before the program
+    waits for its answer, and the REPL's output before its prompt;
+  - on `flush-output-port`; on `exit` and `emergency-exit`, before
+    `closeExited`. R7RS §6.14 says `emergency-exit` terminates *"without
+    running any outstanding dynamic-wind after procedures"*, and says nothing
+    of ports: writing out what the program wrote is what C's `exit` does,
+    and the program can't tell the difference except by losing output;
+  - when the context closes (`finalizeContext`), and when a pre-initialized
+    context is patched (D17).
+
+  The `scheme.BufferOutput` option (default true) turns it off: each write
+  is then flushed at once, as before. The launcher turns it off when stdin
+  and stdout are a terminal (the framework's `isTTY()`), unless the command
+  line sets it, so a terminal sees partial lines (progress dots) at once;
+  with stdout on a terminal but stdin redirected, output is buffered (Java
+  can't tell stdout alone is a terminal without a native call). Standard
+  error is never buffered. Textual file output ports were buffered already
+  (`TruffleFile.newBufferedWriter`); binary ones still write each `write-u8`
+  through. Buffering those too would make a binary port the program never
+  closes lose its last output at exit, as an unclosed textual file port
+  already does: the context doesn't track its open file ports to flush them.
 - **Interop for embedders (M6-02).** Scheme values answer Truffle's
   `InteropLibrary` as what they are, each with the language `scheme`, its
   `write` syntax as display string (`Value.toString()`), and a meta object:
@@ -2259,7 +2298,9 @@ Each entry: the decision, why, and what was rejected.
       `current-output-port` and the other two parameters hold them) and
       write and read the new Env's stdout, stderr and stdin through
       streams that the patch points at them (pre-initialization reads and
-      writes none, so nothing is left buffered);
+      writes none, and the patch flushes standard output's buffer first, so
+      nothing is left buffered), and take the run's `scheme.BufferOutput`
+      (D10);
     - the library path (`-I`, `scheme.LibraryPath`), which the compiler's
       `Libraries` keeps, with the Env it resolves directories in;
     - the context's `AllocationReporter`.

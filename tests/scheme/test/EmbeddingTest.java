@@ -9,6 +9,7 @@ import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+import java.io.BufferedOutputStream;
 import java.io.ByteArrayOutputStream;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
@@ -705,6 +706,29 @@ public class EmbeddingTest {
             assertThrows(UnsupportedOperationException.class, () -> bindings.removeMember("limit"));
             assertNotNull(bindings.toString());
         }
+    }
+
+    /**
+     * The context buffers its standard output (design.md D10), and flushes it, down to the
+     * embedder's stream, when an evaluation returns and when the context closes: so output is
+     * never left behind in a buffer, the embedder's own included.
+     */
+    @Test
+    public void outputIsFlushedToTheEmbeddersStreamOnReturnAndOnClose() {
+        ByteArrayOutputStream sink = new ByteArrayOutputStream();
+        BufferedOutputStream embedders = new BufferedOutputStream(sink, 1 << 16);
+        Context context = Context.newBuilder(SCHEME).out(embedders).build();
+        try {
+            eval(context, "(display \"first\")");
+            assertEquals("first", sink.toString(StandardCharsets.UTF_8));
+            Value write = eval(context, "(lambda (s) (display s))");
+            write.execute(" second");
+            assertEquals("first second", sink.toString(StandardCharsets.UTF_8));
+            write.execute(" third");
+        } finally {
+            context.close();
+        }
+        assertEquals("first second third", sink.toString(StandardCharsets.UTF_8));
     }
 
     @Test
