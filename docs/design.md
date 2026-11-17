@@ -627,6 +627,20 @@ Each entry: the decision, why, and what was rejected.
   only when every list is circular. `list-tail`, `list-ref` and `list-set!`
   walk a bounded number of pairs and need no check; `equal?`, `write` and
   `display` already terminate (above).
+- **Circular code is a syntax error.** R7RS §2.4: *"It is an error for a
+  program or library to include circular references except in literals. In
+  particular, it is an error for quasiquote (section 4.2.8) to contain
+  them."* The expander walks code as a tree, so a form that contains itself
+  would expand forever (as `(eval '#0=(car #0#) env)` did until the §4–5
+  audit). `eval`'s datum, and every datum the reader makes with a datum
+  label that refers into itself (program text, libraries, `include`d and
+  `load`ed files), are checked first (`CircularCode`): a cycle that isn't
+  inside a `(quote datum)` or a vector (self-evaluating, §4.1.2) is a syntax
+  error. Inside `quasiquote` and `syntax-rules`, whose templates the
+  expander walks, nothing may be circular. The forms are recognized by name
+  before expansion, so a cycle handed to another macro is an error even if
+  that macro would quote it (§2.4 allows cycles only in literals). Shared
+  structure that isn't circular is fine. Data read by `read` is not checked.
 - `exit` runs all outstanding after-thunks through `rewind`, then exits the
   context through Truffle. `emergency-exit` skips the after-thunks.
 - `delay`, `delay-force` and `make-promise` use the space-safe reference
