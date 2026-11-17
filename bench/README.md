@@ -180,10 +180,12 @@ How each number is measured:
 implementations nixpkgs has, on ecraven's set, the way his published tables
 do. `nix develop .#bench` is the default shell plus Chez Scheme (with
 chez-srfi), Racket, Chicken (with the r7rs egg), Guile and Gauche; chibi is in
-both. One command runs everything and writes the page and its data
-(`docs/benchmarks.json`):
+both. Our native launcher is a column too, so build it first, here and for
+this machine (design.md D17). One command then runs everything and writes
+the page and its data (`docs/benchmarks.json`):
 
 ```
+bazel build --config=local //:scheme-native
 nix develop .#bench --command bazel run //:r7rs -- bench-report --note "quiet machine"
 nix develop .#bench --command bazel run //:r7rs -- bench-report --benchmarks fib,tak --scale 0.1   # a quick look
 bazel run //:r7rs -- bench-report --render-only   # rewrite the page from the JSON
@@ -209,25 +211,47 @@ command downloads them, pinned, into `bench/.cache/` (gitignored):
 - for Gauche, SLIB, which its postlude imports;
 - for Racket, the `r7rs` package, which its prelude's `#lang r7rs` needs.
 
+We run three ways, each a column (`--implementations` keys `jit`, `native`
+and `interpreter`): the launcher's JVM with the Graal JIT, the native
+launcher (`bazel-bin/scheme-native`, docs/usage.md "Native image", or
+`--native FILE`), and the JVM with compilation off. Both with a JIT run the
+harness `--jit-iterations` times in one process: the first is the comparable
+number, the best of the rest the steady state. The native launcher also has
+the first iteration with its startup and exit ("native with startup": the
+process's wall time, less the later iterations), since it starts in about
+10 ms where the JVM takes over half a second; the others' numbers, like
+ecraven's, leave startup out. It runs with our JVMs' `-Xmx2g` (Heap, above),
+given on its command line, with native-image's serial collector. Without the
+executable, the column says it wasn't run.
+
 Our JVMs' memory is measured three ways (Heap, above): the peak RSS, as for
 every implementation; the heap after GC of the timed run; and the live heap,
 from a second run of each program with the JIT, untimed, whose whole heap is
-collected every `--live-every` seconds (0.5; 0 skips that run).
+collected every `--live-every` seconds (0.5; 0 skips that run). The native
+launcher's is measured the first two ways: its heap after GC comes from the
+lines its `-XX:+PrintGC` writes to standard error (kept apart from the
+program's output), and it has no `jcmd` for the live heap.
 
 Options: `--benchmarks` and `--implementations` choose rows and columns;
 `--scale F` runs every program `F` times its count on every implementation
 (the Count column says so); our interpreter runs `--interpreter-scale` (0.1)
-times that again, its time scaled back up and marked; our JIT's JVM runs the
-harness `--jit-iterations` (3) times, the first being the comparable number
-and the best of the rest the steady state; `--timeout` (300 s, ecraven's
-`CPU_LIMIT`) kills a run, and `--interpreter-timeout` our interpreter's (ten
-programs have a count of 1, which no scale reduces). Implementations take
-turns per program, in a rotating order, so a machine whose load changes during
-the run affects them evenly.
+times that again, its time scaled back up and marked; our JIT's JVM and the
+native launcher run the harness `--jit-iterations` (3) times, the first being
+the comparable number and the best of the rest the steady state; `--native`
+names the native launcher; `--timeout` (300 s, ecraven's `CPU_LIMIT`) kills a
+run (our JIT's and native launcher's once per iteration), and
+`--interpreter-timeout` our interpreter's (ten programs have a count of 1,
+which no scale reduces). Implementations take turns per program, in a
+rotating order, so a machine whose load changes during the run affects them
+evenly; the report also states the machine's 1-minute load average at the
+start, the most before any program, and at the end. The machine is shared, so
+run it while it is quiet, as for `bench-check` (Thresholds, below), and say
+how loaded it was with `--note`.
 
 How long it takes: the committed report (`--scale 0.1 --interpreter-timeout
-60`, every program) took 80 minutes on a quiet 16-core machine, most of it
-chibi's and our interpreter's timeouts and the programs whose count is 1;
+60`, every program) took 83 minutes on a 16-core machine shared with other
+agents (80 on a quiet one, before the native column), most of it chibi's and
+our interpreter's timeouts and the programs whose count is 1;
 twelve programs at the same scale take about 25 minutes. With the programs'
 own counts, expect several hours. The live-heap run doubles our JIT's share of
 that (with one iteration, both of our JIT's runs of every program took 8

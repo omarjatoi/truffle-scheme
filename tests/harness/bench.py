@@ -21,6 +21,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -386,9 +387,15 @@ class _Implementation:
         self.setup = setup
 
 
+# Our implementations whose process runs the harness --jit-iterations times: the first is the
+# comparable number, the best of the rest the steady state. The native launcher (`native`,
+# `bazel build //:scheme-native`) keeps the Graal JIT, so it needs the iterations as much.
+_ITERATED = ('jit', 'native')
+
 # In the bench script's order of speed in ecraven's tables, roughly: the column order of the report.
 _IMPLEMENTATIONS = [
     _Implementation('jit', 'Ours, JIT'),
+    _Implementation('native', 'Ours, native'),
     _Implementation('interpreter', 'Ours, interpreter'),
     _Implementation('chez', 'Chez', 'Chez', 'scheme', run_cmd=[
         'scheme', '--optimize-level', '2', '--compile-imported-libraries', '--libdirs', '{chezlibs}', '--program', '{src}'],
@@ -406,12 +413,13 @@ _IMPLEMENTATIONS = [
 
 
 class _Measured:
-    def __init__(self, rc, output, timed_out, rss_bytes, heap=None):
+    def __init__(self, rc, output, timed_out, rss_bytes, heap=None, wall_seconds=None):
         self.rc = rc
         self.output = output
         self.timed_out = timed_out
         self.rss_bytes = rss_bytes
-        self.heap = heap  # _heap_from_gc_log's, for our JVMs
+        self.heap = heap  # _heap_from_gc_log's, for our JVMs; _heap_from_native_gc_lines', for the native launcher
+        self.wall_seconds = wall_seconds  # from starting the process to its exit
 
 
 def _gc_log_vm_args(path):
@@ -445,6 +453,24 @@ def _heap_from_gc_log(path):
             'gcs': len(pauses), 'gc_ms': round(sum(p[2] for p in pauses))}
 
 
+# The native launcher's runtime options, which it takes from its command line before the launcher
+# sees it: our JVMs' heap (BENCH_HEAP_VM_ARGS), and a line per collection on its standard error.
+# Its collector is native-image's serial one, the only one GraalVM CE has.
+_NATIVE_VM_ARGS = BENCH_HEAP_VM_ARGS + ['-XX:+PrintGC']
+# Such a line: "[0.099s] GC(0) Pause Incremental GC (Collect on allocation) 48.00M->38.50M 46.344ms":
+# as the JVM's (_GC_PAUSE_LINE), without the committed size.
+_NATIVE_GC_LINE = re.compile(r'^\[[\d.]+s\] GC\(\d+\) Pause .*? ([\d.]+)([KMG])->([\d.]+)([KMG]) ([\d.]+)ms\n?', re.MULTILINE)
+
+
+def _heap_from_native_gc_lines(text):
+    """_heap_from_gc_log's numbers from the native launcher's GC lines, but committed_mb, which
+    they don't give."""
+    pauses = [(float(m.group(3)) * _UNIT_MB[m.group(4)], float(m.group(5))) for m in _NATIVE_GC_LINE.finditer(text)]
+    if not pauses:
+        return {'heap_mb': None, 'gcs': 0, 'gc_ms': 0}
+    return {'heap_mb': round(max(p[0] for p in pauses), 1), 'gcs': len(pauses), 'gc_ms': round(sum(p[1] for p in pauses))}
+
+
 _HISTOGRAM_TOTAL = re.compile(r'^Total\s+\d+\s+(\d+)\s*$', re.MULTILINE)
 
 
@@ -459,44 +485,66 @@ def _live_heap_mb(jcmd, pid):
     return int(m.group(1)) / 2**20 if m else None
 
 
-def _run_measured(argv, cwd, stdin_path, env, timeout, gc_log=None, live_every=None):
-    """Runs argv to completion or until timeout seconds have passed, and measures its peak RSS
-    (the largest of the process and the descendants it waited for, from wait4); with gc_log, reads
-    the GC log that a JVM of argv writes there (_gc_log_vm_args); with live_every, measures the live
-    heap of that JVM (argv[0] is its java) every live_every seconds (_live_heap_mb), each time a full
-    collection, so the times it prints are not to be used."""
+def _run_measured(argv, cwd, stdin_path, env, timeout, gc_log=None, live_every=None, native_gc=False):
+    """Runs argv to completion or until timeout seconds have passed, and measures its wall time and
+    peak RSS (the largest of the process and the descendants it waited for, from wait4); with
+    gc_log, reads the GC log that a JVM of argv writes there (_gc_log_vm_args); with live_every,
+    measures the live heap of that JVM (argv[0] is its java) every live_every seconds
+    (_live_heap_mb), each time a full collection, so the times it prints are not to be used; with
+    native_gc, reads the lines that the native launcher's -XX:+PrintGC writes to its standard
+    error (_NATIVE_VM_ARGS), which is kept apart from its standard output for that, so that
+    they can't split one of the program's lines."""
     jcmd = join(os.path.dirname(argv[0]), 'jcmd') if live_every else None
     live = []
-    with tempfile.TemporaryFile() as out, open(stdin_path or os.devnull, 'rb') as stdin:
-        process = subprocess.Popen(argv, cwd=cwd, stdin=stdin, stdout=out, stderr=subprocess.STDOUT, env=env,
-                                   start_new_session=True)
-        deadline = time.monotonic() + timeout
-        next_sample = time.monotonic() + (live_every or 0)
+    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err, open(stdin_path or os.devnull, 'rb') as stdin:
+        start = time.monotonic()
+        process = subprocess.Popen(argv, cwd=cwd, stdin=stdin, stdout=out, stderr=err if native_gc else subprocess.STDOUT,
+                                   env=env, start_new_session=True)
+        # A thread waits for the process, so that its wall time is exact (the native launcher
+        # starts in about 10 ms) while this one keeps the deadline and takes the samples.
+        reaped = {}
+
+        def reap():
+            reaped['wait'] = os.wait4(process.pid, 0)
+            reaped['end'] = time.monotonic()
+
+        waiter = threading.Thread(target=reap, daemon=True)
+        waiter.start()
+        deadline = start + timeout
+        next_sample = start + (live_every or math.inf)
         timed_out = False
-        while True:
-            pid, status, rusage = os.wait4(process.pid, os.WNOHANG)
-            if pid:
-                break
-            if time.monotonic() > deadline:
+        while waiter.is_alive():
+            now = time.monotonic()
+            if now > deadline:
                 timed_out = True
-                os.killpg(process.pid, signal.SIGKILL)
-                _, status, rusage = os.wait4(process.pid, 0)
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass  # it ended just now
+                waiter.join()
                 break
-            if jcmd and time.monotonic() >= next_sample:
+            if jcmd and now >= next_sample:
                 sample = _live_heap_mb(jcmd, process.pid)
                 if sample is not None:
                     live.append(sample)
                 next_sample = time.monotonic() + live_every
-            time.sleep(0.05)
+            waiter.join(min(1.0, max(0.0, min(deadline, next_sample) - time.monotonic()) + 0.001))
+        _, status, rusage = reaped['wait']
         process.returncode = os.waitstatus_to_exitcode(status)
         out.seek(0)
         output = out.read().decode('utf-8', errors='replace')
+        err.seek(0)
+        errors = err.read().decode('utf-8', errors='replace')
     # ru_maxrss is in bytes on macOS, in kilobytes on Linux.
     rss = rusage.ru_maxrss * (1 if sys.platform == 'darwin' else 1024)
     heap = _heap_from_gc_log(gc_log) if gc_log else None
+    if native_gc:
+        heap = _heap_from_native_gc_lines(errors)
+        rest = _NATIVE_GC_LINE.sub('', errors)
+        output += ('\n' if rest and output and not output.endswith('\n') else '') + rest
     if live_every:
         heap = dict(heap or {}, live_mb=round(max(live), 1) if live else None, live_samples=len(live))
-    return _Measured(process.returncode, output, timed_out, rss, heap)
+    return _Measured(process.returncode, output, timed_out, rss, heap, reaped['end'] - start)
 
 
 def _outcome(measured, iterations, stage=''):
@@ -552,12 +600,21 @@ def _run_one(impl, words, lude, bench_set, program, count, options, root):
             f.write(stdin_text)
         src = join(workdir, program + '.scm')
         if impl.name is None:
-            iterations = options.jit_iterations if impl.key == 'jit' else 1
+            iterations = options.jit_iterations if impl.key in _ITERATED else 1
             with open(src, 'wb') as f:
                 f.write(bench_set.program(program, _our_postlude(f'truffle-scheme-{impl.key}', iterations)))
+            timeout = options.timeout * iterations if impl.key in _ITERATED else options.interpreter_timeout
+            if impl.key == 'native':
+                measured = _run_measured([options.native] + _NATIVE_VM_ARGS + [src], workdir, stdin_path, None, timeout,
+                                         native_gc=True)
+                result = _outcome(measured, iterations)
+                if result['status'] == 'ok':
+                    # The first iteration with the process's startup and exit: its wall time, less
+                    # the iterations after the first (the native launcher starts in about 10 ms).
+                    result['process_seconds'] = measured.wall_seconds - sum(result['times'][1:])
+                return result
             gc_log = join(workdir, 'gc.log')
             argv = RUNTIME[0].launcher([src], _BENCH_MODES[impl.key][0] + _gc_log_vm_args(gc_log))
-            timeout = options.timeout * iterations if impl.key == 'jit' else options.interpreter_timeout
             result = _outcome(_run_measured(argv, workdir, stdin_path, None, timeout, gc_log), iterations)
             if impl.key == 'jit' and options.live_every and result['status'] == 'ok':
                 # The live heap, in a JVM of its own: its full collections would change the times.
@@ -626,12 +683,16 @@ def r7rs_bench_report(args):
     parser.add_argument('--live-every', type=float, default=0.5, metavar='SECONDS',
                         help="our JIT's live heap: run each program again, collecting the whole heap and measuring "
                              "what is live this often (default 0.5; 0: don't)")
+    parser.add_argument('--native', default=join(repo_root(), 'bazel-bin', 'scheme-native'), metavar='FILE',
+                        help='the native launcher, for the native column (default: bazel-bin/scheme-native, '
+                             'which `bazel build --config=local //:scheme-native` builds)')
     parser.add_argument('--note', default='', help='conditions to state in the report, e.g. how loaded the machine was')
     parser.add_argument('--output', default=join(repo_root(), 'docs', 'benchmarks.md'), metavar='FILE.md')
     parser.add_argument('--json', default=join(repo_root(), 'docs', 'benchmarks.json'), metavar='FILE.json')
     parser.add_argument('--render-only', action='store_true', help='rewrite --output from --json without running anything')
     options = parser.parse_args(args)
     options.interpreter_timeout = options.interpreter_timeout or options.timeout
+    options.native = os.path.abspath(options.native)
     if options.render_only:
         with open(options.json, encoding='utf-8') as f:
             report = json.load(f)
@@ -673,6 +734,14 @@ def r7rs_bench_report(args):
         for impl in impls:
             info = {'title': impl.title, 'notes': []}
             report['implementations'][impl.key] = info
+            if impl.key == 'native':
+                info['version'] = f'truffle-scheme {report["commit"]}, GraalVM {graalvm_version(RUNTIME[0].release)} Native'
+                info['command'] = f'scheme-native {" ".join(_NATIVE_VM_ARGS)} {{src}} < {{input}}'
+                info['notes'].append('`bench/postlude.scm` as the postlude')
+                if not os.access(options.native, os.X_OK):
+                    info['unavailable'] = f'no native launcher at `{options.native}`: `bazel build --config=local //:scheme-native` builds it'
+                    log(f'bench-report: {impl.title}: {info["unavailable"]}')
+                continue
             if impl.name is None:
                 info['version'] = f'truffle-scheme {report["commit"]}, GraalVM {graalvm_version(RUNTIME[0].release)}'
                 info['command'] = ('java ' + ' '.join(harness.launcher_vm_args(_BENCH_MODES[impl.key][0]) + _BENCH_MODES[impl.key][0] + _gc_log_vm_args('{gc.log}'))
@@ -700,7 +769,11 @@ def r7rs_bench_report(args):
                 log(f'bench-report: {impl.title}: {info["unavailable"]}')
         runnable = [impl for impl in impls if 'unavailable' not in report['implementations'][impl.key]]
         start = time.time()
+        loads = []
         for i, program in enumerate(programs):
+            # The 1-minute load average before each program, and at the end: the report states it.
+            loads.append(round(os.getloadavg()[0], 2))
+            report['load'] = {'start': loads[0], 'max': max(loads)}
             with open(join(bench_set.dir, 'inputs', program + '.input'), encoding='utf-8') as f:
                 full = _input_count(f.read())
             count = max(1, round(full * options.scale))
@@ -720,7 +793,7 @@ def r7rs_bench_report(args):
                     # The comparable number: the first (or only) run in a fresh process, as in
                     # ecraven's tables; the interpreter's scaled up to the count the rest ran.
                     result['seconds'] = result['times'][0] * count / run_count
-                    if impl.key == 'jit' and len(result['times']) > 1:
+                    if impl.key in _ITERATED and len(result['times']) > 1:
                         result['steady_seconds'] = min(result['times'][1:])
                     if 'version' in result:
                         report['implementations'][impl.key].setdefault('version', result['version'])
@@ -730,6 +803,8 @@ def r7rs_bench_report(args):
                        f'{program} on {impl.title} (count {run_count}): {shown}')
             _write_json(report, options.json)
         report['minutes'] = round((time.time() - start) / 60, 1)
+        loads.append(round(os.getloadavg()[0], 2))
+        report['load'] = {'start': loads[0], 'max': max(loads), 'end': loads[-1]}
         _write_json(report, options.json)
         _write_report_markdown(report, options.output)
         log(f'bench-report: wrote {options.output} and {options.json}')
@@ -757,12 +832,15 @@ def _write_report_markdown(report, path):
     impls = report['implementations']
     programs = report['programs']
     keys = list(impls)
-    # The columns: each implementation, and our JIT's steady state next to its first run.
+    # The columns: each implementation; our JIT's and native launcher's steady state next to their
+    # first run, and the native launcher's first run with its startup.
     columns = []
     for key in keys:
         columns.append((key, 'seconds', impls[key]['title']))
-        if key == 'jit' and report['jit_iterations'] > 1:
-            columns.append((key, 'steady_seconds', 'Ours, JIT steady'))
+        if key in _ITERATED and report['jit_iterations'] > 1:
+            columns.append((key, 'steady_seconds', impls[key]['title'] + ' steady'))
+        if key == 'native':
+            columns.append((key, 'process_seconds', impls[key]['title'] + ' with startup'))
 
     def time_of(program, key, field):
         result = programs[program]['results'].get(key)
@@ -831,15 +909,26 @@ def _write_report_markdown(report, path):
         out(f'- Ours, JIT: one JVM runs the harness {report["jit_iterations"]} times. The first, in a fresh process, '
             "is the comparable number (as for every other implementation, and in ecraven's tables: the harness's "
             'own timing, startup excluded); "JIT steady" is the best of the others, once the JIT has compiled the program.')
+    if 'native' in impls:
+        out(f'- Ours, native: the native launcher (`bazel build //:scheme-native`, which keeps the Graal JIT) runs the '
+            f'harness {report["jit_iterations"]} times in one process, as our JIT\'s JVM does: the first is the comparable '
+            'number, "native steady" the best of the others. "Native with startup" is the first with the process\'s '
+            'startup and exit: its wall time, less the iterations after the first.')
     interpreter_timeout = report.get('interpreter_timeout', report['timeout'])
-    out(f'- A run is killed after {report["timeout"]} s (ecraven\'s `CPU_LIMIT`), our JIT\'s after that '
+    iterated = ' and native launcher\'s' if 'native' in impls else ''
+    out(f'- A run is killed after {report["timeout"]} s (ecraven\'s `CPU_LIMIT`), our JIT\'s{iterated} after that '
         'once per iteration' + (f', our interpreter\'s after {interpreter_timeout} s' if interpreter_timeout != report['timeout'] else '')
         + '. Peak memory is the process\'s maximum resident set size. ' + (
-            f'Our JVMs run with `{" ".join(report["heap_vm_args"])}`, a fixed maximum heap (bench/README.md "Heap"); '
+            f'Our JVMs{" and native launcher" if "native" in impls else ""} run with `{" ".join(report["heap_vm_args"])}`, '
+            'a fixed maximum heap (bench/README.md "Heap"); '
             'the memory tables also give how much of their heap the program used (Peak memory).'
             if 'heap_vm_args' in report else
             'Our JVMs run with the default heap limits (no `-Xmx`), so theirs is as much as the JVM\'s default '
             'ergonomics let the heap grow.'))
+    load = report.get('load')
+    if load:
+        out(f'- The machine\'s 1-minute load average: {load["start"]:g} at the start, at most {load["max"]:g} before a program'
+            + (f', {load["end"]:g} at the end' if 'end' in load else '') + '.')
     out('')
     out('## Summary')
     out('')
@@ -855,6 +944,8 @@ def _write_report_markdown(report, path):
     for key, field, title in columns:
         info = impls[key]
         if 'unavailable' in info:
+            if field != 'seconds':
+                continue  # said once, on its first row
             out(f'| {title} | not run: {info["unavailable"]} | | | | |' + ' |' * len(heap_summary))
             continue
         ratios = [ratio(p, key, field) for p in programs]
@@ -894,7 +985,8 @@ def _write_report_markdown(report, path):
     out('')
     out('## Peak memory')
     out('')
-    out('Maximum resident set size in MB, failed runs included (our JIT\'s over all its iterations).')
+    out('Maximum resident set size in MB, failed runs included (our JIT\'s'
+        + (' and native launcher\'s' if 'native' in impls else '') + ' over all its iterations).')
     if live_keys or heap_keys:
         out('')
         out('For ours, how much of that is heap the program used, in MB (bench/README.md "Heap"):')
@@ -904,8 +996,11 @@ def _write_report_markdown(report, path):
             out(f'- live: the most the program kept alive, measured by collecting the whole heap every {every:g} s '
                 'in another run of the program, whose times aren\'t used ("too short": it ended before the first);')
         if heap_keys:
-            out('- after GC: the most the heap held right after a collection in the timed run, from the JVM\'s GC log: '
-                'what was live, and the garbage the collection left in the old generation ("no GC": no collection).')
+            out('- after GC: the most the heap held right after a collection in the timed run, from the JVM\'s GC log'
+                + (' (the native launcher\'s: its `-XX:+PrintGC` lines)' if 'native' in heap_keys else '')
+                + ': what was live, and the garbage the collection left in the old generation ("no GC": no collection).')
+        if 'native' in heap_keys and 'native' not in live_keys:
+            out('- The native launcher has no live heap: native-image has no `jcmd` to collect and count it from outside.')
     out('')
     mem_columns = []
     for key, field, title in columns:
@@ -925,7 +1020,8 @@ def _write_report_markdown(report, path):
     out('')
     failures = [(program, key, result) for program, entry in programs.items()
                 for key, result in entry['results'].items() if result['status'] != 'ok']
-    limits = {'jit': report['timeout'] * report['jit_iterations'], 'interpreter': interpreter_timeout}
+    limits = {'jit': report['timeout'] * report['jit_iterations'], 'native': report['timeout'] * report['jit_iterations'],
+              'interpreter': interpreter_timeout}
     if not failures:
         out('None.')
     else:
