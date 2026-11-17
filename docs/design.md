@@ -508,11 +508,48 @@ full R7RS-small conformance comes first.
     frames it unwound are gone; and a fixed larger count, which a 256 KB
     stack can't hold in the interpreter.
 - **Escape-only fast path (M5-04).** When `EscapeAnalysis` proves that a
-  `call/cc`'s `k` is never `set!`, never referenced by a nested lambda, and is
-  only called or passed to a known procedure (a literal lambda, an internal
+  `call/cc`'s `k` is never `set!`, and is only called or passed to a known
+  procedure (a literal lambda, a `let`-bound lambda or an internal
   definition, or in an isolated program a once-defined global) whose
   parameter qualifies in turn, the call compiles to `%call/ec`: a prompt with
-  a fresh tag. Calling `k` throws `EscapeException`, a `ControlFlowException`;
+  a fresh tag.
+  - *k in lambdas that are only called.* A reference to `k` inside a nested
+    lambda qualifies when that lambda is itself only called in the same way:
+    a `do` or named `let` loop (`puzzle`'s and `quicksort`'s `return`, whose
+    non-tail call keeps the loop from being contified), a helper bound by
+    `let`, `letrec*` or an internal definition, or a lambda passed to a known
+    procedure's parameter that qualifies (`maze`'s `vector-for-each-rev`).
+    The analysis decides which values (variables, and lambdas' closures) are
+    *contained*, used only in the extent of the call that binds or makes
+    them, as one greatest fixed point: a value is contained unless it is used
+    other than as a call's operator, a qualifying argument or a `let`'s init,
+    or is assigned, or is referred to from inside a lambda (between the
+    reference and the variable's own root) that isn't contained. So a lambda
+    stored, returned, or passed to `map`, `for-each`, `apply`, any other
+    procedure of the prelude, or `call/cc`, keeps every variable it refers to
+    from outside a full capture, and so does a helper such a lambda calls.
+    Every call of a contained closure happens in the extent of the call that
+    made it, so every invocation of `k` happens before `%call/ec` returns.
+    It runs after contification (M7-02): a contified loop is code of its
+    root, not a closure, and needs no rule.
+  - *What it gains.* `puzzle`, `quicksort` and `maze` now escape (`ctak` and
+    `fibc` already did). A fresh JVM per run, interleaved with the code
+    before, medians of 3 (Apple M3 Max, shared); interpreter
+    (`engine.Compilation=false`) at a tenth of the counts: `puzzle` 0.91,
+    `quicksort` 1.03, `maze` 1.11, `ctak` and `fibc` 1.01. JIT, at a tenth of
+    the counts, first iteration and best of the next two: `puzzle` 2.20 and
+    0.85, `quicksort` 0.98 and 0.98, `maze` 0.93 and 0.87, `ctak` and `fibc`
+    1.00. `puzzle` at its own count (1000), 2 runs: first iteration 1.85 to
+    2.23 s, then 1.50 to 1.35 s.
+  - *`puzzle`'s first iteration pays for compiling more.* A full `call/cc`
+    ends Truffle's inlining (the receiver runs from the prompt driver after
+    the capture), but `%call/ec`'s root calls the receiver directly, so
+    `trial`'s recursion, `trial` → `%call/ec` → receiver → loop → `trial`, is
+    inlined: the loop's tier-2 compilation takes 0.73 s (39 targets inlined)
+    and `%call/ec`'s 0.54 s, against 0.19 s for the largest before, and they
+    finish at the end of the first iteration (no deoptimization loop: 81
+    host deoptimizations in the run against 62). `ctak` has the same shape
+    and has always paid it. Calling `k` throws `EscapeException`, a `ControlFlowException`;
   a `k` tail-called back to its own prompt returns with no throw. An escape
   across a change of dynamic environment goes through the prelude's
   `%escape`, which rewinds first. Captures flatten the prompt into a marker
