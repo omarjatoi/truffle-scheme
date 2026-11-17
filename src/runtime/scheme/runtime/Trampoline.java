@@ -19,8 +19,8 @@ import scheme.runtime.value.SClosure;
  * the {@link TailCall}s that come back, until a value does (plan.md M5-10). Each call site has its
  * own, with inline caches of {@link DirectCallNode}s keyed on the tail-called procedure's call
  * target, so a procedure reached by a tail call can be inlined into the site, and its
- * {@code TailCall} and argument array can be scalar-replaced. Past {@link #CACHE_LIMIT} targets a
- * cache calls indirectly.
+ * {@code TailCall} and argument array can be scalar-replaced. Past {@link #CACHE_LIMIT} targets
+ * ({@link #REST_CACHE_LIMIT} for the tail calls after the first) a cache calls indirectly.
  *
  * <p>There are two caches (plan.md M7-01): one for the first tail call that comes back, and one for
  * the tail calls after it. A procedure's tail calls form a chain ({@code map} tail-calls its
@@ -43,13 +43,15 @@ import scheme.runtime.value.SClosure;
  */
 public final class Trampoline extends Node {
 
-    /** As many tail-called targets as a cache holds before it calls indirectly. */
+    /** As many tail-called targets as the first tail call's cache holds before it calls indirectly. */
     static final int CACHE_LIMIT = 4;
+    /** As many as the cache of the tail calls after the first holds (plan.md M8-05). */
+    static final int REST_CACHE_LIMIT = 8;
 
     /** Performs the first tail call that comes back; reports polymorphism when megamorphic. */
-    @Child private TailCalls first = TrampolineFactory.TailCallsNodeGen.create(true);
+    @Child private TailCalls first = TrampolineFactory.TailCallsNodeGen.create(true, CACHE_LIMIT);
     /** Performs the tail calls after the first, and the calls of {@link #executeCall}. */
-    @Child private TailCalls rest = TrampolineFactory.TailCallsNodeGen.create(false);
+    @Child private TailCalls rest = TrampolineFactory.TailCallsNodeGen.create(false, REST_CACHE_LIMIT);
 
     private Trampoline() {
     }
@@ -106,13 +108,14 @@ public final class Trampoline extends Node {
     @Introspectable
     abstract static class TailCalls extends Node {
 
-        static final int LIMIT = CACHE_LIMIT;
-
         /** Whether this cache reports polymorphism when it goes megamorphic. */
         private final boolean reports;
+        /** How many targets it holds before it calls indirectly. */
+        final int limit;
 
-        TailCalls(boolean reports) {
+        TailCalls(boolean reports, int limit) {
             this.reports = reports;
+            this.limit = limit;
         }
 
         abstract Object execute(Object procedure, Object[] arguments);
@@ -125,7 +128,7 @@ public final class Trampoline extends Node {
             return IndirectCallNode.create();
         }
 
-        @Specialization(guards = "procedure.callTarget == cachedTarget", limit = "LIMIT")
+        @Specialization(guards = "procedure.callTarget == cachedTarget", limit = "limit")
         static Object doDirect(@SuppressWarnings("unused") SClosure procedure, Object[] arguments,
                         @Cached("procedure.callTarget") @SuppressWarnings("unused") RootCallTarget cachedTarget,
                         @Cached("create(cachedTarget)") DirectCallNode callNode) {
