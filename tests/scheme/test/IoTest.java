@@ -640,6 +640,95 @@ public class IoTest {
     }
 
     /**
+     * Closing the context closes the input file ports the program left open, textual and binary,
+     * as it does output ones: their descriptors are released at once, not when the ports are
+     * collected.
+     */
+    @Test
+    public void closingTheContextClosesTheInputFilePorts() throws IOException {
+        assumeTrue(Files.isDirectory(OPEN_DESCRIPTORS));
+        for (int i = 0; i < 50; i++) {
+            Files.writeString(dir.resolve("in-" + i), "x" + i);
+        }
+        Context context = Context.newBuilder(SCHEME).allowIO(IOAccess.ALL).build();
+        context.initialize(SCHEME);
+        long before = openDescriptors();
+        String read = context.eval(SCHEME, """
+                        (define (name i) (string-append %s (number->string i)))
+                        (define ports
+                          (let loop ((i 0) (ports '()))
+                            (if (= i 50)
+                                ports
+                                (let ((p (if (even? i) (open-input-file (name i)) (open-binary-input-file (name i)))))
+                                  (if (even? i) (read-char p) (read-u8 p))
+                                  (loop (+ i 1) (cons p ports))))))
+                        (length ports)""".formatted(file("in-"))).toString();
+        assertEquals("50", read);
+        assertTrue("50 files are open", openDescriptors() >= before + 50);
+        context.close();
+        long after = openDescriptors();
+        assertTrue("open descriptors: " + before + " before, " + after + " after", after < before + 10);
+    }
+
+    /**
+     * The same through the context's file system: every file a port opened, input or output, is
+     * closed when the context closes, whether the program kept its port, dropped it or closed it.
+     */
+    @Test
+    public void closingTheContextClosesEveryFileItsPortsOpened() throws IOException {
+        Files.writeString(dir.resolve("in.txt"), "text");
+        Files.write(dir.resolve("in.bin"), new byte[]{1, 2, 3});
+        CountingFileSystem fs = new CountingFileSystem();
+        String out = runCountingReads(fs, """
+                        (define kept (list (open-input-file %s) (open-binary-input-file %s)
+                                           (open-output-file %s) (open-binary-output-file %s)))
+                        (read-char (open-input-file %s))
+                        (read-u8 (open-binary-input-file %s))
+                        (close-port (open-input-file %s))
+                        (write (list (read-char (car kept)) (read-u8 (cadr kept))))""".formatted(file("in.txt"), file("in.bin"),
+                        file("out.txt"), file("out.bin"), file("in.txt"), file("in.bin"), file("in.txt")));
+        assertEquals("(#\\t 1)", out);
+        assertEquals("files opened", 7, fs.opened.get());
+        assertEquals("files closed", 7, fs.closed.get());
+    }
+
+    /**
+     * An input file port the program drops without closing it is closed after it is collected, the
+     * next time the context opens a file port or flushes them; one it keeps stays tracked, and
+     * open. Closing a port stops tracking it.
+     */
+    @Test
+    public void droppedInputPortsAreClosedWhenCollected() throws Exception {
+        Files.writeString(dir.resolve("in.txt"), "text");
+        Files.write(dir.resolve("in.bin"), new byte[]{1, 2, 3});
+        try (Context context = Context.newBuilder(SCHEME).allowIO(IOAccess.ALL).build()) {
+            context.eval(SCHEME, """
+                            (define kept-text (open-input-file %s))
+                            (define kept-binary (open-binary-input-file %s))
+                            (let ((p (open-input-file %s))) (read-char p) (close-port p))
+                            (do ((i 0 (+ i 1))) ((= i 1000))
+                              (if (even? i)
+                                  (read-char (open-input-file %s))
+                                  (read-u8 (open-binary-input-file %s))))""".formatted(file("in.txt"), file("in.bin"), file("in.txt"),
+                            file("in.txt"), file("in.bin")));
+            int tracked = trackedPorts(context);
+            assertTrue("ports tracked: " + tracked, tracked >= 2);
+            for (int i = 0; i < 200 && tracked > 2; i++) {
+                System.gc();
+                Thread.sleep(10);
+                tracked = trackedPorts(context);
+            }
+            assertEquals("ports still tracked", 2, tracked);
+            assertEquals("(\"text\" #u8(1 2 3))", context.eval(SCHEME, """
+                            (let ((r (list (read-string 10 kept-text) (read-bytevector 10 kept-binary))))
+                              (close-port kept-text)
+                              (close-port kept-binary)
+                              r)""").toString());
+            assertEquals("closed ports are not tracked", 0, trackedPorts(context));
+        }
+    }
+
+    /**
      * Binary file output ports are buffered, as textual ones are: their file holds nothing until
      * {@code flush-output-port} (or closing the port) writes the buffer out.
      */
@@ -667,6 +756,8 @@ public class IoTest {
     private static final class CountingFileSystem implements FileSystem {
         private final FileSystem fs = FileSystem.newDefaultFileSystem();
         final AtomicInteger reads = new AtomicInteger();
+        final AtomicInteger opened = new AtomicInteger();
+        final AtomicInteger closed = new AtomicInteger();
 
         @Override
         public Path parsePath(URI uri) {
@@ -696,7 +787,10 @@ public class IoTest {
         @Override
         public SeekableByteChannel newByteChannel(Path path, Set<? extends OpenOption> options, FileAttribute<?>... attrs) throws IOException {
             SeekableByteChannel channel = fs.newByteChannel(path, options, attrs);
+            opened.incrementAndGet();
             return new SeekableByteChannel() {
+                private boolean counted;
+
                 @Override
                 public int read(ByteBuffer dst) throws IOException {
                     reads.incrementAndGet();
@@ -737,6 +831,10 @@ public class IoTest {
 
                 @Override
                 public void close() throws IOException {
+                    if (!counted) {
+                        counted = true;
+                        closed.incrementAndGet();
+                    }
                     channel.close();
                 }
             };
@@ -914,6 +1012,156 @@ public class IoTest {
         }
     }
 
+    /** A stream of {@code bytes} that counts its one-byte and its bulk reads. */
+    private static final class CountingInputStream extends ByteArrayInputStream {
+        int singleReads;
+        int bulkReads;
+
+        CountingInputStream(byte[] bytes) {
+            super(bytes);
+        }
+
+        @Override
+        public synchronized int read() {
+            singleReads++;
+            return super.read();
+        }
+
+        @Override
+        public synchronized int read(byte[] b, int off, int len) {
+            bulkReads++;
+            return super.read(b, off, len);
+        }
+    }
+
+    /** A reader of {@code text} that counts its one-character and its bulk reads. */
+    private static final class CountingReader extends java.io.Reader {
+        private final String text;
+        private int pos;
+        private int mark;
+        int singleReads;
+        int bulkReads;
+
+        CountingReader(String text) {
+            this.text = text;
+        }
+
+        @Override
+        public int read() {
+            singleReads++;
+            return pos < text.length() ? text.charAt(pos++) : -1;
+        }
+
+        @Override
+        public int read(char[] cbuf, int off, int len) {
+            bulkReads++;
+            if (pos == text.length()) {
+                return -1;
+            }
+            int n = Math.min(len, text.length() - pos);
+            text.getChars(pos, pos + n, cbuf, off);
+            pos += n;
+            return n;
+        }
+
+        @Override
+        public boolean markSupported() {
+            return true;
+        }
+
+        @Override
+        public void mark(int readAheadLimit) {
+            mark = pos;
+        }
+
+        @Override
+        public void reset() {
+            pos = mark;
+        }
+
+        @Override
+        public void close() {
+        }
+    }
+
+    /**
+     * A binary input port's bulk reads ({@code read-bytevector}, {@code read-bytevector!}) copy
+     * from its stream in bulk, not a byte at a time, and a byte peeked before one comes first.
+     */
+    @Test
+    public void bulkByteReadsCopyFromTheStream() {
+        byte[] bytes = new byte[100_000];
+        new Random(5).nextBytes(bytes);
+        CountingInputStream in = new CountingInputStream(bytes);
+        SPort port = SPort.binaryInput(in);
+        assertArrayEquals(Arrays.copyOfRange(bytes, 0, 10), port.readBytes(10));
+        assertEquals(bytes[10] & 0xff, port.peekByte());
+        byte[] into = new byte[50_000];
+        assertEquals(40_000, port.readBytes(into, 5, 40_000));
+        assertArrayEquals(Arrays.copyOfRange(bytes, 10, 40_010), Arrays.copyOfRange(into, 5, 40_005));
+        assertEquals(0, into[4]);
+        assertEquals(0, into[40_005]);
+        assertEquals(0, port.readBytes(into, 0, 0));
+        assertArrayEquals(new byte[0], port.readBytes(0));
+        // More than is left: the rest.
+        assertArrayEquals(Arrays.copyOfRange(bytes, 40_010, 100_000), port.readBytes(Integer.MAX_VALUE));
+        assertNull(port.readBytes(1));
+        assertEquals(-1, port.readBytes(into, 0, 4));
+        assertArrayEquals(new byte[0], port.readBytes(0));
+        assertEquals(-1, port.peekByte());
+        assertNull(port.readBytes(1));
+        assertEquals("one-byte reads: the peeks", 2, in.singleReads);
+        assertTrue("bulk reads: " + in.bulkReads, in.bulkReads <= 20);
+    }
+
+    /**
+     * A textual input port's {@code read-string} copies from its reader in bulk, and counts in
+     * characters (code points): a surrogate pair split at the end of a bulk read is read whole.
+     */
+    @Test
+    public void bulkStringReadsCopyFromTheReader() throws IOException {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < 30_000; i++) {
+            sb.appendCodePoint(switch (i % 5) {
+                case 0 -> 'a';
+                case 1 -> 0x1F600;
+                case 2 -> 0xE9;
+                case 3 -> 0x4E2D;
+                default -> '\n';
+            });
+        }
+        String text = sb.toString();
+        int[] cps = text.codePoints().toArray();
+        CountingReader in = new CountingReader(text);
+        SPort port = SPort.textInput(in, false);
+        int pos = 0;
+        StringBuilder read = new StringBuilder();
+        // Chunk sizes that end on either half of a pair, and a peek between some.
+        for (int k : new int[]{1, 2, 3, 4, 5, 7, 8191, 8192, 8193, 1, 2}) {
+            String s = port.readString(k);
+            assertEquals("characters read for " + k, k, s.codePointCount(0, s.length()));
+            assertEquals(new String(cps, pos, k), s);
+            pos += k;
+            read.append(s);
+            if (k > 4) {
+                assertEquals(cps[pos], port.peekChar());
+            }
+        }
+        assertEquals("", port.readString(0));
+        String rest = port.readString(Integer.MAX_VALUE);
+        assertEquals(cps.length - pos, rest.codePointCount(0, rest.length()));
+        read.append(rest);
+        assertEquals(text, read.toString());
+        assertNull(port.readString(1));
+        assertEquals("", port.readString(0));
+        assertEquals(-1, port.peekChar());
+        assertNull(port.readString(5));
+        assertTrue("one-character reads: " + in.singleReads, in.singleReads <= 20);
+        // 36,000 UTF-16 units. A read-string asks for as many units as characters are still wanted,
+        // so when pairs make a read come up short it asks again for the rest: a few reads each.
+        assertTrue("bulk reads: " + in.bulkReads, in.bulkReads <= 100);
+    }
+
     /**
      * The port operations compile without performance warnings (design.md D10, "Ports in compiled
      * code"): each kind of port goes through the same procedures, so their compiled code sees a
@@ -923,9 +1171,10 @@ public class IoTest {
      */
     @Test
     public void portOperationsCompileWithoutPerformanceWarnings() throws IOException {
-        Files.writeString(dir.resolve("in.txt"), "b".repeat(3000));
-        Files.write(dir.resolve("in.bin"), new byte[3000]);
+        // Each iteration reads 3 characters from each textual port and 5 bytes from each binary one.
         int n = 2000;
+        Files.writeString(dir.resolve("in.txt"), "b".repeat(3 * n + 1000));
+        Files.write(dir.resolve("in.bin"), new byte[5 * n + 1000]);
         String program = """
                         (define text-out (open-output-file %s))
                         (define binary-out (open-binary-output-file %s))
@@ -933,38 +1182,45 @@ public class IoTest {
                         (define binary-in (open-binary-input-file %s))
                         (define string-out (open-output-string))
                         (define bytes-out (open-output-bytevector))
-                        (define string-in (open-input-string (make-string 3000 #\\a)))
-                        (define bytes-in (open-input-bytevector (make-bytevector 3000 7)))
+                        (define string-in (open-input-string (make-string (+ (* 3 %d) 1000) #\\a)))
+                        (define bytes-in (open-input-bytevector (make-bytevector (+ (* 5 %d) 1000) 7)))
                         (define (text-output p i)
                           (display i p) (write 'x p) (write-char #\\y p) (write-string "z" p) (newline p)
                           (flush-output-port p))
                         (define (binary-output p i)
                           (write-u8 (modulo i 256) p) (write-bytevector (bytevector 1 2) p) (flush-output-port p))
-                        (define (text-input p) (char-ready? p) (peek-char p) (read-char p))
-                        (define (binary-input p) (u8-ready? p) (peek-u8 p) (read-u8 p))
+                        (define into (make-bytevector 4))
+                        ;; Each returns the number of characters or bytes it read.
+                        (define (text-input p)
+                          (char-ready? p) (peek-char p)
+                          (+ (if (char? (read-char p)) 1 0) (string-length (read-string 2 p))))
+                        (define (binary-input p)
+                          (u8-ready? p) (peek-u8 p)
+                          (+ (if (integer? (read-u8 p)) 1 0) (bytevector-length (read-bytevector 2 p))
+                             (read-bytevector! into p 1 3)))
                         (define chars 0)
                         (define bytes 0)
                         (let loop ((i 0))
                           (when (< i %d)
                             (text-output string-out i) (text-output text-out i) (text-output (current-output-port) i)
                             (binary-output bytes-out i) (binary-output binary-out i)
-                            (for-each (lambda (p) (if (char? (text-input p)) (set! chars (+ chars 1))))
+                            (for-each (lambda (p) (set! chars (+ chars (text-input p))))
                                       (list string-in text-in (current-input-port)))
-                            (for-each (lambda (p) (if (integer? (binary-input p)) (set! bytes (+ bytes 1))))
+                            (for-each (lambda (p) (set! bytes (+ bytes (binary-input p))))
                                       (list bytes-in binary-in))
                             (loop (+ i 1))))
                         (close-port text-out)
                         (close-port binary-out)
-                        (unless (and (= chars (* 3 %d)) (= bytes (* 2 %d))
+                        (unless (and (= chars (* 9 %d)) (= bytes (* 10 %d))
                                      (= (string-length (get-output-string string-out)) %d)
                                      (= (bytevector-length (get-output-bytevector bytes-out)) (* 3 %d)))
                           (error "wrong input or in-memory output" chars bytes))
-                        """.formatted(file("out.txt"), file("out.bin"), file("in.txt"), file("in.bin"), n, n, n,
+                        """.formatted(file("out.txt"), file("out.bin"), file("in.txt"), file("in.bin"), n, n, n, n, n,
                         textOutput(n).length(), n);
         Path log = Files.createTempFile(dir, "engine", ".log");
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         Context.Builder builder = Context.newBuilder(SCHEME).allowIO(IOAccess.ALL).allowExperimentalOptions(true).out(out).in(
-                        new ByteArrayInputStream("c".repeat(n).getBytes(StandardCharsets.UTF_8))).option("log.file", log.toString());
+                        new ByteArrayInputStream("c".repeat(3 * n).getBytes(StandardCharsets.UTF_8))).option("log.file", log.toString());
         builder.option("engine.Compilation", "true").option("engine.CompileImmediately", "false").option("engine.BackgroundCompilation", "false");
         builder.option("engine.SingleTierCompilationThreshold", "100").option("engine.FirstTierCompilationThreshold", "100");
         builder.option("engine.LastTierCompilationThreshold", "500");

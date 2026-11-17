@@ -368,6 +368,16 @@ tools_tests(
 
 # --- Checks ------------------------------------------------------------------------------------
 
+# bench-report reads the native launcher's -XX:+PrintGC lines, the serial collector's and G1's.
+harness_test(
+    name = "bench_gc",
+    check = "bench_gc",
+    args = [],
+    data = [],
+    deps = ["commands"],
+    size = "small",
+)
+
 # AGENTS.md rule 1: Java builtins never call Scheme.
 harness_test(
     name = "rules",

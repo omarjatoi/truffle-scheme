@@ -1,10 +1,14 @@
 package scheme.runtime;
 
+import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
+import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.Closeable;
 import java.io.Flushable;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.lang.ref.ReferenceQueue;
@@ -16,18 +20,19 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import scheme.runtime.value.SPort;
 
 /**
- * A context's open output file ports, textual and binary (design.md D10, "Open file ports"). Both
- * kinds are buffered; the context writes out what they hold where it writes out standard output
- * ({@link SchemeContext#flushOutput}: when control goes back to the caller, on {@code exit} and
- * when the context closes), and closes them when it is disposed, so a program that never closes a
- * port loses none of its output.
+ * A context's open file ports, input and output, textual and binary (design.md D10, "Open file
+ * ports"). All are buffered; the context writes out what the output ones hold where it writes out
+ * standard output ({@link SchemeContext#flushOutput}: when control goes back to the caller, on
+ * {@code exit} and when the context closes), and closes them all when it is disposed, so a program
+ * that never closes a port loses none of its output, and holds none of its files' descriptors past
+ * the context.
  *
  * <p>The ports are held weakly, so tracking them keeps none alive. Each one's buffered stream is
  * held strongly instead: when the program drops a port without closing it, the collector clears
  * the reference and queues it, and the next time the context opens a port or flushes them it
- * writes out and closes that stream, on the context's thread. Closing a port (its stream) stops
- * tracking it. All of it runs on the context's thread (D10: single-threaded), never on a
- * {@code Cleaner}'s.
+ * writes out (for an output port) and closes that stream, on the context's thread. Closing a port
+ * (its stream) stops tracking it. All of it runs on the context's thread (D10: single-threaded),
+ * never on a {@code Cleaner}'s.
  */
 public final class OpenFiles {
 
@@ -58,7 +63,28 @@ public final class OpenFiles {
         return port;
     }
 
-    /** How many ports are tracked, including collected ones not yet written out (for tests). */
+    /**
+     * A textual input port over a file's stream, decoded from UTF-8 and buffered, as
+     * {@code TruffleFile.newBufferedReader(UTF_8)} reads it.
+     */
+    @TruffleBoundary
+    public SPort textInput(InputStream file) {
+        TextInputFile reader = new TextInputFile(this, file);
+        SPort port = SPort.textInput(reader, false);
+        reader.entry = track(port, reader);
+        return port;
+    }
+
+    /** A binary input port over a file's stream, buffered. */
+    @TruffleBoundary
+    public SPort binaryInput(InputStream file) {
+        BinaryInputFile stream = new BinaryInputFile(this, file);
+        SPort port = SPort.binaryInput(stream);
+        stream.entry = track(port, stream);
+        return port;
+    }
+
+    /** How many ports are tracked, including collected ones not yet closed (for tests). */
     public int size() {
         return count;
     }
@@ -115,7 +141,10 @@ public final class OpenFiles {
         }
     }
 
-    /** Writes out and closes the streams of the ports that were collected without being closed. */
+    /**
+     * Writes out (output ports) and closes the streams of the ports that were collected without
+     * being closed.
+     */
     private void reap() {
         for (Entry e = (Entry) collected.poll(); e != null; e = (Entry) collected.poll()) {
             if (e.next != null) {
@@ -128,7 +157,10 @@ public final class OpenFiles {
         }
     }
 
-    /** A port's buffered stream, which stops tracking the port when it is closed. */
+    /**
+     * A port's buffered stream, which stops tracking the port when it is closed. An input stream's
+     * {@code flush} does nothing.
+     */
     private interface FileStream extends Closeable, Flushable {
     }
 
@@ -179,6 +211,53 @@ public final class OpenFiles {
         BinaryFile(OpenFiles files, OutputStream file) {
             super(file);
             this.files = files;
+        }
+
+        @Override
+        public void close() throws IOException {
+            if (entry != null) {
+                files.untrack(entry);
+                entry = null;
+            }
+            super.close();
+        }
+    }
+
+    /** As {@code TruffleFile.newBufferedReader(UTF_8)}, which closing stops tracking. */
+    private static final class TextInputFile extends BufferedReader implements FileStream {
+        private final OpenFiles files;
+        Entry entry;
+
+        TextInputFile(OpenFiles files, InputStream file) {
+            super(new InputStreamReader(file, StandardCharsets.UTF_8));
+            this.files = files;
+        }
+
+        @Override
+        public void flush() {
+        }
+
+        @Override
+        public void close() throws IOException {
+            if (entry != null) {
+                files.untrack(entry);
+                entry = null;
+            }
+            super.close();
+        }
+    }
+
+    private static final class BinaryInputFile extends BufferedInputStream implements FileStream {
+        private final OpenFiles files;
+        Entry entry;
+
+        BinaryInputFile(OpenFiles files, InputStream file) {
+            super(file);
+            this.files = files;
+        }
+
+        @Override
+        public void flush() {
         }
 
         @Override

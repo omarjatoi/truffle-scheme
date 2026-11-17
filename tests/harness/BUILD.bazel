@@ -3,6 +3,7 @@ load("@rules_python//python:defs.bzl", "py_binary", "py_library")
 package(default_visibility = ["//visibility:public"])
 
 exports_files([
+    "check_bench_gc.py",
     "check_launcher_vm.py",
     "check_launcher_vm_native.py",
     "check_readme.py",

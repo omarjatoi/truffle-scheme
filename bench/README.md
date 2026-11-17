@@ -222,8 +222,9 @@ the first iteration with its startup and exit ("native with startup": the
 process's wall time, less the later iterations), since it starts in about
 10 ms where the JVM takes over half a second; the others' numbers, like
 ecraven's, leave startup out. It runs with our JVMs' `-Xmx2g` (Heap, above),
-given on its command line, with native-image's serial collector. Without the
-executable, the column says it wasn't run.
+given on its command line, with the collector it was built with:
+native-image's serial one by default, or G1 (`--//:native_gc=G1`, design.md
+D17). Without the executable, the column says it wasn't run.
 
 Our JVMs' memory is measured three ways (Heap, above): the peak RSS, as for
 every implementation; the heap after GC of the timed run; and the live heap,
@@ -231,7 +232,8 @@ from a second run of each program with the JIT, untimed, whose whole heap is
 collected every `--live-every` seconds (0.5; 0 skips that run). The native
 launcher's is measured the first two ways: its heap after GC comes from the
 lines its `-XX:+PrintGC` writes to standard error (kept apart from the
-program's output), and it has no `jcmd` for the live heap.
+program's output; the serial collector's and G1's, which `//tests:bench_gc`
+checks), and it has no `jcmd` for the live heap.
 
 Options: `--benchmarks` and `--implementations` choose rows and columns;
 `--scale F` runs every program `F` times its count on every implementation

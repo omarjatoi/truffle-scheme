@@ -1417,18 +1417,31 @@ Each entry: the decision, why, and what was rejected.
   a `BufferedInputStream` over the file's stream, which until then it read
   once per byte (reading 10 MB took 4.3 s with `read-u8` and 4.1 s in
   4096-byte `read-bytevector`s, which read a byte at a time too, against
-  0.26 s and 0.09 s buffered). `u8-ready?` on a file is still always `#t`:
+  0.26 s and 0.09 s buffered). The bulk reads, `read-bytevector`,
+  `read-bytevector!` and `read-string`, copy from the buffer
+  (`SPort.readBytes` and `readString`, `final` boundaries as in "Ports in
+  compiled code"), where they called the port once per byte or character:
+  10 MB in 4096-byte `read-bytevector`s takes 0.002 s once compiled, against
+  0.038 s, and in 16-byte ones 0.008 s, against 0.040 s; `read-string` of a
+  10 MB UTF-8 file in 4096-character chunks 0.044 s, against 0.073 s (#200's
+  0.09 s included opening the file and summing every byte). `read-string`
+  asks the reader for as many UTF-16 units as characters are still wanted,
+  so it never reads past them, and pairs a high surrogate that ends a read
+  with the low one after it. `u8-ready?` on a file is still always `#t`:
   a read of a file never blocks, and at its end, where the stream's
   `available()` is 0, R7RS §6.13.2 says *"If port is at end of file, then
   u8-ready? returns #t"* (chibi-scheme answers `#f` there). The context
-  tracks the ports it opened (`OpenFiles`), and `flushOutput` writes out what
-  they hold wherever it writes out standard output: when control goes back
-  to the caller (so after a program ends, normally or with an uncaught
-  error), on `exit` and `emergency-exit` (Truffle calls `finalizeContext`
-  after a hard exit too) and when the context closes, which also closes
-  them (`disposeContext`). A program that never closes a port loses none of
-  its output, and an embedder or the REPL finds it in the file when the call
-  returns. R7RS doesn't ask for this: §6.13.1 says only that `close-port`
+  tracks the file ports it opened, input and output (`OpenFiles`), and
+  `flushOutput` writes out what the output ones hold wherever it writes out
+  standard output: when control goes back to the caller (so after a program
+  ends, normally or with an uncaught error), on `exit` and `emergency-exit`
+  (Truffle calls `finalizeContext` after a hard exit too) and when the
+  context closes, which also closes them all (`disposeContext`). A program
+  that never closes a port loses none of its output, and an embedder or the
+  REPL finds it in the file when the call returns; no port, input or
+  output, holds its file's descriptor past the context (M10-05 tracks input
+  ports too: until then one never closed kept its descriptor until it was
+  collected). R7RS doesn't ask for this: §6.13.1 says only that `close-port`
   *"closes the resource associated with port, rendering the port incapable
   of delivering or accepting data"*, nothing of a port never closed, and
   §6.14's `exit` *"runs all outstanding dynamic-wind after procedures,
@@ -1446,8 +1459,8 @@ Each entry: the decision, why, and what was rejected.
     alive; each reference holds the port's buffered stream strongly
     instead. When the program drops a port without closing it, the
     collector queues its reference, and the next time the context opens a
-    file port or flushes them, it writes out and closes that stream, on the
-    context's thread. Closing a port stops tracking it. A program that opens
+    file port or flushes them, it writes out (an output port's) and closes
+    that stream, on the context's thread. Closing a port stops tracking it. A program that opens
     10,000 files and drops them keeps only the ones not yet collected.
   - *Rejected:* `Env.registerOnDispose`, Truffle's hook for resources that
     live as long as the context: it closes them when the context is
