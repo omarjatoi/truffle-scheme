@@ -38,6 +38,8 @@ final class TerminalInput extends InputStream {
     static final String HISTORY_VARIABLE = "SCHEME_HISTORY";
     private static final String HISTORY_FILE = ".scheme_history";
     private static final byte[] EMPTY = new byte[0];
+    /** The shadowed JLine's switch for raising signals from the control characters it reads. */
+    private static final String SOFTWARE_SIGNALS = "org.graalvm.shadowed.org.jline.terminal.softwareSignals";
 
     private final Terminal terminal;
     private final LineReader reader;
@@ -49,6 +51,11 @@ final class TerminalInput extends InputStream {
     private boolean interrupted;
     /** What Ctrl-C does during an evaluation, or null. Set and read on the REPL's thread. */
     private Interrupter interrupter;
+    /**
+     * The REPL's input under evaluation: it goes in the history when it is done, or, if the session
+     * ends before that (a second Ctrl-C gives up on its interrupt, M8-06), when the history is saved.
+     */
+    private final Running running = new Running();
     private final SchemeReads schemeReads = new SchemeReads();
 
     private TerminalInput(Terminal terminal, LineReader reader) {
@@ -61,6 +68,14 @@ final class TerminalInput extends InputStream {
      * an unfinished datum is {@code continuationPrompt}.
      */
     static TerminalInput open(String continuationPrompt) {
+        // While JLine reads a line, the terminal is in raw mode, where Ctrl-C is a byte, not a
+        // signal, and JLine's keymap binds it to its interrupt widget, which ends the line. By
+        // default JLine also raises INT for that byte as its input thread reads it ("software
+        // signals"), which interrupts the reading thread: a second interrupt of the same Ctrl-C,
+        // which ended the next line read too when it came after the first had ended this one (the
+        // prompt shown twice). Only the widget, then. Outside a read, ISIG is on, and Ctrl-C is
+        // the process's SIGINT, which the handlers below pass on.
+        System.setProperty(SOFTWARE_SIGNALS, "false");
         Terminal terminal;
         try {
             // No native signals: JLine would swap the process's handler each time it reads a line
@@ -202,13 +217,41 @@ final class TerminalInput extends InputStream {
         return line.length - position;
     }
 
-    /** Saves the history and gives the terminal back. */
+    /** The REPL evaluates {@code input}, or null once it is done (see {@link #running}). */
+    void running(String input) {
+        running.set(input);
+    }
+
+    /**
+     * Saves the history, with the input still running if the session ends during one, and gives
+     * the terminal back.
+     */
     @Override
     public void close() throws IOException {
+        String unfinished = running.take();
         try {
+            if (unfinished != null) {
+                addHistory(unfinished);
+            }
             reader.getHistory().save();
         } finally {
             terminal.close();
+        }
+    }
+
+    /** The input under evaluation: set on the REPL's thread, taken on Ctrl-C's. */
+    private static final class Running {
+
+        private String input;
+
+        synchronized void set(String value) {
+            input = value;
+        }
+
+        synchronized String take() {
+            String value = input;
+            input = null;
+            return value;
         }
     }
 

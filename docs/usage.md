@@ -136,7 +136,7 @@ prompts again, with the definitions made so far and the parameters as they
 were before the input (the `dynamic-wind` after-thunks it skips don't run).
 If an interrupt hasn't stopped the input after a second, because it waits in
 the operating system (opening a FIFO, say), Ctrl-C again ends the REPL with
-status 130. Its standard input can be a file:
+status 130 (the input goes in the history all the same). Its standard input can be a file:
 
 <!-- readme: run -->
 ```sh

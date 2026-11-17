@@ -1161,7 +1161,12 @@ Each entry: the decision, why, and what was rejected.
     launcher registers SIGINT, SIGWINCH and SIGCONT once, through JLine's
     `Signals` (`sun.misc.Signal` by reflection, which already worked in the
     native launcher), and passes each to the terminal's handler of the
-    moment. Ctrl-C while JLine reads a line for the REPL drops the line as before,
+    moment. While JLine reads a line, the terminal is in raw mode (ISIG off),
+    and Ctrl-C is a byte that JLine's keymap binds to its `interrupt` widget;
+    JLine's "software signals", which also raise INT for that byte as its
+    input thread reads it, are off (a system property the launcher sets),
+    since that second interrupt of one key ended the next line read too, now
+    and then (the prompt shown twice). Ctrl-C while JLine reads a line for the REPL drops the line as before,
     and while it reads one for Scheme code it interrupts the evaluation: the
     read returns an empty line once the interrupt has been submitted (its
     thread waits for the evaluation), so the evaluation stops at its next
@@ -1190,7 +1195,7 @@ Each entry: the decision, why, and what was rejected.
       same way, so the next input runs as the one before it did.
     - A Ctrl-C while an interrupt has waited a second or more (the
       evaluation is in host code that never polls, such as opening a FIFO)
-      saves the history and ends the process with status 130, as SIGINT's
+      saves the history, the running input in it, and ends the process with status 130, as SIGINT's
       default action would; a quicker second Ctrl-C does nothing more.
     - With assertions on, an interrupt that lands at a Bytecode DSL root's
       return fails an assertion in Truffle (docs/upstream.md); the launcher
