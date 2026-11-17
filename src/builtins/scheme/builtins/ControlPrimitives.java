@@ -30,6 +30,7 @@ import scheme.runtime.value.SComplex;
 import scheme.runtime.value.SConstant;
 import scheme.runtime.value.SErrorObject;
 import scheme.runtime.value.SPair;
+import scheme.runtime.value.SPromise;
 import scheme.runtime.value.SRational;
 import scheme.runtime.value.SRecord;
 import scheme.runtime.value.SRecordType;
@@ -90,6 +91,11 @@ final class ControlPrimitives {
                         new PrimitiveSpec("error-object-irritants", 1, 1, () -> new ErrorObjectOp(ErrorObjectOp.IRRITANTS)),
                         new PrimitiveSpec("read-error?", 1, 1, () -> new ErrorObjectOp(ErrorObjectOp.READ)),
                         new PrimitiveSpec("file-error?", 1, 1, () -> new ErrorObjectOp(ErrorObjectOp.FILE)),
+                        new PrimitiveSpec("%make-promise", 2, 2, MakePromise::new).allocating(),
+                        new PrimitiveSpec("promise?", 1, 1, () -> new TypePredicate(x -> x instanceof SPromise)),
+                        new PrimitiveSpec("%promise-done?", 1, 1, () -> new PromiseOp(PromiseOp.DONE)),
+                        new PrimitiveSpec("%promise-value", 1, 1, () -> new PromiseOp(PromiseOp.VALUE)),
+                        new PrimitiveSpec("%promise-update!", 2, 2, () -> new PromiseOp(PromiseOp.UPDATE)),
                         new PrimitiveSpec("%make-record-type", 2, 2, MakeRecordType::new),
                         new PrimitiveSpec("%record-constructor", 3, 3, () -> new RecordProcedure(RecordProcedure.CONSTRUCTOR)),
                         new PrimitiveSpec("%record-predicate", 2, 2, () -> new RecordProcedure(RecordProcedure.PREDICATE)),
@@ -498,6 +504,57 @@ final class ControlPrimitives {
                     }
                     return op == MESSAGE ? e.message : e.irritants;
             }
+        }
+    }
+
+    /**
+     * {@code (%make-promise done? obj)}: a new promise (R7RS §4.2.5, design.md D9), done with the
+     * value {@code obj}, or not done with {@code obj} the thunk of a {@code delay-force}.
+     */
+    static final class MakePromise extends PrimitiveNode {
+        @Override
+        public Object invoke(Object[] args) {
+            return new SPromise(!(args[1] instanceof Boolean b && !b), args[2]);
+        }
+    }
+
+    /**
+     * R7RS §7.3's promise operations, which {@code force} (lazy.scm) is made of:
+     * {@code (%promise-done? p)}, {@code (%promise-value p)} (the value, or the thunk if not done),
+     * and {@code (%promise-update! new p)}, which gives {@code p} the state of {@code new}, the
+     * promise that {@code p}'s thunk returned, and makes {@code new} share {@code p}'s state.
+     */
+    static final class PromiseOp extends PrimitiveNode {
+        static final int DONE = 0;
+        static final int VALUE = 1;
+        static final int UPDATE = 2;
+
+        private final int op;
+
+        PromiseOp(int op) {
+            this.op = op;
+        }
+
+        @Override
+        public Object invoke(Object[] args) {
+            switch (op) {
+                case DONE:
+                    return promise("force", args[1]).state.done;
+                case VALUE:
+                    return promise("force", args[1]).state.value;
+                default:
+                    // The promise a delay-force's expression returned: anything else is an error
+                    // (R7RS §4.2.5).
+                    promise("delay-force", args[1]).updateInto(promise("force", args[2]));
+                    return SConstant.UNSPECIFIED;
+            }
+        }
+
+        private static SPromise promise(String who, Object x) {
+            if (x instanceof SPromise p) {
+                return p;
+            }
+            throw notA(who, "promise", x);
         }
     }
 

@@ -27,6 +27,7 @@ import scheme.runtime.value.SErrorObject;
 import scheme.runtime.value.SPair;
 import scheme.runtime.value.SRational;
 import scheme.runtime.value.SPort;
+import scheme.runtime.value.SPromise;
 import scheme.runtime.value.SRecord;
 import scheme.runtime.value.SRecordType;
 import scheme.runtime.value.SString;
@@ -318,6 +319,8 @@ public final class Printer {
             out.append("#<record-type ").append(t.name).append('>');
         } else if (v instanceof SEnvironment) {
             out.append("#<environment>");
+        } else if (v instanceof SPromise) {
+            out.append("#<promise>");
         } else if (v instanceof Continuation) {
             out.append("#<continuation>");
         } else if (v instanceof TruffleObject) {
