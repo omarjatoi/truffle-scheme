@@ -37,6 +37,7 @@ and removes the entry.
 | `tail-callcc` | `call/cc` in tail position; a continuation invoked each iteration; one continuation re-entered 1M times from tail position |
 | `tail-dynamic-wind` | 1M iterations through `dynamic-wind` (winders don't accumulate) |
 | `tail-derived` | the tail positions of R7RS §3.5 in derived syntax: `cond` (and `=>`), `case`, `and`, `or`, `when`, `unless`, `let`, `let*`, `letrec`, `letrec*`, named `let`, `let-values`, `let*-values`, `do`, `case-lambda` |
+| `tail-promise` | R7RS §4.2.5's `delay-force` loop and `stream-filter`, SRFI 45's `stream-ref`, and a `make-promise` chain, each forcing a million promises |
 | `tail-apply` | `apply` and the consumer of `call-with-values` in tail position |
 | `cont-escape` | escapes out of non-tail recursion |
 | `cont-reentry` | re-entry with pending operands; re-entry of a top-level form carries on through the following forms (design.md D6) |
