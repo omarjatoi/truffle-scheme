@@ -346,10 +346,36 @@ full R7RS-small conformance comes first.
     iterations at a tenth of its count take about 10% longer (a transient:
     its later iterations, and every iteration at its own count, are as
     before).
-  - Escape-only `k` (`%call/ec`, below) still throws `EscapeException`, which
-    could meet the same host deoptimization. None of the benchmarks throws
-    one (`-Xlog:exceptions`): their `k` is tail-called back to its prompt,
-    which returns without a throw.
+  - *Escape-only `k` returns too (M9-04).* Invoking `%call/ec`'s `k` (below)
+    returns an ESCAPE `Capture` for its prompt's tag, which travels up the
+    same way: the frames it passes are abandoned, the prompt it is for
+    returns its value, a driver that holds that prompt flattened into a
+    marker drops its pending segments up to it, and every other prompt
+    passes it on. It was an `EscapeException` thrown to the prompt. Since
+    #173 made `puzzle`'s `return` escape-only, `puzzle` threw it about
+    24,000 times at a tenth of its count; a `puzzle` whose `return` is
+    reached through two tail calls (so the throw leaves through the
+    trampoline's loop, as #172's did) deoptimized `continueAt` 36 times in
+    the interpreter (`not_compiled_exception_handler` at
+    `OptimizedDirectCallNode.call`, bci 27, in 4 to 5 recompilations), against
+    one with the capture. `HostJitPitfallsTest` checks that such a program
+    throws nothing. Measured against throwing, on the code after #178
+    (which contified `puzzle`'s loop; a fresh JVM per run, interleaved,
+    medians, an Apple M3 Max shared with other agents, load 7-12): in the
+    interpreter, at a tenth of the counts, `puzzle` 0.93, `quicksort` 0.98,
+    `maze` 0.98, `ctak` 0.99, `fibc` 0.97. With the JIT, at a tenth of the
+    counts, first iteration and best of the next two: `puzzle` 0.33 and
+    1.20, `quicksort` 0.86 and 1.07, `maze` 1.00 and 0.88, `ctak` and `fibc`
+    within noise; the 24 programs of M8-03, 1.012 and 0.972 (noise: programs
+    that never escape moved as much). At its own count (5 iterations, 3
+    runs) `puzzle`'s first iteration is 0.68 times (2.72 s to 1.84 s) and its
+    later ones about 1.06 times (best 1.32 s to 1.40 s; `quicksort`'s 1.00):
+    a trade-off. Before #178 it was 0.79 and 1.12. It is the compiled shape,
+    not the cost of an escape: throwing from compiled code and returning only
+    in the interpreter (`CompilerDirectives.inInterpreter`) measured the
+    same, and so did returning at once from the driver when the procedure
+    it calls escapes to it. `bench-check`: `puzzle` 1.07 times its baseline,
+    `quicksort`, `ctak` and `fibc` 0.99-1.01.
 - **Segments are immutable once shared.** Each resume of a segment that a
   continuation can reach copies the frame. This is correct only because of
   assignment conversion (D2): the frame holds no mutable Scheme variables,
@@ -540,6 +566,21 @@ full R7RS-small conformance comes first.
     prompt (which runs once, so is never compiled) is compiled on the stack,
     gained about 3% on `ack` for compilations of 130 to 240 KB that kept
     being invalidated: not done.
+  - *The driver's loop and the host profile (M9-04).* The root prompt's
+    driver loop is a Java loop in a root that runs once, as the trampoline's
+    was before #167, so it runs as fast as HotSpot compiles
+    `PromptDriver.run`, whose profile every other prompt's driver also makes
+    (an escape-only `call/cc` runs one, which returns at once). Checked with
+    `-XX:+PrintCompilation`, interpreter and JIT, on a deep recursion's return
+    path (1,000,000 frames resumed, before and after 300,000 escape-only
+    calls, and with an escape-only `call/cc` in every frame resumed), under
+    torture (`fib` with and without one in every call), and on a generator
+    of full continuations: HotSpot OSR-compiled the loop every time, with 3
+    to 6 recompilations and no skipped compilation, and the later rounds took
+    as long as in a run without the escapes. Unlike the trampoline's loop
+    (`while (result instanceof TailCall)`, which the warm-up never entered),
+    every call enters the driver's loop and most take its back-edges, so no
+    profile prunes it. `HostJitPitfallsTest` keeps the check.
   - *Rejected:* catching `StackOverflowError` and spilling then: the error can
     come from anywhere (a specialization half done, class loading), and the
     frames it unwound are gone; and a fixed larger count, which a 256 KB
@@ -641,9 +682,10 @@ full R7RS-small conformance comes first.
     1.88, `fft` 1.33); no recursive inlining
     (`compiler.InliningRecursionDepth=0`, one run) made `tak` 1.2 times
     slower.
-  - *Invoking `k`.* Calling `k` throws `EscapeException`, a
-    `ControlFlowException`; a `k` tail-called back to its own prompt
-    returns with no throw. An escape across a change of dynamic
+  - *Invoking `k`.* Calling `k` returns an ESCAPE `Capture` for its
+    prompt, which travels up like any capture (M9-04, "Invoking a full
+    continuation returns", above); a `k` tail-called back to its own prompt
+    returns with no capture. An escape across a change of dynamic
     environment goes through the prelude's `%escape`, which rewinds first.
     Captures flatten the prompt into a marker like any other, so `k` works
     from re-entered copies too. `unwindExceptions` isn't needed: guard is

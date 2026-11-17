@@ -986,13 +986,23 @@ collector); each task measures with interleaved A/B runs.
     6–7%. Cut it.
   - **Done when** the interpreter's geometric mean improves by at least 10%
     over M8's report, and `tak`/`ack` finish well inside the 60 s timeout.
-- [ ] **M9-04 · Host-JIT pitfalls in run-once loops** *(early)*
+- [x] **M9-04 · Host-JIT pitfalls in run-once loops** *(early)*
   - `PromptDriver.run`'s driver loop is a Java loop in a root that runs once,
     like the trampoline was before #167; `EscapeException` passes through
     `OptimizedDirectCallNode.call` like `InvokeContinuation` did before #172.
     Check both for HotSpot deopt loops, and fix them the way #167 and #172 did.
   - **Done when** a program shaped to stress each shows no host deopt loop
     (`-Xlog:exceptions`/deopt counts) and benchmarks are unchanged.
+  - Done (2026-11-17): an escape-only `k` returns an ESCAPE capture instead
+    of throwing (design.md "Continuations"): a `puzzle` that escapes through
+    the trampoline's loop went from 36 host deoptimizations to 1, and
+    `HostJitPitfallsTest` checks that an escape throws nothing. The driver's
+    loop showed no host-profile trap in any program tried (design.md
+    "The driver's loop and the host profile"), and the test checks that
+    HotSpot OSR-compiles it. Benchmarks: the 24 programs within noise;
+    `puzzle`'s first iteration 0.33 times at a tenth of its count (0.68 at
+    its own), its later iterations about 1.06 times at its own count, a
+    trade-off recorded there.
 - [x] **M9-05 · Smaller compiler wins** *(early)*
   - `assq`/`assv` of quoted lists compiled like M8-05's `memv` (#140);
     contify loops whose only unknown non-tail call is an escape-only `k`

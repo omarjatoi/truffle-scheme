@@ -23,15 +23,17 @@ import scheme.runtime.value.SPair;
  * prompt of its own whose tag is a fresh {@link Target}:
  *
  * <ul>
- * <li>Invoking k throws an {@link EscapeException} to that prompt, which returns k's arguments. When
- * k is tail-called back to the prompt's own driver loop, the driver returns them without a
- * throw.</li>
+ * <li>Invoking k returns an ESCAPE {@link Capture} for that prompt, which travels up the stack like
+ * every other capture (each frame it passes is abandoned) and makes the prompt return k's
+ * arguments. When k is tail-called back to the prompt's own driver loop, the driver returns them
+ * without a capture. It isn't a Java exception: one thrown through the host-compiled interpreter
+ * made the host compiler deoptimize it again and again (M9-04, design.md "Continuations").</li>
  * <li>k is invoked in call/cc's dynamic environment, as the full continuation would be: if the
  * current one differs, k first tail-calls the prelude's {@code %escape}, which rewinds (running
  * after-thunks, design.md "Dynamic environment") and invokes k again.</li>
  * <li>A capture that crosses the prompt (call/cc, guard, a spill, torture) flattens it into a
  * prompt marker, like any prompt ({@link PromptDriver}). Invoking k from a resumed segment then
- * throws to the driver that holds the marker, which drops the pending segments up to it. So k
+ * returns to the driver that holds the marker, which drops the pending segments up to it. So k
  * works from every copy of a continuation captured inside the receiver's extent.</li>
  * <li>A {@code %call/ec} in tail position of the receiver has this prompt's continuation, so the
  * driver runs it in this prompt (R7RS §3.5: call/cc calls its receiver in tail position).</li>
@@ -72,15 +74,7 @@ public final class EscapeRootNode extends RootNode {
         int use = context.stackUse;
         context.stackUse = use + StackBudget.promptCost(context);
         try {
-            Object first;
-            try {
-                first = driver.callWithProcedure(arguments[1], new Object[]{null, continuation(target, context)});
-            } catch (EscapeException e) {
-                if (e.target != target) {
-                    throw e;
-                }
-                return e.value;
-            }
+            Object first = driver.callWithProcedure(arguments[1], new Object[]{null, continuation(target, context)});
             return driver.run(frame, target, first, null, context);
         } finally {
             context.stackUse = use;
@@ -139,8 +133,9 @@ public final class EscapeRootNode extends RootNode {
             Object[] arguments = frame.getArguments();
             SClosure self = (SClosure) arguments[0];
             SchemeContext context = SchemeContext.get(this);
-            if (self.captured[1] == context.getDynamicEnv()) {
-                throw new EscapeException((Target) self.captured[0], values(arguments));
+            DynEnv env = context.getDynamicEnv();
+            if (self.captured[1] == env) {
+                return Capture.escape((Target) self.captured[0], values(arguments), env);
             }
             // Leaving dynamic-wind extents, or other bindings: rewind first, in Scheme (D5).
             return rewindFirst(context.escape, self, arguments);

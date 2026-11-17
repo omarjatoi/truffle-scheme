@@ -25,6 +25,11 @@ import com.oracle.truffle.api.library.ExportMessage;
  * with {@link #value}. The frames it passes are abandoned, so it keeps none of them: it travels up
  * as a returned value, not as a Java exception, whose handlers the host compiler may have left out
  * of the compiled interpreter (design.md "Continuations").</li>
+ * <li>{@link Kind#ESCAPE}: invoking an escape-only continuation (M5-04, {@link EscapeRootNode}).
+ * Abandons the current continuation up to the {@code %call/ec} prompt whose tag is {@link #tag},
+ * which returns {@link #value}; a prompt driver that holds that prompt flattened into a marker
+ * drops its pending segments up to it instead. Like APPLY, it keeps none of the frames it passes,
+ * and travels up as a returned value (M9-04).</li>
  * <li>{@link Kind#SPILL}: stack-depth spill. A call site past the depth threshold captures up to
  * the root prompt instead of calling; the root prompt makes the call ({@link #value}, an argument
  * array with the procedure at index 0) on a fresh Java stack. Only the root prompt's driver can
@@ -62,6 +67,7 @@ public final class Capture implements TruffleObject {
         DELIMITED,
         REINSTATE,
         APPLY,
+        ESCAPE,
         SPILL,
         TORTURE
     }
@@ -160,7 +166,7 @@ public final class Capture implements TruffleObject {
     public final DynEnv dynEnv;
     /** For REINSTATE and APPLY. */
     public final Continuation continuation;
-    /** The value to go on with (REINSTATE, APPLY, TORTURE), or the spilled call's arguments (SPILL). */
+    /** The value to go on with (REINSTATE, APPLY, ESCAPE, TORTURE), or the spilled call's arguments (SPILL). */
     private Object value;
     /**
      * Segments and prompt markers, innermost first: the cells of the list {@link #segmentsBefore}
@@ -214,6 +220,11 @@ public final class Capture implements TruffleObject {
         return new Capture(Kind.APPLY, ROOT_TAG, null, dynEnv, continuation, value);
     }
 
+    /** k of the {@code %call/ec} prompt with {@code target} invoked with {@code value}. */
+    public static Capture escape(EscapeRootNode.Target target, Object value, DynEnv dynEnv) {
+        return new Capture(Kind.ESCAPE, target, null, dynEnv, null, value);
+    }
+
     public static Capture torture(Object value, DynEnv dynEnv) {
         return new Capture(Kind.TORTURE, ROOT_TAG, null, dynEnv, null, value);
     }
@@ -224,13 +235,18 @@ public final class Capture implements TruffleObject {
 
     /**
      * A frame suspends into the capture: it goes after (outside) the frames already in it. An APPLY
-     * capture abandons the frame instead: nothing resumes it.
+     * or ESCAPE capture abandons the frame instead: nothing resumes it.
      */
     public void addSegment(ContinuationRootNode root, MaterializedFrame frame) {
-        if (kind == Kind.APPLY) {
+        if (abandons()) {
             return;
         }
         append(new Segment(root, frame, owner));
+    }
+
+    /** Whether the frames and prompts this capture passes are abandoned: APPLY and ESCAPE. */
+    private boolean abandons() {
+        return kind == Kind.APPLY || kind == Kind.ESCAPE;
     }
 
     private void append(Object item) {
@@ -263,7 +279,7 @@ public final class Capture implements TruffleObject {
      */
     @TruffleBoundary
     void addOuter(SegmentList pending, PromptMarker prompt) {
-        if (kind == Kind.APPLY) {
+        if (abandons()) {
             // Abandoned with the rest of the current continuation.
             return;
         }

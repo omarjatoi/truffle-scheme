@@ -37,8 +37,9 @@ import scheme.runtime.value.SClosure;
  * <li>a {@link Capture}: complete it here, or, if it is for another prompt, pass it on outward with
  * this prompt's pending segments and itself (as a marker) added; an APPLY capture (a full
  * continuation invoked) only the root prompt handles, and the others pass it on as it is;</li>
- * <li>an {@link EscapeException} (M5-04): the {@code %call/ec} prompt it is for returns its value;
- * a driver holding that prompt's marker drops the pending segments up to it.</li>
+ * <li>an ESCAPE capture (M5-04, an escape-only continuation invoked): the {@code %call/ec} prompt
+ * it is for returns its value; a driver holding that prompt's marker drops the pending segments up
+ * to it; any other passes it on as it is.</li>
  * </ul>
  *
  * Everything is flat: re-entry costs O(1) Java stack depth, and finding a prompt costs the distance
@@ -130,6 +131,24 @@ final class PromptDriver extends Node {
                             }
                             pending = capture.continuation.segments;
                             context.setDynamicEnv(capture.continuation.dynEnv);
+                            value = capture.takeValue();
+                            continue;
+                        }
+                        case ESCAPE: {
+                            // An escape-only continuation invoked (M5-04): its prompt returns.
+                            if (capture.tag == tag) {
+                                return capture.takeValue();
+                            }
+                            SegmentList marker = SegmentList.markerOf(pending, capture.tag);
+                            if (marker == null) {
+                                if (tag == Capture.ROOT_TAG) {
+                                    throw escapedTooFar();
+                                }
+                                // Abandoned with the rest of this prompt.
+                                return capture;
+                            }
+                            // Its prompt is flattened into this driver's pending segments.
+                            pending = marker.tail;
                             value = capture.takeValue();
                             continue;
                         }
@@ -261,19 +280,6 @@ final class PromptDriver extends Node {
                     throw unwind(e, pending);
                 }
                 value = new PendingRaise(e.getErrorObject());
-            } catch (EscapeException e) {
-                if (e.target == tag) {
-                    return e.value;
-                }
-                SegmentList marker = SegmentList.markerOf(pending, e.target);
-                if (marker == null) {
-                    if (tag == Capture.ROOT_TAG) {
-                        throw escapedTooFar();
-                    }
-                    throw e;
-                }
-                pending = marker.tail;
-                value = e.value;
             }
         }
     }
