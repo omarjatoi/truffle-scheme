@@ -993,7 +993,7 @@ collector); each task measures with interleaved A/B runs.
     Check both for HotSpot deopt loops, and fix them the way #167 and #172 did.
   - **Done when** a program shaped to stress each shows no host deopt loop
     (`-Xlog:exceptions`/deopt counts) and benchmarks are unchanged.
-- [ ] **M9-05 · Smaller compiler wins** *(early)*
+- [x] **M9-05 · Smaller compiler wins** *(early)*
   - `assq`/`assv` of quoted lists compiled like M8-05's `memv` (#140);
     contify loops whose only unknown non-tail call is an escape-only `k`
     (#173); let a `call/cc` receiver count as "only called" so an outer `k`

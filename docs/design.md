@@ -556,13 +556,25 @@ full R7RS-small conformance comes first.
     other than as a call's operator, a qualifying argument or a `let`'s init,
     or is assigned, or is referred to from inside a lambda (between the
     reference and the variable's own root) that isn't contained. So a lambda
-    stored, returned, or passed to `map`, `for-each`, `apply`, any other
-    procedure of the prelude, or `call/cc`, keeps every variable it refers to
-    from outside a full capture, and so does a helper such a lambda calls.
+    stored, returned, or passed to `map`, `for-each`, `apply` or any other
+    procedure of the prelude keeps every variable it refers to from outside
+    a full capture, and so does a helper such a lambda calls.
     Every call of a contained closure happens in the extent of the call that
     made it, so every invocation of `k` happens before `%call/ec` returns.
     It runs after contification (M7-02): a contified loop is code of its
     root, not a closure, and needs no rule.
+  - *A `call/cc` receiver is only called (M9-05).* `call/cc` calls its
+    receiver once, in its own extent, so a receiver is contained when the
+    `call/cc`'s own `k` is: an outer `k` used in a nested `call/cc`'s
+    receiver is escape-only, and both calls become `%call/ec`. It is one more
+    edge of the same fixed point (the receiver depends on its `k`), so `k`s
+    that depend on each other, through a helper both are passed to, are
+    decided together. A nested receiver whose `k` escapes keeps the outer `k`
+    a full capture too: with a full capture there the receiver still runs in
+    the extent, and invoking the outer `k` from it would work (the prompt
+    marker), but the rule stays with escapes nested in escapes. No benchmark
+    program has the shape (`ctak`'s and `fibc`'s nested receivers use their
+    own `k`), so none changes.
   - *What it gains.* `puzzle`, `quicksort` and `maze` now escape (`ctak` and
     `fibc` already did). A fresh JVM per run, interleaved with the code
     before, medians of 3 (Apple M3 Max, shared); interpreter
