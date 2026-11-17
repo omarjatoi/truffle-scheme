@@ -75,6 +75,25 @@ public class StackBudgetTest {
     }
 
     @Test
+    public void recursionThatFitsInTheStackDoesNotSpillWhenTheProbesThreadsGetLargerStacks() throws InterruptedException {
+        // The probe calibrates on threads it starts with 512 KB and larger stacks. On Linux, glibc
+        // gives a new thread a cached stack of an exited one, up to 4 times the size it asked for,
+        // if it has none of that size: then a 512 KB thread runs on a 1 MB stack, as deep as the
+        // larger one (CI's executors, under load). Here the cache is left holding just a 1 MB
+        // stack: a 64 MB thread's exit empties it (it holds 40 MB at most), and a 1 MB thread's
+        // exit fills it. Elsewhere this is recursionThatFitsInTheStackDoesNotSpill.
+        onThread(64L << 20, () -> null);
+        Thread.sleep(200);
+        onThread(1L << 20, () -> null);
+        Thread.sleep(200);
+        long spills = onThread(64L << 20, () -> withContext(context -> {
+            context.eval(SCHEME, COUNT);
+            return spills(context, "(count 0 3000)", 3000);
+        }));
+        assertEquals(0L, spills);
+    }
+
+    @Test
     public void deepRecursionOnASmallStackSpills() throws InterruptedException {
         // 256 KB of stack, the smallest the space tests use: a million nested calls spill, and
         // never overflow the stack.

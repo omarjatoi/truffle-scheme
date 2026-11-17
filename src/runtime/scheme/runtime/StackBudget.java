@@ -206,9 +206,12 @@ final class StackBudget {
     // ------------------------------------------------------------------------------------------
     // Measuring the stack
 
-    /** The stack sizes of the two reference threads: their difference calibrates a probe frame. */
+    /**
+     * The stack sizes of the two reference threads: their difference calibrates a probe frame, and
+     * the larger one, less {@link #THREAD_OVERHEAD}, bounds it.
+     */
     private static final long SMALL_STACK = 512 * 1024;
-    private static final long LARGE_STACK = 1024 * 1024;
+    private static final long LARGE_STACK = 2048 * 1024;
     /**
      * At most this much of a thread's stack is measured, and so touched (a stack's pages, once
      * touched, stay in memory): room for some 200,000 compiled calls. A given size counts as no more
@@ -220,36 +223,43 @@ final class StackBudget {
     /**
      * About how many bytes of Java stack remain below the caller (at most {@link #MEASURED_MAX}), or
      * 0 if that can't be told. Java has no way to ask, so: a probe recurses until the stack
-     * overflows, here and on two threads with stacks of known sizes. The reference threads give the
-     * bytes per probe frame (the difference in their sizes over the difference in their depths),
-     * whatever a frame's size, as long as every probe runs the same code. A JIT compiles the probe
-     * while it runs, and its compiled frames are much smaller (and may hold several levels), so a
-     * round probes the references, here twice, and the references again, and counts only if each
-     * pair agrees; the result is the smaller of two rounds in a row that agree. Once per thread, the
-     * first time a call on it passes the floor: a few milliseconds.
+     * overflows, here and on two reference threads with stacks of known sizes, which give the bytes
+     * per probe frame ({@link #bytesPerFrame}). A JIT compiles the probe while it runs, and its
+     * compiled frames are much smaller (and may hold several levels), so a round probes the
+     * references, here twice, and the references again, and counts only if the two figures for a
+     * frame agree, and so do the two depths here; the result is the smaller of two rounds in a row
+     * that agree. Once per thread, the first time a call on it passes the floor: a few milliseconds.
+     *
+     * <p>If no two rounds agree, the result is the smallest any round gave, each with the smaller of
+     * its two figures for a frame. The JIT makes the probe's frames smaller as it goes, so that
+     * figure is no larger than the frames here, measured between them, and the result
+     * underestimates what remains: never the floor because a busy machine kept the JIT going.
      */
     @TruffleBoundary
     static long remainingStack() {
         long previous = -1;
+        long smallest = Long.MAX_VALUE;
         try {
             for (int round = 0; round < ROUNDS; round++) {
-                long small = onThread(SMALL_STACK);
-                long large = onThread(LARGE_STACK);
-                if (small <= 0 || large <= small) {
+                double bytesPerFrame = bytesPerFrame();
+                if (bytesPerFrame <= 0) {
                     previous = -1;
                     continue;
                 }
-                double bytesPerFrame = (double) (LARGE_STACK - SMALL_STACK) / (large - small);
                 long cap = (long) (MEASURED_MAX / bytesPerFrame);
                 long here = new Probe(cap).depth();
                 long hereAgain = new Probe(cap).depth();
-                long smallAgain = onThread(SMALL_STACK);
-                long largeAgain = onThread(LARGE_STACK);
-                if (!agree(small, smallAgain) || !agree(large, largeAgain) || !agree(here, hereAgain)) {
+                double bytesPerFrameAgain = bytesPerFrame();
+                if (bytesPerFrameAgain <= 0) {
                     previous = -1;
                     continue;
                 }
-                long bytes = (long) (Math.min(here, hereAgain) * bytesPerFrame);
+                long bytes = (long) (Math.min(here, hereAgain) * Math.min(bytesPerFrame, bytesPerFrameAgain));
+                smallest = Math.min(smallest, bytes);
+                if (!agree(bytesPerFrame, bytesPerFrameAgain) || !agree(here, hereAgain)) {
+                    previous = -1;
+                    continue;
+                }
                 if (previous >= 0 && agree(previous, bytes)) {
                     return Math.min(previous, bytes);
                 }
@@ -260,11 +270,32 @@ final class StackBudget {
         } catch (RuntimeException | OutOfMemoryError e) {
             // No thread could be started (an embedder's limit): the floor it is.
         }
-        return 0;
+        return smallest == Long.MAX_VALUE ? 0 : smallest;
+    }
+
+    /**
+     * The bytes per probe frame the reference threads give, or 0 if they don't. The difference in
+     * their sizes over the difference in their depths is a frame's size whatever the thread's own
+     * overhead, if each thread's stack is the size it asked for. It may be larger: on Linux, glibc
+     * gives a new thread the cached stack of an exited one up to 4 times the size it asks for, if
+     * none of that size is free (once one 512 KB thread ran on a 1 MB stack, every later one did,
+     * and as deep as the 1 MB thread, so that no round counted, on CI's executors). That makes the
+     * difference too large if it is the small thread's, so the figure is at most the large
+     * thread's size less {@link #THREAD_OVERHEAD} over its depth, which a larger stack only makes
+     * smaller.
+     */
+    private static double bytesPerFrame() throws InterruptedException {
+        long small = onThread(SMALL_STACK);
+        long large = onThread(LARGE_STACK);
+        if (small <= 0 || large <= 0) {
+            return 0;
+        }
+        double bound = (double) (LARGE_STACK - THREAD_OVERHEAD) / large;
+        return large > small ? Math.min((double) (LARGE_STACK - SMALL_STACK) / (large - small), bound) : bound;
     }
 
     /** Within 2% of each other. */
-    private static boolean agree(long a, long b) {
+    private static boolean agree(double a, double b) {
         return Math.abs(a - b) * 50 <= Math.max(a, b);
     }
 
