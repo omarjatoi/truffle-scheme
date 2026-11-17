@@ -1642,6 +1642,73 @@ Each entry: the decision, why, and what was rejected.
   | CI, no cache | 4.9 min on 7 runners (17 runner-min) | 10.3 min on 2 runners (13.7 runner-min) |
   | CI, cache from an earlier run of the same change | same | 1.7 min (all cached) |
 
+- **Platforms and C and C++ toolchains (decided in M10-01).** C and C++ are
+  built with Bazel's own rules and toolchains, and which machine runs an
+  action is a property of the execution platform it lands on, not of tags on
+  rules. (The maintainer's choice: *"let's do Bazel's defaults, and have
+  platforms defined so if I use Bazel and select macOS/darwin the build
+  happens on my local laptop. Eventually we'll get remote Macs."*)
+  - *The platforms* are defined in the repository (`bazel/platforms`), both
+    in `--extra_execution_platforms` under `--config=remote`, Linux first:
+    `linux_x86_64`, BuildBuddy's executors, with the constraints and
+    `exec_properties` of `toolchains_buildbuddy`'s Ubuntu 22.04 platform
+    (which it replaces, so remote cache keys stay the same); and
+    `macos_arm64`, this Mac, whose `exec_properties` are
+    `{"no-remote-exec": "1"}`. Bazel adds a platform's `exec_properties`
+    with a true-ish value to its actions' execution requirements (katre, in
+    bazelbuild/bazel#22363: *"an exec property with a 'true-ish' value (like
+    '1' or 'TRUE' or 'yes') has the key added to the exec info and
+    requirements"*), so the Mac's actions run here while
+    `--remote_executor` is set, and still read and write the remote cache.
+    An action runs on the first platform that has the toolchains it needs:
+    Java, Python, genrules and the Linux tests on the executors, and a C or
+    C++ action for a macOS target, which needs the Xcode toolchain, on the
+    Mac. Checked on a prototype: for a macOS target, `launcher.cc`'s
+    `CppCompile` and `CppLink` and the `NativeImage` action ran on
+    `//bazel/platforms:macos_arm64`, locally, while `Javac` ran remotely on
+    `linux_x86_64`; with `--platforms=//bazel/platforms:linux_x86_64` all
+    three ran remotely.
+  - *The C++ toolchains.* A Linux target uses `toolchains_buildbuddy`'s GCC
+    toolchain on the executors (`--extra_toolchains`, as before); under
+    `--config=local` on a Linux host, rules_cc's autodetected one. A macOS
+    target uses `apple_support`'s Xcode toolchain (a `bazel_dep` above
+    `rules_cc`, so it is registered first), with the Xcode pinned by an
+    `xcode_config` (`--xcode_version_config`), as BuildBuddy's
+    linux-to-mac-rbe-demo does, so a build doesn't depend on what a machine
+    detects and remote Macs can share its cache. On a Mac, rules_cc's
+    autodetection is off (`BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=1`, in the
+    `macos` config that `--enable_platform_specific_config` applies there):
+    in `nix develop` it found Nix's clang wrapper.
+  - *Rules that run the target's C compiler themselves* (native-image, for
+    the native launcher's library; chibi-scheme's `make`) declare the C++
+    toolchain type, so they land on the platform that has the target's
+    toolchain, as the C++ rules do; their `no-remote-exec` tags go.
+  - *Tests for a macOS target* run on it: `--platforms=//bazel/platforms:macos_arm64`
+    with `--use_target_platform_for_tests`, so the test action's execution
+    platform is the target platform, the Mac. Without it a test runs on the
+    first execution platform, the executors. (bazelbuild/bazel#22777
+    reports test actions reaching remote executors in spite of a
+    platform's `no-remote-exec`; with `--use_target_platform_for_tests`,
+    the prototype's test ran on the Mac.)
+  - *Remote Macs later* are a change to `macos_arm64` alone: its
+    `exec_properties` become the executors' (`"OSFamily": "Darwin"`,
+    `"Arch": "arm64"`, and a `"Pool"` if they are in one) instead of
+    `"no-remote-exec"`, and the `xcode_config` names their Xcode. Bazel 10
+    stops forwarding `no-`, `supports-` and `disable-` keys to remote
+    executors (bazelbuild/bazel#32010); until then the key is part of the
+    Mac's actions' cache keys, which is harmless while only one machine
+    runs them.
+  - *Rejected:* compiling with the host's `c++` in a custom action (#211's
+    first version): it uses no Bazel toolchain, so it can't move to remote
+    Macs without its own logic, and its compiler is whatever is on the
+    action's PATH. `no-remote-exec` tags chosen per rule by the target's OS
+    (what the native image and chibi-scheme did): every rule
+    has to know, and remote Macs need each changed. `--strategy=CppCompile=local`
+    and other per-mnemonic strategies: they apply to Linux targets too, whose
+    compiles must run on the executors. `cc_binary` with only the
+    autodetected toolchain: for a macOS target under `--config=remote` its
+    compile went to a Linux executor, with Nix's clang wrapper (`clang: not
+    found`).
 - *Rejected:* mx, GraalVM's build tool, which this project used until the
   measurements above: it reran every check and test on every run and
   needed CI sharding to stay fast. The Nix GraalVM as Bazel's JDK: a local
