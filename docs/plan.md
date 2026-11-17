@@ -972,12 +972,23 @@ collector); each task measures with interleaved A/B runs.
     invalidation at its source, or spill early while the code is new.
   - **Done when** a deep recursion's first run deoptimizes O(1) frames (a test
     counts them), and its time improves on the JVM and natively.
-- [ ] **M9-02 · Baselines that got slower** *(early)*
+- [x] **M9-02 · Baselines that got slower** *(early)*
   - M8's threshold measure found `quicksort` 1.29×, `triangl` 1.19×, `fib`
     1.14×, `fibfp` 1.13× and `startup` 1.08× slower than M7's baselines.
     Bisect each over M8's merges and fix what isn't an accepted trade-off.
   - **Done when** each is back within noise of its M7 baseline, or the
     trade-off that costs it is recorded in design.md.
+  - Done. The bisect used `bench-check`'s metric, interleaved, over every
+    source commit since M7-03. #165's hand-off check, which ran in every
+    compiled prologue, cost `quicksort` 1.36×, `triangl` 1.21×, `fibfp`
+    1.15× and `fib` 1.09×. #181 now checks only at a compilation's root. At
+    `47fc603` against M7-03, 5 interleaved rounds: `quicksort` 0.94×,
+    `triangl` 1.02×, `fib` 1.05×, `fibfp` 1.05×. The rest of `fib`'s and
+    `fibfp`'s gap is M8-01's stack-use count per call (#137: 1.06× and 1.04×
+    at that commit, all of the gap). `startup` is 1.035× on one day (the
+    1.08× compared two days), from the evaluation thread (#139, #142) and
+    the warm-up (#143). Both trade-offs are recorded in design.md
+    ("Stack-depth spill", D17's warm-up).
 - [ ] **M9-03 · The interpreter's per-call cost** *(needs M9-01)*
   - M8-04's profile: Truffle's call path and frame allocation are about 34% of
     an interpreted call, bytecode dispatch about 25%, the capture check after
