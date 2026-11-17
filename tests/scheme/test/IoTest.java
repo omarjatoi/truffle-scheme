@@ -46,6 +46,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import scheme.runtime.SchemeContext;
+import scheme.runtime.value.SConstant;
 import scheme.runtime.value.SPort;
 
 /**
@@ -1163,6 +1164,142 @@ public class IoTest {
     }
 
     /**
+     * A textual input port's {@code read-line} finds the line ending, LF, CR LF or a lone CR, in
+     * the reader's buffer, not a character at a time, and reads exactly what reading a character at
+     * a time did (the {@link LineModel}): a last line without an ending, empty lines, CR LF and CR
+     * split across the buffer's ends, lines longer than the buffer, surrogate pairs, and a peeked
+     * character (a CR or LF among them) before a line, over a buffered reader (files and the
+     * console), a string port and another reader that can mark.
+     */
+    @Test
+    public void readLineFindsTheLineEndingInTheBuffer() throws IOException {
+        Random random = new Random(11);
+        String[] texts = {"", "\n", "\r", "\r\n", "\n\r", "\r\r\n\n", "a", "a\n", "a\r", "a\r\n", "😀", "é\r\n中", lines(random, 300, true),
+                        lines(random, 300, false), lines(random, 3000, true)};
+        for (String text : texts) {
+            for (int size : new int[]{1, 2, 3, 7, 64, 8192}) {
+                readLines(text, SPort.textInput(new java.io.BufferedReader(new CountingReader(text), size), false), random);
+            }
+            readLines(text, SPort.inputString(text), random);
+            readLines(text, SPort.textInput(new CountingReader(text), false), random);
+            // Only read-line: the reader is read in bulk.
+            CountingReader in = new CountingReader(text);
+            List<String> expected = new LineModel(text).lines();
+            SPort port = SPort.textInput(in, false);
+            for (String line : expected) {
+                assertEquals(line, port.readLine().toString());
+            }
+            assertEquals(SConstant.EOF, port.readLine());
+            assertTrue("one-character reads: " + in.singleReads + " for " + text.length(), in.singleReads <= text.length() / 20 + 1);
+            assertTrue("bulk reads: " + in.bulkReads + " for " + expected.size(), in.bulkReads <= 3 * expected.size() + text.length() / 1000 + 2);
+        }
+    }
+
+    /** {@code n} lines of random lengths and characters, each with a random line ending. */
+    private static String lines(Random random, int n, boolean lastEnds) {
+        int[] chars = {'a', ' ', 0xe9, 0xff, 0x4e2d, 0x1F600};
+        String[] endings = {"\n", "\r\n", "\r"};
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < n; i++) {
+            int length = switch (random.nextInt(10)) {
+                case 0 -> 0;
+                case 1 -> random.nextInt(20_000);
+                default -> random.nextInt(200);
+            };
+            int[] alphabet = Arrays.copyOf(chars, 1 + random.nextInt(chars.length));
+            for (int j = 0; j < length; j++) {
+                sb.appendCodePoint(alphabet[random.nextInt(alphabet.length)]);
+            }
+            if (i < n - 1 || lastEnds) {
+                sb.append(endings[random.nextInt(endings.length)]);
+            }
+        }
+        return sb.toString();
+    }
+
+    /** Reads {@code text} from {@code port} with read-line, mixed with the other reads, against the model. */
+    private static void readLines(String text, SPort port, Random random) {
+        LineModel model = new LineModel(text);
+        while (true) {
+            int op = random.nextInt(10);
+            String what = op + " at " + model.pos + " of " + text.length();
+            if (op == 0) {
+                assertEquals(what, model.peek(), port.peekChar());
+            } else if (op == 1) {
+                assertEquals(what, model.read(), port.readChar());
+            } else if (op == 2) {
+                int k = random.nextInt(5);
+                assertEquals(what, model.readString(k), port.readString(k));
+            } else {
+                String line = model.readLine();
+                Object read = port.readLine();
+                assertEquals(what, line == null ? SConstant.EOF : line, line == null ? read : read.toString());
+                if (line == null) {
+                    break;
+                }
+            }
+        }
+        assertEquals(-1, port.peekChar());
+        assertEquals(SConstant.EOF, port.readLine());
+    }
+
+    /** A textual input port as read-line read it before it read in bulk: a character at a time. */
+    private static final class LineModel {
+        private final int[] cps;
+        int pos;
+
+        LineModel(String text) {
+            cps = text.codePoints().toArray();
+        }
+
+        int peek() {
+            return pos < cps.length ? cps[pos] : -1;
+        }
+
+        int read() {
+            int c = peek();
+            pos = Math.min(pos + 1, cps.length);
+            return c;
+        }
+
+        String readString(int k) {
+            if (k > 0 && pos == cps.length) {
+                return null;
+            }
+            int n = Math.min(k, cps.length - pos);
+            pos += n;
+            return new String(cps, pos - n, n);
+        }
+
+        String readLine() {
+            int c = read();
+            if (c < 0) {
+                return null;
+            }
+            StringBuilder sb = new StringBuilder();
+            while (c >= 0 && c != '\n') {
+                if (c == '\r') {
+                    if (peek() == '\n') {
+                        read();
+                    }
+                    break;
+                }
+                sb.appendCodePoint(c);
+                c = read();
+            }
+            return sb.toString();
+        }
+
+        List<String> lines() {
+            List<String> lines = new ArrayList<>();
+            for (String line = readLine(); line != null; line = readLine()) {
+                lines.add(line);
+            }
+            return lines;
+        }
+    }
+
+    /**
      * The port operations compile without performance warnings (design.md D10, "Ports in compiled
      * code"): each kind of port goes through the same procedures, so their compiled code sees a
      * port that isn't a constant, and partial evaluation must reach the port's stream without a
@@ -1171,9 +1308,11 @@ public class IoTest {
      */
     @Test
     public void portOperationsCompileWithoutPerformanceWarnings() throws IOException {
-        // Each iteration reads 3 characters from each textual port and 5 bytes from each binary one.
+        // Each iteration reads a line of 5 characters from each textual port (3 a character or two
+        // at a time, then the rest of the line, ending in LF, CR LF or CR) and 5 bytes from each
+        // binary one.
         int n = 2000;
-        Files.writeString(dir.resolve("in.txt"), "b".repeat(3 * n + 1000));
+        Files.writeString(dir.resolve("in.txt"), "bbbde\r\n".repeat(n + 100));
         Files.write(dir.resolve("in.bin"), new byte[5 * n + 1000]);
         String program = """
                         (define text-out (open-output-file %s))
@@ -1182,7 +1321,10 @@ public class IoTest {
                         (define binary-in (open-binary-input-file %s))
                         (define string-out (open-output-string))
                         (define bytes-out (open-output-bytevector))
-                        (define string-in (open-input-string (make-string (+ (* 3 %d) 1000) #\\a)))
+                        (define string-in
+                          (open-input-string
+                           (let ((p (open-output-string)))
+                             (do ((i 0 (+ i 1))) ((= i (+ %d 100)) (get-output-string p)) (write-string "aaade\n" p)))))
                         (define bytes-in (open-input-bytevector (make-bytevector (+ (* 5 %d) 1000) 7)))
                         (define (text-output p i)
                           (display i p) (write 'x p) (write-char #\\y p) (write-string "z" p) (newline p)
@@ -1193,7 +1335,7 @@ public class IoTest {
                         ;; Each returns the number of characters or bytes it read.
                         (define (text-input p)
                           (char-ready? p) (peek-char p)
-                          (+ (if (char? (read-char p)) 1 0) (string-length (read-string 2 p))))
+                          (+ (if (char? (read-char p)) 1 0) (string-length (read-string 2 p)) (string-length (read-line p))))
                         (define (binary-input p)
                           (u8-ready? p) (peek-u8 p)
                           (+ (if (integer? (read-u8 p)) 1 0) (bytevector-length (read-bytevector 2 p))
@@ -1211,7 +1353,7 @@ public class IoTest {
                             (loop (+ i 1))))
                         (close-port text-out)
                         (close-port binary-out)
-                        (unless (and (= chars (* 9 %d)) (= bytes (* 10 %d))
+                        (unless (and (= chars (* 15 %d)) (= bytes (* 10 %d))
                                      (= (string-length (get-output-string string-out)) %d)
                                      (= (bytevector-length (get-output-bytevector bytes-out)) (* 3 %d)))
                           (error "wrong input or in-memory output" chars bytes))
@@ -1220,7 +1362,7 @@ public class IoTest {
         Path log = Files.createTempFile(dir, "engine", ".log");
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         Context.Builder builder = Context.newBuilder(SCHEME).allowIO(IOAccess.ALL).allowExperimentalOptions(true).out(out).in(
-                        new ByteArrayInputStream("c".repeat(3 * n).getBytes(StandardCharsets.UTF_8))).option("log.file", log.toString());
+                        new ByteArrayInputStream("cccde\r".repeat(n).getBytes(StandardCharsets.UTF_8))).option("log.file", log.toString());
         builder.option("engine.Compilation", "true").option("engine.CompileImmediately", "false").option("engine.BackgroundCompilation", "false");
         builder.option("engine.SingleTierCompilationThreshold", "100").option("engine.FirstTierCompilationThreshold", "100");
         builder.option("engine.LastTierCompilationThreshold", "500");

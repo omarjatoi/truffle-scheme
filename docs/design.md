@@ -1027,7 +1027,7 @@ Each entry: the decision, why, and what was rejected.
 | complex | `SComplex { real, imag }`. Both parts are real numbers of the **same exactness**: exact (`long`, `SBigInteger` or `SRational`) or inexact (`double`). Mixing exactness makes both parts inexact. |
 | boolean | `boolean` |
 | char | `SChar` (`int` code point), with a cache for 0–255 |
-| string | `SString`: Latin-1 `byte[]` until a character above 255 is stored, then UTF-32 `int[]`. Indexing and `string-set!` are O(1). Literals carry an immutable flag. `substring`, `string-append` and `string-copy!` copy between strings of one storage with an array copy (M8-04). |
+| string | `SString`: Latin-1 `byte[]` until a character above 255 is stored, then UTF-32 `int[]`. Indexing and `string-set!` are O(1). Literals carry an immutable flag. `substring`, `string-append` and `string-copy!` copy between strings of one storage with an array copy (M8-04). A string from Java text (a `String`, or a reader's `char[]`) is built in one pass: Latin-1 bytes until the first unit above 255, then code points (M10-05's follow-up; `codePoints().toArray()` and two more passes until then). |
 | symbol | `SSymbol`, interned per context (held weakly, so a symbol nothing refers to is collected; M8-02), name is a `TruffleString` |
 | pair | `SPair`, mutable `car`/`cdr` fields |
 | vector / bytevector | `SVector` (`long[]` while every element is a fixnum, `double[]` while every element is a flonum, otherwise `Object[]`, generalizing for good on the first store that doesn't fit; M5-06) / `SBytevector` (`byte[]`), each with an immutable flag for literals |
@@ -1456,7 +1456,18 @@ Each entry: the decision, why, and what was rejected.
   0.09 s included opening the file and summing every byte). `read-string`
   asks the reader for as many UTF-16 units as characters are still wanted,
   so it never reads past them, and pairs a high surrogate that ends a read
-  with the low one after it. `u8-ready?` on a file is still always `#t`:
+  with the low one after it. `read-line` finds the line ending in the
+  buffer too (`SPort.readLine`, M10-05's follow-up), where it read a
+  character at a time: a file's or the console's `BufferedReader` with its
+  own `readLine`, which ends a line where we did, at LF, CR LF or a CR
+  alone, and skips the LF after a CR on its next read, so a CR typed at the
+  console ends a line without waiting for the next character; a string
+  port's reader in chunks of 128 to 8192 units, marked so that it goes back
+  to the line's end. Each line goes straight into an `SString` (D1: one
+  pass). A 10 MB file of 200,000 lines takes 0.037 s once compiled, against
+  0.079 s, and `read-string` of a whole 10 MB file 0.011 s, against 0.020 s,
+  when it is ASCII (0.039 s against 0.045 s when 10% of its lines are wide,
+  so the string is too). `u8-ready?` on a file is still always `#t`:
   a read of a file never blocks, and at its end, where the stream's
   `available()` is 0, R7RS §6.13.2 says *"If port is at end of file, then
   u8-ready? returns #t"* (chibi-scheme answers `#f` there). The context

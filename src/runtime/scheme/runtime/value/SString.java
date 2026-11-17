@@ -40,6 +40,26 @@ public final class SString implements TruffleObject {
         return fromJava(s, true);
     }
 
+    /**
+     * A new mutable string of the UTF-16 text in {@code chars} from {@code offset}, {@code length}
+     * units long: what a reader read, without a {@code String} in between. A surrogate pair in the
+     * range is one character, as in {@link #of(String)}; a half of one at either end of the range
+     * is a lone surrogate.
+     */
+    @TruffleBoundary
+    public static SString of(char[] chars, int offset, int length) {
+        java.util.Objects.checkFromIndexSize(offset, length, chars.length);
+        byte[] bytes = new byte[length];
+        for (int i = 0; i < length; i++) {
+            char c = chars[offset + i];
+            if (c > 0xff) {
+                return wide(bytes, i, chars, offset, length, false);
+            }
+            bytes[i] = (byte) c;
+        }
+        return new SString(bytes, null, length, false);
+    }
+
     /** A new mutable string of {@code length} copies of {@code codePoint}. */
     public static SString make(int length, int codePoint) {
         if (codePoint <= 0xff) {
@@ -52,24 +72,47 @@ public final class SString implements TruffleObject {
         return new SString(null, cps, length, false);
     }
 
+    /**
+     * One pass over the text: Latin-1 bytes while every unit is at most 255, which is one character
+     * each (a surrogate is above 255); at the first unit above, the code points so far and the rest.
+     */
     @TruffleBoundary
     private static SString fromJava(String s, boolean immutable) {
-        int[] cps = s.codePoints().toArray();
-        boolean narrow = true;
-        for (int cp : cps) {
-            if (cp > 0xff) {
-                narrow = false;
-                break;
+        int length = s.length();
+        byte[] bytes = new byte[length];
+        for (int i = 0; i < length; i++) {
+            char c = s.charAt(i);
+            if (c > 0xff) {
+                // A String with a unit above 255 holds UTF-16, so its array is a copy of that.
+                return wide(bytes, i, s.toCharArray(), 0, length, immutable);
+            }
+            bytes[i] = (byte) c;
+        }
+        return new SString(bytes, null, length, immutable);
+    }
+
+    /**
+     * The UTF-32 string of the {@code units} UTF-16 units in {@code chars} from {@code offset}, whose
+     * first {@code start} units are Latin-1 and in {@code latin1} already: pairs a high surrogate
+     * with the low one after it, as {@code String.codePoints()} does, and leaves a lone one as it
+     * is. The text has at most {@code units} code points, so the array is trimmed only if a pair
+     * made it shorter.
+     */
+    private static SString wide(byte[] latin1, int start, char[] chars, int offset, int units, boolean immutable) {
+        int[] cps = new int[units];
+        for (int i = 0; i < start; i++) {
+            cps[i] = latin1[i] & 0xff;
+        }
+        int n = start;
+        for (int i = start; i < units; i++) {
+            char c = chars[offset + i];
+            if (Character.isHighSurrogate(c) && i + 1 < units && Character.isLowSurrogate(chars[offset + i + 1])) {
+                cps[n++] = Character.toCodePoint(c, chars[offset + ++i]);
+            } else {
+                cps[n++] = c;
             }
         }
-        if (!narrow) {
-            return new SString(null, cps, cps.length, immutable);
-        }
-        byte[] bytes = new byte[cps.length];
-        for (int i = 0; i < cps.length; i++) {
-            bytes[i] = (byte) cps[i];
-        }
-        return new SString(bytes, null, cps.length, immutable);
+        return new SString(null, n == units ? cps : java.util.Arrays.copyOf(cps, n), n, immutable);
     }
 
     public int length() {
