@@ -34,6 +34,7 @@ public final class SchemeType implements TruffleObject {
     public static final SchemeType EOF_OBJECT = new SchemeType("eof-object");
     public static final SchemeType ERROR_OBJECT = new SchemeType("error-object");
     public static final SchemeType ENVIRONMENT = new SchemeType("environment");
+    public static final SchemeType PROMISE = new SchemeType("promise");
     public static final SchemeType RECORD_TYPE = new SchemeType("record-type");
     public static final SchemeType UNSPECIFIED = new SchemeType("unspecified");
     public static final SchemeType DEFAULT_OBJECT = new SchemeType("default-object");
@@ -79,6 +80,8 @@ public final class SchemeType implements TruffleObject {
             return ERROR_OBJECT;
         } else if (value instanceof SEnvironment) {
             return ENVIRONMENT;
+        } else if (value instanceof SPromise) {
+            return PROMISE;
         } else if (value instanceof SRecordType) {
             return RECORD_TYPE;
         } else if (value instanceof MultipleValues) {

@@ -395,6 +395,7 @@ Each entry: the decision, why, and what was rejected.
 | procedure | `SClosure { RootCallTarget, Object[] captured }` |
 | multiple values | a single value is returned as itself; zero or 2+ values are a `MultipleValues` (`Object[]`) |
 | record | `SRecord { SRecordType }`, a static object of Truffle's Static Object Model whose fields are its record fields (M7-04) |
+| promise | `SPromise { State }`, `State { done, value }`: R7RS §7.3's promise and the state a forced `delay-force` chain shares (D9) |
 
 - `eq?` compares `long`, `double` (as `eqv?` does), `SChar` and `boolean` by
   value and everything else by identity, so boxing never leaks into results: a
@@ -442,7 +443,12 @@ Each entry: the decision, why, and what was rejected.
   Truffle call, index unboxing and an array bounds check per access: what
   M7-04 replaced); a shape per record type (a generated class per evaluation
   of a definition, so a definition in a loop or in `eval` makes classes
-  without bound; the type check it would save is one field load).
+  without bound; the type check it would save is one field load); promises
+  as pairs whose car is a unique tag (what they were until promises got a
+  type: `pair?` held for them, and `car` and `set-car!` took them apart);
+  promises as a record type of the prelude's (they would write as
+  `#<record promise>` and show interop their state as members, for no gain
+  in speed over `SPromise`).
 
 ### D2. Closures: flat closures with assignment conversion
 
@@ -693,7 +699,14 @@ Each entry: the decision, why, and what was rejected.
 - `exit` runs all outstanding after-thunks through `rewind`, then exits the
   context through Truffle. `emergency-exit` skips the after-thunks.
 - `delay`, `delay-force` and `make-promise` use the space-safe reference
-  implementation from §7.3.
+  implementation from §7.3. A promise is a type of its own (`SPromise`, D1;
+  R7RS §3.2 doesn't list promises among the disjoint types, but nothing says
+  a promise may be a pair, and one that is lets `car` and `set-car!` take
+  it apart): its state, done and the value or not done and the thunk, is an
+  object the promises of a forced `delay-force` chain share, so `force`
+  (lazy.scm) loops in constant space. A promise forced again while it is
+  being forced keeps the value of the forcing that completes first, and
+  `make-promise` of a promise is that promise (§4.2.5).
 - Unicode: use the JDK's tables. Character procedures use simple case
   mapping, string procedures use full case mapping (`(string-upcase "ß")` is
   `"SS"`), and everything uses `Locale.ROOT`, never the default locale.
@@ -746,8 +759,8 @@ Each entry: the decision, why, and what was rejected.
   - Meta objects are R7RS §3.2's disjoint types, named as their predicates
     without `?` (`boolean`, `number`, `char`, `string`, `symbol`, `pair`,
     `null`, `vector`, `bytevector`, `procedure`, `port`, `eof-object`), plus
-    `error-object`, `environment`, `record-type`, `unspecified` and
-    `values`; a record's meta object is its record type. `long`, `double`
+    `error-object`, `environment`, `promise`, `record-type`,
+    `unspecified` and `values`; a record's meta object is its record type. `long`, `double`
     and `boolean` get theirs, and their Scheme display strings (`#t`,
     `+inf.0`), through `getLanguageView`.
   - Errors and exit: an error a call doesn't handle surfaces as a

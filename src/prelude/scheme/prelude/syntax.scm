@@ -155,8 +155,8 @@
            (cl (params body0 ...) ...)))))))
 
 ;; Promises (R7RS §4.2.5): the space-safe reference implementation of §7.3 (design.md D9). A promise
-;; is (%promise-tag . box), and box is (done? . value-or-thunk); forcing a delay-force chain shares
-;; one box, so iterative lazy algorithms run in constant space.
+;; is an SPromise whose state is done? and the value or thunk; forcing a delay-force chain shares
+;; one state, so iterative lazy algorithms run in constant space (lazy.scm).
 (define-syntax delay-force
   (syntax-rules ()
     ((delay-force expression) (%make-promise #f (lambda () expression)))))
