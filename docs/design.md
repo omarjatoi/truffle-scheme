@@ -1398,7 +1398,16 @@ Each entry: the decision, why, and what was rejected.
   ports, textual and binary, write to an 8 KB buffer over the
   `TruffleFile`'s stream (binary ones wrote each `write-u8` through until
   then: writing 10 MB with `write-u8` took 18 s, against 0.26 s buffered,
-  and in 16-byte `write-bytevector`s 1.3 s, against 0.22 s). The context
+  and in 16-byte `write-bytevector`s 1.3 s, against 0.22 s). Input file
+  ports read through an 8 KB buffer too: the textual one through
+  `TruffleFile.newBufferedReader`'s `BufferedReader`, the binary one through
+  a `BufferedInputStream` over the file's stream, which until then it read
+  once per byte (reading 10 MB took 4.3 s with `read-u8` and 4.1 s in
+  4096-byte `read-bytevector`s, which read a byte at a time too, against
+  0.26 s and 0.09 s buffered). `u8-ready?` on a file is still always `#t`:
+  a read of a file never blocks, and at its end, where the stream's
+  `available()` is 0, R7RS §6.13.2 says *"If port is at end of file, then
+  u8-ready? returns #t"* (chibi-scheme answers `#f` there). The context
   tracks the ports it opened (`OpenFiles`), and `flushOutput` writes out what
   they hold wherever it writes out standard output: when control goes back
   to the caller (so after a program ends, normally or with an uncaught
