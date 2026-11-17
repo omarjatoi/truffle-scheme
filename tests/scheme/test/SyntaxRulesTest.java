@@ -252,6 +252,33 @@ public class SyntaxRulesTest {
                         (write (f))"""));
     }
 
+    /**
+     * R7RS §4.3.2: a pattern datum matches input that is {@code equal?} to it. Erratum 10 adds
+     * bytevectors to {@code <pattern datum>}; numbers match by {@code equal?} too, so 1/2, a bignum
+     * and an exact complex match themselves and nothing of another exactness.
+     */
+    @Test
+    public void patternDatumsMatchByEqual() {
+        String m = """
+                        (define-syntax d
+                          (syntax-rules ()
+                            ((_ #u8(1 2)) 'bytevector)
+                            ((_ 1/2) 'ratio)
+                            ((_ 123456789012345678901234567890) 'bignum)
+                            ((_ 1+2i) 'complex)
+                            ((_ 2.5) 'flonum)
+                            ((_ "s") 'string)
+                            ((_ #\\c) 'char)
+                            ((_ x) 'other)))
+                        """;
+        assertEquals("(bytevector other other ratio other bignum complex flonum other string char other)",
+                        run(m + """
+                                        (write (list (d #u8(1 2)) (d #u8(1 2 3)) (d #u8())
+                                                     (d 1/2) (d 0.5)
+                                                     (d 123456789012345678901234567890)
+                                                     (d 1+2i) (d 2.5) (d 5/2) (d "s") (d #\\c) (d #\\C)))"""));
+    }
+
     @Test
     public void errors() {
         assertTrue(error("(define-syntax m (syntax-rules () ((_ a) a))) (m)").getMessage().contains("no syntax-rules pattern matches"));

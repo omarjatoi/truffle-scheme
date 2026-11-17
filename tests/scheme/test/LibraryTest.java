@@ -207,4 +207,22 @@ public class LibraryTest {
         // A program with explicit imports (R7RS §5.1) still works.
         assertEquals("ok", run("(import (scheme base) (scheme write)) (display 'ok)"));
     }
+
+    /**
+     * R7RS erratum 22: "In Appendix A, the (scheme r5rs) library should export syntax-rules,
+     * else, ..., => and _." Without them, a program on (scheme r5rs) alone couldn't write a macro.
+     */
+    @Test
+    public void r5rsExportsSyntaxRulesAndItsAuxiliarySyntax() {
+        assertEquals("(ok 3 other)", run("""
+                        (import (only (scheme r5rs) define-syntax syntax-rules else => _ ... quote list cond case lambda car cdr)
+                                (only (scheme write) write))
+                        (define-syntax m
+                          (syntax-rules (else =>)
+                            ((_ else => _ ...) 'ok)
+                            ((_ x ...) 'other)))
+                        (write (list (m else => 1 2)
+                                     (cond (#f 1) ((list 1 2 3) => (lambda (l) (car (cdr (cdr l))))))
+                                     (case 1 ((2) 'two) (else 'other))))"""));
+    }
 }
