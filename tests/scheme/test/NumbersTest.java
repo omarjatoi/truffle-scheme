@@ -63,6 +63,51 @@ public class NumbersTest {
         assertEquals("(1.0 0.0 2.0)", write("(list (exp 0) (log 1) (log 100 10))"));
     }
 
+    /**
+     * R7RS §6.2.6: inexact "returns an inexact representation of z. The value returned is the
+     * inexact number that is numerically closest to the argument", so a rational rounds once to
+     * the nearest flonum, ties to even, also just next to a tie, at the subnormals and at the
+     * overflow threshold; the reader's #i rationals alike.
+     */
+    @Test
+    public void inexactRationalsRoundToNearest() {
+        assertEquals("(0.2500000000000001 0.125 0.12500000000000006 0.12500000000000003 0.125 0.2500000000000001)", write("""
+                        (list (inexact 9007199254740995/36028797018963968) (inexact 9007199254740993/72057594037927936)
+                              (inexact 9007199254740997/72057594037927936)
+                              (inexact (/ 11417981541647680316116887983825362587765178369 (expt 2 156)))
+                              (inexact (/ 11417981541647680316116887983825362587765178367 (expt 2 156)))
+                              #i9007199254740995/36028797018963968)"""));
+        assertEquals("(#t #t #t 1.7976931348623157e+308 +inf.0 -0.3333333333333333)", write("""
+                        (list (eqv? (inexact (/ 3 (expt 2 1075))) 1e-323) (eqv? (inexact (/ 1 (expt 2 1075))) 0.)
+                              (eqv? (inexact (/ -1 (expt 2 1076))) -0.)
+                              (inexact (/ (- (expt 2 1025) (expt 2 971) 1) 2)) (inexact (/ (+ (- (expt 2 1025) (expt 2 971)) 1) 2))
+                              (inexact -1/3))"""));
+    }
+
+    /**
+     * R7RS §6.2.7: number->string returns "an external representation of the given number in the
+     * given radix such that (eqv? number (string->number (number->string number radix) radix)) is
+     * true", and "it is an error if no possible result makes this expression true", which "can
+     * occur only when z is not a complex number or is a complex number with a non-rational real or
+     * imaginary part". Decimals are radix 10 only (§7.1.1 &lt;decimal 10&gt;), so an inexact number in
+     * radix 2, 8 or 16 is written as #i and the exact rational it equals; infinities and NaNs are
+     * written as in every radix.
+     */
+    @Test
+    public void inexactNumbersInOtherRadixesReadBack() {
+        assertEquals("(\"#i1/10\" \"#iff\" \"#i-11/10\" \"#i0\" \"+inf.0\" \"-inf.0\" \"+nan.0\")", write(
+                        "(list (number->string .5 2) (number->string 255. 16) (number->string -1.125 8) (number->string 0. 2) (number->string +inf.0 2) (number->string -inf.0 8) (number->string +nan.0 16))"));
+        assertEquals("(\"#i11/10+1/100i\" \"#i1+inf.0i\" \"#i-1/10-1i\")", write("(list (number->string 1.5+.25i 2) (number->string 1.+inf.0i 16) (number->string -.5-1.i 2))"));
+        assertEquals("#t", write("""
+                        (let loop ((zs (list .5 255. -1.125 0. 1e300 5e-324 .1 -1e-10 +inf.0 -inf.0 1.5+.25i -.5-1.i 1.+inf.0i)))
+                          (or (null? zs)
+                              (and (let each ((radixes '(2 8 10 16)))
+                                     (or (null? radixes)
+                                         (and (eqv? (car zs) (string->number (number->string (car zs) (car radixes)) (car radixes)))
+                                              (each (cdr radixes)))))
+                                   (loop (cdr zs)))))"""));
+    }
+
     @Test
     public void signedZerosAndBranchCuts() {
         // M4-12 (Larceny's inexact and complex tests): negation flips a zero's sign, abs clears it.

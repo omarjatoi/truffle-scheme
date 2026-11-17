@@ -394,7 +394,12 @@ final class NumberPrimitives {
         }
     }
 
-    /** {@code (number->string z [radix])}: radix 2, 8, 10 or 16; inexact numbers in radix 10. */
+    /**
+     * {@code (number->string z [radix])}: radix 2, 8, 10 or 16. The result reads back as z in
+     * that radix (R7RS §6.2.7). Decimals are radix 10 only (§7.1.1), so in another radix an inexact
+     * number is written as {@code #i} and the exact rational it equals, its infinities and NaNs as
+     * in radix 10.
+     */
     static final class NumberToString extends PrimitiveNode {
         @Override
         public Object invoke(Object[] args) {
@@ -405,17 +410,25 @@ final class NumberPrimitives {
         private static String convert(Object z, Object radixValue) {
             Arithmetic.check("number->string", z);
             int radix = radix("number->string", radixValue);
-            if (radix == 10 || !Arithmetic.isExact(z)) {
+            if (radix == 10 || (z instanceof Double d && !Double.isFinite(d))) {
                 return Printer.print(z, Printer.Mode.DISPLAY);
             }
+            String prefix = Arithmetic.isExact(z) ? "" : "#i";
             if (z instanceof SComplex c) {
                 String im = real(c.imag, radix);
-                return real(c.real, radix) + (im.startsWith("-") ? "" : "+") + im + "i";
+                return prefix + real(c.real, radix) + (im.startsWith("-") || im.startsWith("+") ? "" : "+") + im + "i";
             }
-            return real(z, radix);
+            return prefix + real(z, radix);
         }
 
         private static String real(Object x, int radix) {
+            if (x instanceof Double d) {
+                if (!Double.isFinite(d)) {
+                    return Printer.print(d, Printer.Mode.DISPLAY);
+                }
+                // -0.0 has no exact counterpart; "#i-0" reads back as 0.0.
+                return (d == 0 && 1 / d < 0 ? "-" : "") + real(Arithmetic.exact("number->string", d), radix);
+            }
             String n = Arithmetic.numerator(x).toString(radix);
             return x instanceof SRational ? n + "/" + Arithmetic.denominator(x).toString(radix) : n;
         }
