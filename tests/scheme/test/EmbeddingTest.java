@@ -14,6 +14,8 @@ import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.PolyglotException;
@@ -160,6 +162,74 @@ public class EmbeddingTest {
             assertEquals(1, it.getIteratorNextElement().asInt());
             eval(context, "(set-car! (cdr mutable) 20)");
             assertEquals(20, it.getIteratorNextElement().asInt());
+        }
+    }
+
+    /**
+     * A pair that doesn't start a proper list (an improper list's, a circular list's) is also an
+     * object whose members are car and cdr, so Java sees an improper list's last cdr, which the
+     * iterator leaves out; both are writable, as set-car! and set-cdr! write them. A proper list has
+     * no members, so a Java Object is an Iterable of its elements, as before.
+     */
+    @Test
+    public void pairsOfImproperListsHaveCarAndCdrMembers() {
+        try (Context context = context()) {
+            Value improper = eval(context, "'(1 2 . 3)");
+            assertTrue(improper.hasIterator());
+            assertTrue(improper.hasMembers());
+            assertEquals(Set.of("car", "cdr"), improper.getMemberKeys());
+            assertEquals(1, improper.getMember("car").asInt());
+            Value second = improper.getMember("cdr");
+            assertEquals(2, second.getMember("car").asInt());
+            assertEquals(3, second.getMember("cdr").asInt());
+            assertFalse(improper.hasMember("cadr"));
+            assertNull(improper.getMember("cadr"));
+            assertFalse(second.getMember("cdr").hasMembers());
+            assertTrue(eval(context, "(cons 1 2)").hasMembers());
+            // Writable, and Scheme sees the writes.
+            Value pair = eval(context, "(define p (cons 1 (cons 2 3))) p");
+            pair.putMember("car", "one");
+            pair.getMember("cdr").putMember("cdr", 30);
+            assertEquals("(\"one\" 2 . 30)", eval(context, "p").toString());
+            assertThrows(UnsupportedOperationException.class, () -> pair.putMember("cadr", 1));
+            // A circular list isn't proper: members, and the iterator walks it as before.
+            Value circular = eval(context, "(define c (list 1 2)) (set-cdr! (cdr c) c) c");
+            assertTrue(circular.hasMembers());
+            assertEquals(2, circular.getMember("cdr").getMember("car").asInt());
+            Value it = circular.getIterator();
+            assertEquals(1, it.getIteratorNextElement().asInt());
+            assertEquals(2, it.getIteratorNextElement().asInt());
+            assertEquals(1, it.getIteratorNextElement().asInt());
+            // An improper list as a Java Object is a Map of its members.
+            assertTrue(improper.as(Object.class) instanceof Map<?, ?> map && map.keySet().equals(Set.of("car", "cdr")));
+        }
+    }
+
+    @Test
+    public void properListsHaveNoMembers() {
+        try (Context context = context()) {
+            Value list = eval(context, "(define l (list 1 2)) l");
+            assertTrue(list.hasIterator());
+            assertFalse(list.hasMembers());
+            assertFalse(list.hasMember("car"));
+            assertThrows(UnsupportedOperationException.class, () -> list.getMember("car"));
+            assertThrows(UnsupportedOperationException.class, () -> list.putMember("car", 0));
+            assertFalse(eval(context, "'()").hasMembers());
+            // As a Java Object (a host method's Object parameter), an Iterable of its elements.
+            Object converted = list.as(Object.class);
+            assertTrue(converted.getClass().getName(), converted instanceof Iterable<?> && !(converted instanceof Map<?, ?>));
+            List<Object> items = new ArrayList<>();
+            ((Iterable<?>) converted).forEach(items::add);
+            assertEquals("[1, 2]", items.toString());
+            List<Long> longs = new ArrayList<>();
+            for (Long item : list.as(new TypeLiteral<Iterable<Long>>() {
+            })) {
+                longs.add(item);
+            }
+            assertEquals(List.of(1L, 2L), longs);
+            // set-cdr! can make it improper: the answer follows.
+            eval(context, "(set-cdr! (cdr l) 3)");
+            assertTrue(list.hasMembers());
         }
     }
 
