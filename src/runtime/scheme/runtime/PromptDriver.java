@@ -35,8 +35,8 @@ import scheme.runtime.value.SClosure;
  * segments"); a flattened prompt marker just passes the value on;</li>
  * <li>a {@link TailCall}: perform it;</li>
  * <li>a {@link Capture}: complete it here, or, if it is for another prompt, pass it on outward with
- * this prompt's pending segments and itself (as a marker) added;</li>
- * <li>an {@link InvokeContinuation} (full continuation): only the root prompt handles it;</li>
+ * this prompt's pending segments and itself (as a marker) added; an APPLY capture (a full
+ * continuation invoked) only the root prompt handles, and the others pass it on as it is;</li>
  * <li>an {@link EscapeException} (M5-04): the {@code %call/ec} prompt it is for returns its value;
  * a driver holding that prompt's marker drops the pending segments up to it.</li>
  * </ul>
@@ -119,6 +119,17 @@ final class PromptDriver extends Node {
                         case REINSTATE: {
                             // Composable continuation: its segments go on top of the invoker's.
                             pending = SegmentList.concat(capture.continuation.segments, capture.segmentsBefore(pending));
+                            value = capture.takeValue();
+                            continue;
+                        }
+                        case APPLY: {
+                            // A full continuation invoked: it replaces the current one, up to the
+                            // root prompt (design.md "Continuations").
+                            if (tag != Capture.ROOT_TAG) {
+                                return capture;
+                            }
+                            pending = capture.continuation.segments;
+                            context.setDynamicEnv(capture.continuation.dynEnv);
                             value = capture.takeValue();
                             continue;
                         }
@@ -262,13 +273,6 @@ final class PromptDriver extends Node {
                     throw e;
                 }
                 pending = marker.tail;
-                value = e.value;
-            } catch (InvokeContinuation e) {
-                if (tag != Capture.ROOT_TAG) {
-                    throw e;
-                }
-                pending = e.continuation.segments;
-                context.setDynamicEnv(e.continuation.dynEnv);
                 value = e.value;
             }
         }

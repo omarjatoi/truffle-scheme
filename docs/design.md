@@ -276,6 +276,33 @@ full R7RS-small conformance comes first.
   during a resume, the segments not yet resumed are added to the new capture.
   Re-entry therefore costs O(1) Java stack depth, and captures share segments
   that are already on the heap.
+- **Invoking a full continuation returns; it doesn't throw.** The prelude's
+  `%continue` rewinds, then `%apply-continuation` returns an APPLY `Capture`
+  (the continuation and its values), which travels up like any capture:
+  each frame it passes suspends with nothing kept (`Capture.addSegment` drops
+  the frame), every other prompt passes it on as it is, and the root prompt's
+  driver replaces its pending segments with the continuation's and resumes
+  them. It was an `InvokeContinuation` exception thrown to the root prompt.
+  - *Why.* An exception that passes the host-compiled interpreter
+    (`continueAt`, with `Call`, the trampoline and `OptimizedDirectCallNode`
+    inlined into it) needs the exception edges of the inlined calls, and Graal
+    leaves out an edge whose profile says nothing was thrown there. In
+    `puzzle`, whose `k` is invoked from inside a `do` loop (so it is a full
+    continuation: the loop is a lambda), the throw left through the
+    trampoline's Truffle loop (#167), and every throw then deoptimized
+    `continueAt` (`not_compiled_exception_handler` at
+    `OptimizedDirectCallNode.call`, bci 27, its `handleException`) and it was
+    compiled again without the edge, about every 250 ms for as long as the
+    program ran, although every invoke on the way had recorded the exception
+    by then: 16 recompilations in a 4 s run, against 1 before #167, where the
+    same edge was learnt after one. Lower host compile thresholds
+    (`-XX:CompileThresholdScaling=0.05`) or `-Djdk.graal.UseExceptionProbability=false`
+    also end it, but they are the JVM's settings, not ours. Returning keeps
+    the transfer in the code the host compiler sees taken: `puzzle` in the
+    interpreter 7.3 s → 4.7 s (count 100; 4.7 s before #167).
+  - Escape-only `k` (`%call/ec`, below) still throws `EscapeException`, which
+    could meet the same host deoptimization: none of the benchmarks' escapes
+    does (their `k` is tail-called back to its prompt, which doesn't throw).
 - **Segments are immutable once shared.** Each resume of a segment that a
   continuation can reach copies the frame. This is correct only because of
   assignment conversion (D2): the frame holds no mutable Scheme variables,

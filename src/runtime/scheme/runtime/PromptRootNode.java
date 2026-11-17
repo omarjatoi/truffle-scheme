@@ -43,13 +43,7 @@ public final class PromptRootNode extends RootNode {
         DynEnv outer = context.getDynamicEnv();
         StackBudget.enterRoot(context);
         try {
-            Object first;
-            try {
-                first = body.call(NO_ARGUMENTS);
-            } catch (InvokeContinuation e) {
-                context.setDynamicEnv(e.continuation.dynEnv);
-                return driver.run(frame, Capture.ROOT_TAG, e.value, e.continuation.segments, context);
-            }
+            Object first = body.call(NO_ARGUMENTS);
             return driver.run(frame, Capture.ROOT_TAG, first, null, context);
         } catch (SchemeError e) {
             return driver.leave(frame, e, outer, context);

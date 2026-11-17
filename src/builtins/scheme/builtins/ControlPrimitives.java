@@ -13,7 +13,6 @@ import scheme.runtime.Capture;
 import scheme.runtime.Continuation;
 import scheme.runtime.DynEnv;
 import scheme.runtime.Intrinsics;
-import scheme.runtime.InvokeContinuation;
 import scheme.runtime.PrimitiveNode;
 import scheme.runtime.PrimitiveRootNode;
 import scheme.runtime.PrimitiveSpec;
@@ -230,9 +229,9 @@ final class ControlPrimitives {
     }
 
     /**
-     * Continuation transfers for the prelude's %continue (control.scm). None calls Scheme (rule 1):
-     * {@code %apply-continuation} throws to the root prompt, {@code %reinstate} returns a request that
-     * travels to the nearest prompt.
+     * Continuation transfers for the prelude's %continue (control.scm). None calls Scheme (rule 1),
+     * and none throws: each returns a request ({@link Capture}) that travels up the stack,
+     * {@code %apply-continuation}'s to the root prompt, {@code %reinstate}'s to the nearest prompt.
      */
     static final class ContinuationOps extends PrimitiveNode {
         static final int APPLY = 0;
@@ -251,7 +250,7 @@ final class ControlPrimitives {
             Continuation k = continuation(args[1]);
             switch (kind) {
                 case APPLY:
-                    throw new InvokeContinuation(k, values(args[2]));
+                    return Capture.apply(k, values(args[2]), SchemeContext.get(this).getDynamicEnv());
                 case REINSTATE:
                     return Capture.reinstate(k, values(args[2]), SchemeContext.get(this).getDynamicEnv());
                 case COMPOSABLE:

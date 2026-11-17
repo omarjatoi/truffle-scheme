@@ -880,7 +880,10 @@ load rule.
     every 250 ms (`not_compiled_exception_handler` in
     `OptimizedDirectCallNode.call`). `-Djdk.graal.UseExceptionProbability=false`
     ends that (`puzzle` 0.57 times) but slows most short first runs by 10-30%
-    (1.013 times overall, 44 programs), so it isn't used. A loop branches once per iteration
+    (1.013 times overall, 44 programs), so it isn't used. Fixed instead by
+    invoking a full continuation (`puzzle`'s `k`, which a loop's lambda refers
+    to, so it isn't escape-only) with a returned request, not an exception
+    (design.md "Continuations"). A loop branches once per iteration
     (design.md "Calls and tail calls"): 0.985 on the six longest programs. What
     an interpreted call costs, from builds with a piece removed (`tak` and
     `fib` with small inputs, 3 interleaved runs): the capture check after it

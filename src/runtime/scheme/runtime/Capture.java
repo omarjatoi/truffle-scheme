@@ -20,6 +20,11 @@ import com.oracle.truffle.api.library.ExportMessage;
  * {@link #tag}, aborts to it, and calls the receiver there with the (composable) continuation.</li>
  * <li>{@link Kind#REINSTATE}: invoking a composable continuation. Captures up to the nearest prompt
  * of any tag, then pushes the continuation's segments on top and resumes them with {@link #value}.</li>
+ * <li>{@link Kind#APPLY}: invoking a full continuation ({@code %apply-continuation}). Abandons the
+ * current continuation up to the root prompt, which resumes the continuation's segments instead,
+ * with {@link #value}. The frames it passes are abandoned, so it keeps none of them: it travels up
+ * as a returned value, not as a Java exception, whose handlers the host compiler may have left out
+ * of the compiled interpreter (design.md "Continuations").</li>
  * <li>{@link Kind#SPILL}: stack-depth spill. A call site past the depth threshold captures up to
  * the root prompt instead of calling; the root prompt makes the call ({@link #value}, an argument
  * array with the procedure at index 0) on a fresh Java stack. Only the root prompt's driver can
@@ -56,6 +61,7 @@ public final class Capture implements TruffleObject {
         FULL,
         DELIMITED,
         REINSTATE,
+        APPLY,
         SPILL,
         TORTURE
     }
@@ -152,9 +158,9 @@ public final class Capture implements TruffleObject {
     public final Object receiver;
     /** The dynamic environment when the capture started. */
     public final DynEnv dynEnv;
-    /** For REINSTATE. */
+    /** For REINSTATE and APPLY. */
     public final Continuation continuation;
-    /** The value to go on with (REINSTATE, TORTURE), or the spilled call's arguments (SPILL). */
+    /** The value to go on with (REINSTATE, APPLY, TORTURE), or the spilled call's arguments (SPILL). */
     private Object value;
     /**
      * Segments and prompt markers, innermost first: the cells of the list {@link #segmentsBefore}
@@ -204,6 +210,10 @@ public final class Capture implements TruffleObject {
         return new Capture(Kind.REINSTATE, null, null, dynEnv, continuation, value);
     }
 
+    public static Capture apply(Continuation continuation, Object value, DynEnv dynEnv) {
+        return new Capture(Kind.APPLY, ROOT_TAG, null, dynEnv, continuation, value);
+    }
+
     public static Capture torture(Object value, DynEnv dynEnv) {
         return new Capture(Kind.TORTURE, ROOT_TAG, null, dynEnv, null, value);
     }
@@ -212,8 +222,14 @@ public final class Capture implements TruffleObject {
         return new Capture(Kind.SPILL, ROOT_TAG, null, dynEnv, null, arguments);
     }
 
-    /** A frame suspends into the capture: it goes after (outside) the frames already in it. */
+    /**
+     * A frame suspends into the capture: it goes after (outside) the frames already in it. An APPLY
+     * capture abandons the frame instead: nothing resumes it.
+     */
     public void addSegment(ContinuationRootNode root, MaterializedFrame frame) {
+        if (kind == Kind.APPLY) {
+            return;
+        }
         append(new Segment(root, frame, owner));
     }
 
@@ -247,6 +263,10 @@ public final class Capture implements TruffleObject {
      */
     @TruffleBoundary
     void addOuter(SegmentList pending, PromptMarker prompt) {
+        if (kind == Kind.APPLY) {
+            // Abandoned with the rest of the current continuation.
+            return;
+        }
         for (SegmentList l = pending; l != null; l = l.tail) {
             if (l.head instanceof Segment segment) {
                 segment.share();
