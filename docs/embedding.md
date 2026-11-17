@@ -143,7 +143,7 @@ record type.
 | boolean | `asBoolean()` |
 | vector, bytevector | an array; bytevector elements are integers 0 to 255; literal ones are read-only |
 | list | an iterable (`getIterator()`), walked lazily up to the first non-pair |
-| pair | also an object whose members are `car` and `cdr`, writable as with `set-car!` (an improper list's last cdr is its last pair's `cdr`); so `as(Object.class)` is a `Map` of the two, and `as(Iterable.class)` the elements |
+| pair of an improper or circular list | also an object whose members are `car` and `cdr`, writable as with `set-car!`, so an improper list's last cdr is its last pair's `cdr`; such a pair is a `Map` of the two as an `Object` (`as(Iterable.class)` still gives its elements). A proper list has no members, so as an `Object` it is an `Iterable` |
 | `'()` | null, and an empty iterable |
 | unspecified value | null |
 | zero or several values | a read-only array |
