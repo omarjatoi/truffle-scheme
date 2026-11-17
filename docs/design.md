@@ -1457,6 +1457,18 @@ Each entry: the decision, why, and what was rejected.
     on the cleaner's thread, outside the context (D10: single-threaded), and
     would write through an embedder's file system from a thread it doesn't
     expect.
+- **Ports in compiled code.** The I/O primitives' compiled code sees a port
+  it can't know the class of (it comes from a parameter or an argument), so
+  nothing it calls on `SPort` is virtual: a port's direction and kind are
+  `final` fields, and each operation (`write`, `flush`, `read-char`, ...) is
+  a `final` method behind a `@TruffleBoundary`, since it is I/O, which calls
+  the kind of port's own implementation as runtime code. Its virtual
+  `isInput`, `isBinary` and operations were calls partial evaluation can't
+  inline, a performance warning each (30 in ecraven's `scheme`), and a
+  runtime call for each check (#NNN: ecraven's `cat` and `wc` take 0.84 and
+  0.83 times as long). *Rejected:* DSL specializations on the four port
+  classes: the operation is behind a boundary either way, and the checks
+  fold as field reads.
 - **Interop for embedders (M6-02).** Scheme values answer Truffle's
   `InteropLibrary` as what they are, each with the language `scheme`, its
   `write` syntax as display string (`Value.toString()`), and a meta object:

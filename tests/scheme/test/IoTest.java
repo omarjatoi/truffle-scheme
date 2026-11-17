@@ -913,4 +913,92 @@ public class IoTest {
             assertEquals(copy, expected, md5(Files.readAllBytes(dir.resolve(copy))));
         }
     }
+
+    /**
+     * The port operations compile without performance warnings (design.md D10, "Ports in compiled
+     * code"): each kind of port goes through the same procedures, so their compiled code sees a
+     * port that isn't a constant, and partial evaluation must reach the port's stream without a
+     * virtual call it can't inline. The program's output is checked too, buffering included: what
+     * was written to each file, standard output and the in-memory ports.
+     */
+    @Test
+    public void portOperationsCompileWithoutPerformanceWarnings() throws IOException {
+        Files.writeString(dir.resolve("in.txt"), "b".repeat(3000));
+        Files.write(dir.resolve("in.bin"), new byte[3000]);
+        int n = 2000;
+        String program = """
+                        (define text-out (open-output-file %s))
+                        (define binary-out (open-binary-output-file %s))
+                        (define text-in (open-input-file %s))
+                        (define binary-in (open-binary-input-file %s))
+                        (define string-out (open-output-string))
+                        (define bytes-out (open-output-bytevector))
+                        (define string-in (open-input-string (make-string 3000 #\\a)))
+                        (define bytes-in (open-input-bytevector (make-bytevector 3000 7)))
+                        (define (text-output p i)
+                          (display i p) (write 'x p) (write-char #\\y p) (write-string "z" p) (newline p)
+                          (flush-output-port p))
+                        (define (binary-output p i)
+                          (write-u8 (modulo i 256) p) (write-bytevector (bytevector 1 2) p) (flush-output-port p))
+                        (define (text-input p) (char-ready? p) (peek-char p) (read-char p))
+                        (define (binary-input p) (u8-ready? p) (peek-u8 p) (read-u8 p))
+                        (define chars 0)
+                        (define bytes 0)
+                        (let loop ((i 0))
+                          (when (< i %d)
+                            (text-output string-out i) (text-output text-out i) (text-output (current-output-port) i)
+                            (binary-output bytes-out i) (binary-output binary-out i)
+                            (for-each (lambda (p) (if (char? (text-input p)) (set! chars (+ chars 1))))
+                                      (list string-in text-in (current-input-port)))
+                            (for-each (lambda (p) (if (integer? (binary-input p)) (set! bytes (+ bytes 1))))
+                                      (list bytes-in binary-in))
+                            (loop (+ i 1))))
+                        (close-port text-out)
+                        (close-port binary-out)
+                        (unless (and (= chars (* 3 %d)) (= bytes (* 2 %d))
+                                     (= (string-length (get-output-string string-out)) %d)
+                                     (= (bytevector-length (get-output-bytevector bytes-out)) (* 3 %d)))
+                          (error "wrong input or in-memory output" chars bytes))
+                        """.formatted(file("out.txt"), file("out.bin"), file("in.txt"), file("in.bin"), n, n, n,
+                        textOutput(n).length(), n);
+        Path log = Files.createTempFile(dir, "engine", ".log");
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        Context.Builder builder = Context.newBuilder(SCHEME).allowIO(IOAccess.ALL).allowExperimentalOptions(true).out(out).in(
+                        new ByteArrayInputStream("c".repeat(n).getBytes(StandardCharsets.UTF_8))).option("log.file", log.toString());
+        builder.option("engine.Compilation", "true").option("engine.CompileImmediately", "false").option("engine.BackgroundCompilation", "false");
+        builder.option("engine.SingleTierCompilationThreshold", "100").option("engine.FirstTierCompilationThreshold", "100");
+        builder.option("engine.LastTierCompilationThreshold", "500");
+        builder.option("compiler.TracePerformanceWarnings", "all").option("engine.TraceCompilation", "true");
+        Context context;
+        try {
+            context = builder.build();
+        } catch (IllegalArgumentException e) {
+            assumeTrue("no optimizing Truffle runtime: " + e.getMessage(), false);
+            throw e;
+        }
+        try (Context c = context) {
+            c.eval(SCHEME, program);
+        }
+        String engineLog = Files.readString(log);
+        assertTrue(engineLog, engineLog.contains("opt done") && engineLog.contains("text-output") && engineLog.contains("binary-input"));
+        assertFalse(engineLog, engineLog.contains("perf warn"));
+        assertEquals(textOutput(n), out.toString(StandardCharsets.UTF_8));
+        assertEquals(textOutput(n), Files.readString(dir.resolve("out.txt")));
+        byte[] expected = new byte[3 * n];
+        for (int i = 0; i < n; i++) {
+            expected[3 * i] = (byte) i;
+            expected[3 * i + 1] = 1;
+            expected[3 * i + 2] = 2;
+        }
+        assertArrayEquals(expected, Files.readAllBytes(dir.resolve("out.bin")));
+    }
+
+    /** What {@code text-output} writes for 0 to {@code n - 1}. */
+    private static String textOutput(int n) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < n; i++) {
+            sb.append(i).append("xyz\n");
+        }
+        return sb.toString();
+    }
 }
