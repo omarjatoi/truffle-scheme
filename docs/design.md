@@ -149,6 +149,27 @@ full R7RS-small conformance comes first.
   caller, where the root that enters it would often be past the splitting limit
   (`map`'s and `for-each`'s loops, which are named after them so traces show
   them as `map` and `for-each`).
+  A call of an escape-only `k` (`%call/ec`'s, "Continuations" below) doesn't
+  count (M9-05): it always runs the same escape procedure, which never returns
+  to the loop. `EscapeAnalysis` needs the contified loops, so `Closures`
+  contifies these after it, and resolves the unit again; contifying a loop
+  that refers to `k` keeps `k` escape-only, since such a loop's variable is
+  only called. `puzzle`'s and `quicksort`'s `do` loops, which call `return`,
+  are now code of the receiver. A fresh JVM per run, interleaved with the
+  code before (Apple M3 Max, shared, load 6-10), medians of 5: `puzzle`
+  (1000, 5 iterations) first iteration 2.32 to 2.64 s (1.14×, 13-22% in each
+  of 5 pairs, and 7-17% in 10 more runs of 3 iterations), the steady state
+  (best of iterations 2-5) 1.42 to 1.35 s (0.95×), the interpreter (count
+  100) 0.93×; `quicksort` within noise (JIT
+  first 1.02×, steady 0.99×, interpreter 1.00×). `puzzle`'s first iteration
+  pays for compiling more, as with M5-04's escape (below): the receiver, with
+  the loop in it, is what `trial`'s recursion inlines, and its tier-2
+  compilation is 22,700 nodes and 1.29 s against the separate loop's 12,900
+  and 0.78 s (`%call/ec`'s 21,700 and 0.92 s against 12,400 and 0.57 s),
+  finishing 2.6 s into the run against 0.9 s; more compiler threads
+  (`engine.CompilerThreads=6`) don't change that. Over 5 iterations the two
+  take as long (medians 8.07 s against 8.10 s). Kept, as M5-04's escape was:
+  the steady state and the interpreter gain, and the first iteration pays.
 - **The trampoline reports loop counts (M7-02).** The tail calls a site performs
   count as iterations of a loop of the root it is in (`LoopNode.reportLoopCount`),
   as a self tail call's jump does, so a procedure called a few times whose sites
@@ -526,7 +547,7 @@ full R7RS-small conformance comes first.
   - *k in lambdas that are only called.* A reference to `k` inside a nested
     lambda qualifies when that lambda is itself only called in the same way:
     a `do` or named `let` loop (`puzzle`'s and `quicksort`'s `return`, whose
-    non-tail call keeps the loop from being contified), a helper bound by
+    non-tail call kept the loop from being contified before M9-05), a helper bound by
     `let`, `letrec*` or an internal definition, or a lambda passed to a known
     procedure's parameter that qualifies (`maze`'s `vector-for-each-rev`).
     The analysis decides which values (variables, and lambdas' closures) are

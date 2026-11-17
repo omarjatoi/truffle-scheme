@@ -59,7 +59,8 @@ import scheme.runtime.GlobalCell;
  *
  * <p>Runs after {@link Closures}: a contified loop (M7-02) is code of the root that enters it, not a
  * closure, and each lambda's {@link Lambda#parent} and each variable's {@link Var#owner} are the
- * roots that make and bind them.
+ * roots that make and bind them. Then {@link Closures#contifyEscapes} contifies the loops whose
+ * only unknown non-tail calls are of the escape-only ks found here (M9-05).
  *
  * <p>No Java recursion proportional to nesting depth (AGENTS.md rule 4): an explicit stack.
  */
@@ -91,22 +92,28 @@ final class EscapeAnalysis {
         this.closed = closed;
     }
 
-    /** Rewrites, in place, the escape-only {@code call/cc}s of a unit (a program, library body, eval or load). */
-    static void rewrite(Lambda unit, boolean closed, Set<GlobalCell> callCC, GlobalCell callEC) {
+    /**
+     * Rewrites, in place, the escape-only {@code call/cc}s of a unit (a program, library body, eval
+     * or load). Returns their k variables.
+     */
+    static Set<Var> rewrite(Lambda unit, boolean closed, Set<GlobalCell> callCC, GlobalCell callEC) {
         EscapeAnalysis analysis = new EscapeAnalysis(closed);
         analysis.scan(unit, callCC);
         if (analysis.sites.isEmpty()) {
-            return;
+            return Set.of();
         }
         Set<Object> notContained = analysis.solve();
+        Set<Var> escapes = Collections.newSetFromMap(new IdentityHashMap<>());
         for (Ast.Call site : analysis.sites) {
             Var k = ((Lambda) site.arguments.get(0)).params.get(0);
             if (!k.assigned && !notContained.contains(k)) {
                 Ast.GlobalRef callEc = new Ast.GlobalRef(callEC);
                 callEc.source = site.procedure.source;
                 site.procedure = callEc;
+                escapes.add(k);
             }
         }
+        return escapes;
     }
 
     private void scan(Lambda unit, Set<GlobalCell> callCC) {
