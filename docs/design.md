@@ -577,6 +577,107 @@ full R7RS-small conformance comes first.
     mostly runs a program once. So the limit stays the costs' 56 MB (about
     28 MB of compiled frames, really). HotSpot has no equivalent of
     `StackValue` short of a native call, so the JVM couldn't do it either.
+    (Measured before M9-01, next item, took the first run's deoptimizations
+    away: a larger limit hasn't been measured again since.)
+  - *A first descent isn't compiled (M9-01).* Why a deep recursion's first
+    run deoptimized frame by frame: Truffle compiles a procedure once it has
+    been called a few hundred times, which a recursion does on its way down,
+    before any of its calls has returned. Nothing after the recursive call
+    has run then: the base case's branch (the Bytecode DSL's branch profile),
+    the operation that takes the call's value (`+`, `cons`: uninitialized
+    specializations), the call's return-type profile. The first return
+    reaches them in compiled code, which deoptimizes and invalidates it
+    (natively the trace's first deoptimization resumes right after the
+    prologue's `releaseArguments`, #165's code: that is where the base case's
+    frame state is, not the cause, as nothing has a side effect between it
+    and the base case's branch; on HotSpot the engine logs an uncommon trap
+    and `Profiled Return Type` invalidations), and then each compiled frame
+    of it still on the stack deoptimizes as it is returned to: 158,000
+    frames of a 300,000-deep `count` natively, 25 to 40 µs each. No profile
+    can be initialized ahead: what follows a call is any code. So the code
+    isn't compiled until it has seen a return:
+    - *A site's first descent.* A non-tail call site (its `Trampoline`)
+      records whether a call from it has come back, and until one has, counts
+      the interpreted frames waiting in its calls. While 8 or more do, the
+      procedure's `prepareForCompilation` declines: Truffle retries on a
+      later call, and the descent goes on in the interpreter, whose frames
+      don't deoptimize. A value comes back from the base case first, and then
+      the code compiles with what follows the call. 8, so that a procedure
+      whose first call wraps the whole program (`dynamic-wind`'s,
+      `with-exception-handler`'s) still compiles, and so that a recursion
+      gets there long before a compilation threshold. Compiled code counts
+      nothing: the bookkeeping is the interpreter's, on calls from sites that
+      haven't returned, so it costs nothing once they have.
+    - *What counts as coming back.* Anything but a spill: a value; another
+      capture, whose frames are resumed past the call (in their
+      continuations, which share the code) or abandoned (an escape, M9-04); an
+      exception. A site whose calls never come back with a value (a
+      `call/cc` whose `k` is always invoked, as `fibc`'s) mustn't hold its
+      procedure off for good; the price is that a descent that ended in an
+      escape leaves the next one unprotected, as before. A spill takes the
+      waiting frames off the Java stack, but the descent goes on from the
+      frame that spilled, on a fresh one: so a spill of 8 or more holds
+      compilation off for up to a second, until the descent is 8 deep again
+      (100 ms wasn't enough on a loaded CI executor, with a synchronous
+      compilation or a collection in between), or something else comes back
+      through the site.
+    - *Not on-stack replacement.* A loop at the bottom of a first descent is
+      compiled as before: OSR code runs in an interpreted frame and returns
+      to it, so it leaves no compiled frame of the procedure on the stack.
+      Truffle prepares an OSR compilation's root by preparing the root its
+      loop is in, with nothing that tells them apart, so the procedure looks
+      for Truffle's `BaseOSRRootNode` on the compiler thread's stack. Without
+      that, a 30-million-iteration loop 20 calls deep ran in the interpreter:
+      1.4 s instead of 0.14 on the JVM, 2.4 s instead of 0.05 natively.
+    - *Measured* (Apple M3 Max shared with other agents, runs with a
+      1-minute load above 10 left out; medians; the first iteration in a
+      fresh process, and the median of the later ones):
+
+      | 5 processes each | JVM before | JVM after | native before | native after |
+      |---|---:|---:|---:|---:|
+      | `count` 300,000 deep, first | 2.76 s (1.0-2.9) | 0.40 s (0.39-0.46) | 5.04 s (4.3-5.4) | 0.15 s (0.14-0.16) |
+      | then (11 more) | 26 ms | 17 ms | 37 ms | 59 ms |
+      | build a list 1,000,000 deep and `map` it, first | 2.59 s (1.2-3.6) | 0.90 s (0.88-1.02) | 8.74 s (3.5-9.8) | 0.87 s (0.81-0.91) |
+      | then (5 more) | 139 ms | 137 ms | 343 ms | 261 ms |
+
+      Against `main` after #181 (which made `releaseArguments` return early
+      outside a compilation root; the first deoptimization still resumes at
+      its end, and 19,902 frames still deoptimized in the test's setting),
+      3 processes each at a load of 2 to 5: `count` 1.01 to 0.40 s on the
+      JVM, 4.99 to 0.15 s natively; the list 1.39 to 0.90 s, 8.54 to 0.81 s.
+      Natively, `count`'s later iterations wait for the second tier, which
+      comes later when the first one does: over 40 iterations, both settle at
+      10 to 12 ms. With the JIT off, the interpreter alone runs the first
+      `count` in 0.3 s on the JVM and 0.12 s natively.
+
+      `DeepRecursionFirstRunTest` counts the deoptimized frames, with the
+      compiler at the 100th call: a 20,000-deep recursion deoptimized about
+      19,900 of them, and now none. Truffle resubmits the declined compilation
+      on each call that finds it not queued: 1,200 (native) to 2,800 (JVM)
+      times in a 300,000-deep descent, on the compiler threads.
+      Elsewhere nothing changes beyond noise (the report's counts, `-Xmx2g`,
+      3 iterations in a fresh process, 3 interleaved rounds): ecraven's `ack`,
+      `divrec`, `primes`, `destruc` and `nqueens`, whose recursions are
+      shallower or return early, measure 0.985 times `main` first and 0.991
+      steady on the JVM, 1.005 and 1.012 natively; M8-03's 24 programs 0.995
+      and 1.004 on the JVM.
+    - *Rejected: spilling a first descent early instead.* Until a call from
+      a site had returned, a compiled call from it counted as a 64th of the
+      stack limit, so the descent spilled every 64 compiled frames, and the
+      first return found at most 64 on the stack (13 to 44 deoptimized
+      frames in the test); the first value through the site deoptimized the
+      code. Natively its first runs were a little faster (`count` 0.08 s
+      against 0.14 to 0.15; the list 0.65 to 0.68 s against 0.78 to 0.87),
+      on the JVM about the same. But a recursion that fits in the stack then
+      spills when its first descent is compiled, which `StackBudgetTest`
+      forbids (under `CompileImmediately` it spilled 45 times, and once under
+      owned torture), and under `CompileImmediately` Graal's deopt-cycle
+      detection failed a compilation in `EmbeddingGuideTest` (not looked
+      into further).
+    - *Rejected: profiles that start "seen".* Every node after the call
+      would need one, and only `IsValue`'s branch and the return-type
+      profile are this runtime's; the rest are the operations' own
+      specializations.
   - *Spilling is still per frame.* A frame that doesn't fit is materialized
     when it suspends, and until M8's owned segments was also copied when it
     resumed, about 1 KB allocated and 240 ns per frame (`ack`, M8-01);

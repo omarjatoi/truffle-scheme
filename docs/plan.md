@@ -963,7 +963,7 @@ the interpreter's per-call cost, and the remaining host-JIT pitfalls.
 Benchmarks are local (bench/README.md: the load rule, `-Xmx2g`, the serial
 collector); each task measures with interleaved A/B runs.
 
-- [ ] **M9-01 · Deep recursion's first run** *(early)*
+- [x] **M9-01 · Deep recursion's first run** *(early)*
   - A deep recursion's first JIT run deoptimizes frame by frame: its code is
     compiled while it descends, the first return invalidates it (traced to
     `SchemeRootNode.releaseArguments`, #165), and every compiled frame still on
@@ -972,6 +972,20 @@ collector); each task measures with interleaved A/B runs.
     invalidation at its source, or spill early while the code is new.
   - **Done when** a deep recursion's first run deoptimizes O(1) frames (a test
     counts them), and its time improves on the JVM and natively.
+  - Done (2026-11-17): the invalidation can't be removed at its source (what
+    follows a recursive call is unprofiled until a call returns: the base
+    case's branch, the operation that takes the value, the return-type
+    profile; `releaseArguments` is only where the base case's frame state
+    is), so a procedure isn't compiled while 8 or more interpreted frames
+    wait in calls from a site that hasn't returned yet (design.md
+    "Stack-depth spill"). `DeepRecursionFirstRunTest`: a 20,000-deep first
+    descent, the compiler at the 100th call, deoptimized 19,902 frames, now
+    none. First iteration, medians of 5 interleaved processes: `count`
+    300,000 deep 2.76 to 0.40 s on the JVM, 5.04 to 0.15 s natively; a
+    1,000,000-deep list built and `map`ped 2.59 to 0.90 s, 8.74 to 0.87 s.
+    `ack`, `divrec`, `primes`, `destruc`, `nqueens` and M8-03's 24 programs
+    unchanged (geometric means 0.985 to 1.012); `bench-check` passes.
+    Spilling early was built and measured too, and rejected (design.md).
 - [x] **M9-02 · Baselines that got slower** *(early)*
   - M8's threshold measure found `quicksort` 1.29×, `triangl` 1.19×, `fib`
     1.14×, `fibfp` 1.13× and `startup` 1.08× slower than M7's baselines.

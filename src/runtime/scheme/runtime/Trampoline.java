@@ -1,5 +1,7 @@
 package scheme.runtime;
 
+import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
+
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.Truffle;
@@ -71,7 +73,76 @@ public final class Trampoline extends Node {
      */
     @Child private LoopNode loop = Truffle.getRuntime().createLoopNode(new TailCallLoop());
 
+    /**
+     * Whether a call from this non-tail call site has come back other than by a spill
+     * ({@link #leaveDescent}, design.md "Stack-depth spill", plan.md M9-01): until then, nothing
+     * after the call has run, and code compiled from it would deoptimize where the call returns. Only the interpreter writes it; the compiler threads read it
+     * ({@link #blocksCompilation}).
+     */
+    private volatile boolean returned;
+    /** The interpreted activations that wait in a call from this site, while it hasn't returned. */
+    private volatile int descending;
+    private static final AtomicIntegerFieldUpdater<Trampoline> DESCENDING = AtomicIntegerFieldUpdater.newUpdater(Trampoline.class, "descending");
+    /**
+     * Until when ({@link System#nanoTime}) a spill of a first descent holds off the compilation of
+     * the procedure this site is in: its frames have left the Java stack, but the descent goes on
+     * from the frame that spilled, on a fresh one.
+     */
+    private volatile long heldUntil;
+    /** Whether this site is in its root's list of sites in a first descent. */
+    private boolean registered;
+
     private Trampoline() {
+    }
+
+    /**
+     * Whether a call from this site that is about to be made is part of a first descent: the
+     * interpreter is making it, and no call from this site has returned yet. If so, the caller
+     * calls {@link #enterDescent} before the call and {@link #leaveDescent} after it, however it
+     * ends.
+     */
+    boolean inFirstDescent() {
+        return CompilerDirectives.inInterpreter() && !returned;
+    }
+
+    void enterDescent(SchemeRootNode root) {
+        if (DESCENDING.incrementAndGet(this) == SchemeRootNode.FIRST_DESCENT_DEPTH && !registered) {
+            registered = true;
+            root.registerFirstDescent(this);
+        }
+    }
+
+    /**
+     * The call is over: it came back with {@code result}, or null if an exception left it. Anything
+     * but a spill's {@link Capture} means the site has returned: a value; another capture, whose
+     * frames are resumed past the call (in their continuations, which share this code) or
+     * abandoned; an exception. A site whose calls never come back with a value ({@code fibc}'s
+     * {@code call/cc}, whose {@code k} is always invoked) mustn't hold its procedure off for good.
+     * A spill's frames go on with the descent instead: they leave the Java stack, but the descent
+     * goes on from the frame that spilled, and its next frames would otherwise be compiled, so the
+     * spill holds compilation off for a while.
+     */
+    void leaveDescent(Object result) {
+        if (!(result instanceof Capture capture && capture.kind == Capture.Kind.SPILL)) {
+            returned = true;
+        } else if (descending >= SchemeRootNode.FIRST_DESCENT_DEPTH) {
+            // The frames nearest the root prompt, fewer than that, leave the hold as it is.
+            heldUntil = System.nanoTime() + SchemeRootNode.FIRST_DESCENT_HOLD_NANOS;
+        }
+        DESCENDING.decrementAndGet(this);
+    }
+
+    /**
+     * Whether this site holds off the compilation of the procedure it is in: no call from it has
+     * returned yet, and many interpreted frames wait in one, or a spill of them has just happened.
+     */
+    boolean blocksCompilation(long now) {
+        return !returned && (descending >= SchemeRootNode.FIRST_DESCENT_DEPTH || now - heldUntil < 0);
+    }
+
+    /** Whether this site can leave its root's list: a call from it has returned. */
+    boolean firstDescentOver() {
+        return returned;
     }
 
     @NeverDefault
