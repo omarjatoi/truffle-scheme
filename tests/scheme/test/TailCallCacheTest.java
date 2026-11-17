@@ -144,6 +144,27 @@ public class TailCallCacheTest {
     }
 
     @Test
+    public void longTailCallLoopsInAProcedureCalledOnceAreCompiled() throws IOException {
+        // run-once is called once, and its call of ev? performs 400,000 tail calls between ev? and
+        // od?, which come back to its trampoline: as a loop, they are compiled by on-stack
+        // replacement (OSR) once they pass engine.OSRCompilationThreshold (100,352). As a Java loop
+        // in the call operation, they ran in host code only, as fast as HotSpot had compiled it: in
+        // a whole iteration of cpstak, which the JIT warm-up's profile kept HotSpot from compiling
+        // by OSR, five times as slow (design.md "Calls and tail calls").
+        String chain = "(define (ev? n) (if (= n 0) #t (od? (- n 1)))) (define (od? n) (if (= n 0) #f (ev? (- n 1))))";
+        Pattern osr = Pattern.compile("opt done\\s+engine=\\d+\\s+id=\\d+\\s+tail calls<OSR>");
+        String log = engineLog(chain + "(define (run-once) (list (ev? 400000))) (run-once)", "engine.TraceCompilation", "true");
+        assertTrue(log, osr.matcher(log).find());
+        // A procedure the compiled loop hasn't seen (late, near the end) deoptimizes it, and the
+        // interpreter goes on with the tail call in the frame.
+        log = engineLog("(define (late n) (ev? n))" +
+                        "(define (ev? n) (if (= n 0) 'even (od? (- n 1)))) (define (od? n) (cond ((= n 0) 'odd) ((= n 99) (late n)) (else (ev? (- n 1)))))" +
+                        "(define (run-once) (list (ev? 400000)))" +
+                        "(unless (equal? (run-once) '(odd)) (error \"wrong result\"))", "engine.TraceCompilation", "true");
+        assertTrue(log, osr.matcher(log).find());
+    }
+
+    @Test
     public void higherOrderProceduresAreSplit() throws IOException {
         // twice is called from five sites, each with a procedure of its own: more than its call
         // site's cache holds, so the site reports the polymorphism, and Truffle splits twice for

@@ -1,5 +1,8 @@
 package scheme.runtime;
 
+import com.oracle.truffle.api.CompilerDirectives;
+import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
+import com.oracle.truffle.api.Truffle;
 import com.oracle.truffle.api.dsl.Bind;
 import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.Fallback;
@@ -8,10 +11,13 @@ import com.oracle.truffle.api.dsl.Introspectable;
 import com.oracle.truffle.api.dsl.NeverDefault;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.RootCallTarget;
+import com.oracle.truffle.api.frame.FrameDescriptor;
+import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.DirectCallNode;
 import com.oracle.truffle.api.nodes.IndirectCallNode;
 import com.oracle.truffle.api.nodes.LoopNode;
 import com.oracle.truffle.api.nodes.Node;
+import com.oracle.truffle.api.nodes.RepeatingNode;
 
 import scheme.runtime.value.SClosure;
 
@@ -49,10 +55,21 @@ public final class Trampoline extends Node {
     /** As many as the cache of the tail calls after the first holds (plan.md M8-05). */
     static final int REST_CACHE_LIMIT = 8;
 
+    /**
+     * The key of the auxiliary frame slot that holds the next tail call while {@link #loop} runs. A
+     * root's trampolines share it: only one of them runs at a time in a frame, since each runs in a
+     * call that the frame waits for.
+     */
+    private static final Object NEXT_TAIL_CALL = new Object();
+
     /** Performs the first tail call that comes back; reports polymorphism when megamorphic. */
     @Child private TailCalls first = TrampolineFactory.TailCallsNodeGen.create(true, CACHE_LIMIT);
-    /** Performs the tail calls after the first, and the calls of {@link #executeCall}. */
-    @Child private TailCalls rest = TrampolineFactory.TailCallsNodeGen.create(false, REST_CACHE_LIMIT);
+    /**
+     * Performs the tail calls after the first ({@link TailCallLoop}), and the calls of
+     * {@link #executeCall}: a Truffle loop, so that a long one in a procedure that runs once is
+     * compiled by on-stack replacement.
+     */
+    @Child private LoopNode loop = Truffle.getRuntime().createLoopNode(new TailCallLoop());
 
     private Trampoline() {
     }
@@ -74,25 +91,54 @@ public final class Trampoline extends Node {
         return IndirectCallNode.create();
     }
 
+    private TailCallLoop body() {
+        return (TailCallLoop) loop.getRepeatingNode();
+    }
+
     /**
      * Performs {@code value} if it is a tail call, and every tail call after it; returns the value.
-     * The tail calls count as iterations of a loop of the root this site is in (plan.md M7-02), as
-     * a self tail call's jump does: a procedure called a few times whose call sites perform many tail
-     * calls (a loop through several procedures) gets compiled, and its loop with it.
+     * {@code frame} is the frame of the root this site is in, which holds the loop's state.
+     *
+     * <p>The tail calls count as iterations of a loop of the root this site is in (plan.md M7-02),
+     * as a self tail call's jump does: a procedure called a few times whose call sites perform many
+     * tail calls (a loop through several procedures) gets compiled, and its loop with it. The ones
+     * after the first are a Truffle loop ({@link LoopNode}), so a long loop in a procedure that runs
+     * once (a benchmark's harness loop, which performs every tail call of a CPS program) is compiled
+     * by on-stack replacement (design.md "Calls and tail calls"). As a Java loop it ran in this
+     * method's host-compiled code, at whatever speed HotSpot had compiled it to.
      */
-    public Object run(Object value) {
+    public Object run(VirtualFrame frame, Object value) {
         if (!(value instanceof TailCall tail)) {
             return value;
         }
         // The first tail call is peeled out of the loop, so a TailCall built by a callee inlined
         // into this site never flows into the loop's phi and can stay virtual.
         Object result = first.execute(tail.procedure, tail.arguments);
-        int count = 1;
+        LoopNode.reportLoopCount(this, 1);
+        if (!(result instanceof TailCall)) {
+            return result;
+        }
+        frame.setAuxiliarySlot(body().slot(frame), result);
+        // Only the frame holds it now, and the loop clears it as it makes the call: this method's
+        // Java frame, which an interpreter keeps for the whole loop, mustn't keep its arguments
+        // alive (design.md "Tail calls keep nothing alive").
+        result = null;
+        return loop.execute(frame);
+    }
+
+    /**
+     * {@link #run(VirtualFrame, Object)} without a frame, for the calls a site makes besides its
+     * own ({@code raise} for an error): a Java loop, which isn't compiled by OSR.
+     */
+    public Object run(Object value) {
+        if (!(value instanceof TailCall tail)) {
+            return value;
+        }
+        Object result = first.execute(tail.procedure, tail.arguments);
+        TailCalls rest = body().rest;
         while (result instanceof TailCall next) {
             result = rest.execute(next.procedure, next.arguments);
-            count++;
         }
-        LoopNode.reportLoopCount(this, count);
         return result;
     }
 
@@ -101,7 +147,64 @@ public final class Trampoline extends Node {
      * isn't a tail call of the site's callee (a prompt's, or {@code raise} for an error).
      */
     public Object executeCall(Object procedure, Object[] arguments) {
-        return rest.execute(procedure, arguments);
+        return body().rest.execute(procedure, arguments);
+    }
+
+    /**
+     * The body of a trampoline's loop: performs the tail call in the frame's auxiliary slot, and
+     * continues while another comes back. The state is in the frame, not in this node: the same
+     * site can run in several activations at once (recursion, threads), and when an OSR-compiled
+     * loop deoptimizes, the interpreter goes on from the frame.
+     */
+    static final class TailCallLoop extends Node implements RepeatingNode {
+
+        /** Performs the tail calls after the first, and the calls of {@link #executeCall}. */
+        @Child TailCalls rest = TrampolineFactory.TailCallsNodeGen.create(false, REST_CACHE_LIMIT);
+
+        /** The auxiliary slot of the frames this loop runs in; null before the first loop. */
+        @CompilationFinal private AuxiliarySlot slot;
+
+        /** An auxiliary slot of a frame descriptor's frames; published in one write. */
+        private record AuxiliarySlot(FrameDescriptor descriptor, int index) {
+        }
+
+        /** The index of the auxiliary slot that holds the next tail call in frames like {@code frame}. */
+        int slot(VirtualFrame frame) {
+            FrameDescriptor descriptor = frame.getFrameDescriptor();
+            AuxiliarySlot cached = slot;
+            if (cached == null || cached.descriptor != descriptor) {
+                CompilerDirectives.transferToInterpreterAndInvalidate();
+                cached = new AuxiliarySlot(descriptor, descriptor.findOrAddAuxiliarySlot(NEXT_TAIL_CALL));
+                slot = cached;
+            }
+            return cached.index;
+        }
+
+        @Override
+        public Object executeRepeatingWithValue(VirtualFrame frame) {
+            int index = slot(frame);
+            TailCall next = (TailCall) frame.getAuxiliarySlot(index);
+            // Cleared before the call: the frame mustn't keep the tail call's arguments alive while
+            // the call runs, nor after the loop, however it ends (design.md "Tail calls keep
+            // nothing alive").
+            frame.setAuxiliarySlot(index, null);
+            Object result = rest.execute(next.procedure, next.arguments);
+            if (result instanceof TailCall) {
+                frame.setAuxiliarySlot(index, result);
+                return CONTINUE_LOOP_STATUS;
+            }
+            return result;
+        }
+
+        @Override
+        public boolean executeRepeating(VirtualFrame frame) {
+            throw CompilerDirectives.shouldNotReachHere("the loop runs executeRepeatingWithValue");
+        }
+
+        @Override
+        public String toString() {
+            return "tail calls";
+        }
     }
 
     /** One inline cache of tail-called procedures. Introspectable for StableWarmupTest. */
