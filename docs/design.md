@@ -407,7 +407,37 @@ full R7RS-small conformance comes first.
     there, bound it, and the stress matrix (`//tests:space`,
     `StackBudgetTest`) checks they still do. `//tests:space_native` runs the deep recursions through the native
     launcher on stacks from 256 KB to 256 MB. The limit still counts at most
-    64 MB of a stack; natively it could now use more of a known one.
+    64 MB of a stack, natively too (next item).
+  - *Natively, the limit doesn't use more of a known stack.* Since a native
+    image reads its stack's depth, its limit could be most of a known stack,
+    on the real depth (the launcher's 256 MB less a reserve, 224 MB), and the
+    costs would only say when to read it. Tried and measured (native
+    launcher, Apple M3 Max): a frame that stays on the Java stack costs
+    more than one that spills, unless the whole recursion fits and its code
+    is already stable. A recursion's first deep run is compiled while it
+    descends, before any call has returned, so the first return invalidates
+    the code, and each compiled frame of it still on the stack deoptimizes
+    when it is returned to (`--engine.TraceCompilation` logs an `opt deopt`
+    per frame): 25 to 40 µs a frame, where a spilled frame, which resumes
+    into new code, costs about 1 µs. And every collection scans the whole
+    Java stack, so a deeper stack makes each one slower. Medians of the
+    iterations in one process; the first iteration, then the steady ones:
+
+    | | 56 MB counted (kept) | 224 MB real |
+    |---|---:|---:|
+    | `ack(3,12)` ×4 | 1.20 s, then 1.16 s; no spill; 92 MB | the same |
+    | `divrec`, `primes` (M8-01's counts) | unchanged; no spill | the same |
+    | `count` 300,000 deep ×6 | 0.1 to 5.3 s, then 25 to 150 ms; 13, then 2 to 5 spills | 10 s, then 3 ms; no spill |
+    | build a list and `map` it, 1,000,000 deep, ×6 | 17.7 s, then 0.26 to 0.57 s; 12 to 19 spills; 1.0 GB | 58 to 60 s, then 0.16 to 0.28 s; 0 to 3 spills; 0.9 to 1.1 GB |
+    | `count` 10,000,000 deep ×3 | 15.9 s, then 2.3 to 2.8 s; 65 to 69 spills; 4.3 GB | 72 s, then 3.4 s; 3 to 7 spills; 4.9 GB |
+
+    The list's first iteration, traced: 480,000 deoptimized frames and 6.3 s
+    of collections (308) with the counted limit, 1,530,000 and 19.7 s (314)
+    with the real one. Only a steady recursion that fits the larger stack
+    gains, and every whole run measured took longer; the native launcher
+    mostly runs a program once. So the limit stays the costs' 56 MB (about
+    28 MB of compiled frames, really). HotSpot has no equivalent of
+    `StackValue` short of a native call, so the JVM couldn't do it either.
   - *Spilling is still per frame.* A frame that doesn't fit is materialized
     when it suspends, and until M8's owned segments was also copied when it
     resumed, about 1 KB allocated and 240 ns per frame (`ack`, M8-01);
