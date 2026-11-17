@@ -206,4 +206,34 @@ public class DerivedSyntaxTest {
         check("ok", "(let ((memv #f) (else #f)) (case 1 ((1) 'ok)))");
         check("3", "(let ((loop 3)) (do ((i 0 (+ i 1))) ((= i 2) loop)))");
     }
+
+    /** The message of the error that evaluating {@code program} raises. */
+    private static String error(String program) {
+        try (Context context = Context.newBuilder(SCHEME).out(new ByteArrayOutputStream()).build()) {
+            PolyglotException e = assertThrows(PolyglotException.class, () -> context.eval(SCHEME, program));
+            assertTrue(e.getMessage(), e.isGuestException());
+            return e.getMessage();
+        }
+    }
+
+    /**
+     * R7RS §5.3: "It is an error if a variable appears more than once in the set of <formals>" of
+     * define-values. In a body two definitions of one variable were already an error (§5.3.2); at
+     * the top level they were two definitions, the second silently winning. Both are now syntax
+     * errors, at expansion, as for lambda.
+     */
+    @Test
+    public void defineValuesWithADuplicateFormalIsAnError() {
+        for (String formals : new String[]{"(x x)", "(x y x)", "(x . x)", "(x y . x)"}) {
+            String e = error("(define-values " + formals + " (values 1 2 3))");
+            assertTrue(formals + ": " + e, e.contains("duplicate parameter x"));
+            e = error("(let () (define-values " + formals + " (values 1 2 3)) x)");
+            assertTrue(formals + ": " + e, e.contains("duplicate"));
+        }
+        // Still fine: distinct formals, at the top level and in a body. The wrong number of values is an error.
+        check("(1 2 (3))", "(let () (define-values (x y . z) (values 1 2 3)) (list x y z))");
+        check("(define-values (a b c) (values 1 2 3))", "(1 2 3)", "(list a b c)");
+        String e = error("(define-values (a b) (values 1 2 3))");
+        assertTrue(e, e.contains("arguments"));
+    }
 }
