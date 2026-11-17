@@ -477,6 +477,27 @@ full R7RS-small conformance comes first.
     it is given a stack size (D17, "The evaluation thread").
     The option `scheme.SpillDepth` fixes the old count of nested calls
     instead, for tests of spilled frames.
+  - *What the count costs a call (M9-02).* Every non-tail call adds its
+    caller's cost to the stack use and compares it with the thread's limit,
+    a field and not a constant, then puts the old use back when the call
+    returns. That replaced incrementing a count, comparing it with the
+    constant 50, and decrementing it. In compiled code it costs a recursion
+    that does little else a few percent: `fib` 1.06 times and `fibfp`
+    1.04 times the code before M8-01 (`c458546` against `de2f55c`). The
+    benchmark is `bench-check`'s: fresh JVMs, the median of the last 10 of
+    25 iterations, `-XX:+UseSerialGC -Xmx2g`, 7 interleaved rounds. That is
+    all of what `fib` and `fibfp` still lose against M7-03 at M9-02 (`main`
+    at `47fc603`: 1.06 and 1.04 times). We accept it for what M8-01 gives: a
+    deep recursion runs about 3,300 compiled calls deep before a spill
+    instead of 50, thousands of times deeper with the launcher's stack, and
+    the limit follows the stack the thread really has. With the launcher's
+    evaluation thread (D17), that took `ack` from 37.9 to 2.4 times the
+    fastest implementation in the report. Tried without gain: the costs as
+    `@CompilationFinal` fields, constants in compiled code, made `fib`
+    1.12 times slower again. Taking the cost off the use instead of keeping
+    the old use live across the call, or comparing with a constant instead
+    of the limit (both unsafe, measured only), were slower or within the
+    noise.
   - *A stack size the embedder knows isn't measured.* The probe touches
     what it measures, up to 64 MB, which stays resident (60 MB more peak
     RSS for a small program), and overflowing a 16 to 64 MB stack took 0.3
@@ -1714,6 +1735,20 @@ Each entry: the decision, why, and what was rejected.
     runs), the warm-up's start as it ends. The second context costs memory
     while it lives: a program that runs 2 s peaks about 80 MB higher (487 MB
     against 407), a hello-world program no higher.
+  - *What startup pays for the evaluation thread and the warm-up
+    (M9-02).* M8's threshold re-measure found `bench-check`'s `startup`
+    1.08 times its M7-03 baseline (412.8 ms against 380.7). Those were two
+    measures made on different days. Interleaved on one day it is 1.035
+    times. The setup was `bench-check`'s way: 9 launcher runs a JVM, the
+    median wall time, Bazel's GraalVM, 7-8 rounds, load 4-6. M7-03's jars
+    with G1, the collector then, took 363 ms, and `main` at `47fc603` with
+    the serial one took 376 ms. With the same collector for both it is
+    1.04 times (360 against 376 ms, serial). Bisected (serial, 8 rounds,
+    load 5-9, single runs spread up to 450 ms), the steps are the
+    evaluation thread (#139 and #142, together about 13 ms, above) and this
+    warm-up (#143, about 10 ms, as measured here). The serial collector
+    (#157) gave a few ms back. Both are accepted for what they give: deep
+    recursion on a large stack, and the first iteration's 0.92 times.
   - *Rejected:* running the warm-up on the evaluation thread before the
     program: the first run fell further (0.84-0.87 times), but by moving
     work before the harness's timer: it took 85-140 ms of that thread, a
