@@ -14,6 +14,7 @@ import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.nodes.Node;
 
+import scheme.runtime.value.LiteralPair;
 import scheme.runtime.value.SChar;
 import scheme.runtime.value.SClosure;
 import scheme.runtime.value.SConstant;
@@ -83,6 +84,18 @@ public final class Intrinsics {
         /** Whether {@code (/ a b)} is a fixnum: {@code b} divides {@code a}. */
         static boolean exactQuotient(long a, long b) {
             return fixnumQuotient(a, b) && a % b == 0;
+        }
+
+        /**
+         * Whether {@code x} is a pair made at run time ({@link SPair#isMutable}): {@code car},
+         * {@code cdr} and {@code pair?} check the exact class, as {@code set-car!} does, so that a
+         * site that has seen only such pairs proves the exact class, and a {@code set-car!} of the
+         * same value checks nothing more ({@code instanceof SPair}, now that {@code SPair} has a
+         * subclass, wouldn't prove it, and would also load a supertype of the value's class). A
+         * literal's pair, a final class, is a specialization of its own, also one class compare.
+         */
+        static boolean isMutable(Object x) {
+            return SPair.isMutable(x);
         }
 
         static boolean inBounds(long k, int length) {
@@ -158,8 +171,13 @@ public final class Intrinsics {
     public abstract static class Car extends IntrinsicNode {
         public abstract Object execute(GlobalCell cell, boolean tail, Object x);
 
+        @Specialization(guards = "isMutable(pair)")
+        static Object doPair(@SuppressWarnings("unused") GlobalCell cell, @SuppressWarnings("unused") boolean tail, Object pair) {
+            return SPair.asMutable(pair).car;
+        }
+
         @Specialization
-        static Object doPair(@SuppressWarnings("unused") GlobalCell cell, @SuppressWarnings("unused") boolean tail, SPair pair) {
+        static Object doLiteral(@SuppressWarnings("unused") GlobalCell cell, @SuppressWarnings("unused") boolean tail, LiteralPair pair) {
             return pair.car;
         }
 
@@ -181,8 +199,13 @@ public final class Intrinsics {
     public abstract static class Cdr extends IntrinsicNode {
         public abstract Object execute(GlobalCell cell, boolean tail, Object x);
 
+        @Specialization(guards = "isMutable(pair)")
+        static Object doPair(@SuppressWarnings("unused") GlobalCell cell, @SuppressWarnings("unused") boolean tail, Object pair) {
+            return SPair.asMutable(pair).cdr;
+        }
+
         @Specialization
-        static Object doPair(@SuppressWarnings("unused") GlobalCell cell, @SuppressWarnings("unused") boolean tail, SPair pair) {
+        static Object doLiteral(@SuppressWarnings("unused") GlobalCell cell, @SuppressWarnings("unused") boolean tail, LiteralPair pair) {
             return pair.cdr;
         }
 
@@ -227,9 +250,19 @@ public final class Intrinsics {
     public abstract static class IsPair extends IntrinsicNode {
         public abstract boolean execute(Object x);
 
+        @Specialization(guards = "isMutable(x)")
+        static boolean doPair(@SuppressWarnings("unused") Object x) {
+            return true;
+        }
+
         @Specialization
-        static boolean doCheck(Object x) {
-            return x instanceof SPair;
+        static boolean doLiteral(@SuppressWarnings("unused") LiteralPair x) {
+            return true;
+        }
+
+        @Fallback
+        static boolean doOther(@SuppressWarnings("unused") Object x) {
+            return false;
         }
     }
 
@@ -269,8 +302,8 @@ public final class Intrinsics {
      * {@code eq?} compares other than as {@code eqv?} does. One instruction: in the interpreter a loop
      * in Java, where a chain of {@code Eq} operations ran several instructions an entry; compiled, the
      * comparisons one after another, with the keys and entries constants (the node's, made from the
-     * alist the first time it runs, so a later {@code set-car!} on the literal, an error, is not
-     * seen).
+     * alist the first time it runs: the alist is a literal, whose pairs {@code set-car!} and
+     * {@code set-cdr!} refuse, design.md D1).
      */
     @OperationProxy.Proxyable(storeBytecodeIndex = false)
     @GenerateInline(false)

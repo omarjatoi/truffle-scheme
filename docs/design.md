@@ -1000,7 +1000,7 @@ Each entry: the decision, why, and what was rejected.
 | char | `SChar` (`int` code point), with a cache for 0–255 |
 | string | `SString`: Latin-1 `byte[]` until a character above 255 is stored, then UTF-32 `int[]`. Indexing and `string-set!` are O(1). Literals carry an immutable flag. `substring`, `string-append` and `string-copy!` copy between strings of one storage with an array copy (M8-04). |
 | symbol | `SSymbol`, interned per context (held weakly, so a symbol nothing refers to is collected; M8-02), name is a `TruffleString` |
-| pair | `SPair`, `car`/`cdr` fields and an immutable flag for literals |
+| pair | `SPair`, mutable `car`/`cdr` fields; a literal's pairs are its final subclass `LiteralPair`, which adds no field |
 | vector / bytevector | `SVector` (`long[]` while every element is a fixnum, `double[]` while every element is a flonum, otherwise `Object[]`, generalizing for good on the first store that doesn't fit; M5-06) / `SBytevector` (`byte[]`), each with an immutable flag for literals |
 | empty list, unspecified, eof, default object | singletons |
 | procedure | `SClosure { RootCallTarget, Object[] captured }` |
@@ -1036,10 +1036,10 @@ Each entry: the decision, why, and what was rejected.
   location that is denoted by an immutable object"*; §4.1.2: *"it is an
   error to attempt to alter a constant (i.e. the value of a literal
   expression) using a mutation procedure like `set-car!` or
-  `string-set!`"*). Strings, vectors, bytevectors and pairs carry a flag,
-  and every mutation procedure signals `"<who>: <type> is immutable (a
-  literal)"` on a flagged object (D8, D9): for pairs, `set-car!`,
-  `set-cdr!` and `list-set!`. A literal is whatever the program's text
+  `string-set!`"*). Strings, vectors and bytevectors carry a flag, and a
+  literal's pairs are of a class of their own (below); every mutation
+  procedure signals `"<who>: <type> is immutable (a literal)"` on a
+  literal (D8, D9): for pairs, `set-car!`, `set-cdr!` and `list-set!`. A literal is whatever the program's text
   denotes as a constant, however it got there: `quote`'s datum, a
   self-evaluating vector and its elements, a `syntax-rules` template's
   quoted data (a `quote` form in the expansion), `case`'s data, the
@@ -1052,25 +1052,35 @@ Each entry: the decision, why, and what was rejected.
   program's strings, vectors and bytevectors immutable; the expander
   copies a literal's pairs and vectors out of the syntax objects anyway,
   so it makes them immutable as it copies (`Syntax.toLiteral`). The
-  prelude image keeps the flags (its format 2 added the pair's). What
+  prelude image keeps the flags and the pairs' class (its format 3 added
+  a record for a literal's pair). What
   `read` returns, and everything made at run time (`cons`, `list`,
   `list-copy` of a literal, `append`'s copies, rest lists), is mutable.
-  `append` shares its last argument, so a literal there stays one. The
-  flag shows only to mutation: `eq?`, `eqv?`, `equal?` and printing don't
-  see it. It costs a pair no space on HotSpot: a 12-byte header and two
-  compressed references are 20 bytes, padded to 24, and the boolean fits
-  in the padding (with `-XX:+UseCompactObjectHeaders`, which we don't use,
-  the header is 8 bytes and the flag would take a pair from 16 to 24). In
-  the native launcher (D17) it does cost: Native Image's header is 8
-  bytes, so a pair grows from 16 bytes to 24 (consing 10 million pairs
-  allocates 153 MB without the flag and 230 MB with it). The
-  check is a field load and a branch in `set-car!`, `set-cdr!` and
-  `list-set!` (none of them a typed operation, M7-03); `cons`, `car`,
-  `cdr` and `pair?` don't change. It costs destruc, whose loops are mostly
-  `set-car!` and `set-cdr!`, 3-4% (2,080 to 2,160 ms a run); nboyer and
-  deriv, which allocate pairs but never mutate them, are unchanged. Marking
-  the throwing path slow, or deoptimizing on the first literal pair
-  instead of compiling the path, didn't take that back.
+  `append` shares its last argument, so a literal there stays one.
+  Immutability shows only to mutation: `eq?`, `eqv?`, `equal?` and
+  printing don't see it.
+
+  A literal's pair is a `LiteralPair`, a final subclass of `SPair` with
+  no field of its own, so it costs no memory: a pair is a header and two
+  references, 24 bytes on HotSpot (a 12-byte header and two compressed
+  references, padded) and 16 in the native launcher (D17), whichever its
+  class. `pair?`, `car`, `cdr` and every other reader accept both classes;
+  `set-car!`, `set-cdr!` and `list-set!` take the fast path only for
+  exactly `SPair` (`SPair.isMutable`: one compare of the value's class,
+  which is also their type check) and signal on a `LiteralPair`. Interop
+  sees a literal pair's members as read-only (D10). For speed, nothing
+  checks the class hierarchy where it matters: now that `SPair` has a
+  subclass, `instanceof SPair` would load a supertype of the value's
+  class as well, and it wouldn't prove the exact class a mutator checks.
+  So the `car`, `cdr` and `pair?` operations (M7-03) specialize on the
+  exact class, `SPair` or `LiteralPair`, each one compare: a site that has
+  seen only run-time pairs proves the exact class, and a `set-car!` of the
+  same value after it checks nothing more, as when `SPair` was final.
+  The list primitives' loops (`length`, `list?`, `memq`, `assq`,
+  `list-copy`, ...) compare a value's class with each of the two
+  (`SPair.asPair`) rather than use `instanceof`. Measured against the
+  final `SPair` without literal pairs (the PR that made them a class):
+  MEASUREMENTS.
 - **Records (M7-04)** are static objects (Truffle's Static Object Model):
   their fields are fields of the object itself, so a record is one
   allocation and a field access is a field load. A language has one
@@ -1100,11 +1110,14 @@ Each entry: the decision, why, and what was rejected.
   promises as a record type of the prelude's (they would write as
   `#<record promise>` and show interop their state as members, for no gain
   in speed over `SPromise`); mutable literal pairs (what they were until
-  pairs got the flag: §4.1.2's `(define (g) '(constant-list))` returned a
-  list `set-car!` changed for every later call, silently); a subclass for
-  literal pairs (`SPair` would stop being final, so `pair?`, `car` and
-  `cdr` would check a class hierarchy instead of comparing one class); a
-  weak identity set of literal pairs (a hash lookup in every `set-car!`).
+  literal pairs got their class: §4.1.2's `(define (g) '(constant-list))`
+  returned a list `set-car!` changed for every later call, silently); a
+  flag field on `SPair` for literal pairs (#169: free on HotSpot, where
+  the boolean fits in the padding, but in the native launcher it takes
+  every pair from 16 bytes to 24, so consing 10 million pairs allocated
+  230 MB instead of 153 MB, and the field load and branch in `set-car!`
+  and `set-cdr!` made destruc 3-4% slower); a weak identity set of
+  literal pairs (a hash lookup in every `set-car!`).
 
 ### D2. Closures: flat closures with assignment conversion
 
@@ -2844,7 +2857,7 @@ errata (r7rs.org):
 | R7RS | "It is an error ..." | Here |
 |---|---|---|
 | §2.4 | circular references in code, except in literals | syntax error (D9) |
-| §3.4, §4.1.2 | altering a constant (the value of a literal expression) with a mutation procedure like `set-car!` or `string-set!` | error when the mutation runs: every literal string, vector, bytevector and pair is flagged immutable (D1) |
+| §3.4, §4.1.2 | altering a constant (the value of a literal expression) with a mutation procedure like `set-car!` or `string-set!` | error when the mutation runs: every literal string, vector and bytevector is flagged immutable, and a literal's pairs are `LiteralPair`s, which `set-car!`, `set-cdr!` and `list-set!` refuse (D1) |
 | §4.1.4, §5.3 | a variable more than once in `lambda`'s or `define-values`' formals | syntax error, at the top level too (`define-values` receives its values with a `lambda` of its formals) |
 | §5.3.2 | defining the same identifier more than once in a body | syntax error |
 | §5.5 | the same identifier as two field names, or as two accessor/modifier names | syntax error, at the top level too (the type's definition holds a never-called `lambda` of each) |
