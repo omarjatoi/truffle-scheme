@@ -24,6 +24,16 @@ final class CompilerState {
     record Environment(Scope scope, GlobalEnvironment namespace, boolean mutable) {
     }
 
+    /**
+     * The top level of an isolated program or a library, which a root compiled there records
+     * ({@code SchemeRootNode.topLevel}): code a debugger evaluates in its frames resolves global
+     * names there (plan.md M6-05, M7-07). A {@code closed} one's variables are assigned only by its
+     * own code (an isolated program's, which its compilation assumes), so that code may not assign
+     * them; a library's may be assigned from another unit by a macro it exports, so it may.
+     */
+    record TopLevel(Scope scope, GlobalEnvironment namespace, boolean closed) {
+    }
+
     final SyntacticEnvironment top = new SyntacticEnvironment();
     final Scope interactionScope;
     final GlobalEnvironment interaction;

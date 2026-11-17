@@ -66,10 +66,10 @@ public interface SchemeCompiler {
      * Code a debugger evaluates in a suspended frame (plan.md M6-05): the source's forms, as a body,
      * compiled into a procedure whose parameters are the frame's variables by name, in the frame's
      * top level ({@code topLevel}, what its root records, {@link SchemeRootNode#getTopLevel}: an
-     * isolated program's, plan.md M7-07), else the interaction environment (design.md D15). A
-     * variable with {@code boxed} set is passed as its Box and used as the procedure's own;
+     * isolated program's or a library's, plan.md M7-07), else the interaction environment (design.md
+     * D15). A variable with {@code boxed} set is passed as its Box and used as the procedure's own;
      * {@code set!} of any other is a syntax error, since it would change only a copy, and so is
-     * {@code set!} of an isolated program's own variables.
+     * {@code set!} of an isolated program's own variables (a library's may be assigned).
      */
     SClosure compileInFrame(SchemeLanguage language, SchemeContext context, Source source, String[] names, boolean[] boxed, Object topLevel);
 
