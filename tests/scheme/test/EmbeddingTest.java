@@ -169,7 +169,8 @@ public class EmbeddingTest {
     /**
      * A pair that doesn't start a proper list (an improper list's, a circular list's) is also an
      * object whose members are car and cdr, so Java sees an improper list's last cdr, which the
-     * iterator leaves out; both are writable, as set-car! and set-cdr! write them. A proper list has
+     * iterator leaves out; both are writable, as set-car! and set-cdr! write them, except a literal's
+     * (read-only, as literal vectors are). A proper list has
      * no members, so a Java Object is an Iterable of its elements, as before.
      */
     @Test
@@ -193,6 +194,12 @@ public class EmbeddingTest {
             pair.getMember("cdr").putMember("cdr", 30);
             assertEquals("(\"one\" 2 . 30)", eval(context, "p").toString());
             assertThrows(UnsupportedOperationException.class, () -> pair.putMember("cadr", 1));
+            // A literal's pairs are constants (R7RS §3.4, design.md D1): their members are read-only.
+            Value literal = eval(context, "(define lit '(1 2 . 3)) lit");
+            assertEquals(1, literal.getMember("car").asInt());
+            assertThrows(UnsupportedOperationException.class, () -> literal.putMember("car", 9));
+            assertThrows(UnsupportedOperationException.class, () -> literal.getMember("cdr").putMember("cdr", 9));
+            assertEquals("(1 2 . 3)", eval(context, "lit").toString());
             // A circular list isn't proper: members, and the iterator walks it as before.
             Value circular = eval(context, "(define c (list 1 2)) (set-cdr! (cdr c) c) c");
             assertTrue(circular.hasMembers());

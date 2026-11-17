@@ -26,6 +26,7 @@ import scheme.runtime.GlobalCell;
 import scheme.runtime.GlobalEnvironment;
 import scheme.runtime.SchemeError;
 import scheme.runtime.SchemeLanguage;
+import scheme.runtime.value.LiteralPair;
 import scheme.runtime.value.SString;
 import scheme.runtime.printer.Printer;
 import scheme.runtime.value.SConstant;
@@ -864,7 +865,7 @@ public final class Expander {
                 if (d == SConstant.EMPTY_LIST) {
                     throw syntax("() is not an expression", form);
                 }
-                return new Ast.Const(Syntax.toDatum(form));
+                return new Ast.Const(Syntax.toLiteral(form));
             }
             Object binding = isIdentifier(p.car) ? resolve(p.car) : null;
             if (binding instanceof Macro m) {
@@ -885,7 +886,7 @@ public final class Expander {
                 if (f.size() != 2) {
                     throw syntax("quote takes one datum", form);
                 }
-                return new Ast.Const(Syntax.toDatum(f.get(1)));
+                return new Ast.Const(Syntax.toLiteral(f.get(1)));
             case QUASIQUOTE:
                 if (f.size() != 2) {
                     throw syntax("quasiquote takes one template", form);
@@ -1349,7 +1350,8 @@ public final class Expander {
 
     /**
      * Expands a quasiquote template into calls of the primitives cons, append and list->vector
-     * (which the use site can't shadow), with constant parts folded back into literals. Nested
+     * (which the use site can't shadow), with constant parts folded back into literals: immutable,
+     * as §4.2.8 has them (<i>"Portions that do not need to be rebuilt are always literal"</i>). Nested
      * quasiquotes raise the level that unquote must reach. Built top-down on an explicit stack
      * (rule 4).
      * <p>
@@ -1422,7 +1424,7 @@ public final class Expander {
                 tasks.push(new QTask(elements, t.depth(), call.args, 0));
                 result = call;
             } else {
-                result = new Ast.Const(Syntax.toDatum(t.template()));
+                result = new Ast.Const(Syntax.toLiteral(t.template()));
             }
             if (result instanceof PrimCall call) {
                 calls.add(call);
@@ -1442,9 +1444,9 @@ public final class Expander {
             if (call.cell == append && call.args[1] instanceof Ast.Const tail && tail.value == SConstant.EMPTY_LIST) {
                 call.folded = call.args[0];
             } else if (constant && call.cell == cons) {
-                call.folded = new Ast.Const(new SPair(((Ast.Const) call.args[0]).value, ((Ast.Const) call.args[1]).value));
+                call.folded = new Ast.Const(new LiteralPair(((Ast.Const) call.args[0]).value, ((Ast.Const) call.args[1]).value));
             } else if (constant && call.cell == listToVector) {
-                call.folded = new Ast.Const(SVector.of(listElements(((Ast.Const) call.args[0]).value), false));
+                call.folded = new Ast.Const(SVector.of(listElements(((Ast.Const) call.args[0]).value), true));
             }
         }
         Object result = root[0] instanceof PrimCall call && call.folded != null ? call.folded : root[0];
