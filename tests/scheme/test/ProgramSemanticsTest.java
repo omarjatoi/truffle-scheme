@@ -157,18 +157,19 @@ public class ProgramSemanticsTest {
     @Test
     public void introducedDefinitionsInLibraries() throws IOException {
         // A library's macro, used in a program, defines and assigns its own counter each time; the
-        // library also uses it itself, and exports helper by a name that doesn't refer to it.
-        file("test/counters.sld", """
+        // library also uses it itself.
+        String library = """
                         (define-library (test counters)
                           (import (scheme base))
-                          (export define-counter tick helper)
+                          (export define-counter tick)
                           (begin
                             (define-syntax define-counter
                               (syntax-rules ()
                                 ((_ name) (begin (define helper 0)
                                                  (define (name) (set! helper (+ helper 1)) helper)))))
                             (define-counter tick)))
-                        """);
+                        """;
+        file("test/counters.sld", library);
         String program = """
                         (import (scheme base) (scheme write) (test counters))
                         (define-counter a)
@@ -177,6 +178,10 @@ public class ProgramSemanticsTest {
                         """;
         assertEquals("(3 2 2)", run(program + "(display (list (a) (b) (tick)))"));
         assertTrue(error(program + "(display helper)").contains("unbound variable: helper"));
+        // An export of helper doesn't refer to the introduced one: the library defines no helper
+        // of its own, so exporting it is an error (R7RS §5.6.1, design.md D18).
+        file("test/counters2.sld", library.replace("(test counters)", "(test counters2)").replace("(export define-counter tick)", "(export define-counter tick helper)"));
+        assertTrue(error("(import (scheme base) (test counters2))").contains("exports helper, which it neither defines nor imports"));
     }
 
     // ------------------------------------------------------------------------------------------

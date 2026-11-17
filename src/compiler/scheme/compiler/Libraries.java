@@ -15,7 +15,6 @@ import com.oracle.truffle.api.TruffleLanguage;
 import com.oracle.truffle.api.source.Source;
 
 import scheme.reader.Scope;
-import scheme.reader.ScopeSet;
 import scheme.reader.Syntax;
 import scheme.runtime.Features;
 import scheme.runtime.GlobalCell;
@@ -270,7 +269,7 @@ final class Libraries {
                 case "import":
                     for (Object set : args) {
                         for (Map.Entry<SSymbol, Object> e : importSet(set, expander).entrySet()) {
-                            top.bind(e.getKey(), ScopeSet.EMPTY.add(scope), e.getValue());
+                            expander.bindImport(e.getKey(), e.getValue(), set);
                         }
                     }
                     break;
@@ -318,7 +317,15 @@ final class Libraries {
             if (binding instanceof Ast.Var) {
                 throw errors.syntaxError("cannot export a local variable", export[0]);
             }
-            exported.put((SSymbol) export[1], binding);
+            // R7RS §5.6.1: "an <identifier> names a single binding defined within or imported into
+            // the library". A name it does neither for resolves to a cell of its own that nothing defines.
+            if (binding instanceof GlobalCell cell && namespace.owns(cell) && !expander.defines(cell)) {
+                throw errors.syntaxError("library " + key + " exports " + Expander.symbol(export[0]) + ", which it neither defines nor imports", export[0]);
+            }
+            Object before = exported.put((SSymbol) export[1], binding);
+            if (before != null && before != binding) {
+                throw errors.syntaxError("library " + key + " exports " + export[1] + " twice, with different bindings", export[0]);
+            }
         }
         return new Library(key, exported);
     }

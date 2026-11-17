@@ -557,6 +557,26 @@ Each entry: the decision, why, and what was rejected.
   a search path (`-I dir`).
 - `environment` returns a fresh environment importing the given libraries.
   `interaction-environment` is the mutable REPL environment.
+- **Exports and imports name one binding each (§4–5 audit).** R7RS §5.6.1:
+  an export spec's identifier *"names a single binding defined within or
+  imported into the library"*, so exporting a name the library neither
+  defines nor imports is a syntax error when the library loads, and so are
+  two export specs with one external name and different bindings. R7RS
+  §5.2: *"In a program or library declaration, it is an error to import the
+  same identifier more than once with different bindings ... However, a REPL
+  should permit these actions"*: a syntax error in a program or a library,
+  while in the interaction environment the last import wins. Importing one
+  binding twice (from two libraries that re-export it, or under two names)
+  is fine. Redefining an imported name with `define` in a program shadows
+  the import (D15), which R7RS also calls an error but which is cheap to
+  allow and deliberate when written.
+- **Auxiliary syntax is bound.** `else`, `=>`, `...` and `_` (R7RS §4.2,
+  §4.3.2, Appendix A) are core-form keywords of `(r7rs %primitives)` that
+  are a syntax error wherever they're expanded; `syntax-rules` literals
+  match them by binding (`free-identifier=?`) as before, and `...` and `_`
+  in patterns by name. They used to be unbound cells, so `else` as an
+  expression was an "unbound variable" when it ran, and the libraries that
+  export them exported variables nothing defined.
 
 ### D8. Errors
 

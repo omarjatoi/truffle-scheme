@@ -192,6 +192,61 @@ public class LibraryTest {
         assertTrue(error("(define (f) (import (scheme base)) 1)").contains("only allowed at the top level"));
     }
 
+    /**
+     * R7RS §5.6.1: "an <identifier> names a single binding defined within or imported into the
+     * library". An export of a name the library neither defines nor imports used to export an
+     * unbound variable, and an importer got "unbound variable" only when it used it.
+     */
+    @Test
+    public void exportingAnUndefinedIdentifierIsAnError() throws IOException {
+        file("ex/undef.sld", "(define-library (ex undef) (import (scheme base)) (export nothere) (begin (define here 1)))");
+        String e = error("(import (scheme base) (ex undef))");
+        assertTrue(e, e.contains("exports nothere, which it neither defines nor imports"));
+        file("ex/undef2.sld", "(define-library (ex undef2) (import (scheme base)) (export (rename nothere there)))");
+        e = error("(import (scheme base) (ex undef2))");
+        assertTrue(e, e.contains("exports nothere, which it neither defines nor imports"));
+        // Defined, imported, a macro, or an imported keyword: all fine, with or without a body.
+        file("ex/fine.sld", """
+                        (define-library (ex fine)
+                          (import (scheme base))
+                          (export here car (rename m mac) if)
+                          (begin (define here 1) (define-syntax m (syntax-rules () ((_) 3)))))
+                        """);
+        file("ex/fine2.sld", "(define-library (ex fine2) (import (scheme base)) (export cdr))");
+        assertEquals("(1 2 3)", run("(import (scheme base) (scheme write) (ex fine) (ex fine2)) (write (list here (car (cdr '(1 2))) (if #t (mac) 0)))"));
+    }
+
+    /**
+     * R7RS §5.6.1: each export spec names one binding by its external name, so two specs with the
+     * same external name and different bindings make that name mean two things; §5.2: "In a program
+     * or library declaration, it is an error to import the same identifier more than once with
+     * different bindings ... However, a REPL should permit these actions." Both used to keep the
+     * last one silently. Importing one binding twice (through two libraries, or twice from one) is
+     * fine, and the interaction environment may rebind a name by importing it again.
+     */
+    @Test
+    public void conflictingExportsAndImportsAreErrors() throws IOException {
+        file("ex/dupexp.sld", "(define-library (ex dupexp) (import (scheme base)) (export a (rename b a)) (begin (define a 1) (define b 2)))");
+        String e = error("(import (scheme base) (ex dupexp))");
+        assertTrue(e, e.contains("exports a twice"));
+        file("ex/mycar.sld", "(define-library (ex mycar) (import (scheme base)) (export car) (begin (define (car x) 'mine)))");
+        e = error("(import (scheme base) (ex mycar))");
+        assertTrue(e, e.contains("imports car twice, with different bindings"));
+        e = error("(import (rename (scheme base) (cdr car)) (only (scheme base) car))");
+        assertTrue(e, e.contains("imports car twice, with different bindings"));
+        file("ex/user.sld", "(define-library (ex user) (import (scheme base) (ex mycar)) (export f) (begin (define (f) 1)))");
+        e = error("(import (scheme base) (ex user))");
+        assertTrue(e, e.contains("imports car twice, with different bindings"));
+        // The same binding twice: through (scheme base) and (scheme r5rs), one library twice, or one binding under two names.
+        assertEquals("1", run("(import (scheme base) (scheme r5rs) (scheme base) (only (scheme write) display)) (display (car '(1)))"));
+        file("ex/same.sld", "(define-library (ex same) (import (scheme base)) (export car (rename car kar)) (begin))");
+        assertEquals("(2 1)", run("(import (scheme base) (scheme write) (ex same) (rename (ex same) (kar car2))) (write (list (car2 '(2)) (kar '(1))))"));
+        // Excluding the clash makes it fine.
+        assertEquals("mine", run("(import (except (scheme base) car) (ex mycar) (only (scheme write) display)) (display (car 1))"));
+        // The interaction environment (text without a leading import) permits it: the last import wins.
+        assertEquals("mine", run("(display 0) (import (ex mycar)) (display (car 1))").substring(1));
+    }
+
     @Test
     public void standardLibraries() {
         // Every standard library resolves, and shares cells: (scheme r5rs)'s car is (scheme base)'s.

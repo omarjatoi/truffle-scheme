@@ -263,4 +263,28 @@ public class ExpanderTest {
             assertTrue(e.getMessage(), e.getMessage().contains("not a transformer") && e.getMessage().contains("line 2"));
         }
     }
+
+    /**
+     * The auxiliary syntax of R7RS §4.2 and §4.3.2 (else, =>, ..., _) is bound as keywords
+     * (design.md D18): used as an expression it is a syntax error, where it used to be an unbound
+     * variable when the expression ran. As literals it still matches by binding.
+     */
+    @Test
+    public void auxiliarySyntaxIsAKeyword() {
+        for (String aux : new String[]{"else", "=>", "...", "_"}) {
+            for (String use : new String[]{aux, "(" + aux + " 1)"}) {
+                try (Context context = Context.create(SCHEME)) {
+                    String program = "(import (scheme base)) (define (f) " + use + ")";
+                    PolyglotException e = assertThrows(PolyglotException.class, () -> context.eval(SCHEME, program));
+                    assertTrue(program + ": " + e.getMessage(), e.getMessage().contains("syntax error"));
+                }
+            }
+        }
+        assertEquals("(2 3 ok 4)", output("""
+                        (import (scheme base) (scheme write))
+                        (write (list (cond (#f 1) (else 2))
+                                     (case 1 ((1) => (lambda (x) (+ x 2))))
+                                     (let ((=> #f)) (cond (#t => 'ok)))
+                                     (let ((else #f)) (cond (else 3) (#t 4)))))"""));
+    }
 }
