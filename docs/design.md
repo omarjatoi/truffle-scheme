@@ -509,7 +509,10 @@ Each entry: the decision, why, and what was rejected.
   see it. It costs a pair no space on HotSpot: a 12-byte header and two
   compressed references are 20 bytes, padded to 24, and the boolean fits
   in the padding (with `-XX:+UseCompactObjectHeaders`, which we don't use,
-  the header is 8 bytes and the flag would take a pair from 16 to 24). The
+  the header is 8 bytes and the flag would take a pair from 16 to 24). In
+  the native launcher (D17) it does cost: Native Image's header is 8
+  bytes, so a pair grows from 16 bytes to 24 (consing 10 million pairs
+  allocates 153 MB without the flag and 230 MB with it). The
   check is a field load and a branch in `set-car!`, `set-cdr!` and
   `list-set!` (none of them a typed operation, M7-03); `cons`, `car`,
   `cdr` and `pair?` don't change. It costs destruc, whose loops are mostly

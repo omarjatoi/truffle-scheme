@@ -14,9 +14,9 @@ import scheme.runtime.SchemeLanguage;
 
 /**
  * A pair. Literal pairs are immutable (R7RS §3.4, design.md D1): {@code set-car!}, {@code set-cdr!}
- * and {@code list-set!} refuse them. Pairs made at run time are mutable. The flag costs no space: a
- * pair is a 12-byte header and two compressed references, 20 bytes padded to 24, and it fits in the
- * padding.
+ * and {@code list-set!} refuse them. Pairs made at run time are mutable. On HotSpot the flag costs
+ * no space: a pair is a 12-byte header and two compressed references, 20 bytes padded to 24, and it
+ * fits in the padding. In a native image (8-byte header) it takes a pair from 16 bytes to 24.
  */
 @ExportLibrary(InteropLibrary.class)
 public final class SPair implements TruffleObject {
