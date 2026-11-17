@@ -1221,7 +1221,7 @@ measures with interleaved A/B runs.
     `TraceTransferToInterpreter`, the tools' options) on `bazel-bin/scheme`,
     and a native test on `scheme-native`, each checking that an option of
     that class takes effect or fails clearly.
-- [ ] **M10-05 · I/O follow-ups** *(early)*
+- [x] **M10-05 · I/O follow-ups** *(early)*
   - *A bulk read* (#200's follow-up): `read-bytevector`, `read-bytevector!`
     and `read-string` (`IoPrimitives.ReadBytevector`, `ReadBytevectorInto`,
     `ReadString`) call `SPort.readByte()`/`readChar()` once per element, each

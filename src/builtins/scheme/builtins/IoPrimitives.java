@@ -1,10 +1,7 @@
 package scheme.builtins;
 
-import java.io.BufferedInputStream;
 import java.io.IOException;
 import java.io.PrintStream;
-import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Supplier;
@@ -475,19 +472,18 @@ final class IoPrimitives {
         }
 
         /**
-         * Output ports, textual and binary, are buffered, and the context tracks them, to write out
-         * what they hold when control returns to the caller, on exit and when the context closes,
-         * even if the program never closes them (design.md D10, "Open file ports"). Input ports read
-         * through an 8 KB buffer too: the textual one's {@code BufferedReader}, the binary one's
-         * {@code BufferedInputStream} (the file's stream reads it once per {@code read-u8}).
+         * File ports are buffered (8 KB), and the context tracks them (design.md D10, "Open file
+         * ports"): it writes out what the output ones hold when control returns to the caller, on
+         * exit and when the context closes, even if the program never closes them, and closes every
+         * one, input ones too, when the context closes, or after the program drops it.
          */
         @TruffleBoundary
         private static SPort open(SchemeContext context, String who, int mode, SString name) {
             TruffleFile file = file(context.getEnv(), who, name);
             try {
                 return switch (mode) {
-                    case TEXT_IN -> SPort.textInput(file.newBufferedReader(StandardCharsets.UTF_8), false);
-                    case BINARY_IN -> SPort.binaryInput(new BufferedInputStream(file.newInputStream()));
+                    case TEXT_IN -> context.openFiles().textInput(file.newInputStream());
+                    case BINARY_IN -> context.openFiles().binaryInput(file.newInputStream());
                     case TEXT_OUT -> context.openFiles().textOutput(file.newOutputStream());
                     default -> context.openFiles().binaryOutput(file.newOutputStream());
                 };
@@ -620,22 +616,8 @@ final class IoPrimitives {
         @Override
         public Object invoke(Object[] args) {
             int k = index("read-string", args[1], 0, Integer.MAX_VALUE);
-            return readString(k, textualInput("read-string", args[2]));
-        }
-
-        @TruffleBoundary
-        private static Object readString(int k, SPort port) {
-            StringBuilder sb = new StringBuilder();
-            int n = 0;
-            while (n < k) {
-                int c = port.readChar();
-                if (c < 0) {
-                    break;
-                }
-                sb.appendCodePoint(c);
-                n++;
-            }
-            return n == 0 && k > 0 ? SConstant.EOF : SString.of(sb.toString());
+            String s = textualInput("read-string", args[2]).readString(k);
+            return s == null ? SConstant.EOF : SString.of(s);
         }
     }
 
@@ -674,24 +656,8 @@ final class IoPrimitives {
         @Override
         public Object invoke(Object[] args) {
             int k = index("read-bytevector", args[1], 0, Integer.MAX_VALUE);
-            return read(k, binaryInput("read-bytevector", args[2]));
-        }
-
-        @TruffleBoundary
-        private static Object read(int k, SPort port) {
-            byte[] buffer = new byte[Math.min(k, 8192)];
-            int n = 0;
-            while (n < k) {
-                int b = port.readByte();
-                if (b < 0) {
-                    break;
-                }
-                if (n == buffer.length) {
-                    buffer = Arrays.copyOf(buffer, (int) Math.min(k, 2L * n));
-                }
-                buffer[n++] = (byte) b;
-            }
-            return n == 0 && k > 0 ? SConstant.EOF : new SBytevector(Arrays.copyOf(buffer, n));
+            byte[] bytes = binaryInput("read-bytevector", args[2]).readBytes(k);
+            return bytes == null ? SConstant.EOF : new SBytevector(bytes);
         }
     }
 
@@ -706,20 +672,8 @@ final class IoPrimitives {
             SPort port = binaryInput("read-bytevector!", args[2]);
             int end = args.length > 4 ? index("read-bytevector!", args[4], 0, bv.bytes.length) : bv.bytes.length;
             int start = args.length > 3 ? index("read-bytevector!", args[3], 0, end) : 0;
-            return read(bv.bytes, start, end, port);
-        }
-
-        @TruffleBoundary
-        private static Object read(byte[] bytes, int start, int end, SPort port) {
-            int i = start;
-            while (i < end) {
-                int b = port.readByte();
-                if (b < 0) {
-                    break;
-                }
-                bytes[i++] = (byte) b;
-            }
-            return i == start && end > start ? SConstant.EOF : (Object) (long) (i - start);
+            int n = port.readBytes(bv.bytes, start, end - start);
+            return n < 0 ? SConstant.EOF : (Object) (long) n;
         }
     }
 

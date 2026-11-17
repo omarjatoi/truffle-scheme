@@ -175,7 +175,7 @@ public final class SchemeContext {
         }
     }
 
-    /** The open output file ports: where a file port is made, so that it is tracked. */
+    /** The open file ports: where a file port is made, so that it is tracked. */
     @TruffleBoundary
     public OpenFiles openFiles() {
         if (openFiles == null) {

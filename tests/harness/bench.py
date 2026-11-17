@@ -455,20 +455,41 @@ def _heap_from_gc_log(path):
 
 # The native launcher's runtime options, which it takes from its command line before the launcher
 # sees it: our JVMs' heap (BENCH_HEAP_VM_ARGS), and a line per collection on its standard error.
-# Its collector is native-image's serial one, the only one GraalVM CE has.
+# Its collector is native-image's serial one by default, the only one GraalVM CE has, or G1
+# (`--//:native_gc=G1`, with Oracle GraalVM: design.md D17, "The native image's collector").
 _NATIVE_VM_ARGS = BENCH_HEAP_VM_ARGS + ['-XX:+PrintGC']
-# Such a line: "[0.099s] GC(0) Pause Incremental GC (Collect on allocation) 48.00M->38.50M 46.344ms":
-# as the JVM's (_GC_PAUSE_LINE), without the committed size.
-_NATIVE_GC_LINE = re.compile(r'^\[[\d.]+s\] GC\(\d+\) Pause .*? ([\d.]+)([KMG])->([\d.]+)([KMG]) ([\d.]+)ms\n?', re.MULTILINE)
+# A pause's line, the serial collector's:
+#   "[0.063s] GC(0) Pause Incremental GC (Collect on allocation) 40.00M->30.00M 20.102ms"
+# or G1's, which adds the log's level and tag, and the committed size, as the JVM's
+# (_GC_PAUSE_LINE) does:
+#   "[0.051s][info][gc] GC(0) Pause Young (Normal) (G1 Evacuation Pause) 78M->60M(304M) 8.148ms"
+# (both from GraalVM 25.5's native launcher, with -XX:+PrintGC; tests/harness/check_bench_gc.py).
+_NATIVE_GC_DECORATION = r'^\[[\d.]+s\](?:\[\w+\]\[gc\])? '
+_NATIVE_GC_LINE = re.compile(_NATIVE_GC_DECORATION + r'GC\(\d+\) Pause .*? ([\d.]+)([KMG])->([\d.]+)([KMG])(?:\(([\d.]+)([KMG])\))? '
+                             r'([\d.]+)ms\n?', re.MULTILINE)
+# Every line -XX:+PrintGC writes, pauses or not, which the program's output leaves out: G1 also
+# writes "[0.000s][info][gc] Using G1" and its concurrent cycles' lines, such as
+# "[0.120s][info][gc] GC(5) Concurrent Mark Cycle 19.874ms".
+_NATIVE_GC_ANY_LINE = re.compile(_NATIVE_GC_DECORATION + r'(?:Using \S+|GC\(\d+\) .*)$\n?', re.MULTILINE)
 
 
 def _heap_from_native_gc_lines(text):
-    """_heap_from_gc_log's numbers from the native launcher's GC lines, but committed_mb, which
-    they don't give."""
-    pauses = [(float(m.group(3)) * _UNIT_MB[m.group(4)], float(m.group(5))) for m in _NATIVE_GC_LINE.finditer(text)]
+    """_heap_from_gc_log's numbers from the native launcher's GC lines; committed_mb only from G1's
+    (None from the serial collector's, which don't give it)."""
+    pauses = [(float(m.group(3)) * _UNIT_MB[m.group(4)],
+               float(m.group(5)) * _UNIT_MB[m.group(6)] if m.group(5) else None,
+               float(m.group(7)))
+              for m in _NATIVE_GC_LINE.finditer(text)]
     if not pauses:
-        return {'heap_mb': None, 'gcs': 0, 'gc_ms': 0}
-    return {'heap_mb': round(max(p[0] for p in pauses), 1), 'gcs': len(pauses), 'gc_ms': round(sum(p[1] for p in pauses))}
+        return {'heap_mb': None, 'committed_mb': None, 'gcs': 0, 'gc_ms': 0}
+    committed = [p[1] for p in pauses if p[1] is not None]
+    return {'heap_mb': round(max(p[0] for p in pauses), 1), 'committed_mb': round(max(committed), 1) if committed else None,
+            'gcs': len(pauses), 'gc_ms': round(sum(p[2] for p in pauses))}
+
+
+def _without_native_gc_lines(text):
+    """The native launcher's standard error without the lines its -XX:+PrintGC wrote."""
+    return _NATIVE_GC_ANY_LINE.sub('', text)
 
 
 _HISTOGRAM_TOTAL = re.compile(r'^Total\s+\d+\s+(\d+)\s*$', re.MULTILINE)
@@ -542,7 +563,7 @@ def _run_measured(argv, cwd, stdin_path, env, timeout, gc_log=None, live_every=N
     heap = _heap_from_gc_log(gc_log) if gc_log else None
     if native_gc:
         heap = _heap_from_native_gc_lines(errors)
-        errors = _NATIVE_GC_LINE.sub('', errors)
+        errors = _without_native_gc_lines(errors)
     output += ('\n' if errors and output and not output.endswith('\n') else '') + errors
     if live_every:
         heap = dict(heap or {}, live_mb=round(max(live), 1) if live else None, live_samples=len(live))

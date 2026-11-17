@@ -219,7 +219,10 @@ Output file ports, textual and binary, are always buffered. What they hold is
 written out by `flush-output-port` and `close-port`, and also when the
 program ends, exits or stops with an error, even if it never closes them.
 Input file ports, textual and binary, read their file a buffer (8 KB) at a
-time, so reading one byte or character at a time is cheap.
+time, so reading one byte or character at a time is cheap, and
+`read-bytevector`, `read-bytevector!` and `read-string` copy from the buffer.
+Every file port the program leaves open, input or output, is closed when the
+context closes, or after the program drops it.
 
 As GraalVM's language launchers do, the launcher takes the JVM's own options
 as `--vm.<option>`, among its options (before the program file): `--vm.Xmx2g`,

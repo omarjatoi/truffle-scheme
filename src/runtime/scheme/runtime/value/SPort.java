@@ -11,6 +11,7 @@ import java.io.OutputStream;
 import java.io.PrintStream;
 import java.io.Reader;
 import java.io.StringReader;
+import java.util.Arrays;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.interop.InteropLibrary;
@@ -148,6 +149,36 @@ public abstract class SPort implements TruffleObject {
         return doPeekByte();
     }
 
+    /**
+     * Textual input ({@code read-string}): the next {@code k} characters (code points), or as many
+     * as are left before the end; null if {@code k > 0} and the port is at the end. Copies from the
+     * port's reader in bulk.
+     */
+    @TruffleBoundary
+    public final String readString(int k) {
+        return doReadString(k);
+    }
+
+    /**
+     * Binary input ({@code read-bytevector}): the next {@code k} bytes, or as many as are left
+     * before the end; null if {@code k > 0} and the port is at the end. Copies from the port's
+     * stream in bulk.
+     */
+    @TruffleBoundary
+    public final byte[] readBytes(int k) {
+        return doReadBytes(k);
+    }
+
+    /**
+     * Binary input ({@code read-bytevector!}): the next {@code len} bytes, or as many as are left
+     * before the end, into {@code bytes} from {@code off}; the number read, or -1 if {@code len > 0}
+     * and the port is at the end. Copies from the port's stream in bulk.
+     */
+    @TruffleBoundary
+    public final int readBytes(byte[] bytes, int off, int len) {
+        return doReadBytes(bytes, off, len);
+    }
+
     /** Input: whether the next read won't block ({@code char-ready?}, {@code u8-ready?}). */
     @TruffleBoundary
     public final boolean ready() {
@@ -190,9 +221,24 @@ public abstract class SPort implements TruffleObject {
         throw unsupported();
     }
 
+    protected String doReadString(int k) {
+        throw unsupported();
+    }
+
+    protected byte[] doReadBytes(int k) {
+        throw unsupported();
+    }
+
+    protected int doReadBytes(byte[] bytes, int off, int len) {
+        throw unsupported();
+    }
+
     protected boolean doReady() {
         throw unsupported();
     }
+
+    /** The most a bulk read asks of a reader or stream at once, and the buffer it starts with. */
+    private static final int CHUNK = 8192;
 
     private IllegalStateException unsupported() {
         // Internal error, never a Scheme error (design.md D8): the builtins check the port first.
@@ -397,6 +443,57 @@ public abstract class SPort implements TruffleObject {
             }
         }
 
+        /**
+         * Asks the reader for at most as many UTF-16 units as characters are still wanted, so never
+         * reads too many (a character is one unit or two). A high surrogate that ends a read is
+         * paired with the low one after it, as {@link #decode} pairs them, so a pair is never split.
+         * Reads until {@code k} characters are read or the reader ends, as {@link #doReadChar} would.
+         */
+        @Override
+        protected String doReadString(int k) {
+            if (k == 0) {
+                return "";
+            }
+            StringBuilder sb = new StringBuilder(Math.min(k, CHUNK));
+            int n = 0;
+            if (peeked != NONE) {
+                int c = peeked;
+                peeked = NONE;
+                if (c < 0) {
+                    return null;
+                }
+                sb.appendCodePoint(c);
+                n = 1;
+            }
+            try {
+                char[] buffer = null;
+                while (n < k) {
+                    int want = Math.min(k - n, CHUNK);
+                    if (buffer == null) {
+                        buffer = new char[want];
+                    }
+                    int r = in.read(buffer, 0, want);
+                    if (r < 0) {
+                        break;
+                    }
+                    sb.append(buffer, 0, r);
+                    n += Character.codePointCount(buffer, 0, r);
+                    if (r > 0 && Character.isHighSurrogate(buffer[r - 1])) {
+                        in.mark(1);
+                        int low = in.read();
+                        if (low >= 0 && Character.isLowSurrogate((char) low)) {
+                            sb.append((char) low);
+                        } else {
+                            in.reset();
+                        }
+                    }
+                }
+            } catch (IOException e) {
+                throw ioError(e);
+            }
+            return n == 0 ? null : sb.toString();
+        }
+
         @Override
         protected boolean doReady() {
             if (neverBlocks || peeked != NONE) {
@@ -445,6 +542,53 @@ public abstract class SPort implements TruffleObject {
                 }
             }
             return peeked;
+        }
+
+        @Override
+        protected byte[] doReadBytes(int k) {
+            byte[] buffer = new byte[Math.min(k, CHUNK)];
+            int n = 0;
+            while (n < k) {
+                if (n == buffer.length) {
+                    buffer = Arrays.copyOf(buffer, (int) Math.min(k, 2L * n));
+                }
+                int r = doReadBytes(buffer, n, buffer.length - n);
+                if (r < 0) {
+                    break;
+                }
+                n += r;
+                if (n < buffer.length) {
+                    break; // A read stops short only at the end.
+                }
+            }
+            if (n == 0 && k > 0) {
+                return null;
+            }
+            return n == buffer.length ? buffer : Arrays.copyOf(buffer, n);
+        }
+
+        /** Reads until {@code len} bytes are read or the stream ends, as {@link #doReadByte} would. */
+        @Override
+        protected int doReadBytes(byte[] bytes, int off, int len) {
+            if (len == 0) {
+                return 0;
+            }
+            int n = 0;
+            if (peeked != NONE) {
+                int b = peeked;
+                peeked = NONE;
+                if (b < 0) {
+                    return -1;
+                }
+                bytes[off] = (byte) b;
+                n = 1;
+            }
+            try {
+                n += in.readNBytes(bytes, off + n, len - n);
+            } catch (IOException e) {
+                throw ioError(e);
+            }
+            return n == 0 ? -1 : n;
         }
 
         /** Bytevectors and files never block. */
