@@ -1,7 +1,9 @@
 package scheme.builtins;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Supplier;
 import java.util.Map;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
@@ -11,6 +13,7 @@ import com.oracle.truffle.api.nodes.Node;
 import scheme.runtime.Features;
 import scheme.runtime.PrimitiveNode;
 import scheme.runtime.PrimitiveSpec;
+import scheme.runtime.PrimitiveSpec.Result;
 import scheme.runtime.SchemeContext;
 import scheme.runtime.value.SConstant;
 import scheme.runtime.value.SPair;
@@ -30,17 +33,71 @@ final class ProcessTimePrimitives {
     private ProcessTimePrimitives() {
     }
 
-    /** This area's primitives: the one list to add to. */
+    /** This area's primitives, as {@code Builtins} registers them. */
     static List<PrimitiveSpec> primitives() {
-        return List.of(
-                        new PrimitiveSpec("emergency-exit", 0, 1, EmergencyExit::new),
-                        new PrimitiveSpec("command-line", 0, 0, CommandLine::new),
-                        new PrimitiveSpec("get-environment-variable", 1, 1, GetEnvironmentVariable::new),
-                        new PrimitiveSpec("get-environment-variables", 0, 0, GetEnvironmentVariables::new),
-                        new PrimitiveSpec("current-second", 0, 0, CurrentSecond::new),
-                        new PrimitiveSpec("current-jiffy", 0, 0, CurrentJiffy::new),
-                        new PrimitiveSpec("jiffies-per-second", 0, 0, JiffiesPerSecond::new),
-                        new PrimitiveSpec("features", 0, 0, FeatureList::new));
+        List<PrimitiveSpec> specs = new ArrayList<>();
+        for (Primitive primitive : Primitive.values()) {
+            specs.add(primitive.spec);
+        }
+        return specs;
+    }
+
+    /**
+     * This area's primitives: the one list to add to. A constant has the primitive's name and
+     * arity, and {@link #node} makes its node when it is first called: no lambda per primitive for
+     * the JVM to link as a context starts (design.md D17, "The primitives' registry").
+     */
+    enum Primitive implements Supplier<PrimitiveNode> {
+        EMERGENCY_EXIT("emergency-exit", 0, 1),
+        COMMAND_LINE("command-line", 0, 0),
+        GET_ENVIRONMENT_VARIABLE("get-environment-variable", 1, 1),
+        GET_ENVIRONMENT_VARIABLES("get-environment-variables", 0, 0),
+        CURRENT_SECOND("current-second", 0, 0),
+        CURRENT_JIFFY("current-jiffy", 0, 0),
+        JIFFIES_PER_SECOND("jiffies-per-second", 0, 0),
+        FEATURES("features", 0, 0);
+
+        final PrimitiveSpec spec;
+
+        Primitive(String name, int minArgs, int maxArgs) {
+            this(name, minArgs, maxArgs, Result.VALUE);
+        }
+
+        Primitive(String name, int minArgs, int maxArgs, Result result) {
+            this.spec = new PrimitiveSpec(name, minArgs, maxArgs, this, result);
+        }
+
+        @Override
+        public PrimitiveNode get() {
+            return (PrimitiveNode) node();
+        }
+
+        /**
+         * The primitive's node: a {@code return} in each case, typed {@code Object}, so that the
+         * JVM's verifier needn't load every node class to check what is returned (a switch
+         * expression's cases would join as {@code PrimitiveNode}). Each is loaded when it is made.
+         */
+        private Object node() {
+            switch (this) {
+                case EMERGENCY_EXIT:
+                    return new EmergencyExit();
+                case COMMAND_LINE:
+                    return new CommandLine();
+                case GET_ENVIRONMENT_VARIABLE:
+                    return new GetEnvironmentVariable();
+                case GET_ENVIRONMENT_VARIABLES:
+                    return new GetEnvironmentVariables();
+                case CURRENT_SECOND:
+                    return new CurrentSecond();
+                case CURRENT_JIFFY:
+                    return new CurrentJiffy();
+                case JIFFIES_PER_SECOND:
+                    return new JiffiesPerSecond();
+                case FEATURES:
+                    return new FeatureList();
+            }
+            throw new AssertionError(this);
+        }
     }
 
     /**

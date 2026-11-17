@@ -4,7 +4,9 @@ import java.io.IOException;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Supplier;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.TruffleFile;
@@ -14,6 +16,7 @@ import scheme.reader.CharSource;
 import scheme.reader.Reader;
 import scheme.runtime.PrimitiveNode;
 import scheme.runtime.PrimitiveSpec;
+import scheme.runtime.PrimitiveSpec.Result;
 import scheme.runtime.SchemeContext;
 import scheme.runtime.SchemeError;
 import scheme.runtime.printer.Printer;
@@ -42,64 +45,198 @@ final class IoPrimitives {
     private IoPrimitives() {
     }
 
-    /** This area's primitives: the one list to add to. */
+    /** This area's primitives, as {@code Builtins} registers them. */
     static List<PrimitiveSpec> primitives() {
-        return List.of(
-                        // Console ports, the initial values of the current-port parameters.
-                        new PrimitiveSpec("%stdout-port", 0, 0, () -> new ConsolePort(ConsolePort.OUT)),
-                        new PrimitiveSpec("%stderr-port", 0, 0, () -> new ConsolePort(ConsolePort.ERR)),
-                        new PrimitiveSpec("%stdin-port", 0, 0, () -> new ConsolePort(ConsolePort.IN)),
-                        // Predicates and closing.
-                        new PrimitiveSpec("port?", 1, 1, () -> new TypePredicate(x -> x instanceof SPort)),
-                        new PrimitiveSpec("input-port?", 1, 1, () -> new TypePredicate(x -> x instanceof SPort p && p.isInput())),
-                        new PrimitiveSpec("output-port?", 1, 1, () -> new TypePredicate(x -> x instanceof SPort p && p.isOutput())),
-                        new PrimitiveSpec("textual-port?", 1, 1, () -> new TypePredicate(x -> x instanceof SPort p && p.isTextual())),
-                        new PrimitiveSpec("binary-port?", 1, 1, () -> new TypePredicate(x -> x instanceof SPort p && p.isBinary())),
-                        new PrimitiveSpec("input-port-open?", 1, 1, () -> new PortOpen(true)),
-                        new PrimitiveSpec("output-port-open?", 1, 1, () -> new PortOpen(false)),
-                        new PrimitiveSpec("close-port", 1, 1, () -> new ClosePort("close-port")),
-                        new PrimitiveSpec("close-input-port", 1, 1, () -> new ClosePort("close-input-port")),
-                        new PrimitiveSpec("close-output-port", 1, 1, () -> new ClosePort("close-output-port")),
-                        new PrimitiveSpec("eof-object", 0, 0, EofObject::new),
-                        new PrimitiveSpec("eof-object?", 1, 1, () -> new TypePredicate(x -> x == SConstant.EOF)),
-                        // String and bytevector ports.
-                        new PrimitiveSpec("open-input-string", 1, 1, OpenInputString::new).allocating(),
-                        new PrimitiveSpec("open-output-string", 0, 0, OpenOutputString::new).allocating(),
-                        new PrimitiveSpec("get-output-string", 1, 1, GetOutputString::new).allocating(),
-                        new PrimitiveSpec("open-input-bytevector", 1, 1, OpenInputBytevector::new).allocating(),
-                        new PrimitiveSpec("open-output-bytevector", 0, 0, OpenOutputBytevector::new).allocating(),
-                        new PrimitiveSpec("get-output-bytevector", 1, 1, GetOutputBytevector::new).allocating(),
-                        // File ports (R7RS §6.13.1, (scheme file)).
-                        new PrimitiveSpec("open-input-file", 1, 1, () -> new OpenFile(OpenFile.TEXT_IN)),
-                        new PrimitiveSpec("open-binary-input-file", 1, 1, () -> new OpenFile(OpenFile.BINARY_IN)),
-                        new PrimitiveSpec("open-output-file", 1, 1, () -> new OpenFile(OpenFile.TEXT_OUT)),
-                        new PrimitiveSpec("open-binary-output-file", 1, 1, () -> new OpenFile(OpenFile.BINARY_OUT)),
-                        new PrimitiveSpec("file-exists?", 1, 1, () -> new FileOp(FileOp.EXISTS)),
-                        new PrimitiveSpec("delete-file", 1, 1, () -> new FileOp(FileOp.DELETE)),
-                        // Input (R7RS §6.13.2): (%op [k] port).
-                        new PrimitiveSpec("%read", 1, 1, Read::new),
-                        new PrimitiveSpec("%read-char", 1, 1, () -> new ReadChar(false)),
-                        new PrimitiveSpec("%peek-char", 1, 1, () -> new ReadChar(true)),
-                        new PrimitiveSpec("%read-line", 1, 1, ReadLine::new),
-                        new PrimitiveSpec("%char-ready?", 1, 1, () -> new Ready(false)),
-                        new PrimitiveSpec("%read-string", 2, 2, ReadString::new),
-                        new PrimitiveSpec("%read-u8", 1, 1, () -> new ReadU8(false)),
-                        new PrimitiveSpec("%peek-u8", 1, 1, () -> new ReadU8(true)),
-                        new PrimitiveSpec("%u8-ready?", 1, 1, () -> new Ready(true)),
-                        new PrimitiveSpec("%read-bytevector", 2, 2, ReadBytevector::new),
-                        new PrimitiveSpec("%read-bytevector!", 2, 4, ReadBytevectorInto::new),
-                        // Output (R7RS §6.13.3): (%op obj port [start [end]]).
-                        new PrimitiveSpec("%display", 2, 2, () -> new Print(Printer.Mode.DISPLAY, "display")),
-                        new PrimitiveSpec("%write", 2, 2, () -> new Print(Printer.Mode.WRITE, "write")),
-                        new PrimitiveSpec("%write-shared", 2, 2, () -> new Print(Printer.Mode.WRITE_SHARED, "write-shared")),
-                        new PrimitiveSpec("%write-simple", 2, 2, () -> new Print(Printer.Mode.WRITE_SIMPLE, "write-simple")),
-                        new PrimitiveSpec("%write-char", 2, 2, WriteChar::new),
-                        new PrimitiveSpec("%write-string", 2, 4, WriteString::new),
-                        new PrimitiveSpec("%write-u8", 2, 2, WriteU8::new),
-                        new PrimitiveSpec("%write-bytevector", 2, 4, WriteBytevector::new),
-                        new PrimitiveSpec("%flush-output-port", 1, 1, Flush::new),
-                        // The REPL's echo of each top-level form's values (design.md D17).
-                        new PrimitiveSpec("%repl-write", 1, 1, ReplWrite::new));
+        List<PrimitiveSpec> specs = new ArrayList<>();
+        for (Primitive primitive : Primitive.values()) {
+            specs.add(primitive.spec);
+        }
+        return specs;
+    }
+
+    /**
+     * This area's primitives: the one list to add to. A constant has the primitive's name and
+     * arity, and {@link #node} makes its node when it is first called: no lambda per primitive for
+     * the JVM to link as a context starts (design.md D17, "The primitives' registry").
+     */
+    enum Primitive implements Supplier<PrimitiveNode> {
+        // Console ports, the initial values of the current-port parameters.
+        STDOUT_PORT("%stdout-port", 0, 0),
+        STDERR_PORT("%stderr-port", 0, 0),
+        STDIN_PORT("%stdin-port", 0, 0),
+        // Predicates and closing.
+        IS_PORT("port?", 1, 1),
+        IS_INPUT_PORT("input-port?", 1, 1),
+        IS_OUTPUT_PORT("output-port?", 1, 1),
+        IS_TEXTUAL_PORT("textual-port?", 1, 1),
+        IS_BINARY_PORT("binary-port?", 1, 1),
+        IS_INPUT_PORT_OPEN("input-port-open?", 1, 1),
+        IS_OUTPUT_PORT_OPEN("output-port-open?", 1, 1),
+        CLOSE_PORT("close-port", 1, 1),
+        CLOSE_INPUT_PORT("close-input-port", 1, 1),
+        CLOSE_OUTPUT_PORT("close-output-port", 1, 1),
+        EOF_OBJECT("eof-object", 0, 0),
+        IS_EOF_OBJECT("eof-object?", 1, 1),
+        // String and bytevector ports.
+        OPEN_INPUT_STRING("open-input-string", 1, 1, Result.NEW_OBJECT),
+        OPEN_OUTPUT_STRING("open-output-string", 0, 0, Result.NEW_OBJECT),
+        GET_OUTPUT_STRING("get-output-string", 1, 1, Result.NEW_OBJECT),
+        OPEN_INPUT_BYTEVECTOR("open-input-bytevector", 1, 1, Result.NEW_OBJECT),
+        OPEN_OUTPUT_BYTEVECTOR("open-output-bytevector", 0, 0, Result.NEW_OBJECT),
+        GET_OUTPUT_BYTEVECTOR("get-output-bytevector", 1, 1, Result.NEW_OBJECT),
+        // File ports (R7RS §6.13.1, (scheme file)).
+        OPEN_INPUT_FILE("open-input-file", 1, 1),
+        OPEN_BINARY_INPUT_FILE("open-binary-input-file", 1, 1),
+        OPEN_OUTPUT_FILE("open-output-file", 1, 1),
+        OPEN_BINARY_OUTPUT_FILE("open-binary-output-file", 1, 1),
+        IS_FILE_EXISTS("file-exists?", 1, 1),
+        DELETE_FILE("delete-file", 1, 1),
+        // Input (R7RS §6.13.2): (%op [k] port).
+        READ("%read", 1, 1),
+        READ_CHAR("%read-char", 1, 1),
+        PEEK_CHAR("%peek-char", 1, 1),
+        READ_LINE("%read-line", 1, 1),
+        IS_CHAR_READY("%char-ready?", 1, 1),
+        READ_STRING("%read-string", 2, 2),
+        READ_U8("%read-u8", 1, 1),
+        PEEK_U8("%peek-u8", 1, 1),
+        IS_U8_READY("%u8-ready?", 1, 1),
+        READ_BYTEVECTOR("%read-bytevector", 2, 2),
+        READ_BYTEVECTOR_INTO("%read-bytevector!", 2, 4),
+        // Output (R7RS §6.13.3): (%op obj port [start [end]]).
+        DISPLAY("%display", 2, 2),
+        WRITE("%write", 2, 2),
+        WRITE_SHARED("%write-shared", 2, 2),
+        WRITE_SIMPLE("%write-simple", 2, 2),
+        WRITE_CHAR("%write-char", 2, 2),
+        WRITE_STRING("%write-string", 2, 4),
+        WRITE_U8("%write-u8", 2, 2),
+        WRITE_BYTEVECTOR("%write-bytevector", 2, 4),
+        FLUSH_OUTPUT_PORT("%flush-output-port", 1, 1),
+        // The REPL's echo of each top-level form's values (design.md D17).
+        REPL_WRITE("%repl-write", 1, 1);
+
+        final PrimitiveSpec spec;
+
+        Primitive(String name, int minArgs, int maxArgs) {
+            this(name, minArgs, maxArgs, Result.VALUE);
+        }
+
+        Primitive(String name, int minArgs, int maxArgs, Result result) {
+            this.spec = new PrimitiveSpec(name, minArgs, maxArgs, this, result);
+        }
+
+        @Override
+        public PrimitiveNode get() {
+            return (PrimitiveNode) node();
+        }
+
+        /**
+         * The primitive's node: a {@code return} in each case, typed {@code Object}, so that the
+         * JVM's verifier needn't load every node class to check what is returned (a switch
+         * expression's cases would join as {@code PrimitiveNode}). Each is loaded when it is made.
+         */
+        private Object node() {
+            switch (this) {
+                case STDOUT_PORT:
+                    return new ConsolePort(ConsolePort.OUT);
+                case STDERR_PORT:
+                    return new ConsolePort(ConsolePort.ERR);
+                case STDIN_PORT:
+                    return new ConsolePort(ConsolePort.IN);
+                case IS_PORT:
+                    return new TypePredicate(x -> x instanceof SPort);
+                case IS_INPUT_PORT:
+                    return new TypePredicate(x -> x instanceof SPort p && p.isInput());
+                case IS_OUTPUT_PORT:
+                    return new TypePredicate(x -> x instanceof SPort p && p.isOutput());
+                case IS_TEXTUAL_PORT:
+                    return new TypePredicate(x -> x instanceof SPort p && p.isTextual());
+                case IS_BINARY_PORT:
+                    return new TypePredicate(x -> x instanceof SPort p && p.isBinary());
+                case IS_INPUT_PORT_OPEN:
+                    return new PortOpen(true);
+                case IS_OUTPUT_PORT_OPEN:
+                    return new PortOpen(false);
+                case CLOSE_PORT:
+                    return new ClosePort("close-port");
+                case CLOSE_INPUT_PORT:
+                    return new ClosePort("close-input-port");
+                case CLOSE_OUTPUT_PORT:
+                    return new ClosePort("close-output-port");
+                case EOF_OBJECT:
+                    return new EofObject();
+                case IS_EOF_OBJECT:
+                    return new TypePredicate(x -> x == SConstant.EOF);
+                case OPEN_INPUT_STRING:
+                    return new OpenInputString();
+                case OPEN_OUTPUT_STRING:
+                    return new OpenOutputString();
+                case GET_OUTPUT_STRING:
+                    return new GetOutputString();
+                case OPEN_INPUT_BYTEVECTOR:
+                    return new OpenInputBytevector();
+                case OPEN_OUTPUT_BYTEVECTOR:
+                    return new OpenOutputBytevector();
+                case GET_OUTPUT_BYTEVECTOR:
+                    return new GetOutputBytevector();
+                case OPEN_INPUT_FILE:
+                    return new OpenFile(OpenFile.TEXT_IN);
+                case OPEN_BINARY_INPUT_FILE:
+                    return new OpenFile(OpenFile.BINARY_IN);
+                case OPEN_OUTPUT_FILE:
+                    return new OpenFile(OpenFile.TEXT_OUT);
+                case OPEN_BINARY_OUTPUT_FILE:
+                    return new OpenFile(OpenFile.BINARY_OUT);
+                case IS_FILE_EXISTS:
+                    return new FileOp(FileOp.EXISTS);
+                case DELETE_FILE:
+                    return new FileOp(FileOp.DELETE);
+                case READ:
+                    return new Read();
+                case READ_CHAR:
+                    return new ReadChar(false);
+                case PEEK_CHAR:
+                    return new ReadChar(true);
+                case READ_LINE:
+                    return new ReadLine();
+                case IS_CHAR_READY:
+                    return new Ready(false);
+                case READ_STRING:
+                    return new ReadString();
+                case READ_U8:
+                    return new ReadU8(false);
+                case PEEK_U8:
+                    return new ReadU8(true);
+                case IS_U8_READY:
+                    return new Ready(true);
+                case READ_BYTEVECTOR:
+                    return new ReadBytevector();
+                case READ_BYTEVECTOR_INTO:
+                    return new ReadBytevectorInto();
+                case DISPLAY:
+                    return new Print(Printer.Mode.DISPLAY, "display");
+                case WRITE:
+                    return new Print(Printer.Mode.WRITE, "write");
+                case WRITE_SHARED:
+                    return new Print(Printer.Mode.WRITE_SHARED, "write-shared");
+                case WRITE_SIMPLE:
+                    return new Print(Printer.Mode.WRITE_SIMPLE, "write-simple");
+                case WRITE_CHAR:
+                    return new WriteChar();
+                case WRITE_STRING:
+                    return new WriteString();
+                case WRITE_U8:
+                    return new WriteU8();
+                case WRITE_BYTEVECTOR:
+                    return new WriteBytevector();
+                case FLUSH_OUTPUT_PORT:
+                    return new Flush();
+                case REPL_WRITE:
+                    return new ReplWrite();
+            }
+            throw new AssertionError(this);
+        }
     }
 
     // ------------------------------------------------------------------------------------------

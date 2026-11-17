@@ -1,12 +1,15 @@
 package scheme.builtins;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Supplier;
 import java.util.Locale;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 
 import scheme.runtime.PrimitiveNode;
 import scheme.runtime.PrimitiveSpec;
+import scheme.runtime.PrimitiveSpec.Result;
 import scheme.runtime.SchemeContext;
 import scheme.runtime.SchemeError;
 import scheme.runtime.value.SChar;
@@ -29,64 +32,206 @@ final class CharStringPrimitives {
     private CharStringPrimitives() {
     }
 
-    /** This area's primitives: the one list to add to. */
+    /** This area's primitives, as {@code Builtins} registers them. */
     static List<PrimitiveSpec> primitives() {
-        return List.of(
-                        // §6.5 Symbols
-                        new PrimitiveSpec("symbol?", 1, 1, () -> new TypePredicate(x -> x instanceof SSymbol)),
-                        new PrimitiveSpec("symbol=?", 2, -1, SymbolEquals::new),
-                        new PrimitiveSpec("symbol->string", 1, 1, SymbolToString::new),
-                        new PrimitiveSpec("string->symbol", 1, 1, StringToSymbol::new),
-                        // §6.6 Characters
-                        new PrimitiveSpec("char?", 1, 1, () -> new TypePredicate(x -> x instanceof SChar)),
-                        new PrimitiveSpec("char=?", 2, -1, () -> new CharCompare("char=?", EQ, false)),
-                        new PrimitiveSpec("char<?", 2, -1, () -> new CharCompare("char<?", LT, false)),
-                        new PrimitiveSpec("char>?", 2, -1, () -> new CharCompare("char>?", GT, false)),
-                        new PrimitiveSpec("char<=?", 2, -1, () -> new CharCompare("char<=?", LE, false)),
-                        new PrimitiveSpec("char>=?", 2, -1, () -> new CharCompare("char>=?", GE, false)),
-                        new PrimitiveSpec("char-ci=?", 2, -1, () -> new CharCompare("char-ci=?", EQ, true)),
-                        new PrimitiveSpec("char-ci<?", 2, -1, () -> new CharCompare("char-ci<?", LT, true)),
-                        new PrimitiveSpec("char-ci>?", 2, -1, () -> new CharCompare("char-ci>?", GT, true)),
-                        new PrimitiveSpec("char-ci<=?", 2, -1, () -> new CharCompare("char-ci<=?", LE, true)),
-                        new PrimitiveSpec("char-ci>=?", 2, -1, () -> new CharCompare("char-ci>=?", GE, true)),
-                        new PrimitiveSpec("char-alphabetic?", 1, 1, () -> new CharUnary("char-alphabetic?", CharUnary.ALPHABETIC)),
-                        new PrimitiveSpec("char-numeric?", 1, 1, () -> new CharUnary("char-numeric?", CharUnary.NUMERIC)),
-                        new PrimitiveSpec("char-whitespace?", 1, 1, () -> new CharUnary("char-whitespace?", CharUnary.WHITESPACE)),
-                        new PrimitiveSpec("char-upper-case?", 1, 1, () -> new CharUnary("char-upper-case?", CharUnary.UPPER_CASE)),
-                        new PrimitiveSpec("char-lower-case?", 1, 1, () -> new CharUnary("char-lower-case?", CharUnary.LOWER_CASE)),
-                        new PrimitiveSpec("digit-value", 1, 1, () -> new CharUnary("digit-value", CharUnary.DIGIT_VALUE)),
-                        new PrimitiveSpec("char->integer", 1, 1, () -> new CharUnary("char->integer", CharUnary.TO_INTEGER)),
-                        new PrimitiveSpec("char-upcase", 1, 1, () -> new CharUnary("char-upcase", CharUnary.UPCASE)),
-                        new PrimitiveSpec("char-downcase", 1, 1, () -> new CharUnary("char-downcase", CharUnary.DOWNCASE)),
-                        new PrimitiveSpec("char-foldcase", 1, 1, () -> new CharUnary("char-foldcase", CharUnary.FOLDCASE)),
-                        new PrimitiveSpec("integer->char", 1, 1, IntegerToChar::new),
-                        // §6.7 Strings
-                        new PrimitiveSpec("string?", 1, 1, () -> new TypePredicate(x -> x instanceof SString)),
-                        new PrimitiveSpec("make-string", 1, 2, MakeString::new).allocating(),
-                        new PrimitiveSpec("string", 0, -1, StringOf::new).allocating(),
-                        new PrimitiveSpec("string-length", 1, 1, StringLength::new),
-                        new PrimitiveSpec("string-ref", 2, 2, StringRef::new),
-                        new PrimitiveSpec("string-set!", 3, 3, StringSet::new),
-                        new PrimitiveSpec("string=?", 2, -1, () -> new StringCompare("string=?", EQ, false)),
-                        new PrimitiveSpec("string<?", 2, -1, () -> new StringCompare("string<?", LT, false)),
-                        new PrimitiveSpec("string>?", 2, -1, () -> new StringCompare("string>?", GT, false)),
-                        new PrimitiveSpec("string<=?", 2, -1, () -> new StringCompare("string<=?", LE, false)),
-                        new PrimitiveSpec("string>=?", 2, -1, () -> new StringCompare("string>=?", GE, false)),
-                        new PrimitiveSpec("string-ci=?", 2, -1, () -> new StringCompare("string-ci=?", EQ, true)),
-                        new PrimitiveSpec("string-ci<?", 2, -1, () -> new StringCompare("string-ci<?", LT, true)),
-                        new PrimitiveSpec("string-ci>?", 2, -1, () -> new StringCompare("string-ci>?", GT, true)),
-                        new PrimitiveSpec("string-ci<=?", 2, -1, () -> new StringCompare("string-ci<=?", LE, true)),
-                        new PrimitiveSpec("string-ci>=?", 2, -1, () -> new StringCompare("string-ci>=?", GE, true)),
-                        new PrimitiveSpec("string-upcase", 1, 1, () -> new StringCase("string-upcase", StringCase.UPCASE)).allocating(),
-                        new PrimitiveSpec("string-downcase", 1, 1, () -> new StringCase("string-downcase", StringCase.DOWNCASE)).allocating(),
-                        new PrimitiveSpec("string-foldcase", 1, 1, () -> new StringCase("string-foldcase", StringCase.FOLDCASE)).allocating(),
-                        new PrimitiveSpec("substring", 3, 3, () -> new StringCopy("substring")).allocating(),
-                        new PrimitiveSpec("string-copy", 1, 3, () -> new StringCopy("string-copy")).allocating(),
-                        new PrimitiveSpec("string-append", 0, -1, StringAppend::new).allocating(),
-                        new PrimitiveSpec("string->list", 1, 3, StringToList::new).allocatingList(),
-                        new PrimitiveSpec("list->string", 1, 1, ListToString::new).allocating(),
-                        new PrimitiveSpec("string-copy!", 3, 5, StringCopyInto::new),
-                        new PrimitiveSpec("string-fill!", 2, 4, StringFill::new));
+        List<PrimitiveSpec> specs = new ArrayList<>();
+        for (Primitive primitive : Primitive.values()) {
+            specs.add(primitive.spec);
+        }
+        return specs;
+    }
+
+    /**
+     * This area's primitives: the one list to add to. A constant has the primitive's name and
+     * arity, and {@link #node} makes its node when it is first called: no lambda per primitive for
+     * the JVM to link as a context starts (design.md D17, "The primitives' registry").
+     */
+    enum Primitive implements Supplier<PrimitiveNode> {
+        // §6.5 Symbols
+        IS_SYMBOL("symbol?", 1, 1),
+        SYMBOL_EQ("symbol=?", 2, -1),
+        SYMBOL_TO_STRING("symbol->string", 1, 1),
+        STRING_TO_SYMBOL("string->symbol", 1, 1),
+        // §6.6 Characters
+        IS_CHAR("char?", 1, 1),
+        CHAR_EQ("char=?", 2, -1),
+        CHAR_LT("char<?", 2, -1),
+        CHAR_GT("char>?", 2, -1),
+        CHAR_LE("char<=?", 2, -1),
+        CHAR_GE("char>=?", 2, -1),
+        CHAR_CI_EQ("char-ci=?", 2, -1),
+        CHAR_CI_LT("char-ci<?", 2, -1),
+        CHAR_CI_GT("char-ci>?", 2, -1),
+        CHAR_CI_LE("char-ci<=?", 2, -1),
+        CHAR_CI_GE("char-ci>=?", 2, -1),
+        IS_CHAR_ALPHABETIC("char-alphabetic?", 1, 1),
+        IS_CHAR_NUMERIC("char-numeric?", 1, 1),
+        IS_CHAR_WHITESPACE("char-whitespace?", 1, 1),
+        IS_CHAR_UPPER_CASE("char-upper-case?", 1, 1),
+        IS_CHAR_LOWER_CASE("char-lower-case?", 1, 1),
+        DIGIT_VALUE("digit-value", 1, 1),
+        CHAR_TO_INTEGER("char->integer", 1, 1),
+        CHAR_UPCASE("char-upcase", 1, 1),
+        CHAR_DOWNCASE("char-downcase", 1, 1),
+        CHAR_FOLDCASE("char-foldcase", 1, 1),
+        INTEGER_TO_CHAR("integer->char", 1, 1),
+        // §6.7 Strings
+        IS_STRING("string?", 1, 1),
+        MAKE_STRING("make-string", 1, 2, Result.NEW_OBJECT),
+        STRING("string", 0, -1, Result.NEW_OBJECT),
+        STRING_LENGTH("string-length", 1, 1),
+        STRING_REF("string-ref", 2, 2),
+        STRING_SET("string-set!", 3, 3),
+        STRING_EQ("string=?", 2, -1),
+        STRING_LT("string<?", 2, -1),
+        STRING_GT("string>?", 2, -1),
+        STRING_LE("string<=?", 2, -1),
+        STRING_GE("string>=?", 2, -1),
+        STRING_CI_EQ("string-ci=?", 2, -1),
+        STRING_CI_LT("string-ci<?", 2, -1),
+        STRING_CI_GT("string-ci>?", 2, -1),
+        STRING_CI_LE("string-ci<=?", 2, -1),
+        STRING_CI_GE("string-ci>=?", 2, -1),
+        STRING_UPCASE("string-upcase", 1, 1, Result.NEW_OBJECT),
+        STRING_DOWNCASE("string-downcase", 1, 1, Result.NEW_OBJECT),
+        STRING_FOLDCASE("string-foldcase", 1, 1, Result.NEW_OBJECT),
+        SUBSTRING("substring", 3, 3, Result.NEW_OBJECT),
+        STRING_COPY("string-copy", 1, 3, Result.NEW_OBJECT),
+        STRING_APPEND("string-append", 0, -1, Result.NEW_OBJECT),
+        STRING_TO_LIST("string->list", 1, 3, Result.NEW_LIST),
+        LIST_TO_STRING("list->string", 1, 1, Result.NEW_OBJECT),
+        STRING_COPY_INTO("string-copy!", 3, 5),
+        STRING_FILL("string-fill!", 2, 4);
+
+        final PrimitiveSpec spec;
+
+        Primitive(String name, int minArgs, int maxArgs) {
+            this(name, minArgs, maxArgs, Result.VALUE);
+        }
+
+        Primitive(String name, int minArgs, int maxArgs, Result result) {
+            this.spec = new PrimitiveSpec(name, minArgs, maxArgs, this, result);
+        }
+
+        @Override
+        public PrimitiveNode get() {
+            return (PrimitiveNode) node();
+        }
+
+        /**
+         * The primitive's node: a {@code return} in each case, typed {@code Object}, so that the
+         * JVM's verifier needn't load every node class to check what is returned (a switch
+         * expression's cases would join as {@code PrimitiveNode}). Each is loaded when it is made.
+         */
+        private Object node() {
+            switch (this) {
+                case IS_SYMBOL:
+                    return new TypePredicate(x -> x instanceof SSymbol);
+                case SYMBOL_EQ:
+                    return new SymbolEquals();
+                case SYMBOL_TO_STRING:
+                    return new SymbolToString();
+                case STRING_TO_SYMBOL:
+                    return new StringToSymbol();
+                case IS_CHAR:
+                    return new TypePredicate(x -> x instanceof SChar);
+                case CHAR_EQ:
+                    return new CharCompare("char=?", EQ, false);
+                case CHAR_LT:
+                    return new CharCompare("char<?", LT, false);
+                case CHAR_GT:
+                    return new CharCompare("char>?", GT, false);
+                case CHAR_LE:
+                    return new CharCompare("char<=?", LE, false);
+                case CHAR_GE:
+                    return new CharCompare("char>=?", GE, false);
+                case CHAR_CI_EQ:
+                    return new CharCompare("char-ci=?", EQ, true);
+                case CHAR_CI_LT:
+                    return new CharCompare("char-ci<?", LT, true);
+                case CHAR_CI_GT:
+                    return new CharCompare("char-ci>?", GT, true);
+                case CHAR_CI_LE:
+                    return new CharCompare("char-ci<=?", LE, true);
+                case CHAR_CI_GE:
+                    return new CharCompare("char-ci>=?", GE, true);
+                case IS_CHAR_ALPHABETIC:
+                    return new CharUnary("char-alphabetic?", CharUnary.ALPHABETIC);
+                case IS_CHAR_NUMERIC:
+                    return new CharUnary("char-numeric?", CharUnary.NUMERIC);
+                case IS_CHAR_WHITESPACE:
+                    return new CharUnary("char-whitespace?", CharUnary.WHITESPACE);
+                case IS_CHAR_UPPER_CASE:
+                    return new CharUnary("char-upper-case?", CharUnary.UPPER_CASE);
+                case IS_CHAR_LOWER_CASE:
+                    return new CharUnary("char-lower-case?", CharUnary.LOWER_CASE);
+                case DIGIT_VALUE:
+                    return new CharUnary("digit-value", CharUnary.DIGIT_VALUE);
+                case CHAR_TO_INTEGER:
+                    return new CharUnary("char->integer", CharUnary.TO_INTEGER);
+                case CHAR_UPCASE:
+                    return new CharUnary("char-upcase", CharUnary.UPCASE);
+                case CHAR_DOWNCASE:
+                    return new CharUnary("char-downcase", CharUnary.DOWNCASE);
+                case CHAR_FOLDCASE:
+                    return new CharUnary("char-foldcase", CharUnary.FOLDCASE);
+                case INTEGER_TO_CHAR:
+                    return new IntegerToChar();
+                case IS_STRING:
+                    return new TypePredicate(x -> x instanceof SString);
+                case MAKE_STRING:
+                    return new MakeString();
+                case STRING:
+                    return new StringOf();
+                case STRING_LENGTH:
+                    return new StringLength();
+                case STRING_REF:
+                    return new StringRef();
+                case STRING_SET:
+                    return new StringSet();
+                case STRING_EQ:
+                    return new StringCompare("string=?", EQ, false);
+                case STRING_LT:
+                    return new StringCompare("string<?", LT, false);
+                case STRING_GT:
+                    return new StringCompare("string>?", GT, false);
+                case STRING_LE:
+                    return new StringCompare("string<=?", LE, false);
+                case STRING_GE:
+                    return new StringCompare("string>=?", GE, false);
+                case STRING_CI_EQ:
+                    return new StringCompare("string-ci=?", EQ, true);
+                case STRING_CI_LT:
+                    return new StringCompare("string-ci<?", LT, true);
+                case STRING_CI_GT:
+                    return new StringCompare("string-ci>?", GT, true);
+                case STRING_CI_LE:
+                    return new StringCompare("string-ci<=?", LE, true);
+                case STRING_CI_GE:
+                    return new StringCompare("string-ci>=?", GE, true);
+                case STRING_UPCASE:
+                    return new StringCase("string-upcase", StringCase.UPCASE);
+                case STRING_DOWNCASE:
+                    return new StringCase("string-downcase", StringCase.DOWNCASE);
+                case STRING_FOLDCASE:
+                    return new StringCase("string-foldcase", StringCase.FOLDCASE);
+                case SUBSTRING:
+                    return new StringCopy("substring");
+                case STRING_COPY:
+                    return new StringCopy("string-copy");
+                case STRING_APPEND:
+                    return new StringAppend();
+                case STRING_TO_LIST:
+                    return new StringToList();
+                case LIST_TO_STRING:
+                    return new ListToString();
+                case STRING_COPY_INTO:
+                    return new StringCopyInto();
+                case STRING_FILL:
+                    return new StringFill();
+            }
+            throw new AssertionError(this);
+        }
     }
 
     // Comparison operators, shared by the character and string comparisons.

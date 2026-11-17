@@ -96,8 +96,9 @@ unit_tests(
         "UpstreamReportPolymorphismTest": "upstream",
         "ValuesTest": "core",
     },
-    # The vendored suite's files that these read as resources.
+    # The files that these read as resources: the vendored suite's, the primitives' former registry.
     resources = {
+        "PrimitiveRegistryTest": ["scheme/test/primitives.txt"],
         "SuiteReadSyntaxTest": glob(["r7rs/**"]),
         "SyntaxRulesTest": glob(["r7rs/**"]),
     },

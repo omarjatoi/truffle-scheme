@@ -1,6 +1,7 @@
 package scheme.runtime;
 
 import java.util.Arrays;
+import java.util.concurrent.locks.Lock;
 
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
@@ -28,19 +29,27 @@ public final class PrimitiveRootNode extends RootNode {
     private static final Object[] NO_CAPTURES = new Object[0];
 
     private final PrimitiveSpec spec;
+    /**
+     * Made on the first call, not with the root: a context makes a root for each of the ~280
+     * primitives as it starts, and most are never called (design.md D17).
+     */
     @Child private PrimitiveNode body;
 
     public PrimitiveRootNode(SchemeLanguage language, PrimitiveSpec spec) {
         super(language);
         this.spec = spec;
-        this.body = spec.createNode();
     }
 
     @Override
     public Object execute(VirtualFrame frame) {
         Object[] args = frame.getArguments();
         spec.checkArity(args.length - 1);
-        Object result = body.invoke(args);
+        PrimitiveNode node = body;
+        if (node == null) {
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            node = createBody();
+        }
+        Object result = node.invoke(args);
         if (!spec.returnsValue() && result instanceof TailCall tail && tail.arguments != args) {
             // apply's list, say: the caller may hold the array while the tail call it asks for
             // runs, which may be for ever (R7RS §3.5, design.md "Tail calls keep nothing alive").
@@ -50,6 +59,19 @@ public final class PrimitiveRootNode extends RootNode {
             Arrays.fill(args, 1, args.length, null);
         }
         return result;
+    }
+
+    private PrimitiveNode createBody() {
+        Lock lock = getLock();
+        lock.lock();
+        try {
+            if (body == null) {
+                body = insert(spec.createNode());
+            }
+            return body;
+        } finally {
+            lock.unlock();
+        }
     }
 
     /**
