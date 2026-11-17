@@ -256,7 +256,16 @@ full R7RS-small conformance comes first.
     left, so a probe recurses until it overflows, here and on two threads
     with stacks of known sizes, which give the bytes per probe frame; the
     probes repeat until two rounds agree, since a JIT compiles the probe as
-    it runs. Each root prompt takes its thread's limit. On a 2 MB stack
+    it runs, and if none do, the smallest any round gave counts (a JIT only
+    makes the probe's frames smaller, so with the smaller of the figures for
+    a frame measured before and after the depth here, a round
+    underestimates). A reference thread can run on a larger stack than it
+    asks for: glibc gives a new thread the cached stack of an exited one up
+    to 4 times its size, so on CI's Linux executors a 512 KB thread ran on a
+    1 MB one, as deep as the larger reference, and no round counted. So a
+    frame's figure is also at most the larger reference's size, less the
+    256 KB of a thread's own overhead (below), over its depth, which a
+    larger stack only makes smaller. Each root prompt takes its thread's limit. On a 2 MB stack
     (macOS's default) about 3,300 compiled calls fit before a spill, instead
     of 50; with a larger `-Xss`, more (the probe looks at no more than 64 MB).
     The `scheme` launcher evaluates on a thread with a 256 MB stack unless
