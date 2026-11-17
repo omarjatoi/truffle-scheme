@@ -1098,3 +1098,169 @@ the M3 Max) passes chibi 1225/1225 and Larceny 2160/2166 (the six listed
 exceptions) both interpreted and with `--compile`, and
 `//tests:conformance_native`, `//tests:readme_native` and
 `//tests:space_native` pass. M10 is not drafted here.
+
+## M10 · Usability and warm-up
+
+What M9's exit (#207, `docs/benchmarks.md` at `4dbb81c16acf`) and the audit
+against GraalVM's Truffle guidance (#205, docs/truffle-guidance.md) left: a
+native launcher that takes a program's `-X`/`-XX:`/`-D` arguments for itself
+(#206), launcher options that are silently ignored (#205), the interpreter's
+first runs, which are mostly the host compiler's work (M9-03, carried),
+`apply`'s cost since #195, an uncommon trap in splits (#205), and I/O
+follow-ups (#197, #200). #208 (`SPort`'s virtual calls in compiled code,
+#205's first follow-up) is already merged. Benchmarks are local
+(bench/README.md: the load rule, `-Xmx2g`, the serial collector); each task
+measures with interleaved A/B runs.
+
+- [ ] **M10-01 · The native launcher as GraalVM's standalones ship it** *(early)*
+  - SubstrateVM parses `-X…`, `-XX:…` and `-D…` from the whole command line
+    as it creates the isolate, before `main` runs, so `scheme-native prog.scm
+    a -Xmx3g -Dx=y b` gives the program `("prog.scm" "a" "b")` and an unknown
+    `-XX:+Foo` after the file ends the process (#206; design.md D17, "VM
+    options"). `-H:-ParseRuntimeOptions` alone fixes that but loses the
+    startup-only options: the heap's sizes and
+    `-XX:InitialCollectionPolicy=` can't be set once the isolate is up, and
+    #203's restart can't carry them (#206).
+  - The maintainer chose #206's follow-up (b), the way GraalVM's language
+    standalones do it, over building with `-H:-ParseRuntimeOptions` and
+    dropping run-time heap options: GraalVM's thin C++ launcher
+    (`sdk/src/org.graalvm.launcher.native/src/launcher.cc`) as the
+    executable, in front of the image built as a shared library with
+    `-H:-ParseRuntimeOptions`. The thin launcher takes the `--vm.` options
+    from the command line and creates the isolate with them
+    (`JNI_CreateJavaVM`); the Java side relaunches with the right ones in
+    `GRAALVM_LANGUAGE_LAUNCHER_VMARGS_<n>` when the guess was wrong. It
+    replaces #203's restart. The decision goes into design.md D17 first, in
+    a PR of its own (AGENTS.md). What the native callers pass today
+    (`bench.py`'s `_NATIVE_VM_ARGS`, `-Xmx2g -XX:+PrintGC`; the checks of
+    `//tests:launcher_vm_native`) keeps working, as `--vm.` options if need
+    be.
+  - In progress on branch `M10-01-thin-launcher` (no PR yet).
+  - **Done when** every argument after the file reaches the program as given
+    (`scheme-native prog.scm a -Xmx3g -XX:+Foo -Dx=y b` gives it all six, a
+    check in `//tests:launcher_vm_native`); `--vm.` heap and policy options
+    (`--vm.Xmx`, `--vm.Xms`, `--vm.XX:InitialCollectionPolicy=`) take effect
+    (`-XX:+VerboseGC`'s sizes, and a maximum a program exceeds, as that test
+    checks today); startup stays within a few ms of today's (M8-07's
+    measure, the medians of interleaved runs: `--version` 9.7 ms, a
+    hello-world program 11.0 ms); and `//tests:conformance_native`,
+    `//tests:readme_native`, `//tests:space_native` and
+    `//tests:launcher_vm_native` pass.
+- [ ] **M10-02 · Interpreter warm-up and host compilation**
+  - Carried from M9-03, not met: in M9's report the interpreter's geometric
+    mean ×fastest, without the native column, is 42.89 against M8's 43.87,
+    and `tak` (56.2 s) and `ack` (52.2 s) are close to its 60 s limit. A
+    first interpreted run at the report's scale is mostly HotSpot compiling
+    the bytecode interpreter's `continueAt` for that program's instructions,
+    and recompiling it as new ones are reached ("made not entrant: uncommon
+    trap"; design.md "The host compiler"). Per-call savings don't touch that,
+    and the rest of a call's cost is blocked by safety properties or is
+    Truffle's (M9-03's notes; design.md "What else an interpreted call
+    costs"). Directions to evaluate, each with interleaved A/B runs:
+  - *The AOT cache, trained on the interpreter.* `bazel-bin/scheme` already
+    maps a JDK 25 AOT cache (JEPs 483, 514 and 515: classes loaded and
+    linked, and method profiles) trained on `bazel/aot-training.scm`, a small
+    program; the benchmarks' runtime (`//:launcher_runtime`) has none
+    (design.md D17, "The AOT cache"). Train it on interpreted programs, so
+    that it carries `continueAt`'s profiles (JEP 515's ahead-of-time method
+    profiling), and measure the interpreter's first runs through
+    `bazel-bin/scheme`. A profile is not compiled code: HotSpot still
+    compiles `continueAt`, but may do it sooner and recompile it less.
+  - *A smaller `continueAt`.* Fewer quickened variants, and
+    `@HostCompilerDirectives.InliningCutoff` on handlers' slow paths
+    (truffle-guidance.md, "Host compilation": not used yet; M9-03's
+    experiment on the call path took `pnpoly`'s `continueAt` from 212 ms of
+    host compilation to 152). Measure host compile time and first runs.
+  - *`boolean` boxing elimination* (#205's follow-up): within 6% both ways on
+    five programs (truffle-guidance.md, "`boolean` boxing elimination,
+    measured"); the report's interpreter subset and `continueAt`'s host
+    compile time decide whether to follow GraalVM's advice and drop it.
+  - *`storeBytecodeIndexInFrame`'s cost* (#205's follow-up): on for D13's
+    locations of suspended frames, and never measured alone. Measure the
+    interpreter with it off where nothing needs it.
+  - *Tail call handlers* (`enableTailCallHandlers`, #205's follow-up) for the
+    native launcher's interpreter, measured natively.
+  - **Done when** the interpreter's geometric mean ×fastest, without the
+    native column, improves by at least 10% over M9's report (42.89, so 38.6
+    or less, in a report regenerated the same way), or each direction above
+    is measured and recorded in design.md with its numbers.
+- [ ] **M10-03 · `apply`'s cost after #195**
+  - #195 stopped marking primitive roots trivial (`PrimitiveRootNode.isTrivial`),
+    so that Graal no longer prints *"Root node of target marked trivial but
+    not trivial after PE"* into a program's output. Calls of primitives
+    through their roots (`apply`'s, through the trampoline's inline cache)
+    are now inlined by the usual policy. #207 measured the cost against
+    `e70adbb` (the commit before #195), interleaved, 10 iterations at the
+    report's counts: `scheme`'s later iterations 1.03 times as slow in 6
+    rounds at load 3-6 (slower in every round) and 1.09 in 5 at load 4-12,
+    `compiler`'s 1.02-1.08 within its noise, `peval` and `conform`
+    unchanged. `forceInlining()` on the trampoline's direct calls to
+    primitive roots restored the inlining but not the time (#195).
+  - Run value-returning primitives in place in the trampoline's inline
+    cache, as call sites already do (design.md "Primitives run in place"),
+    or use Truffle's recommended alternative, without performance warnings.
+  - **Done when** `scheme`'s later iterations are back within noise of
+    `e70adbb`'s (#207's A/B), `PrimitivesInPlaceTest`'s
+    `primitivesCalledThroughTheirRootsCompileWithoutPerformanceWarnings`
+    (#195's test) still passes, and `bench-check` passes.
+- [ ] **M10-04 · Options the launcher drops** *(early)*
+  - #205 found `--engine.TraceTransferToInterpreter` silently ignored by
+    `bazel-bin/scheme` (*"it was previously initialized with 'false'"*: an
+    engine of the process exists before the program's); it works only as
+    `--vm.Dpolyglot.engine.TraceTransferToInterpreter=true`
+    (truffle-guidance.md, "Tools: what 25.5 calls the options").
+    `--compiler.InstrumentBoundaries` printed nothing, to standard output or
+    to `--log.file`.
+  - Audit every `--engine.`, `--compiler.` and `--scheme.` option, and the
+    tools' options (`--inspect`, `--dap`, `--cpusampler`, `--memtracer`),
+    through both launchers. Each one must take effect or fail with a clear
+    error; none is silently ignored (the maintainer's usability rule). The
+    native launcher's half runs on M10-01's launcher once it lands.
+  - **Done when** a launcher test covers each class of option (`--engine.`,
+    `--compiler.`, `--scheme.`, VM-wide engine options such as
+    `TraceTransferToInterpreter`, the tools' options) on `bazel-bin/scheme`,
+    and a native test on `scheme-native`, each checking that an option of
+    that class takes effect or fails clearly.
+- [ ] **M10-05 · I/O follow-ups** *(early)*
+  - *A bulk read* (#200's follow-up): `read-bytevector`, `read-bytevector!`
+    and `read-string` (`IoPrimitives.ReadBytevector`, `ReadBytevectorInto`,
+    `ReadString`) call `SPort.readByte()`/`readChar()` once per element, each
+    behind a boundary (and a `BufferedInputStream` lock for a binary file).
+    A bulk read in `SPort`, a `final` method behind a boundary like the
+    operations #208 made, copies from the buffer.
+  - *Input file ports closed at context close* (#200's follow-up): `OpenFiles`
+    tracks only output file ports (#199), so an input file port the program
+    never closes keeps its descriptor until it is collected, and isn't
+    closed when the context closes.
+  - *G1's GC lines in `bench-report`* (#197's follow-up): `bench.py`'s
+    `_NATIVE_GC_LINE` doesn't match G1's `-XX:+PrintGC` lines, which add
+    `(<committed>)`, so the report of a G1 build (`--//:native_gc`) would
+    show no GC data.
+  - #208 (merged: `SPort`'s direction and kind as `final` fields, its
+    operations as `final` boundaries) covers none of the three.
+  - **Done when** each has a test or a measurement: #200's 10 MB read in
+    16- and 4096-byte chunks (0.23 and 0.09 s) is faster, with #200's
+    buffer-boundary tests still passing; a test checks that an input file
+    port left open is closed when the context closes (#200's counting file
+    system); and a check shows the parser reads both the serial collector's
+    and G1's lines.
+- [ ] **M10-06 · Recompilation after splitting**
+  - #205's follow-up: in ecraven's `scheme`, each of 8 splits of one closure
+    (`gen-combination-2`'s lambda) deoptimizes once after its first
+    compilation, through an uncommon trap (not an explicit
+    `transferToInterpreter`, so `TraceTransferToInterpreter` doesn't show
+    it), and its callers' frames on the stack deoptimize with it; the third
+    iteration has none (truffle-guidance.md). Find the guard in a graph dump
+    of a split's first compilation (`-Djdk.graal.Dump=Truffle:1`, IGV) and
+    fix it.
+  - Also `deriv-interpreter`'s baseline: 104.2 → 84.5 ms (0.81×) in #207's
+    thresholds, from #184 alone (107.7 ms at #179, 83.2 at #186), though
+    #184's bookkeeping only adds work in the interpreter. Find why, in case
+    it is a host-inlining change that could reverse.
+  - **Done when** each cause is found, and fixed with a test or recorded in
+    design.md with its evidence.
+
+**Exit:** every task above is done, or its note records what was measured and
+why it isn't; `docs/benchmarks.md` and `bench/thresholds.json` are regenerated
+on the final M10 code; both suites pass in every mode, including through the
+native launcher.
