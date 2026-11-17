@@ -1,5 +1,6 @@
 package scheme.runtime.value;
 
+import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.interop.InteropLibrary;
 import com.oracle.truffle.api.interop.TruffleObject;
@@ -17,7 +18,7 @@ import scheme.runtime.SchemeLanguage;
  * {@code set-car!}, {@code set-cdr!} and {@code list-set!} refuse (R7RS §3.4, design.md D1). The
  * subclass is the mark, not a field, so a pair stays a header and two references (16 bytes in a
  * native image, where a flag would take it to 24), and the mutators' fast path is one exact-class
- * compare ({@link #mutable}), which is also their type check.
+ * compare ({@link #isMutable}), which is also their type check.
  */
 @ExportLibrary(InteropLibrary.class)
 public class SPair implements TruffleObject {
@@ -31,11 +32,35 @@ public class SPair implements TruffleObject {
     }
 
     /**
-     * {@code x} as a mutable pair, or null if it is a literal's pair or not a pair. When compiled,
-     * one compare of {@code x}'s class with {@code SPair}'s, which also proves the cast.
+     * Whether {@code x} is a pair made at run time: exactly an {@code SPair}, not a
+     * {@link LiteralPair}. Compiled, one compare of {@code x}'s class, after which
+     * {@code CompilerDirectives.castExact(x, SPair.class)} costs nothing and the compiler knows the
+     * exact class, so a later check of the same value folds away.
      */
-    public static SPair mutable(Object x) {
-        return x != null && x.getClass() == SPair.class ? (SPair) x : null;
+    public static boolean isMutable(Object x) {
+        return CompilerDirectives.isExact(x, SPair.class);
+    }
+
+    /**
+     * {@code x} if it is a pair, either class, else null: for loops down a list. Two compares of
+     * {@code x}'s class, each of which proves its cast, where {@code instanceof SPair}, now that
+     * {@code SPair} has a subclass, would also load a supertype of {@code x}'s class.
+     */
+    public static SPair asPair(Object x) {
+        if (x != null) {
+            if (x.getClass() == SPair.class) {
+                return (SPair) x;
+            }
+            if (x.getClass() == LiteralPair.class) {
+                return (LiteralPair) x;
+            }
+        }
+        return null;
+    }
+
+    /** {@code x}, which {@link #isMutable} accepted. */
+    public static SPair asMutable(Object x) {
+        return CompilerDirectives.castExact(x, SPair.class);
     }
 
     // A list to interop (design.md D10): iterable, its elements up to the first non-pair (so an
