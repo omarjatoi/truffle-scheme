@@ -1000,7 +1000,7 @@ Each entry: the decision, why, and what was rejected.
 | char | `SChar` (`int` code point), with a cache for 0–255 |
 | string | `SString`: Latin-1 `byte[]` until a character above 255 is stored, then UTF-32 `int[]`. Indexing and `string-set!` are O(1). Literals carry an immutable flag. `substring`, `string-append` and `string-copy!` copy between strings of one storage with an array copy (M8-04). |
 | symbol | `SSymbol`, interned per context (held weakly, so a symbol nothing refers to is collected; M8-02), name is a `TruffleString` |
-| pair | `SPair`, mutable `car`/`cdr` fields |
+| pair | `SPair`, `car`/`cdr` fields and an immutable flag for literals |
 | vector / bytevector | `SVector` (`long[]` while every element is a fixnum, `double[]` while every element is a flonum, otherwise `Object[]`, generalizing for good on the first store that doesn't fit; M5-06) / `SBytevector` (`byte[]`), each with an immutable flag for literals |
 | empty list, unspecified, eof, default object | singletons |
 | procedure | `SClosure { RootCallTarget, Object[] captured }` |
@@ -1031,6 +1031,46 @@ Each entry: the decision, why, and what was rejected.
     fast paths, with overflow checks on the `long` path. `SBigInteger`,
     `SRational` and `SComplex` go through one generic path marked
     `@TruffleBoundary`, so compiled code stays small for the common cases.
+- **Literals are immutable** (R7RS §3.4: *"literal constants ... are
+  immutable ... it is an error to attempt to store a new value into a
+  location that is denoted by an immutable object"*; §4.1.2: *"it is an
+  error to attempt to alter a constant (i.e. the value of a literal
+  expression) using a mutation procedure like `set-car!` or
+  `string-set!`"*). Strings, vectors, bytevectors and pairs carry a flag,
+  and every mutation procedure signals `"<who>: <type> is immutable (a
+  literal)"` on a flagged object (D8, D9): for pairs, `set-car!`,
+  `set-cdr!` and `list-set!`. A literal is whatever the program's text
+  denotes as a constant, however it got there: `quote`'s datum, a
+  self-evaluating vector and its elements, a `syntax-rules` template's
+  quoted data (a `quote` form in the expansion), `case`'s data, the
+  constant parts of a `quasiquote` template, which the expander folds into
+  constants (§4.2.8: *"Portions that do not need to be rebuilt are always
+  literal"*: `` `(,x 1) `` is a fresh pair whose cdr is the literal list
+  `(1)`), the text of `include`d and `load`ed
+  files and libraries, and the data `eval` quotes, even data built at run
+  time (it is a literal of the evaluated program). The reader makes the
+  program's strings, vectors and bytevectors immutable; the expander
+  copies a literal's pairs and vectors out of the syntax objects anyway,
+  so it makes them immutable as it copies (`Syntax.toLiteral`). The
+  prelude image keeps the flags (its format 2 added the pair's). What
+  `read` returns, and everything made at run time (`cons`, `list`,
+  `list-copy` of a literal, `append`'s copies, rest lists), is mutable.
+  `append` shares its last argument, so a literal there stays one. The
+  flag shows only to mutation: `eq?`, `eqv?`, `equal?` and printing don't
+  see it. It costs a pair no space on HotSpot: a 12-byte header and two
+  compressed references are 20 bytes, padded to 24, and the boolean fits
+  in the padding (with `-XX:+UseCompactObjectHeaders`, which we don't use,
+  the header is 8 bytes and the flag would take a pair from 16 to 24). In
+  the native launcher (D17) it does cost: Native Image's header is 8
+  bytes, so a pair grows from 16 bytes to 24 (consing 10 million pairs
+  allocates 153 MB without the flag and 230 MB with it). The
+  check is a field load and a branch in `set-car!`, `set-cdr!` and
+  `list-set!` (none of them a typed operation, M7-03); `cons`, `car`,
+  `cdr` and `pair?` don't change. It costs destruc, whose loops are mostly
+  `set-car!` and `set-cdr!`, 3-4% (2,080 to 2,160 ms a run); nboyer and
+  deriv, which allocate pairs but never mutate them, are unchanged. Marking
+  the throwing path slow, or deoptimizing on the first literal pair
+  instead of compiling the path, didn't take that back.
 - **Records (M7-04)** are static objects (Truffle's Static Object Model):
   their fields are fields of the object itself, so a record is one
   allocation and a field access is a field load. A language has one
@@ -1059,7 +1099,12 @@ Each entry: the decision, why, and what was rejected.
   type: `pair?` held for them, and `car` and `set-car!` took them apart);
   promises as a record type of the prelude's (they would write as
   `#<record promise>` and show interop their state as members, for no gain
-  in speed over `SPromise`).
+  in speed over `SPromise`); mutable literal pairs (what they were until
+  pairs got the flag: §4.1.2's `(define (g) '(constant-list))` returned a
+  list `set-car!` changed for every later call, silently); a subclass for
+  literal pairs (`SPair` would stop being final, so `pair?`, `car` and
+  `cdr` would check a class hierarchy instead of comparing one class); a
+  weak identity set of literal pairs (a hash lookup in every `set-car!`).
 
 ### D2. Closures: flat closures with assignment conversion
 
@@ -1304,7 +1349,8 @@ Each entry: the decision, why, and what was rejected.
   - So do a bad index, length or range (start after end), a byte outside
     0–255, a radix other than 2, 8, 10 or 16, a non-scalar value for
     `integer->char`, an argument of the wrong type, and mutating a literal
-    or `symbol->string`'s result (§6.5); `exact` of an infinity or a NaN,
+    (a string, vector, bytevector or pair: D1) or `symbol->string`'s result
+    (§6.5); `exact` of an infinity or a NaN,
     `exact-integer-sqrt` of anything but a non-negative exact integer, and
     integer division (`floor/`, `truncate/`, `quotient`, `modulo`, ...) by
     any zero; `utf8->string` of invalid UTF-8 (§6.9: *"It is an error for
@@ -1496,8 +1542,9 @@ Each entry: the decision, why, and what was rejected.
     (polyglot prefers members to iterators), and a list must stay an
     `Iterable` there. `hasMembers` walks the cdr chain each time interop asks
     (Floyd's cycle detection; nothing is cached on `SPair`, and `set-cdr!`
-    can change the answer). The members are writable, since `set-car!` and
-    `set-cdr!` can write any pair: pairs carry no literal flag (D1). Records are objects with their fields as
+    can change the answer). The members are writable, as `set-car!` and
+    `set-cdr!` write them, except a literal's, which are read-only (R7RS
+    §3.4, D1). Records are objects with their fields as
     read-only members.
   - Procedures are executables. Each `execute` runs the procedure under a
     root prompt of its own, as a program or REPL input runs (D6), so tail
@@ -2797,6 +2844,7 @@ errata (r7rs.org):
 | R7RS | "It is an error ..." | Here |
 |---|---|---|
 | §2.4 | circular references in code, except in literals | syntax error (D9) |
+| §3.4, §4.1.2 | altering a constant (the value of a literal expression) with a mutation procedure like `set-car!` or `string-set!` | error when the mutation runs: every literal string, vector, bytevector and pair is flagged immutable (D1) |
 | §4.1.4, §5.3 | a variable more than once in `lambda`'s or `define-values`' formals | syntax error, at the top level too (`define-values` receives its values with a `lambda` of its formals) |
 | §5.3.2 | defining the same identifier more than once in a body | syntax error |
 | §5.5 | the same identifier as two field names, or as two accessor/modifier names | syntax error, at the top level too (the type's definition holds a never-called `lambda` of each) |

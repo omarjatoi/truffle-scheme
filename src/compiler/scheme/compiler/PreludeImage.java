@@ -48,6 +48,7 @@ import scheme.runtime.SchemeContext;
 import scheme.runtime.SchemeLanguage;
 import scheme.runtime.SchemeRootNode;
 import scheme.runtime.SchemeRootNodeGen;
+import scheme.runtime.value.LiteralPair;
 import scheme.runtime.value.SBigInteger;
 import scheme.runtime.value.SBytevector;
 import scheme.runtime.value.SChar;
@@ -99,7 +100,7 @@ final class PreludeImage {
 
     private static final int MAGIC = 0x52375049;
     /** The format's version: change it whenever what the image holds or how it is written changes. */
-    private static final int FORMAT = 2;
+    private static final int FORMAT = 3;
 
     /** Contexts initialized the normal way so far. */
     private static final AtomicInteger NORMAL_INITIALIZATIONS = new AtomicInteger();
@@ -151,6 +152,8 @@ final class PreludeImage {
      * by index), which code a debugger evaluates in the root's frames sees (design.md D13).
      */
     private static final byte TOP_LEVEL = 22;
+    /** A literal's pair ({@link LiteralPair}, R7RS §3.4): a pair record, of the immutable class. */
+    private static final byte LITERAL_PAIR = 23;
 
     // Bindings.
     private static final byte CORE_FORM = 0;
@@ -831,7 +834,7 @@ final class PreludeImage {
                 writeString(values, s.toString());
                 values.writeBoolean(s.isImmutable());
             } else if (o instanceof SPair p) {
-                values.writeByte(PAIR);
+                values.writeByte(p instanceof LiteralPair ? LITERAL_PAIR : PAIR);
                 values.writeInt(valueIds.get(p.car));
                 values.writeInt(valueIds.get(p.cdr));
             } else if (o instanceof SVector v && v.isLongs()) {
@@ -1086,6 +1089,8 @@ final class PreludeImage {
                 }
                 case PAIR:
                     return new SPair(values[in.readInt()], values[in.readInt()]);
+                case LITERAL_PAIR:
+                    return new LiteralPair(values[in.readInt()], values[in.readInt()]);
                 case VECTOR: {
                     Object[] elements = new Object[in.readInt()];
                     for (int i = 0; i < elements.length; i++) {

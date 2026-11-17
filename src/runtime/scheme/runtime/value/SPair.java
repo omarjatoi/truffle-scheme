@@ -12,9 +12,15 @@ import com.oracle.truffle.api.library.ExportMessage;
 import scheme.runtime.InteropValues;
 import scheme.runtime.SchemeLanguage;
 
-/** A mutable pair. */
+/**
+ * A pair made at run time, which is mutable. A literal's pairs are {@link LiteralPair}s, which
+ * {@code set-car!}, {@code set-cdr!} and {@code list-set!} refuse (R7RS §3.4, design.md D1). The
+ * subclass is the mark, not a field, so a pair stays a header and two references (16 bytes in a
+ * native image, where a flag would take it to 24), and the mutators' fast path is one exact-class
+ * compare ({@link #mutable}), which is also their type check.
+ */
 @ExportLibrary(InteropLibrary.class)
-public final class SPair implements TruffleObject {
+public class SPair implements TruffleObject {
 
     public Object car;
     public Object cdr;
@@ -22,6 +28,14 @@ public final class SPair implements TruffleObject {
     public SPair(Object car, Object cdr) {
         this.car = car;
         this.cdr = cdr;
+    }
+
+    /**
+     * {@code x} as a mutable pair, or null if it is a literal's pair or not a pair. When compiled,
+     * one compare of {@code x}'s class with {@code SPair}'s, which also proves the cast.
+     */
+    public static SPair mutable(Object x) {
+        return x != null && x.getClass() == SPair.class ? (SPair) x : null;
     }
 
     // A list to interop (design.md D10): iterable, its elements up to the first non-pair (so an
@@ -44,7 +58,7 @@ public final class SPair implements TruffleObject {
     // of its elements, not a Map of car and cdr. A circular list isn't proper: it has members (and
     // iterates as before). The walk is made each time interop asks, and nothing is cached: a pair
     // stays two fields, and set-cdr! can change the answer. Both members are writable, as set-car!
-    // and set-cdr! write them: pairs carry no literal flag (design.md D1).
+    // and set-cdr! write them, except a literal's, which are constants (design.md D1).
 
     /** The names of a pair's members, in order. */
     private static final SVector MEMBERS = new SVector(new Object[]{SString.literal("car"), SString.literal("cdr")}, true);
@@ -84,9 +98,13 @@ public final class SPair implements TruffleObject {
     }
 
     @ExportMessage(name = "isMemberReadable")
-    @ExportMessage(name = "isMemberModifiable")
     boolean isMember(String member) {
         return ("car".equals(member) || "cdr".equals(member)) && !startsProperList();
+    }
+
+    @ExportMessage
+    boolean isMemberModifiable(String member) {
+        return !(this instanceof LiteralPair) && isMember(member);
     }
 
     @ExportMessage
@@ -109,7 +127,7 @@ public final class SPair implements TruffleObject {
 
     @ExportMessage
     void writeMember(String member, Object value) throws UnsupportedMessageException, UnknownIdentifierException, UnsupportedTypeException {
-        if (startsProperList()) {
+        if (this instanceof LiteralPair || startsProperList()) {
             throw UnsupportedMessageException.create();
         }
         if ("car".equals(member)) {
