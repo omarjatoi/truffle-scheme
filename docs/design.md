@@ -671,13 +671,15 @@ full R7RS-small conformance comes first.
       the real limit on the first two: first iterations within 5% of
       `main`'s up to 64 MB, and 1.03 to 1.3 times from 96 MB up. The patch
       is on the branch `experiment/native-real-depth-limit-2`, not merged.
-    - *Since then* the native launcher's young generation starts at 384 MB
-      instead of 48 (D17, "The native launcher's young generation"), so a
+    - *A larger young generation.* A minimum heap of 1 GB starts the
+      native launcher's young generation at 384 MB instead of 48, so a
       first run collects about a third as often: with the counted limit,
       the list's first iteration took 0.63 s instead of 1.70, the 10M
       `count`'s 6.1 s instead of 10.7, and the 300,000-deep `count`'s 86 ms
-      instead of 133. These tables are from before it, and a deeper limit
-      wasn't measured again with it.
+      instead of 133. It isn't the default (D17, "Rejected: a 1 GB minimum
+      heap for the native launcher"); a user passes `-Xms1g` to the
+      executable for it. These tables are without it, and a deeper limit
+      wasn't measured with it.
   - *A first descent isn't compiled (M9-01).* Why a deep recursion's first
     run deoptimized frame by frame: Truffle compiles a procedure once it has
     been called a few hundred times, which a recursion does on its way down,
@@ -2283,31 +2285,46 @@ Each entry: the decision, why, and what was rejected.
     a dynamically linked executable fails. The baseline target is also what
     nixpkgs' own native-image check builds with, and makes the executable
     run on any x86-64 machine.
-  - **The native launcher's young generation.** The image is built with
-    `-R:MinHeapSize=1g`, a default for the executable's minimum heap, which
-    its own `-Xms` or `-XX:MinHeapSize=` replaces (`--vm.Xms` and the other
-    `--vm.` heap options don't work in a native launcher: the framework
-    rejects the size, and the options can only be set as the process
-    starts). Native-image's serial collector (CE's only one but Epsilon)
-    sizes the young generation with its `Adaptive2` policy, which starts it
-    at a third of the initial heap: 128 MB, or the minimum heap if that is
-    larger. So eden started at 48 MB, and now at 384 MB. The policy grows it
+  - **Rejected: a 1 GB minimum heap for the native launcher (#189).** The
+    image was built for a while with `-R:MinHeapSize=1g`, a default for the
+    executable's minimum heap that its own `-Xms` or `-XX:MinHeapSize=`
+    replaces, and is built with native-image's defaults again. Native-image's
+    serial collector (CE's only one but Epsilon) sizes the young generation
+    with its `Adaptive2` policy, which starts it at a third of the initial
+    heap: 128 MB, or the minimum heap if that is larger. So eden starts at
+    48 MB, and the 1 GB minimum started it at 384 MB. The policy grows it
     later (`nboyer` and `earley` reach about 1 GB either way); a first run
     is what a small one costs.
-    - *Why.* After M9-01, a deep recursion's first run is mostly collections
-      ("Stack-depth spill", *After M9-01*): each one scans the whole Java
-      stack, up to the spill limit's 30 MB of frames, and copies the frames
-      that the descent keeps live (an interpreted call allocates about 230
-      bytes, and a frame that spills about 100 more: its segment, its list
-      cell, and the call that resumes it). Fewer collections do less of
-      both.
-    - *Measured.* The executable before and after, built from the same
+    - *Why it was reverted.* An `-Xmx` below 1 GB then needed an `-Xms` no
+      larger than it: native-image refuses a minimum heap above a maximum
+      that was given (`The specified minimum heap size (1g) must not be
+      larger than the maximum heap size`), so `scheme-native -Xmx512m
+      file.scm` refused to start. (A maximum it chooses itself, from the
+      machine's memory, bounds the minimum instead, and nothing fails.)
+      And a program that allocates moderately (more than 48 MB, less than
+      a few hundred) peaked about three times as high: `divrec` and
+      `primes` at 480 MB instead of 165, and the comparative report's
+      native median peak RSS was 484 MB instead of 181.
+      A user whose programs are deep recursions can pass `-Xms1g` (or
+      `-XX:MinHeapSize=1g`) to the executable, which gives the same first
+      runs (docs/usage.md, "Native image"). `--vm.Xms` and the other `--vm.`
+      heap options don't work in a native launcher: the framework rejects
+      the size, and the options can only be set as the process starts, so
+      the launcher can't choose a minimum itself either.
+    - *What it was for.* After M9-01, a deep recursion's first run is mostly
+      collections ("Stack-depth spill", *After M9-01*): each one scans the
+      whole Java stack, up to the spill limit's 30 MB of frames, and copies
+      the frames that the descent keeps live (an interpreted call allocates
+      about 230 bytes, and a frame that spills about 100 more: its segment,
+      its list cell, and the call that resumes it). Fewer collections do
+      less of both.
+    - *Measured.* The executable without and with it, built from the same
       commit (`main` at `4ab9edc`), on an Apple M3 Max shared with other
       agents (load 3 to 12); medians of 5 interleaved processes each: the
       first iteration, the median of the later ones, the process's wall
       time, its collections (from `-XX:+PrintGC`) and peak RSS:
 
-      | | Before (eden 48 MB) | After (eden 384 MB) |
+      | | Default (eden 48 MB) | 1 GB minimum (eden 384 MB) |
       |---|---:|---:|
       | `count` 300,000 deep ×12 | 133 ms, then 36 ms; 0.61 s; 11 collections, 393 ms; 359 MB | 86 ms, then 6 ms; 0.30 s; 2, 62 ms; 611 MB |
       | build a list and `map` it, 1,000,000 deep, ×6 | 1.70 s, then 506 ms; 4.53 s; 24, 3.45 s; 1.0 GB | 0.63 s, then 422 ms; 2.48 s; 8, 1.38 s; 1.0 GB |
@@ -2322,29 +2339,23 @@ Each entry: the decision, why, and what was rejected.
       The spills are the same (`count` 300,000 deep: 13, then 4 to 6, then
       1 or 2; the list: 86, then 17 to 22, then 12). In the 300,000-deep
       `count`, a collection while the stack is deep still pauses 30 to 60
-      ms, but the first iteration has none.
-    - *What it costs.* A program that allocates less than eden's 384 MB in
-      all never collects, and one that allocates more peaks with eden full:
-      `divrec` and `primes` at 480 MB instead of 165, the deep recursions
-      and `nboyer` and `earley` 0.1 to 0.8 GB higher (table above).
-      Programs that allocate little are unchanged (a hello-world program
-      19 MB, `fib` and `ack` 72 MB). On this machine the JVM launcher's
-      own young generation (the serial collector, a third of the JVM's
-      initial heap, 1/64 of memory) is larger. An `-Xmx` below 1 GB needs
-      an `-Xms` no larger than it: native-image refuses a minimum heap
-      above a maximum that was given (`The specified minimum heap size (1g)
-      must not be larger than the maximum heap size`). A maximum it
-      chooses itself (from the machine's memory) bounds the minimum
-      instead, and nothing fails.
-    - *The compilation isolates keep their own default.* The JIT compiles
-      in isolates of their own (`CompileInIsolates`), which take the
-      image's option defaults, not the command line's, so the 1 GB minimum
-      gave each one a 384 MB eden too: `divrec` peaked at 787 MB instead of
-      the 476 MB of the same minimum given as `-Xms1g`, with the same
-      collections in the program's heap. The image also passes them
-      `-XX:MinHeapSize=0` (`-R:CompilationIsolateOptions`), the default,
-      and the two agree (480 MB).
-    - *Rejected:* other sizes. The same programs with the minimum given
+      ms, but with the 1 GB minimum the first iteration has none. A program
+      that allocates less than eden's 384 MB in all never collects, and one
+      that allocates more peaks with eden full: the deep recursions and
+      `nboyer` and `earley` 0.1 to 0.8 GB higher. Programs that allocate
+      little are unchanged (a hello-world program 19 MB, `fib` and `ack`
+      72 MB). On this machine the JVM launcher's own young generation (the
+      serial collector, a third of the JVM's initial heap, 1/64 of memory)
+      is larger.
+    - *The compilation isolates.* The JIT compiles in isolates of their own
+      (`CompileInIsolates`), which take the image's option defaults, not
+      the command line's, so a build-time 1 GB minimum gave each one a
+      384 MB eden too: `divrec` peaked at 787 MB instead of the 476 MB of
+      the same minimum given as `-Xms1g`, with the same collections in the
+      program's heap. #189 also passed them `-XX:MinHeapSize=0`
+      (`-R:CompilationIsolateOptions`), the default, and the two agreed
+      (480 MB). A minimum given on the command line doesn't reach them.
+    - *Other sizes.* The same programs with the minimum given
       as `-Xms` (5 interleaved processes each, the first iteration, wall
       time and peak RSS):
 
@@ -2379,8 +2390,8 @@ Each entry: the decision, why, and what was rejected.
       root's frame, the `Resumption`). A compiled frame that spills is
       materialized then (about 200 to 300 bytes). Taking the 40 bytes off
       would make 40% fewer of the spill's own allocations, and about a
-      tenth fewer of a deep interpreted descent's, against a third as many
-      collections above, so they stay.
+      tenth fewer of a deep interpreted descent's, against the third as
+      many collections of a 1 GB minimum heap above, so they stay.
   - Limits: the tools (inspector, DAP, profilers) are only on the JVM
     launcher (`bazel-bin/scheme`); the executable is for the platform that built
     it; and there is no auxiliary engine cache in the image (only the first

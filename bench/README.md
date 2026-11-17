@@ -191,6 +191,12 @@ nix develop .#bench --command bazel run //:r7rs -- bench-report --benchmarks fib
 bazel run //:r7rs -- bench-report --render-only   # rewrite the page from the JSON
 ```
 
+The page's native columns (at `044778b801f2`, #191) were measured with the
+executable's 1 GB minimum heap of #189, since reverted (design.md D17,
+"Rejected: a 1 GB minimum heap for the native launcher"): its peak memory is
+higher, and deep recursions' first runs faster, than today's executable's,
+until the report is next regenerated.
+
 Each other implementation runs as upstream's `bench` script runs it: the
 program is `cat <Impl>-prelude.scm <program>.scm common.scm
 <Impl>-postlude.scm common-postlude.scm`, compiled with the script's

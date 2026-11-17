@@ -137,16 +137,10 @@ native_image(
     # A context pre-initialized at build time, which the launcher's context takes over
     # (SchemeLanguage.patchContext): the standard libraries are in the image heap, ready. JLine
     # reaches the terminal through the FFM API, as on the JVM launcher (bazel-bin/scheme): without
-    # native access, the executable warns about it on a terminal. A minimum heap of 1 GB, a default
-    # that the executable's own -Xms or -XX:MinHeapSize replaces, starts the young generation at
-    # 384 MB instead of 48: a deep recursion's first run collects less often, and each collection
-    # scans its whole stack. The JIT's compilation isolates, which would take the same default,
-    # keep theirs (design.md D17, "The native launcher's young generation").
+    # native access, the executable warns about it on a terminal.
     options = [
         "-Dpolyglot.image-build-time.PreinitializeContexts=scheme",
         "--enable-native-access=org.graalvm.shadowed.jline",
-        "-R:MinHeapSize=1g",
-        "-R:CompilationIsolateOptions=-XX:MinHeapSize=0",
     ] + select({
         "//bazel:linux_x86_64": ["-march=compatibility"],
         "//conditions:default": [],
