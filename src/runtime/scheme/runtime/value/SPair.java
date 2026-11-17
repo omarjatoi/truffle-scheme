@@ -58,7 +58,7 @@ public final class SPair implements TruffleObject {
     // of its elements, not a Map of car and cdr. A circular list isn't proper: it has members (and
     // iterates as before). The walk is made each time interop asks, and nothing is cached: a pair
     // stays two fields, and set-cdr! can change the answer. Both members are writable, as set-car!
-    // and set-cdr! write them: pairs carry no literal flag (design.md D1).
+    // and set-cdr! write them, except a literal's, which are constants (design.md D1).
 
     /** The names of a pair's members, in order. */
     private static final SVector MEMBERS = new SVector(new Object[]{SString.literal("car"), SString.literal("cdr")}, true);
@@ -98,9 +98,13 @@ public final class SPair implements TruffleObject {
     }
 
     @ExportMessage(name = "isMemberReadable")
-    @ExportMessage(name = "isMemberModifiable")
     boolean isMember(String member) {
         return ("car".equals(member) || "cdr".equals(member)) && !startsProperList();
+    }
+
+    @ExportMessage
+    boolean isMemberModifiable(String member) {
+        return !immutable && isMember(member);
     }
 
     @ExportMessage
@@ -123,7 +127,7 @@ public final class SPair implements TruffleObject {
 
     @ExportMessage
     void writeMember(String member, Object value) throws UnsupportedMessageException, UnknownIdentifierException, UnsupportedTypeException {
-        if (startsProperList()) {
+        if (immutable || startsProperList()) {
             throw UnsupportedMessageException.create();
         }
         if ("car".equals(member)) {

@@ -870,8 +870,9 @@ Each entry: the decision, why, and what was rejected.
     (polyglot prefers members to iterators), and a list must stay an
     `Iterable` there. `hasMembers` walks the cdr chain each time interop asks
     (Floyd's cycle detection; nothing is cached on `SPair`, and `set-cdr!`
-    can change the answer). The members are writable, since `set-car!` and
-    `set-cdr!` can write any pair: pairs carry no literal flag (D1). Records are objects with their fields as
+    can change the answer). The members are writable, as `set-car!` and
+    `set-cdr!` write them, except a literal's, which are read-only (R7RS
+    §3.4, D1). Records are objects with their fields as
     read-only members.
   - Procedures are executables. Each `execute` runs the procedure under a
     root prompt of its own, as a program or REPL input runs (D6), so tail
