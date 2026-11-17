@@ -30,6 +30,7 @@ import com.oracle.truffle.api.debug.DebugException;
 import com.oracle.truffle.api.debug.Debugger;
 import com.oracle.truffle.api.debug.DebuggerSession;
 import com.oracle.truffle.api.debug.SuspendedEvent;
+import com.oracle.truffle.api.debug.SuspensionFilter;
 
 /**
  * Truffle's debugger on Scheme code (design.md D13), through the API the DAP server and the Chrome
@@ -283,6 +284,138 @@ public class DebuggerTest {
             }
         }
         assertEquals(List.of("scaled", "(3 7 #t)", "only-interactive is unbound", "display is unbound"), values);
+    }
+
+    // Called by map with two lists; its body, line 2, calls only primitives (see PROGRAM).
+    private static final String MAPPED = """
+                    (define (pair-up x y)
+                      (car (cons x y)))
+                    """;
+
+    /**
+     * A standard library's procedure, restored from the prelude image (design.md D13), evaluates in
+     * its library's top level too: in map's frame, (r7rs %prelude)'s definitions that no library
+     * exports are bound, and the interaction environment's aren't. (The prelude's sources are
+     * internal, so the session includes internal frames, as a front end stepping into them would.)
+     */
+    @Test
+    public void expressionsInAStandardLibrarysFrameSeeItsDefinitions() {
+        List<String> values = new ArrayList<>();
+        try (Context context = Context.newBuilder(SCHEME).out(new ByteArrayOutputStream()).build()) {
+            Source source = Source.newBuilder(SCHEME, MAPPED, "mapped.scm").buildLiteral();
+            context.eval(source);
+            // Defined in the interaction environment only: the prelude can't see it.
+            context.eval(SCHEME, "(define only-interactive 1)");
+            Debugger debugger = Debugger.find(context.getEngine());
+            try (DebuggerSession session = debugger.startSession(event -> {
+                DebugStackFrame map = null;
+                for (DebugStackFrame frame : event.getStackFrames()) {
+                    if (frame.getSourceSection() != null && frame.getSourceSection().getSource().getName().equals("prelude/lists-vectors.scm")) {
+                        map = frame;
+                        break;
+                    }
+                }
+                assertNotNull("no frame of map", map);
+                DebugStackFrame frame = map;
+                values.add(frame.getName());
+                // %cars and %all-pairs? are (r7rs %prelude)'s own: neither it nor (scheme base) exports them.
+                values.add(frame.eval("(list (%cars ls) (%all-pairs? ls) (procedure? %vector-refs))").toDisplayString());
+                DebugException e = assertThrows(DebugException.class, () -> frame.eval("only-interactive"));
+                values.add(e.getMessage().contains("only-interactive") ? "only-interactive is unbound" : e.getMessage());
+                event.prepareContinue();
+            })) {
+                session.setSteppingFilter(SuspensionFilter.newBuilder().includeInternal(true).build());
+                session.install(Breakpoint.newBuilder(source.getURI()).lineIs(2).build());
+                assertEquals("(1 2)", context.eval(SCHEME, "(map pair-up '(1 2) '(3 4))").toString());
+            }
+        }
+        assertTrue(values.toString(), values.size() >= 6);
+        assertEquals(List.of("map", "((1 3) #t #t)", "only-interactive is unbound", "map", "((2 4) #t #t)", "only-interactive is unbound"), values.subList(0, 6));
+    }
+
+    // Called from code evaluated in an environment; its body, line 2, calls only primitives.
+    private static final String CALLBACK = """
+                    (define (note y)
+                      (car (cons y y)))
+                    """;
+
+    /**
+     * Code that eval compiles into an environment (R7RS §6.12) evaluates in that environment's top
+     * level: it sees the environment's imports and not the interaction environment's definitions,
+     * and may not assign them (an environment from environment is immutable). In each environment,
+     * a lambda calls note, which has the breakpoint; the lambda's frame is the one below.
+     */
+    @Test
+    public void expressionsInEvaluatedCodeSeeItsEnvironment() {
+        List<String> values = new ArrayList<>();
+        try (Context context = Context.newBuilder(SCHEME).out(new ByteArrayOutputStream()).build()) {
+            Source source = Source.newBuilder(SCHEME, CALLBACK, "callback.scm").buildLiteral();
+            context.eval(source);
+            context.eval(SCHEME, "(define only-interactive 1)");
+            Debugger debugger = Debugger.find(context.getEngine());
+            try (DebuggerSession session = debugger.startSession(event -> {
+                List<DebugStackFrame> frames = new ArrayList<>();
+                event.getStackFrames().forEach(frames::add);
+                DebugStackFrame frame = frames.get(1);
+                values.add(frame.eval("(let ((z y)) (if z (cons x z) #f))").toDisplayString());
+                for (String name : new String[]{"only-interactive", "list"}) {
+                    try {
+                        frame.eval(name);
+                        values.add(name + " is bound");
+                    } catch (DebugException e) {
+                        values.add(e.getMessage().contains(name) ? name + " is unbound" : e.getMessage());
+                    }
+                }
+                DebugException e = assertThrows(DebugException.class, () -> frame.eval("(set! car car)"));
+                values.add(e.getMessage().contains("set!") ? "set! refused" : e.getMessage());
+                event.prepareContinue();
+            })) {
+                session.install(Breakpoint.newBuilder(source.getURI()).lineIs(2).build());
+                for (String environment : new String[]{"(environment '(scheme base))", "(scheme-report-environment 5)", "(environment '(only (scheme base) cons car if let lambda * set!))"}) {
+                    String program = "((eval '(lambda (f x) (let ((y (* x 2))) (if (f y) y #f))) " + environment + ") note 5)";
+                    assertEquals("10", context.eval(SCHEME, program).toString());
+                }
+            }
+        }
+        assertEquals(List.of(
+                        "(5 . 10)", "only-interactive is unbound", "list is bound", "set! refused",
+                        "(5 . 10)", "only-interactive is unbound", "list is bound", "set! refused",
+                        "(5 . 10)", "only-interactive is unbound", "list is unbound", "set! refused"), values.subList(0, Math.min(values.size(), 12)));
+    }
+
+    // A file loaded into an environment: its value (load's, here) is a procedure, whose body, line
+    // 2, calls only primitives.
+    private static final String LOADED = """
+                    (lambda (x)
+                      (car (cons x x)))
+                    """;
+
+    /** Code that load compiles into an environment evaluates in that environment's top level, as eval's does. */
+    @Test
+    public void expressionsInLoadedCodeSeeItsEnvironment() throws IOException {
+        Path file = folder.newFile("loaded.scm").toPath();
+        Files.writeString(file, LOADED);
+        List<String> values = new ArrayList<>();
+        try (Context context = Context.newBuilder(SCHEME).allowIO(IOAccess.ALL).out(new ByteArrayOutputStream()).build()) {
+            context.eval(SCHEME, "(define only-interactive 1)");
+            Debugger debugger = Debugger.find(context.getEngine());
+            try (DebuggerSession session = debugger.startSession(event -> {
+                DebugStackFrame top = event.getTopStackFrame();
+                values.add(top.eval("(cons x (car '(1)))").toDisplayString());
+                DebugException e = assertThrows(DebugException.class, () -> top.eval("only-interactive"));
+                values.add(e.getMessage().contains("only-interactive") ? "only-interactive is unbound" : e.getMessage());
+                e = assertThrows(DebugException.class, () -> top.eval("(set! car cdr)"));
+                values.add(e.getMessage().contains("set!") ? "set! refused" : e.getMessage());
+                event.prepareContinue();
+            })) {
+                Breakpoint breakpoint = Breakpoint.newBuilder(file.toUri()).lineIs(2).build();
+                session.install(breakpoint);
+                String path = file.toString().replace("\\", "\\\\").replace("\"", "\\\"");
+                assertEquals(21, context.eval(SCHEME, "((load \"" + path + "\" (environment '(scheme base))) 21)").asInt());
+                assertEquals(1, breakpoint.getHitCount());
+            }
+        }
+        assertEquals(List.of("(21 . 1)", "only-interactive is unbound", "set! refused"), values);
     }
 
     // The self tail call evaluates its arguments into unnamed temporaries, and or binds a variable
