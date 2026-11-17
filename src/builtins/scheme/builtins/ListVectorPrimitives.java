@@ -222,8 +222,6 @@ final class ListVectorPrimitives {
 
         @Override
         public Object invoke(Object[] args) {
-            // One class compare: a pair made at run time. A literal's pair (a LiteralPair) is an
-            // error to store into (R7RS §3.4, design.md D1), as anything else is.
             // One class compare, which is also the type check: a pair made at run time. A
             // literal's pair is an error to store into (R7RS §3.4, design.md D1).
             Object x = args[1];
