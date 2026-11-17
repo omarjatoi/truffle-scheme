@@ -45,14 +45,7 @@ final class InteropCallRootNode extends RootNode {
         DynEnv caller = context.getDynamicEnv();
         StackBudget.enterRoot(context);
         try {
-            Object first;
-            try {
-                first = driver.callWithProcedure(arguments[0], arguments);
-            } catch (InvokeContinuation e) {
-                // A continuation the procedure invoked directly (it may be one).
-                context.setDynamicEnv(e.continuation.dynEnv);
-                return driver.run(frame, Capture.ROOT_TAG, e.value, e.continuation.segments, context);
-            }
+            Object first = driver.callWithProcedure(arguments[0], arguments);
             return driver.run(frame, Capture.ROOT_TAG, first, null, context);
         } catch (SchemeError e) {
             return driver.leave(frame, e, caller, context);

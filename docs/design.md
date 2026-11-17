@@ -276,6 +276,43 @@ full R7RS-small conformance comes first.
   during a resume, the segments not yet resumed are added to the new capture.
   Re-entry therefore costs O(1) Java stack depth, and captures share segments
   that are already on the heap.
+- **Invoking a full continuation returns; it doesn't throw.** The prelude's
+  `%continue` rewinds, then `%apply-continuation` returns an APPLY `Capture`
+  (the continuation and its values), which travels up like any capture:
+  each frame it passes suspends with nothing kept (`Capture.addSegment` drops
+  the frame), every other prompt passes it on as it is, and the root prompt's
+  driver replaces its pending segments with the continuation's and resumes
+  them. It was an `InvokeContinuation` exception thrown to the root prompt.
+  - *Why.* An exception that passes the host-compiled interpreter
+    (`continueAt`, with `Call`, the trampoline and `OptimizedDirectCallNode`
+    inlined into it) needs the exception edges of the inlined calls, and Graal
+    leaves out an edge whose profile says nothing was thrown there. In
+    `puzzle`, whose `k` is invoked from inside a `do` loop (so it is a full
+    continuation: the loop is a lambda), the throw left through the
+    trampoline's Truffle loop (#167), and every throw then deoptimized
+    `continueAt` (`not_compiled_exception_handler` at
+    `OptimizedDirectCallNode.call`, bci 27, its `handleException`) and it was
+    compiled again without the edge, about every 250 ms for as long as the
+    program ran (16 times in a 4 s run), although every invoke on the way had
+    recorded the exception in its profile by then (`-XX:+PrintMethodData`).
+    Before #167 the same deoptimization happened once or twice, and the
+    recompiled code kept the edge. Lower host compile thresholds
+    (`-XX:CompileThresholdScaling=0.05`) or `-Djdk.graal.UseExceptionProbability=false`
+    also end it, but they are the JVM's settings, not ours. Returning keeps
+    the transfer on paths the host compiler compiles as taken. In the
+    interpreter (medians of 3 interleaved runs, a tenth of the programs'
+    counts): `puzzle` 7.5 s → 5.2 s (4.8 s before #167), `maze` 3.6 s →
+    3.3 s; the 24 programs of M8-03 and `puzzle` at the report's interpreter
+    counts 0.966 times (`puzzle` 0.48, `maze` 0.76, the rest within noise).
+    With the JIT nothing changes beyond noise (24 programs, first iteration
+    1.004 times, steady state 1.004), except that `puzzle`'s second and third
+    iterations at a tenth of its count take about 10% longer (a transient:
+    its later iterations, and every iteration at its own count, are as
+    before).
+  - Escape-only `k` (`%call/ec`, below) still throws `EscapeException`, which
+    could meet the same host deoptimization. None of the benchmarks throws
+    one (`-Xlog:exceptions`): their `k` is tail-called back to its prompt,
+    which returns without a throw.
 - **Segments are immutable once shared.** Each resume of a segment that a
   continuation can reach copies the frame. This is correct only because of
   assignment conversion (D2): the frame holds no mutable Scheme variables,
