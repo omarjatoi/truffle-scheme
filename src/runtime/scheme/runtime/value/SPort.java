@@ -160,6 +160,16 @@ public abstract class SPort implements TruffleObject {
     }
 
     /**
+     * Textual input ({@code read-line}): the characters up to the next line ending, LF, CR LF or a
+     * CR alone, which is read but not returned, or up to the end if no line ending comes first; the
+     * eof object if the port is at the end. Finds the line ending in the port's reader's buffer.
+     */
+    @TruffleBoundary
+    public final Object readLine() {
+        return doReadLine();
+    }
+
+    /**
      * Binary input ({@code read-bytevector}): the next {@code k} bytes, or as many as are left
      * before the end; null if {@code k > 0} and the port is at the end. Copies from the port's
      * stream in bulk.
@@ -225,6 +235,10 @@ public abstract class SPort implements TruffleObject {
         throw unsupported();
     }
 
+    protected Object doReadLine() {
+        throw unsupported();
+    }
+
     protected byte[] doReadBytes(int k) {
         throw unsupported();
     }
@@ -239,6 +253,12 @@ public abstract class SPort implements TruffleObject {
 
     /** The most a bulk read asks of a reader or stream at once, and the buffer it starts with. */
     private static final int CHUNK = 8192;
+
+    /**
+     * The first chunk {@code read-line} asks of a reader that isn't buffered, doubled for each
+     * chunk of a longer line up to {@link #CHUNK}.
+     */
+    private static final int LINE = 128;
 
     private IllegalStateException unsupported() {
         // Internal error, never a Scheme error (design.md D8): the builtins check the port first.
@@ -492,6 +512,103 @@ public abstract class SPort implements TruffleObject {
                 throw ioError(e);
             }
             return n == 0 ? null : sb.toString();
+        }
+
+        /**
+         * A {@link BufferedReader} (files and the console) finds the line in its buffer itself:
+         * {@link BufferedReader#readLine} ends a line exactly where a character at a time did, at
+         * LF, CR LF or a CR alone. After a CR it skips an LF on its next read of any kind, where a
+         * character at a time read the LF at once: the same characters, but it never waits for the
+         * character after a CR that ends a line typed at the console. Another reader (a string
+         * port's) is read in chunks that {@link #scanLine} searches.
+         */
+        @Override
+        protected Object doReadLine() {
+            StringBuilder start = null;
+            try {
+                if (peeked != NONE) {
+                    int c = peeked;
+                    peeked = NONE;
+                    if (c < 0) {
+                        return SConstant.EOF;
+                    } else if (c == '\n' || c == '\r') {
+                        if (c == '\r') {
+                            skipLineFeed();
+                        }
+                        return SString.of("");
+                    }
+                    start = new StringBuilder().appendCodePoint(c);
+                }
+                if (in instanceof BufferedReader buffered) {
+                    String line = buffered.readLine();
+                    if (start == null) {
+                        return line == null ? SConstant.EOF : SString.of(line);
+                    }
+                    return SString.of(line == null ? start.toString() : start.append(line).toString());
+                }
+                return scanLine(start);
+            } catch (IOException e) {
+                throw ioError(e);
+            }
+        }
+
+        /** Reads the LF after a CR that ended a line, if there is one. */
+        private void skipLineFeed() throws IOException {
+            in.mark(1);
+            if (in.read() != '\n') {
+                in.reset();
+            }
+        }
+
+        /**
+         * Reads the reader in chunks, from {@link #LINE} units up to {@link #CHUNK}, marking where
+         * each starts: in the chunk with the line ending, goes back to the mark and skips the line
+         * and its ending. The text goes into one array, {@link SString}'s without a copy between.
+         */
+        private Object scanLine(StringBuilder start) throws IOException {
+            char[] line = new char[start == null ? LINE : Math.max(LINE, 2 * start.length())];
+            int n = 0;
+            if (start != null) {
+                n = start.length();
+                start.getChars(0, n, line, 0);
+            }
+            int want = LINE;
+            while (true) {
+                if (line.length - n < want) {
+                    line = Arrays.copyOf(line, Math.max(2 * line.length, n + want));
+                }
+                in.mark(want);
+                int r = in.read(line, n, want);
+                if (r < 0) {
+                    return n == 0 && start == null ? SConstant.EOF : SString.of(line, 0, n);
+                }
+                for (int i = n; i < n + r; i++) {
+                    char c = line[i];
+                    if (c == '\n' || c == '\r') {
+                        int skip = i + 1 - n;
+                        boolean lineFeed = c == '\r' && i + 1 < n + r && line[i + 1] == '\n';
+                        in.reset();
+                        skipFully(lineFeed ? skip + 1 : skip);
+                        if (c == '\r' && i + 1 == n + r) {
+                            skipLineFeed();
+                        }
+                        return SString.of(line, 0, i);
+                    }
+                }
+                n += r;
+                want = Math.min(2 * want, CHUNK);
+            }
+        }
+
+        private void skipFully(long count) throws IOException {
+            long left = count;
+            while (left > 0) {
+                long skipped = in.skip(left);
+                if (skipped <= 0) {
+                    throw new IOException("reader skipped " + skipped + " of " + left + " characters it had read");
+                }
+                left -= skipped;
+            }
         }
 
         @Override

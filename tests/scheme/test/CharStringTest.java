@@ -1,14 +1,18 @@
 package scheme.test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 
 import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.PolyglotException;
 import org.junit.Test;
+
+import scheme.runtime.value.SString;
 
 /** M4-02: characters, strings and symbols (R7RS §6.5–6.7, design.md D9). */
 public class CharStringTest {
@@ -170,5 +174,48 @@ public class CharStringTest {
                             (set! results (cons r results))
                             (set! n (+ n 1))
                             (if (= n 1) (k #\\x) (reverse results))))"""));
+    }
+
+    /**
+     * {@code SString}'s factories from Java text (a {@code String}, or a reader's {@code char[]})
+     * give the same string as before they built it in one pass: one character per code point, a
+     * surrogate pair one character and a lone surrogate one too, Latin-1 storage exactly when every
+     * character is at most 255 (design.md D1), and a range of an array never pairs across its ends.
+     */
+    @Test
+    public void stringsFromJavaText() {
+        String latin1 = "x".repeat(9999) + "\u00ff";
+        String[] samples = {"", "a", "\u0000", "\u007f\u0080\u00ff", "abc\u00e9\u00ff", "\u0100", "ab\u4e2d", "\u4e2dab\u00ff\u0080",
+                        "\uD83D\uDE00", "a\uD83D\uDE00b\u00e9\u00ff", "\uD83D", "\uDE00", "\uD83Da", "a\uDE00\uD83D", "\uD83D\uD83D\uDE00\uDE00",
+                        "\u00ff\uD800\uDC00\uDBFF\uDFFF\uFFFF", latin1, latin1 + "\u0101", latin1 + "\uD83D\uDE00\u00ff", "\uD83D\uDE00".repeat(5000)};
+        for (String s : samples) {
+            check(s, SString.of(s), false);
+            check(s, SString.literal(s), true);
+            char[] padded = ("\uDE00" + s + "\uDE00").toCharArray();
+            check(s, SString.of(padded, 1, s.length()), false);
+        }
+        // A range that ends inside a pair, or starts inside one: its halves are lone surrogates.
+        char[] pairs = "a\uD83D\uDE00b".toCharArray();
+        check("a\uD83D", SString.of(pairs, 0, 2), false);
+        check("\uDE00b", SString.of(pairs, 2, 2), false);
+        check("", SString.of(pairs, 4, 0), false);
+    }
+
+    private static void check(String expected, SString s, boolean immutable) {
+        int[] cps = expected.codePoints().toArray();
+        assertEquals(expected, cps.length, s.length());
+        for (int i = 0; i < cps.length; i++) {
+            assertEquals(expected + " at " + i, cps[i], s.codePointAt(i));
+        }
+        assertEquals(expected, Arrays.stream(cps).allMatch(c -> c <= 0xff), s.isLatin1());
+        assertEquals(immutable, s.isImmutable());
+        assertEquals(expected, s.toString());
+        if (!immutable && cps.length > 0) {
+            // Still a string of its storage: storing a wide character widens a Latin-1 one.
+            s.set(cps.length - 1, 0x1F600);
+            assertEquals(0x1F600, s.codePointAt(cps.length - 1));
+            assertFalse(s.isLatin1());
+            assertEquals(cps.length > 1 ? cps[0] : 0x1F600, s.codePointAt(0));
+        }
     }
 }

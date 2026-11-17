@@ -583,31 +583,11 @@ final class IoPrimitives {
         }
     }
 
+    /** {@code (%read-line port)}: a line, read in bulk ({@code SPort.readLine}), or eof. */
     static final class ReadLine extends PrimitiveNode {
         @Override
         public Object invoke(Object[] args) {
-            return readLine(textualInput("read-line", args[1]));
-        }
-
-        /** Up to the next line ending (LF, CR LF or CR), which is consumed but not returned. */
-        @TruffleBoundary
-        private static Object readLine(SPort port) {
-            int c = port.readChar();
-            if (c < 0) {
-                return SConstant.EOF;
-            }
-            StringBuilder sb = new StringBuilder();
-            while (c >= 0 && c != '\n') {
-                if (c == '\r') {
-                    if (port.peekChar() == '\n') {
-                        port.readChar();
-                    }
-                    break;
-                }
-                sb.appendCodePoint(c);
-                c = port.readChar();
-            }
-            return SString.of(sb.toString());
+            return textualInput("read-line", args[1]).readLine();
         }
     }
 
