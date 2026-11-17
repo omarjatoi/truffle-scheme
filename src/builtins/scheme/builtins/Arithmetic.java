@@ -2,13 +2,13 @@ package scheme.builtins;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
-import java.math.MathContext;
 import java.math.RoundingMode;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 
 import scheme.runtime.SchemeError;
 import scheme.runtime.printer.Printer;
+import scheme.runtime.value.Numbers;
 import scheme.runtime.value.SBigInteger;
 import scheme.runtime.value.SComplex;
 import scheme.runtime.value.SRational;
@@ -121,7 +121,7 @@ final class Arithmetic {
             return b.value.doubleValue();
         }
         SRational r = (SRational) x;
-        return new BigDecimal(r.numerator).divide(new BigDecimal(r.denominator), MathContext.DECIMAL128).doubleValue();
+        return Numbers.nearestDouble(r.numerator, r.denominator);
     }
 
     /** The exactly equal exact number (design.md D1): a flonum becomes the rational it denotes. */
