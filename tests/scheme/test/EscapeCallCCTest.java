@@ -120,6 +120,106 @@ public class EscapeCallCCTest {
         captures("(lambda (call/cc) (call/cc (lambda (k) (k 1))))");
     }
 
+    /*
+     * The analysis tests see only the core forms: a let is written as what it expands to,
+     * ((lambda (x ...) body) init ...), and a named let or a do loop as ((letrec* ((tag (lambda (x
+     * ...) body))) tag) init ...). The semantics tests below run the same shapes as written.
+     */
+
+    @Test
+    public void rewritesWhenKIsUsedInLambdasThatAreOnlyCalled() {
+        // A do loop whose body calls k (puzzle's and quicksort's shape): a non-tail call of k keeps
+        // it from being contified, so it is a lambda, but one only ever called, so it runs in the
+        // receiver's extent. Local loops and helpers are known in any unit.
+        assertEquals(true, show("""
+                        (call/cc (lambda (return)
+                                   ((letrec* ((loop (lambda (i) (if (= i 10) #f (begin (if (= i 5) (return i)) (loop (+ i 1)))))))
+                                      loop)
+                                    0)))""", false).contains("%call/ec"));
+        // A named let over a variable of the procedure around call/cc.
+        assertEquals(true, show("""
+                        (lambda (l)
+                          (call/cc (lambda (k)
+                                     ((letrec* ((loop (lambda (l)
+                                                        (if (pair? l)
+                                                            (begin (if (negative? (car l)) (k (car l))) (loop (cdr l)))
+                                                            0))))
+                                        loop)
+                                      l))))""", false).contains("%call/ec"));
+        // A loop that calls k in tail position is contified (M7-02): its body is the receiver's.
+        assertEquals(true, show("(call/cc (lambda (k) ((letrec* ((loop (lambda (i) (if (= i 5) (k i) (loop (+ i 1)))))) loop) 0)))", false).contains("%call/ec"));
+        // Helpers bound by an internal definition, a let or a letrec*, called directly or from
+        // each other, and a helper inside a helper.
+        escapes("(lambda (x) (call/cc (lambda (k) (define (check x) (if (negative? x) (k x))) (check 1) (check x) 0)))");
+        escapes("(call/cc (lambda (k) ((lambda (h) (+ 1 (h 2))) (lambda (x) (k x)))))");
+        escapes("(call/cc (lambda (k) (letrec* ((even (lambda (n) (if (= n 0) (k 'even) (odd (- n 1))))) (odd (lambda (n) (if (= n 0) (k 'odd) (even (- n 1)))))) (+ 1 (even 7)))))");
+        escapes("(call/cc (lambda (k) (define (outer x) (define (inner y) (k y)) (+ 1 (inner x))) (outer 1)))");
+        // A let-bound helper is a known procedure too: k passed to it.
+        escapes("(call/cc (lambda (k) ((lambda (h) (+ 1 (h k))) (lambda (j) (j 2)))))");
+        // A loop inside a helper, and a helper called from inside a loop.
+        escapes("""
+                        (call/cc (lambda (k)
+                                   (define (scan v)
+                                     ((letrec* ((loop (lambda (i) (if (= i (vector-length v)) #f (begin (if (vector-ref v i) (k i)) (loop (+ i 1)))))))
+                                        loop)
+                                      0))
+                                   (+ 1 (scan (vector #f #t)))))""");
+        escapes("""
+                        (call/cc (lambda (k)
+                                   (define (leave x) (k x))
+                                   ((letrec* ((loop (lambda (i) (begin (if (= i 3) (leave i)) (loop (+ i 1)))))) loop) 0)))""");
+        // A lambda passed to a known procedure whose parameter is only called (maze's
+        // vector-for-each-rev), directly or from that procedure's own loop.
+        escapes("""
+                        (define (each proc l) (if (pair? l) (begin (proc (car l)) (each proc (cdr l)))))
+                        (define (f l) (call/cc (lambda (k) (each (lambda (x) (if (negative? x) (k x))) l) 0)))""");
+        escapes("""
+                        (define (vector-for-each-rev proc v)
+                          ((letrec* ((lp (lambda (i) (if (>= i 0) (begin (proc (vector-ref v i)) (lp (- i 1)))))))
+                             lp)
+                           (- (vector-length v) 1)))
+                        (define (dig v) (call/cc (lambda (quit) (vector-for-each-rev (lambda (x) (if (= x 0) (quit #f))) v))))""");
+        // k passed along from inside a called lambda to a known procedure that only calls it.
+        escapes("(define (leave k x) (k x)) (call/cc (lambda (k) (define (h x) (leave k x)) (+ 1 (h 2))))");
+    }
+
+    @Test
+    public void keepsTheCaptureWhenALambdaThatUsesKMayOutliveTheCall() {
+        // The lambda is stored, returned, or reachable from a stored or returned lambda.
+        captures("(define saved #f) (call/cc (lambda (k) (define (h) (k 1)) (set! saved h) 0))");
+        captures("(call/cc (lambda (k) (define (h) (k 1)) h))");
+        captures("(call/cc (lambda (k) ((lambda (h) (list h)) (lambda () (k 1)))))");
+        captures("(call/cc (lambda (k) (define (h) (k 1)) (lambda () (h))))");
+        captures("(call/cc (lambda (k) (define (h) (k 1)) (define (g) (h)) g))");
+        captures("""
+                        (define saved #f)
+                        (call/cc (lambda (k)
+                                   ((letrec* ((loop (lambda (i) (if (< i 3) (begin (set! saved (lambda () (k i))) (loop (+ i 1)))))))
+                                      loop)
+                                    0)))""");
+        captures("(call/cc (lambda (k) ((letrec* ((loop (lambda (i) (if (< i 3) (loop (+ i 1)) (lambda () (k i)))))) loop) 0)))");
+        // A loop that is itself a value: passed on.
+        captures("(call/cc (lambda (k) ((letrec* ((loop (lambda (i) (begin (if (= i 3) (k i)) (loop (+ i 1)))))) (g loop)) 0)))");
+        // Passed to map, for-each, apply, or a procedure the unit doesn't know.
+        captures("(define (f l) (call/cc (lambda (k) (map (lambda (x) (if x (k x))) l))))");
+        captures("(define (f l) (call/cc (lambda (k) (define (h x) (if x (k x))) (for-each h l))))");
+        captures("(call/cc (lambda (k) (apply (lambda (x) (k x)) '(1))))");
+        captures("(call/cc (lambda (k) (g (lambda () (k 1)))))");
+        captures("(call/cc (lambda (k) (define (h) (k 1)) (g h)))");
+        // Used inside another call/cc's receiver, which call/cc may keep (that j escapes keeps the
+        // inner call/cc from showing %call/ec too).
+        captures("(call/cc (lambda (k) (define (h) (k 1)) (call/cc (lambda (j) (h) j))))");
+        // A helper that is assigned, or a known procedure whose parameter lets it escape.
+        captures("(call/cc (lambda (k) (define (h) (k 1)) (set! h (lambda () 2)) (h)))");
+        captures("(call/cc (lambda (k) ((lambda (h) (set! h h) (h)) (lambda () (k 1)))))");
+        captures("(define saved #f) (define (keep f) (set! saved f)) (call/cc (lambda (k) (keep (lambda () (k 1)))))");
+        captures("(define (twice f) (lambda () (f) (f))) (call/cc (lambda (k) ((twice (lambda () (k 1))))))");
+        captures("(define (f g) (set! g 1) g) (call/cc (lambda (k) (f (lambda () (k 1)))))");
+        captures("(call/cc (lambda (k) ((lambda (h) (h 1)) (lambda (j) (vector j k)))))");
+        // In the interaction environment a global procedure is unknown, even one that only calls.
+        assertEquals(false, show("(define (each proc l) (if (pair? l) (begin (proc (car l)) (each proc (cdr l))))) (call/cc (lambda (k) (each (lambda (x) (k x)) '(1))))", false).contains("%call/ec"));
+    }
+
     @Test
     public void globalsAreKnownOnlyInClosedUnits() {
         // In the interaction environment a later input may redefine f, so k stays a full capture.
@@ -173,6 +273,51 @@ public class EscapeCallCCTest {
                               (if (zero? (- x 1)) (c 1)
                                   (addc (call/cc (lambda (c) (fibc (- x 1) c))) (call/cc (lambda (c) (fibc (- x 2) c))) c))))
                         (write (list (ctak 12 8 4) (fibc 8 (lambda (n) n))))""");
+    }
+
+    @Test
+    public void escapesFromLambdasThatAreOnlyCalled() {
+        check("(5 -2 odd 3 #f 2 #t 0 7)", """
+                        (define (first-neg l)
+                          (call/cc (lambda (k) (let loop ((l l)) (if (pair? l) (begin (if (negative? (car l)) (k (car l))) (loop (cdr l))) 0)))))
+                        (define (vector-for-each-rev proc v)
+                          (let lp ((i (- (vector-length v) 1)))
+                            (cond ((>= i 0) (proc (vector-ref v i)) (lp (- i 1))))))
+                        (define (dig v) (call/cc (lambda (quit) (vector-for-each-rev (lambda (x) (if (= x 0) (quit #f))) v) #t)))
+                        (define (sorted? v)
+                          (call/cc (lambda (return)
+                                     (do ((i 1 (+ i 1))) ((= i (vector-length v)) #t)
+                                       (unless (<= (vector-ref v (- i 1)) (vector-ref v i)) (return #f))))))
+                        (define (leave k x) (k x))
+                        (write (list (call/cc (lambda (return) (do ((i 0 (+ i 1))) ((= i 10) #f) (if (= i 5) (return i)))))
+                                     (first-neg '(1 2 -2 3))
+                                     (call/cc (lambda (k)
+                                                (letrec ((even (lambda (n) (if (= n 0) (k 'even) (odd (- n 1)))))
+                                                         (odd (lambda (n) (if (= n 0) (k 'odd) (even (- n 1))))))
+                                                  (+ 1 (even 7)))))
+                                     (call/cc (lambda (k) (define (outer x) (define (inner y) (k y)) (+ 1 (inner x))) (* 2 (outer 3))))
+                                     (dig (vector 1 0 2))
+                                     (call/cc (lambda (k) (define (h x) (leave k x)) (+ 1 (h 2))))
+                                     (sorted? (vector 1 2 3))
+                                     (first-neg '(1 2))
+                                     (+ 1 (call/cc (lambda (k) (let ((h (lambda (x) (k x)))) (+ 10 (h 6))))))))""");
+    }
+
+    @Test
+    public void reentryIntoALoopThatUsesKThenEscape() {
+        // A full continuation captured inside a loop that refers to k, re-entered after the
+        // call/cc returned: the loop's k still escapes to its (copied) call/cc.
+        check("(3 13 23)", """
+                        (define saved #f)
+                        (define results '())
+                        (define v
+                          (call/cc (lambda (k)
+                                     (do ((i 0 (+ i 1))) (#f)
+                                       (when (= i 3)
+                                         (k (+ (call/cc (lambda (c) (set! saved c) 0)) i)))))))
+                        (set! results (cons v results))
+                        (if (< (length results) 3) (saved (* 10 (length results))))
+                        (write (reverse results))""");
     }
 
     @Test

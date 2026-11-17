@@ -49,19 +49,23 @@ public class ApplyContinuationTest {
     }
 
     /**
-     * {@code puzzle}'s shape: k is referenced from a loop's body, a lambda, so call/cc captures a
-     * full continuation, and k is invoked (a non-tail call) from a frame that the root prompt
-     * resumed after the nested call/cc's capture. With the interpreter only, and every exception the
-     * JVM throws logged: none is the runtime's.
+     * {@code puzzle}'s shape: k is invoked (a non-tail call) from a loop's body, a lambda, from a
+     * frame that the root prompt resumed after the nested call/cc's capture. k is also stored in a
+     * global, so call/cc captures a full continuation: since a loop that is only called no longer
+     * makes k a full continuation by itself ({@code EscapeCallCCTest}), puzzle's own k is
+     * escape-only. With the interpreter only, and every exception the JVM throws logged: none is the
+     * runtime's.
      */
     @Test
     public void invokingAFullContinuationThrowsNoJavaException() throws IOException, InterruptedException {
         Path program = folder.getRoot().toPath().resolve("trial.scm");
         Files.writeString(program, """
                         (import (scheme base) (scheme write))
+                        (define last #f)
                         (define (trial j)
                           (call-with-current-continuation
                            (lambda (return)
+                             (set! last return)
                              (do ((i 0 (+ i 1))) ((= i 2) #f)
                                (if (or (= j 0) (trial (- j 1))) (return #t))))))
                         (define (run n found)
