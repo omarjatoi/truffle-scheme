@@ -1362,6 +1362,51 @@ Each entry: the decision, why, and what was rejected.
     state). A larger warm-up (20,000 calls of two procedures, to reach the
     second tier too) did less (0.955 times against 0.925): it holds a core
     longer.
+- **The collector (M8-05).** The JVM launcher (`bazel-bin/scheme`, and so the
+  benchmark harness, which runs it) starts the JVM with the serial collector,
+  `-XX:+UseSerialGC`, unless its JVM options already choose one (`tests/harness/harness.py`,
+  `launcher_gc_vm_args`: the JVM refuses to start with two; `JDK_JAVA_OPTIONS`
+  counts). The native launcher has always used it: it is native-image's
+  default (CE has no other but Epsilon). An embedder chooses its own JVM's.
+  - *Why.* Measured on 24 of ecraven's programs at the report's counts (0.1
+    times their own, `-Xmx2g`, 3 iterations per JVM; 2 interleaved rounds,
+    the medians; an Apple M3 Max shared with other agents, runs whose load
+    passed 10 dropped), against G1, the JVM's default:
+
+    | Collector | First iteration | Steady state | Peak RSS |
+    |---|--:|--:|--:|
+    | Serial | 0.82 | 0.82 | 0.70 |
+    | Serial, compact object headers | 0.82 | 0.78 | 0.69 |
+    | Parallel (25 programs, its own rounds) | 0.94 | 1.00 | 0.71 |
+    | G1, compact object headers | 0.97 | 1.08 | 0.74 |
+
+    (geometric means of the ratios). With the serial collector `paraffins` took
+    0.30 times as long, `tak` 0.42, `mperm` 0.49, `graphs` 0.54, `lattice`
+    0.68, `nqueens` 0.73 and `mazefun` 0.75; `nboyer` 1.73 times (its young
+    collections copy hundreds of MB of survivors on one thread: 6.4 s of
+    pauses against G1's 0.7) and `earley` 1.06; the rest within 10%. Most of
+    the gain isn't in the pauses: `tak` and `graphs` spent 36 ms and 600 ms
+    collecting with either, and ran 2.0 against 4.9 s and 2.1 against 3.8 s;
+    the parallel collector, whose write barrier is the serial one's, ran them as slowly as G1 (5.0 s, 3.9 s), so what makes the
+    difference is something of the serial collector's own that these
+    measurements didn't isolate (its TLABs, GC threads, compressed-oop and
+    class-pointer modes and the CDS mapping were ruled out). `paraffins`
+    collected for 115 ms against G1's 1.5 s: the serial young generation, a
+    third of the heap, holds its radicals until they are promoted, where G1
+    and the parallel collector resized theirs and copied them repeatedly.
+    A hello-world program starts in the same time (476 against 448 ms on a
+    loaded machine, 7 runs each).
+  - *Rejected:* compact object headers (`-XX:+UseCompactObjectHeaders`,
+    which make a pair 16 bytes instead of 24): with G1 they were slower
+    (`paraffins` 2.0 times, `peval` 1.5, `sboyer` 1.3, `nboyer` 1.3), with
+    the serial collector 5% faster overall but slower on `nboyer` and
+    `earley`, and the JDK's class-data-sharing archive is built without
+    them, so the JVM starts without it: a hello-world program took 682 ms
+    against 476. The parallel collector: as fast as G1, 30% less memory,
+    none of the serial collector's gains. G1 stays what an embedder's JVM
+    uses unless it chooses otherwise, and a program with a large live
+    heap and a high allocation rate (`nboyer`) can choose it back
+    (`JDK_JAVA_OPTIONS=-XX:+UseG1GC`).
 - The Chrome inspector, DAP and profiler tools are optional modules
   (`//bazel:tools_modules`), which `bazel-bin/scheme` puts on the module
   path, and CI runs a smoke test of each against a Scheme program
