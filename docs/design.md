@@ -2350,6 +2350,52 @@ Each entry: the decision, why, and what was rejected.
     thread's stack, "The evaluation thread"). A collector is chosen when the
     image is built ("The native image's collector"), so `--vm.XX:+Use...GC`
     is an error saying so, and so is `--vm.cp=` (there is no class path).
+  - *A program's arguments in the VM's forms (native).* SubstrateVM reads
+    `-X...`, `-XX:...` and `-D...` from the whole command line as it
+    creates the process's isolate, before `main` runs (25.5's
+    `IsolateArgumentParser.parse`, for the heap's sizes and the other options
+    it needs first, then `RuntimeOptionParser.parseAndConsumeJavaMainOptions`,
+    in `svm-guest-staging.jar`), and `main` gets what is left. So the native
+    launcher can't give them to a program: `scheme-native prog.scm a -Xmx3g
+    -Dx=y b` runs `prog.scm` with `(command-line)` = `("prog.scm" "a" "b")`,
+    a 3 GB maximum heap (`-XX:+VerboseGC`: `Maximum heap size: 3072M`) and
+    the property `x`; one it doesn't know
+    (`-XX:+Foo`) or can't read (`-Xmxfoo`) stops it before the launcher runs
+    (`Error: Could not find option 'Foo'`, status 1), and `-Xss1k` makes it
+    overflow its stack. The JVM launcher passes all of them to the program as
+    given (the JVM's options end before its main module; `//tests:launcher_vm`).
+    - *native-image's switch.* `-H:-ParseRuntimeOptions` (*"Parse and
+      consume standard options and system properties from the command line
+      arguments when the VM is created. Default: + (enabled)"*, 25.5's
+      `native-image --expert-options-all`) turns both parsers off: built with
+      it, `scheme-native prog.scm a -Xmx3g -XX:+Foo -Dx=y b` gave the program
+      `("prog.scm" "a" "-Xmx3g" "-XX:+Foo" "-Dx=y" "b")`. GraalVM builds its own launchers' native images with it
+      (`sdk/mx.sdk/mx_sdk_vm_impl.py`: `if isinstance(image_config,
+      mx_sdk.LauncherConfig): build_args += ['-H:-ParseRuntimeOptions']`), and
+      their framework then sets `--vm.` options in the process
+      (`Launcher.maybeNativeExec`, `RuntimeOptions.set`).
+    - *Why it isn't used.* With it, nothing can set the options that only
+      take effect as the process starts. The heap's sizes (`-Xmx`, `-Xms`,
+      `-Xmn` and their `-XX:` names) and `-XX:InitialCollectionPolicy=` are
+      read by `IsolateArgumentParser` (`RegisterForIsolateArgumentParser`),
+      and 25.5 refuses to change such an option once the runtime is up
+      (`RuntimeOptionKey.validateValueBeforeUpdate`: *"is immutable and can
+      only be set during startup"*); the restart above passes them on a
+      command line that the restarted process no longer reads (the
+      executable built with it: `--vm.Xmx64m` → `Unrecognized argument:
+      '-Xmx64m'`); and SubstrateVM reads no other source of options at
+      startup (no environment variable). The executable would lose `-Xmx`
+      (the comparative report's `-Xmx2g`, G1's bound), `-Xms1g` and the
+      collection policies ("The native image's collector"), which are worth
+      more to its users than arguments of those forms are to programs.
+      GraalVM's language standalones have both through a thin launcher
+      (`sdk/src/org.graalvm.launcher.native/src/launcher.cc`): a small C++
+      executable that takes the `--vm.` options from the command line and
+      creates the VM (the language's shared library, `JNI_CreateJavaVM`)
+      with them, then runs the launcher, which restarts it with the right
+      ones in `GRAALVM_LANGUAGE_LAUNCHER_VMARGS_<n>` if it guessed wrong.
+      That is the way to have both here too: a second file beside the
+      executable, and a design change of its own.
   - `//tests:launcher_vm` checks the JVM launcher's, and the local
     `//tests:launcher_vm_native` the native launcher's (the heap's sizes
     from `-XX:+VerboseGC`, a maximum that a program exceeds, the errors).

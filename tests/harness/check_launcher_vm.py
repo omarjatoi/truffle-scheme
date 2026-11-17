@@ -128,6 +128,13 @@ def vm_options(o):
     check(out.strip() == '("--vm.Xmx1g" "--vm.Dx=y")', f'the --vm. options after the file should be the program\'s: {out}')
     check('-Dscheme.test.vm=given' in command and '-Xmx1g' not in command and '-Dx=y' not in command,
           f'only the --vm. options before the file should be the JVM\'s: {command}')
+    # So are arguments in the JVM's own forms: the JVM's options end before its main module.
+    program_args = ['a', '-Xmx3g', '-XX:+Foo', '-Dx=y', '-Xss1k', 'b']
+    out, command = run(runtime, [program] + program_args)
+    check(out.strip() == '(' + ' '.join(f'"{a}"' for a in program_args) + ')',
+          f'-X, -XX: and -D arguments after the file should be the program\'s, as given: {out}')
+    check(command[command.index(program):] == [program] + program_args,
+          f'the arguments after the file should follow it, as given: {command}')
 
     # The launcher started with java, not with its --vm. options: an error, not ignored.
     env = {k: v for k, v in os.environ.items() if k not in ('JDK_JAVA_OPTIONS', 'JAVA_TOOL_OPTIONS')}
