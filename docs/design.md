@@ -2022,24 +2022,47 @@ Each entry: the decision, why, and what was rejected.
   options (the command's, `JDK_JAVA_OPTIONS`, `JAVA_TOOL_OPTIONS`) set it
   themselves, as for the collector; `//tests:launcher_vm` checks each.
   - *Where the memory went.* A hello-world program on an Apple M3 Max with
-    128 GB (16 cores) peaked at about 340 MB of RSS (`ru_maxrss`, which
-    counts the shared libraries' pages too) and 327 MB of physical
-    footprint (`vmmap --summary`, at its end). Of that, the Java heap was
-    about 280 MB: the program allocates about 250 MB as it starts (with
-    `--engine.Compilation=false` too), and the serial collector's young
-    generation is a third of the initial heap, a 64th of the machine's
-    memory (682 MB here), so it runs without a collection and touches every
-    page it allocates. The JVM's own memory (`-XX:NativeMemoryTracking`) was
-    70 MB: code cache 16, metaspace 16, the JDK's CDS archive 14, arenas 8.
-    The Graal compiler's (libgraal, which compiles the host's Java as well
-    as Truffle's) is outside it: each JVMCI compiler thread has its own
-    libgraal isolate (`JVMCIThreadsPerNativeLibraryRuntime=1`), with a 16 MB
-    eden and the free chunks it keeps, and the JVM had started 7 of its 12
-    host compiler threads as JVMCI threads before the program ended: with
-    a 32 MB young generation (`-Xmn32m`) the heap was 35 MB and the
-    footprint still 290 MB. Thread stacks were 2 MB (the evaluation
-    thread's 256 MB is address space). In a benchmark (`fib`, `-Xmx2g`) the
-    young generation (630 MB touched) is most of the 760 MB footprint.
+    128 GB (16 cores) peaked at about 340 MB of RSS (`ru_maxrss`, which counts
+    the shared libraries' pages too) and 327 MB of physical footprint
+    (`vmmap --summary`, at its end). Of that, the Java heap was about 65 MB:
+    the serial collector's young generation is a third of the initial heap, a
+    64th of the machine's memory (682 MB here), so the program runs without a
+    collection, and the heap's pages it touches are the ones it allocates,
+    65 MB as it starts (with `--engine.Compilation=false` too). That isn't the
+    heap's *used* figure, which said 250-260 MB at exit (`-Xlog:gc*`): most of
+    that is thread-local allocation buffers handed out and never filled. A
+    thread's first buffer is about a 50th of the young generation's eden,
+    11 MB here, and every thread that allocates anything takes one, compiler
+    threads included. A buffer's pages are touched only as objects fill it, so
+    the heap's resident pages (`vmmap -w`, in the heap's address range from
+    `-Xlog:gc*`, with compilation off and the program waiting at its end)
+    were 62 MB, about what the used figure is with `-XX:-UseTLAB` (64.6 MB). Of the 65 MB (JFR's allocation events, with small fixed
+    buffers: `-XX:-ResizeTLAB -XX:TLABSize=16k`), the JDK loading 2,100
+    classes from the jars took about half (`ModuleReader.read` reads each
+    class into a 16 KB buffer, then copies it), linking lambdas and other
+    `invokedynamic` call sites 13 MB (8 MB of it the 310 lambdas of the 283
+    primitives' `PrimitiveSpec`s, which the first context links, in about
+    30 ms), and the engine, the context and the prelude image's restore most
+    of the rest. The AOT cache (below) brings those classes and lambdas
+    linked: with it the program allocates 8 MB as it starts (the used figure
+    with `-XX:-UseTLAB`; 10 MB of the heap is resident, the cache's archived
+    objects included), though the used figure says 131 MB. JFR can't measure
+    that case: a recording started with the JVM (`-XX:StartFlightRecording`)
+    makes it refuse the cache. The JVM's own memory
+    (`-XX:NativeMemoryTracking`) was 70 MB: code cache 16, metaspace 16, the
+    JDK's CDS archive 14, arenas 8. The Graal compiler's (libgraal, which
+    compiles the host's Java as well as Truffle's) is outside it: each JVMCI
+    compiler thread has its own libgraal isolate
+    (`JVMCIThreadsPerNativeLibraryRuntime=1`), with a 16 MB eden and the free
+    chunks it keeps, and the JVM had started 7 of its 12 host compiler threads
+    as JVMCI threads before the program ended: with a 32 MB young generation
+    (`-Xmn32m`) the heap was 35 MB and the footprint still 290 MB. Thread
+    stacks were 2 MB (the evaluation thread's 256 MB is address space). So a
+    smaller young generation (rejected below) wouldn't make starting smaller:
+    with both levers below, a hello-world program's footprint is 107 MB, 10 MB
+    of it the heap (21 interleaved runs, the medians). In a benchmark (`fib`,
+    `-Xmx2g`) the young generation (630 MB touched) is most of the 760 MB
+    footprint.
   - *Compiler threads.* `-XX:CICompilerCount=4` where the JVM would start
     more (16 processors or more; it starts 3 with 4 to 7, and 4 with 8 to
     15): fewer libgraal isolates, and fewer host compilations competing with
