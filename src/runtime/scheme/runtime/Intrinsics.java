@@ -10,6 +10,7 @@ import com.oracle.truffle.api.dsl.Fallback;
 import com.oracle.truffle.api.dsl.GenerateInline;
 import com.oracle.truffle.api.dsl.NeverDefault;
 import com.oracle.truffle.api.dsl.Specialization;
+import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.nodes.Node;
 
 import scheme.runtime.value.SChar;
@@ -252,6 +253,62 @@ public final class Intrinsics {
         @Fallback
         static boolean doObject(Object a, Object b) {
             return eq(a, b);
+        }
+    }
+
+    /**
+     * {@code (assq key 'alist)} or {@code (assv key 'alist)} with a quoted alist (the compiler's
+     * ConstantMember, plan.md M9-05): the first entry whose car is {@code eq?} to the key, or #f. The
+     * compiler checked the alist: a proper list of at most 16 pairs, and for {@code assv} no key that
+     * {@code eq?} compares other than as {@code eqv?} does. One instruction: in the interpreter a loop
+     * in Java, where a chain of {@code Eq} operations ran several instructions an entry; compiled, the
+     * comparisons one after another, with the keys and entries constants (the node's, made from the
+     * alist the first time it runs, so a later {@code set-car!} on the literal, an error, is not
+     * seen).
+     */
+    @OperationProxy.Proxyable(storeBytecodeIndex = false)
+    @GenerateInline(false)
+    @ConstantOperand(type = Object.class, name = "alist")
+    public abstract static class Assoc extends IntrinsicNode {
+        public abstract Object execute(Object alist, Object key);
+
+        @Specialization
+        @ExplodeLoop
+        static Object doMatch(@SuppressWarnings("unused") Object alist, Object key,
+                        @Cached(value = "keys(alist)", dimensions = 1) Object[] keys,
+                        @Cached(value = "entries(alist)", dimensions = 1) Object[] entries) {
+            for (int i = 0; i < keys.length; i++) {
+                if (eq(key, keys[i])) {
+                    return entries[i];
+                }
+            }
+            return false;
+        }
+
+        @NeverDefault
+        static Object[] entries(Object alist) {
+            int n = 0;
+            for (Object rest = alist; rest instanceof SPair p; rest = p.cdr) {
+                n++;
+            }
+            Object[] entries = new Object[n];
+            Object rest = alist;
+            for (int i = 0; i < n; i++) {
+                SPair p = (SPair) rest;
+                entries[i] = p.car;
+                rest = p.cdr;
+            }
+            return entries;
+        }
+
+        @NeverDefault
+        static Object[] keys(Object alist) {
+            Object[] entries = entries(alist);
+            Object[] keys = new Object[entries.length];
+            for (int i = 0; i < keys.length; i++) {
+                keys[i] = ((SPair) entries[i]).car;
+            }
+            return keys;
         }
     }
 

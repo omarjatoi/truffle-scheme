@@ -28,7 +28,6 @@ import scheme.runtime.GlobalCell;
 import scheme.runtime.SchemeRootNode;
 import scheme.runtime.SchemeRootNodeGen;
 import scheme.runtime.value.SConstant;
-import scheme.runtime.value.SPair;
 
 /**
  * Emits Bytecode DSL builder calls for the core AST: one root per lambda, plus the program root.
@@ -808,9 +807,18 @@ final class CodeGenerator {
     }
 
     private List<Runnable> call(Ast.Call c, Ctx ctx, List<Var> dying) {
-        List<SPair> pairs = ConstantMember.pairs(c);
-        if (pairs != null) {
-            return constantMember(c.arguments.get(0), pairs, ctx);
+        List<ConstantMember.Match> matches = ConstantMember.matches(c);
+        if (matches != null) {
+            if (ConstantMember.isAlist(c)) {
+                // assq or assv: one operation, whose loop the interpreter runs in Java (M9-05).
+                Object alist = ((Ast.Const) c.arguments.get(1)).value;
+                List<Runnable> seq = new ArrayList<>();
+                seq.add(() -> b.beginAssoc(alist));
+                seq.add(gen(c.arguments.get(0), Ctx.VALUE));
+                seq.add(b::endAssoc);
+                return valued(seq, ctx);
+            }
+            return constantMember(c.arguments.get(0), matches, ctx);
         }
         List<Runnable> arguments = new ArrayList<>();
         for (Expr a : c.arguments) {
@@ -926,7 +934,7 @@ final class CodeGenerator {
      * the key goes into a temporary, which {@code eq?}'s operation compares with each datum in turn;
      * the value is the tail of the list whose car matched, or #f. No call, in tail position or not.
      */
-    private List<Runnable> constantMember(Expr key, List<SPair> pairs, Ctx ctx) {
+    private List<Runnable> constantMember(Expr key, List<ConstantMember.Match> matches, Ctx ctx) {
         BytecodeLocal[] temp = new BytecodeLocal[1];
         List<Runnable> seq = new ArrayList<>();
         seq.add(() -> {
@@ -937,16 +945,16 @@ final class CodeGenerator {
         seq.add(gen(key, Ctx.VALUE));
         seq.add(() -> {
             b.endStoreLocal();
-            for (SPair p : pairs) {
+            for (ConstantMember.Match m : matches) {
                 b.beginConditional();
                 b.beginEq();
                 b.emitLoadLocal(temp[0]);
-                b.emitLoadConstant(p.car);
+                b.emitLoadConstant(m.datum());
                 b.endEq();
-                b.emitLoadConstant(p);
+                b.emitLoadConstant(m.value());
             }
             b.emitLoadConstant(false);
-            for (int k = 0; k < pairs.size(); k++) {
+            for (int k = 0; k < matches.size(); k++) {
                 b.endConditional();
             }
             b.endBlock();
