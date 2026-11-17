@@ -315,6 +315,25 @@ public class ListVectorTest {
                         write("(let ((l '(1 (2 . 3)))) (list (equal? l (list 1 (cons 2 3))) (eq? l l) (eqv? l l) (eqv? l (list-copy l)) (equal? l (list-copy l)) l))"));
     }
 
+    /**
+     * A literal's pairs are a class of their own (design.md D1), which car, cdr, pair? and the list
+     * primitives take as they take pairs made at run time, at the same call site, before and after
+     * it has seen the other kind; set-car! at a site that has seen literals still stores into a
+     * run-time pair. Under unit_compile the procedures run compiled.
+     */
+    @Test
+    public void callSitesTakeBothKindsOfPairs() {
+        assertEquals("(6 6 6 6 #t #t (9 2 3) \"set-car!: pair is immutable (a literal)\" 3 3 (2 3) (b . 2))", write("""
+                        (let ()
+                          (define (sum l) (if (pair? l) (+ (car l) (sum (cdr l))) 0))
+                          (define (bump! p) (set-car! p 9) p)
+                          (define (try p) (guard (e ((error-object? e) (error-object-message e))) (bump! p)))
+                          (define lit '(1 2 3))
+                          (let* ((a (sum (list 1 2 3))) (b (sum lit)) (c (sum (list 1 2 3))) (d (sum lit)))
+                            (list a b c d (pair? lit) (pair? (list 1)) (try (list 1 2 3)) (try lit)
+                                  (length lit) (length (list 1 2 3)) (memv 2 lit) (assq 'b '((a . 1) (b . 2))))))"""));
+    }
+
     private String run(String program) {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         try (Context context = SchemeMain.newContext(List.of(folder.getRoot().getPath())).out(out).build()) {

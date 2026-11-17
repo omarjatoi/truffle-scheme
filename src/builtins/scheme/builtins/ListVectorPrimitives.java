@@ -116,7 +116,7 @@ final class ListVectorPrimitives {
                 case IS_NULL:
                     return new TypePredicate(x -> x == SConstant.EMPTY_LIST);
                 case IS_PAIR:
-                    return new TypePredicate(x -> x instanceof SPair);
+                    return new TypePredicate(x -> SPair.asPair(x) != null);
                 case APPEND:
                     return new Append();
                 case VECTOR:
@@ -200,7 +200,8 @@ final class ListVectorPrimitives {
 
         @Override
         public Object invoke(Object[] args) {
-            if (args[1] instanceof SPair p) {
+            SPair p = SPair.asPair(args[1]);
+            if (p != null) {
                 return car ? p.car : p.cdr;
             }
             throw notAPair(name, args[1]);
@@ -223,17 +224,20 @@ final class ListVectorPrimitives {
         public Object invoke(Object[] args) {
             // One class compare: a pair made at run time. A literal's pair (a LiteralPair) is an
             // error to store into (R7RS §3.4, design.md D1), as anything else is.
-            SPair p = SPair.mutable(args[1]);
-            if (p == null) {
-                String who = car ? "set-car!" : "set-cdr!";
-                throw args[1] instanceof LiteralPair ? immutablePair(who) : Lists.notAPair(who, args[1]);
+            // One class compare, which is also the type check: a pair made at run time. A
+            // literal's pair is an error to store into (R7RS §3.4, design.md D1).
+            Object x = args[1];
+            if (SPair.isMutable(x)) {
+                SPair p = SPair.asMutable(x);
+                if (car) {
+                    p.car = args[2];
+                } else {
+                    p.cdr = args[2];
+                }
+                return SConstant.UNSPECIFIED;
             }
-            if (car) {
-                p.car = args[2];
-            } else {
-                p.cdr = args[2];
-            }
-            return SConstant.UNSPECIFIED;
+            String who = car ? "set-car!" : "set-cdr!";
+            throw x instanceof LiteralPair ? immutablePair(who) : Lists.notAPair(who, x);
         }
     }
 
@@ -390,10 +394,12 @@ final class ListVectorPrimitives {
             Object slow = x;
             Object fast = x;
             while (true) {
-                if (!(fast instanceof SPair p1)) {
+                SPair p1 = SPair.asPair(fast);
+                if (p1 == null) {
                     return fast == SConstant.EMPTY_LIST;
                 }
-                if (!(p1.cdr instanceof SPair p2)) {
+                SPair p2 = SPair.asPair(p1.cdr);
+                if (p2 == null) {
                     return p1.cdr == SConstant.EMPTY_LIST;
                 }
                 fast = p2.cdr;
@@ -447,7 +453,8 @@ final class ListVectorPrimitives {
             if (op == TAIL) {
                 return tail;
             }
-            if (!(tail instanceof SPair p)) {
+            SPair p = SPair.asPair(tail);
+            if (p == null) {
                 throw outOfRange(who, k, args[1]);
             }
             if (op == REF) {
@@ -464,7 +471,8 @@ final class ListVectorPrimitives {
         private static Object tail(String who, Object list, long k) {
             Object rest = list;
             for (long i = 0; i < k; i++) {
-                if (!(rest instanceof SPair p)) {
+                SPair p = SPair.asPair(rest);
+                if (p == null) {
                     throw outOfRange(who, k, list);
                 }
                 rest = p.cdr;
@@ -494,7 +502,7 @@ final class ListVectorPrimitives {
             Object slow = list;
             Object rest = list;
             long n = 0;
-            while (rest instanceof SPair p) {
+            for (SPair p; (p = SPair.asPair(rest)) != null;) {
                 rest = p.cdr;
                 if ((++n & 1) == 0) {
                     slow = ((SPair) slow).cdr;
@@ -523,7 +531,7 @@ final class ListVectorPrimitives {
             Object rest = list;
             Object result = SConstant.EMPTY_LIST;
             long n = 0;
-            while (rest instanceof SPair p) {
+            for (SPair p; (p = SPair.asPair(rest)) != null;) {
                 result = new SPair(p.car, result);
                 rest = p.cdr;
                 if ((++n & 1) == 0) {
@@ -573,9 +581,10 @@ final class ListVectorPrimitives {
             Object slow = list;
             Object rest = list;
             long n = 0;
-            while (rest instanceof SPair p) {
+            for (SPair p; (p = SPair.asPair(rest)) != null;) {
                 if (alist) {
-                    if (!(p.car instanceof SPair entry)) {
+                    SPair entry = SPair.asPair(p.car);
+                    if (entry == null) {
                         throw Lists.notAPair(who, p.car);
                     }
                     if (same(compare, x, entry.car)) {
@@ -625,7 +634,7 @@ final class ListVectorPrimitives {
         private static boolean isCircular(Object x) {
             Object slow = x;
             Object fast = x;
-            while (fast instanceof SPair p1 && p1.cdr instanceof SPair p2) {
+            for (SPair p1, p2; (p1 = SPair.asPair(fast)) != null && (p2 = SPair.asPair(p1.cdr)) != null;) {
                 fast = p2.cdr;
                 slow = ((SPair) slow).cdr;
                 if (fast == slow) {
@@ -643,7 +652,8 @@ final class ListVectorPrimitives {
     static final class ListCopy extends PrimitiveNode {
         @Override
         public Object invoke(Object[] args) {
-            return args[1] instanceof SPair p ? copy(p) : args[1];
+            SPair p = SPair.asPair(args[1]);
+            return p != null ? copy(p) : args[1];
         }
 
         @TruffleBoundary
@@ -653,7 +663,7 @@ final class ListVectorPrimitives {
             Object slow = list;
             Object rest = list.cdr;
             long n = 1;
-            while (rest instanceof SPair p) {
+            for (SPair p; (p = SPair.asPair(rest)) != null;) {
                 SPair next = new SPair(p.car, SConstant.EMPTY_LIST);
                 last.cdr = next;
                 last = next;
