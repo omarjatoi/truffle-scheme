@@ -850,7 +850,7 @@ final class CodeGenerator {
         State st = state();
         if (c.procedure instanceof Ast.LocalRef r && r.var.self != null && r.var.self.contified) {
             // A call of a contified loop: it jumps back to the loop's start.
-            return selfLoop(r.var.self.params, st.loops.get(r.var.self), arguments);
+            return selfLoop(r.var.self.params, st.loops.get(r.var.self), arguments, c.arguments);
         }
         if (st.loop == null || c.arguments.size() != st.lambda.params.size()) {
             List<Runnable> seq = new ArrayList<>();
@@ -869,27 +869,28 @@ final class CodeGenerator {
         int n = c.arguments.size();
         if (c.procedure instanceof Ast.LocalRef r && r.var.self == st.lambda) {
             // A self tail call by a fixed letrec* variable's name (Closures): it loops.
-            return selfLoop(st.lambda.params, st.loop, arguments);
+            return selfLoop(st.lambda.params, st.loop, arguments, c.arguments);
         }
-        // Possibly a self tail call: evaluate into temporaries, then loop if the procedure is the
-        // running closure, else return a TailCall.
+        // Possibly a self tail call: the procedure into a temporary, then each argument into its
+        // parameter where that is safe (directStores), else into a temporary; then loop if the
+        // procedure is the running closure, else return a TailCall, whose arguments are where they
+        // were stored: this frame is done with its parameters either way.
+        List<Var> params = st.lambda.params;
+        boolean[] direct = directStores(params, c.arguments);
         BytecodeLocal[] temps = new BytecodeLocal[n + 1];
         List<Runnable> seq = new ArrayList<>();
         seq.add(() -> {
             b.beginBlock();
             for (int k = 0; k <= n; k++) {
-                temps[k] = b.createLocal();
+                if (k == 0 || !direct[k - 1]) {
+                    temps[k] = b.createLocal();
+                }
             }
             b.beginStoreLocal(temps[0]);
         });
         seq.add(gen(c.procedure, Ctx.VALUE));
         seq.add(b::endStoreLocal);
-        for (int k = 0; k < n; k++) {
-            int index = k + 1;
-            seq.add(() -> b.beginStoreLocal(temps[index]));
-            seq.add(arguments.get(k));
-            seq.add(b::endStoreLocal);
-        }
+        addStores(seq, params, direct, temps, 1, arguments);
         seq.add(() -> {
             b.beginIfThenElse();
             b.beginIsSame();
@@ -898,15 +899,22 @@ final class CodeGenerator {
             b.endIsSame();
             b.beginBlock();
             for (int k = 0; k < n; k++) {
-                BytecodeLocal temp = temps[k + 1];
-                store(st.lambda.params.get(k), () -> b.emitLoadLocal(temp));
+                if (!direct[k]) {
+                    BytecodeLocal temp = temps[k + 1];
+                    store(params.get(k), () -> b.emitLoadLocal(temp));
+                }
             }
             b.emitBranch(st.loop);
             b.endBlock();
             b.beginReturn();
             b.beginMakeTailCall();
-            for (BytecodeLocal temp : temps) {
-                b.emitLoadLocal(temp);
+            b.emitLoadLocal(temps[0]);
+            for (int k = 0; k < n; k++) {
+                if (direct[k]) {
+                    loadValue(params.get(k));
+                } else {
+                    b.emitLoadLocal(temps[k + 1]);
+                }
             }
             b.endMakeTailCall();
             b.endReturn();
@@ -914,6 +922,49 @@ final class CodeGenerator {
             b.endBlock();
         });
         return seq;
+    }
+
+    /**
+     * Which of the arguments of a loop's jump back (or a possible self tail call) can be stored in
+     * their parameters as soon as they are evaluated (plan.md M9-03): those whose parameter no
+     * later argument refers to or assigns, in lambdas in it too, that isn't boxed, and whose
+     * argument isn't a call. The others go through a temporary, so that every argument sees the
+     * parameters as they were, and a boxed parameter gets its fresh box only once every argument
+     * is evaluated: a continuation captured in a later argument and resumed twice must give each
+     * resumption a box of its own, as {@code bind} does. A call's value comes from one of two
+     * instructions (the call, or the resumption of a suspended frame), and a store of it is never
+     * quickened: stored in the parameter, it would make the parameter's local generic, and every
+     * use of a fixnum parameter boxed (tak's); from the temporary, the parameter's store unboxes
+     * it. A temporary is a frame slot more and a store and a load on every iteration.
+     */
+    private static boolean[] directStores(List<Var> params, List<Expr> arguments) {
+        int n = arguments.size();
+        boolean[] direct = new boolean[n];
+        Set<Var> later = new HashSet<>();
+        for (int k = n - 1; k >= 0; k--) {
+            Expr argument = arguments.get(k);
+            direct[k] = !params.get(k).boxed() && !later.contains(params.get(k)) && !isCall(argument);
+            later.addAll(referenced(argument));
+        }
+        return direct;
+    }
+
+    /** Whether {@code e} is a call that a call site makes: one not compiled to an operation of its own. */
+    private static boolean isCall(Expr e) {
+        return e instanceof Ast.Call c && !Intrinsic.isIntrinsic(c) && !ConstantMember.isConstantMember(c);
+    }
+
+    /**
+     * Adds to {@code seq} the evaluation of each argument, in order, into its parameter or its
+     * temporary ({@code temps[k + offset]}): see {@link #directStores}.
+     */
+    private void addStores(List<Runnable> seq, List<Var> params, boolean[] direct, BytecodeLocal[] temps, int offset, List<Runnable> arguments) {
+        for (int k = 0; k < arguments.size(); k++) {
+            int index = k;
+            seq.add(() -> b.beginStoreLocal(direct[index] ? state().locals.get(params.get(index)) : temps[index + offset]));
+            seq.add(arguments.get(k));
+            seq.add(b::endStoreLocal);
+        }
     }
 
     /** {@code operand}, then the locals of {@code dying} cleared, with the operand's value. */
@@ -963,29 +1014,30 @@ final class CodeGenerator {
     }
 
     /**
-     * A tail call of the running closure, or of a contified loop: evaluate the arguments into
-     * temporaries, store them in the parameters, and jump to {@code start}.
+     * A tail call of the running closure, or of a contified loop: evaluate the arguments into their
+     * parameters, or into temporaries where a later argument reads the parameter
+     * ({@link #directStores}), store the temporaries in the parameters, and jump to {@code start}.
      */
-    private List<Runnable> selfLoop(List<Var> params, BytecodeLabel start, List<Runnable> arguments) {
+    private List<Runnable> selfLoop(List<Var> params, BytecodeLabel start, List<Runnable> arguments, List<Expr> exprs) {
         int n = arguments.size();
+        boolean[] direct = directStores(params, exprs);
         BytecodeLocal[] temps = new BytecodeLocal[n];
         List<Runnable> seq = new ArrayList<>();
         seq.add(() -> {
             b.beginBlock();
             for (int k = 0; k < n; k++) {
-                temps[k] = b.createLocal();
+                if (!direct[k]) {
+                    temps[k] = b.createLocal();
+                }
             }
         });
-        for (int k = 0; k < n; k++) {
-            int index = k;
-            seq.add(() -> b.beginStoreLocal(temps[index]));
-            seq.add(arguments.get(k));
-            seq.add(b::endStoreLocal);
-        }
+        addStores(seq, params, direct, temps, 0, arguments);
         seq.add(() -> {
             for (int k = 0; k < n; k++) {
-                BytecodeLocal temp = temps[k];
-                store(params.get(k), () -> b.emitLoadLocal(temp));
+                if (!direct[k]) {
+                    BytecodeLocal temp = temps[k];
+                    store(params.get(k), () -> b.emitLoadLocal(temp));
+                }
             }
             b.emitBranch(start);
             b.endBlock();

@@ -1011,6 +1011,23 @@ collector); each task measures with interleaved A/B runs.
     6–7%. Cut it.
   - **Done when** the interpreter's geometric mean improves by at least 10%
     over M8's report, and `tak`/`ack` finish well inside the 60 s timeout.
+  - *Progress (not done).* A loop's jump back stores an argument straight into
+    its parameter where that is safe (design.md "A loop's jump back stores in
+    place"). What else was measured, and why it isn't kept, is in design.md
+    ("What else an interpreted call costs"): the two biggest pieces of a call
+    that the language controls are blocked by safety properties, not by
+    effort. Calls with their arguments as operands saved 8% on `fib` but
+    keep the arguments alive in the call's Java frames (the `tail-lazy-*`
+    space tests); a `TryCatch` at each call site saved 5-7% but made a spilling
+    recursion 1.40 times as slow. What is left is Truffle's: on `tak` (main
+    after #184, async-profiler) the frame's allocation is 15% of the time,
+    bytecode dispatch and frame accesses 39%, the DSL's branch profiles 6%,
+    `BindArguments` 7%, `create.variadic` 5%, argument-type profiling 5%,
+    Truffle's call path 4%. And a first run at the report's scale is mostly
+    the host compiler's work on the interpreter (design.md, "The host
+    compiler"), which per-call savings don't touch: most programs' first
+    iterations are 1.5-3 times their later ones. `tak` takes 55-58 s at the
+    report's scale and `ack` 53-61 s on this code (a shared machine, load 3-15).
 - [x] **M9-04 · Host-JIT pitfalls in run-once loops** *(early)*
   - `PromptDriver.run`'s driver loop is a Java loop in a root that runs once,
     like the trampoline was before #167; `EscapeException` passes through

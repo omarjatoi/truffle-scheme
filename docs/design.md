@@ -229,6 +229,71 @@ full R7RS-small conformance comes first.
   profile, so a fixnum parameter is an unboxed `long` as with a `StoreLocal`.
   It replaces `CheckArity` and a load and a store per parameter. A rest
   parameter, or more than 31 parameters, keeps those.
+- **A loop's jump back stores in place (M9-03).** A self tail call that loops
+  (a contified loop's, a fixed letrec* variable's, or a possible one through a
+  global, whose procedure is still compared first) evaluates each argument
+  straight into its parameter when no later argument refers to or assigns that
+  parameter (in lambdas in it too), the parameter isn't boxed, and the argument
+  isn't a call; the others go through temporaries, as every argument did
+  before. In `(loop (+ i 1) (cons i acc))` only `i` waits; in `(loop (+ j 1)
+  (- j 1))` neither does. Each argument still sees the parameters as they
+  were. A temporary was a frame slot and a store,
+  a load and a clear on every iteration. A boxed parameter keeps its temporary
+  so that its fresh box is made once every argument is evaluated: a
+  continuation captured in a later argument and resumed twice gives each
+  resumption a box of its own, as a `let` does. A call's value doesn't go
+  straight in either: it comes from either of two instructions (the call, or
+  the resumption of a suspended frame), and the Bytecode DSL never quickens a
+  store of such a value, so the parameter's local would turn generic and every
+  use of a fixnum parameter boxed (`tak`'s, 4% slower); through the temporary,
+  the parameter's store unboxes it. `tests/diff/loop-direct-stores.scm`.
+  In the interpreter (Apple M3 Max shared with other work, load 3-15, a fresh
+  JVM per run, interleaved with the code before): a micro-benchmark of three
+  loops 0.88 times; the report's interpreter subset at its scale (54 programs,
+  2 rounds, best of each) 0.97 times: `sum` and `sumfp` 0.67, `puzzle` 0.76,
+  `ray` 0.87, `wc` 0.88, the longest programs 0.98, `tak` 1.00, and a few short
+  first runs 1.05-1.15 (`diviter`, `mbrot`), whose later iterations are as fast
+  or faster: a first run there is the host compiler's (below). With the JIT
+  (24 programs, 3 iterations, 2 rounds) the first iteration 1.01 times, the
+  steady state 1.00: noise.
+- **What else an interpreted call costs (M9-03).** Measured and not kept, in
+  the interpreter, against the code before (`fib 32` and 400 runs of `tak 18
+  12 6`, 3 interleaved runs, Apple M3 Max):
+  - *Calls with their arguments as operands* (`Call1`-`Call4`, no
+    `create.variadic` first): `fib` 0.92 times, `tak` 0.96. But an operand is
+    read into a Java local of the call's handler, which stays on the stack for
+    as long as the call runs, and the interpreter's and C1's frames keep their
+    locals alive: a lazy stream's head passed to a tail loop stayed reachable,
+    and every `tail-lazy-*` space test ran out of heap. The variadic array is
+    the only thing that holds the arguments, and the callee's prologue clears
+    it ("Tail calls keep nothing alive", below). The same operations for tail
+    calls (`MakeTailCall0`-`4`), whose handler returns at once, are safe:
+    `cpstak`'s loop 0.97 times, `tak` 0.99, not worth the instructions (below).
+  - *A `TryCatch` at each call site* (the call stores its value in a local of
+    the root's; a capture is thrown, as an `AbstractTruffleException` that
+    `SchemeError`, an `unwindExceptions` type, doesn't pass for, and the
+    handler suspends): `fib` 0.95 times, `tak` 0.93, but a recursion 1,000,000
+    deep, which spills, 1.40 times, and a `call/cc` loop 1.04: every frame a
+    spill or a capture suspends unwinds by a Java exception instead of a
+    return. The capture check stays a return value.
+  - *A default local value* (`defaultLocalValue = "null"`, so a frame's tags
+    needn't be filled when it is made): 1-2% on `fib`, but compiled code then
+    keeps cleared locals (`tail-lazy-*` ran out of heap) and failed to compile
+    some roots (a frame materialized).
+  - *An operation for a self tail call through a global* (`IsSelf`, comparing
+    the cell's value with the running closure, after the arguments, so no
+    temporary for the procedure): `tak` 1.04-1.07 times, with the same
+    bytecode otherwise.
+  - *The host compiler.* A first run at the report's scale is mostly HotSpot
+    (with Graal as its JIT) compiling the bytecode interpreter's
+    `continueAt` for that program's instructions, and recompiling it when a
+    new one is reached ("made not entrant: uncommon trap" a few times a run).
+    The handlers of the instructions a program runs are inlined into it, so an
+    operation whose handler inlines a call's whole path costs every program
+    that runs it: with `Call1`-`Call4`, `pnpoly`'s `continueAt` took 212 ms to
+    compile instead of 131, and its first run 1.15 times as long though it
+    makes almost no calls. `@HostCompilerDirectives.InliningCutoff` on the call
+    path brought it back (152 ms).
 - **Tail calls keep nothing alive.** A tail call replaces the frame it is made
   from (R7RS §3.5), so nothing of that frame may stay reachable while the call
   runs: not its variables, nor the arguments it was called with. A tail loop

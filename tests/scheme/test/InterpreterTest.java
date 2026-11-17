@@ -113,4 +113,38 @@ public class InterpreterTest {
         assertTrue(error("(define (f a b) a) (f 1)").contains("expected 2, got 1"));
         assertTrue(error("(define (f a b) a) (f 1 2 3)").contains("expected 2, got 3"));
     }
+
+    /**
+     * M9-03: a loop's jump back stores each argument in its parameter as soon as it is evaluated
+     * when no later argument reads that parameter, and the argument isn't a call: a temporary for
+     * it is a frame slot more and a store, a load and a clear on every iteration.
+     * {@code tests/diff/loop-direct-stores.scm} checks what such loops do.
+     */
+    @Test
+    public void aLoopStoresAnArgumentInItsParameterUnlessALaterArgumentReadsIt() {
+        try (Context context = Context.create(SCHEME)) {
+            context.eval(SCHEME, """
+                            (define (count n) (let loop ((i 0) (s 0)) (if (< i n) (loop (+ i 1) (+ s 2)) s)))
+                            (define (rev l) (let loop ((l l) (acc '())) (if (null? l) acc (loop (cdr l) (cons (car l) acc)))))
+                            (define (swap n) (let loop ((a 1) (b 2) (k 0)) (if (= k n) a (loop b a (+ k 1)))))
+                            (define (g a b) (if (> a 0) (g (- a 1) (cons a b)) b))
+                            (count 3) (rev '(1 2)) (swap 3) (g 2 '())""");
+            context.enter();
+            try {
+                // A temporary is cleared as the jump back leaves its block. (rev also clears its
+                // parameter as the loop starts: the loop's body doesn't use it.)
+                assertEquals(0, count(names(procedure("count")), "clear.local"));
+                assertEquals(2, count(names(procedure("rev")), "clear.local"));
+                assertEquals(1, count(names(procedure("swap")), "clear.local"));
+                // A possible self tail call through a global: the procedure's temporary, and a's.
+                assertEquals(2, count(names(procedure("g")), "clear.local"));
+            } finally {
+                context.leave();
+            }
+        }
+    }
+
+    private static long count(List<String> names, String name) {
+        return names.stream().filter(n -> n.equals(name)).count();
+    }
 }
