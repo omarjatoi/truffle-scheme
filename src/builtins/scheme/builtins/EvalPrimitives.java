@@ -1,7 +1,9 @@
 package scheme.builtins;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Supplier;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.TruffleFile;
@@ -9,6 +11,7 @@ import com.oracle.truffle.api.source.Source;
 
 import scheme.runtime.PrimitiveNode;
 import scheme.runtime.PrimitiveSpec;
+import scheme.runtime.PrimitiveSpec.Result;
 import scheme.runtime.SchemeContext;
 import scheme.runtime.SchemeError;
 import scheme.runtime.SchemeLanguage;
@@ -33,18 +36,68 @@ final class EvalPrimitives {
     private EvalPrimitives() {
     }
 
-    /** This area's primitives: the one list to add to. */
+    /** This area's primitives, as {@code Builtins} registers them. */
     static List<PrimitiveSpec> primitives() {
-        return List.of(
-                        // R7RS requires the environment; with none, chibi uses the interaction environment.
-                        PrimitiveSpec.transfersControl("eval", 1, 2, Eval::new),
-                        new PrimitiveSpec("environment", 0, -1, Environment::new),
-                        new PrimitiveSpec("interaction-environment", 0, 0, InteractionEnvironment::new),
-                        // (scheme r5rs) imports these two from (r7rs %primitives).
-                        new PrimitiveSpec("scheme-report-environment", 1, 1, () -> new ReportEnvironment("scheme-report-environment", false)),
-                        new PrimitiveSpec("null-environment", 1, 1, () -> new ReportEnvironment("null-environment", true)),
-                        // (scheme load) imports it from (r7rs %primitives).
-                        PrimitiveSpec.transfersControl("load", 1, 2, Load::new));
+        List<PrimitiveSpec> specs = new ArrayList<>();
+        for (Primitive primitive : Primitive.values()) {
+            specs.add(primitive.spec);
+        }
+        return specs;
+    }
+
+    /**
+     * This area's primitives: the one list to add to. A constant has the primitive's name and
+     * arity, and {@link #node} makes its node when it is first called: no lambda per primitive for
+     * the JVM to link as a context starts (design.md D17, "The primitives' registry").
+     */
+    enum Primitive implements Supplier<PrimitiveNode> {
+        // R7RS requires the environment; with none, chibi uses the interaction environment.
+        EVAL("eval", 1, 2, Result.TRANSFERS_CONTROL),
+        ENVIRONMENT("environment", 0, -1),
+        INTERACTION_ENVIRONMENT("interaction-environment", 0, 0),
+        // (scheme r5rs) imports these two from (r7rs %primitives).
+        SCHEME_REPORT_ENVIRONMENT("scheme-report-environment", 1, 1),
+        NULL_ENVIRONMENT("null-environment", 1, 1),
+        // (scheme load) imports it from (r7rs %primitives).
+        LOAD("load", 1, 2, Result.TRANSFERS_CONTROL);
+
+        final PrimitiveSpec spec;
+
+        Primitive(String name, int minArgs, int maxArgs) {
+            this(name, minArgs, maxArgs, Result.VALUE);
+        }
+
+        Primitive(String name, int minArgs, int maxArgs, Result result) {
+            this.spec = new PrimitiveSpec(name, minArgs, maxArgs, this, result);
+        }
+
+        @Override
+        public PrimitiveNode get() {
+            return (PrimitiveNode) node();
+        }
+
+        /**
+         * The primitive's node: a {@code return} in each case, typed {@code Object}, so that the
+         * JVM's verifier needn't load every node class to check what is returned (a switch
+         * expression's cases would join as {@code PrimitiveNode}). Each is loaded when it is made.
+         */
+        private Object node() {
+            switch (this) {
+                case EVAL:
+                    return new Eval();
+                case ENVIRONMENT:
+                    return new Environment();
+                case INTERACTION_ENVIRONMENT:
+                    return new InteractionEnvironment();
+                case SCHEME_REPORT_ENVIRONMENT:
+                    return new ReportEnvironment("scheme-report-environment", false);
+                case NULL_ENVIRONMENT:
+                    return new ReportEnvironment("null-environment", true);
+                case LOAD:
+                    return new Load();
+            }
+            throw new AssertionError(this);
+        }
     }
 
     /** {@code (eval expr-or-def [environment])}: compiles, then tail-calls the result (design.md D6). */

@@ -1,11 +1,14 @@
 package scheme.builtins;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Supplier;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 
 import scheme.runtime.PrimitiveNode;
 import scheme.runtime.PrimitiveSpec;
+import scheme.runtime.PrimitiveSpec.Result;
 import scheme.runtime.SchemeError;
 import scheme.runtime.printer.Printer;
 import scheme.runtime.value.SChar;
@@ -24,46 +27,158 @@ final class ListVectorPrimitives {
     private ListVectorPrimitives() {
     }
 
-    /** This area's primitives: the one list to add to. */
+    /** This area's primitives, as {@code Builtins} registers them. */
     static List<PrimitiveSpec> primitives() {
-        return List.of(
-                        new PrimitiveSpec("cons", 2, 2, Cons::new).allocating(),
-                        new PrimitiveSpec("car", 1, 1, () -> new PairAccess("car", true)),
-                        new PrimitiveSpec("cdr", 1, 1, () -> new PairAccess("cdr", false)),
-                        new PrimitiveSpec("set-car!", 2, 2, () -> new SetPair(true)),
-                        new PrimitiveSpec("set-cdr!", 2, 2, () -> new SetPair(false)),
-                        new PrimitiveSpec("null?", 1, 1, () -> new TypePredicate(x -> x == SConstant.EMPTY_LIST)),
-                        new PrimitiveSpec("pair?", 1, 1, () -> new TypePredicate(x -> x instanceof SPair)),
-                        new PrimitiveSpec("append", 0, -1, Append::new).allocatingList(),
-                        new PrimitiveSpec("vector", 0, -1, MakeVector::new).allocating(),
-                        new PrimitiveSpec("vector?", 1, 1, () -> new TypePredicate(x -> x instanceof SVector)),
-                        new PrimitiveSpec("make-vector", 1, 2, MakeVectorOfLength::new).allocating(),
-                        new PrimitiveSpec("vector-length", 1, 1, VectorLength::new),
-                        new PrimitiveSpec("vector-ref", 2, 2, VectorRef::new),
-                        new PrimitiveSpec("vector-set!", 3, 3, VectorSet::new),
-                        new PrimitiveSpec("list->vector", 1, 1, ListToVector::new).allocating(),
-                        new PrimitiveSpec("list?", 1, 1, IsList::new),
-                        new PrimitiveSpec("make-list", 1, 2, MakeList::new).allocatingList(),
-                        new PrimitiveSpec("list-tail", 2, 2, () -> new ListIndex(ListIndex.TAIL)),
-                        new PrimitiveSpec("list-ref", 2, 2, () -> new ListIndex(ListIndex.REF)),
-                        new PrimitiveSpec("list-set!", 3, 3, () -> new ListIndex(ListIndex.SET)),
-                        new PrimitiveSpec("list-copy", 1, 1, ListCopy::new).allocatingList(),
-                        new PrimitiveSpec("length", 1, 1, Length::new),
-                        new PrimitiveSpec("reverse", 1, 1, Reverse::new).allocatingList(),
-                        new PrimitiveSpec("memq", 2, 2, () -> new Member("memq", Member.EQ, false)),
-                        new PrimitiveSpec("memv", 2, 2, () -> new Member("memv", Member.EQV, false)),
-                        new PrimitiveSpec("%member", 2, 2, () -> new Member("member", Member.EQUAL, false)),
-                        new PrimitiveSpec("assq", 2, 2, () -> new Member("assq", Member.EQ, true)),
-                        new PrimitiveSpec("assv", 2, 2, () -> new Member("assv", Member.EQV, true)),
-                        new PrimitiveSpec("%assoc", 2, 2, () -> new Member("assoc", Member.EQUAL, true)),
-                        new PrimitiveSpec("%circular-list?", 1, 1, IsCircular::new),
-                        new PrimitiveSpec("vector->list", 1, 3, VectorToList::new).allocatingList(),
-                        new PrimitiveSpec("vector->string", 1, 3, VectorToString::new).allocating(),
-                        new PrimitiveSpec("string->vector", 1, 3, StringToVector::new).allocating(),
-                        new PrimitiveSpec("vector-copy", 1, 3, VectorCopy::new).allocating(),
-                        new PrimitiveSpec("vector-copy!", 3, 5, VectorCopyInto::new),
-                        new PrimitiveSpec("vector-append", 0, -1, VectorAppend::new).allocating(),
-                        new PrimitiveSpec("vector-fill!", 2, 4, VectorFill::new));
+        List<PrimitiveSpec> specs = new ArrayList<>();
+        for (Primitive primitive : Primitive.values()) {
+            specs.add(primitive.spec);
+        }
+        return specs;
+    }
+
+    /**
+     * This area's primitives: the one list to add to. A constant has the primitive's name and
+     * arity, and {@link #node} makes its node when it is first called: no lambda per primitive for
+     * the JVM to link as a context starts (design.md D17, "The primitives' registry").
+     */
+    enum Primitive implements Supplier<PrimitiveNode> {
+        CONS("cons", 2, 2, Result.NEW_OBJECT),
+        CAR("car", 1, 1),
+        CDR("cdr", 1, 1),
+        SET_CAR("set-car!", 2, 2),
+        SET_CDR("set-cdr!", 2, 2),
+        IS_NULL("null?", 1, 1),
+        IS_PAIR("pair?", 1, 1),
+        APPEND("append", 0, -1, Result.NEW_LIST),
+        VECTOR("vector", 0, -1, Result.NEW_OBJECT),
+        IS_VECTOR("vector?", 1, 1),
+        MAKE_VECTOR("make-vector", 1, 2, Result.NEW_OBJECT),
+        VECTOR_LENGTH("vector-length", 1, 1),
+        VECTOR_REF("vector-ref", 2, 2),
+        VECTOR_SET("vector-set!", 3, 3),
+        LIST_TO_VECTOR("list->vector", 1, 1, Result.NEW_OBJECT),
+        IS_LIST("list?", 1, 1),
+        MAKE_LIST("make-list", 1, 2, Result.NEW_LIST),
+        LIST_TAIL("list-tail", 2, 2),
+        LIST_REF("list-ref", 2, 2),
+        LIST_SET("list-set!", 3, 3),
+        LIST_COPY("list-copy", 1, 1, Result.NEW_LIST),
+        LENGTH("length", 1, 1),
+        REVERSE("reverse", 1, 1, Result.NEW_LIST),
+        MEMQ("memq", 2, 2),
+        MEMV("memv", 2, 2),
+        MEMBER("%member", 2, 2),
+        ASSQ("assq", 2, 2),
+        ASSV("assv", 2, 2),
+        ASSOC("%assoc", 2, 2),
+        IS_CIRCULAR_LIST("%circular-list?", 1, 1),
+        VECTOR_TO_LIST("vector->list", 1, 3, Result.NEW_LIST),
+        VECTOR_TO_STRING("vector->string", 1, 3, Result.NEW_OBJECT),
+        STRING_TO_VECTOR("string->vector", 1, 3, Result.NEW_OBJECT),
+        VECTOR_COPY("vector-copy", 1, 3, Result.NEW_OBJECT),
+        VECTOR_COPY_INTO("vector-copy!", 3, 5),
+        VECTOR_APPEND("vector-append", 0, -1, Result.NEW_OBJECT),
+        VECTOR_FILL("vector-fill!", 2, 4);
+
+        final PrimitiveSpec spec;
+
+        Primitive(String name, int minArgs, int maxArgs) {
+            this(name, minArgs, maxArgs, Result.VALUE);
+        }
+
+        Primitive(String name, int minArgs, int maxArgs, Result result) {
+            this.spec = new PrimitiveSpec(name, minArgs, maxArgs, this, result);
+        }
+
+        @Override
+        public PrimitiveNode get() {
+            return (PrimitiveNode) node();
+        }
+
+        /**
+         * The primitive's node: a {@code return} in each case, typed {@code Object}, so that the
+         * JVM's verifier needn't load every node class to check what is returned (a switch
+         * expression's cases would join as {@code PrimitiveNode}). Each is loaded when it is made.
+         */
+        private Object node() {
+            switch (this) {
+                case CONS:
+                    return new Cons();
+                case CAR:
+                    return new PairAccess("car", true);
+                case CDR:
+                    return new PairAccess("cdr", false);
+                case SET_CAR:
+                    return new SetPair(true);
+                case SET_CDR:
+                    return new SetPair(false);
+                case IS_NULL:
+                    return new TypePredicate(x -> x == SConstant.EMPTY_LIST);
+                case IS_PAIR:
+                    return new TypePredicate(x -> x instanceof SPair);
+                case APPEND:
+                    return new Append();
+                case VECTOR:
+                    return new MakeVector();
+                case IS_VECTOR:
+                    return new TypePredicate(x -> x instanceof SVector);
+                case MAKE_VECTOR:
+                    return new MakeVectorOfLength();
+                case VECTOR_LENGTH:
+                    return new VectorLength();
+                case VECTOR_REF:
+                    return new VectorRef();
+                case VECTOR_SET:
+                    return new VectorSet();
+                case LIST_TO_VECTOR:
+                    return new ListToVector();
+                case IS_LIST:
+                    return new IsList();
+                case MAKE_LIST:
+                    return new MakeList();
+                case LIST_TAIL:
+                    return new ListIndex(ListIndex.TAIL);
+                case LIST_REF:
+                    return new ListIndex(ListIndex.REF);
+                case LIST_SET:
+                    return new ListIndex(ListIndex.SET);
+                case LIST_COPY:
+                    return new ListCopy();
+                case LENGTH:
+                    return new Length();
+                case REVERSE:
+                    return new Reverse();
+                case MEMQ:
+                    return new Member("memq", Member.EQ, false);
+                case MEMV:
+                    return new Member("memv", Member.EQV, false);
+                case MEMBER:
+                    return new Member("member", Member.EQUAL, false);
+                case ASSQ:
+                    return new Member("assq", Member.EQ, true);
+                case ASSV:
+                    return new Member("assv", Member.EQV, true);
+                case ASSOC:
+                    return new Member("assoc", Member.EQUAL, true);
+                case IS_CIRCULAR_LIST:
+                    return new IsCircular();
+                case VECTOR_TO_LIST:
+                    return new VectorToList();
+                case VECTOR_TO_STRING:
+                    return new VectorToString();
+                case STRING_TO_VECTOR:
+                    return new StringToVector();
+                case VECTOR_COPY:
+                    return new VectorCopy();
+                case VECTOR_COPY_INTO:
+                    return new VectorCopyInto();
+                case VECTOR_APPEND:
+                    return new VectorAppend();
+                case VECTOR_FILL:
+                    return new VectorFill();
+            }
+            throw new AssertionError(this);
+        }
     }
 
     static final class Cons extends PrimitiveNode {

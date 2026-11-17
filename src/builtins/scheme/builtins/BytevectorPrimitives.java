@@ -1,12 +1,15 @@
 package scheme.builtins;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Supplier;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.strings.TruffleString;
 
 import scheme.runtime.PrimitiveNode;
 import scheme.runtime.PrimitiveSpec;
+import scheme.runtime.PrimitiveSpec.Result;
 import scheme.runtime.SchemeError;
 import scheme.runtime.value.SBytevector;
 import scheme.runtime.value.SConstant;
@@ -28,20 +31,80 @@ final class BytevectorPrimitives {
     private BytevectorPrimitives() {
     }
 
-    /** This area's primitives: the one list to add to. */
+    /** This area's primitives, as {@code Builtins} registers them. */
     static List<PrimitiveSpec> primitives() {
-        return List.of(
-                        new PrimitiveSpec("bytevector?", 1, 1, () -> new TypePredicate(x -> x instanceof SBytevector)),
-                        new PrimitiveSpec("bytevector", 0, -1, MakeBytevector::new).allocating(),
-                        new PrimitiveSpec("make-bytevector", 1, 2, MakeBytevectorOfLength::new).allocating(),
-                        new PrimitiveSpec("bytevector-length", 1, 1, BytevectorLength::new),
-                        new PrimitiveSpec("bytevector-u8-ref", 2, 2, BytevectorRef::new),
-                        new PrimitiveSpec("bytevector-u8-set!", 3, 3, BytevectorSet::new),
-                        new PrimitiveSpec("bytevector-copy", 1, 3, BytevectorCopy::new).allocating(),
-                        new PrimitiveSpec("bytevector-copy!", 3, 5, BytevectorCopyInto::new),
-                        new PrimitiveSpec("bytevector-append", 0, -1, BytevectorAppend::new).allocating(),
-                        new PrimitiveSpec("utf8->string", 1, 3, Utf8ToString::new).allocating(),
-                        new PrimitiveSpec("string->utf8", 1, 3, StringToUtf8::new).allocating());
+        List<PrimitiveSpec> specs = new ArrayList<>();
+        for (Primitive primitive : Primitive.values()) {
+            specs.add(primitive.spec);
+        }
+        return specs;
+    }
+
+    /**
+     * This area's primitives: the one list to add to. A constant has the primitive's name and
+     * arity, and {@link #node} makes its node when it is first called: no lambda per primitive for
+     * the JVM to link as a context starts (design.md D17, "The primitives' registry").
+     */
+    enum Primitive implements Supplier<PrimitiveNode> {
+        IS_BYTEVECTOR("bytevector?", 1, 1),
+        BYTEVECTOR("bytevector", 0, -1, Result.NEW_OBJECT),
+        MAKE_BYTEVECTOR("make-bytevector", 1, 2, Result.NEW_OBJECT),
+        BYTEVECTOR_LENGTH("bytevector-length", 1, 1),
+        BYTEVECTOR_U8_REF("bytevector-u8-ref", 2, 2),
+        BYTEVECTOR_U8_SET("bytevector-u8-set!", 3, 3),
+        BYTEVECTOR_COPY("bytevector-copy", 1, 3, Result.NEW_OBJECT),
+        BYTEVECTOR_COPY_INTO("bytevector-copy!", 3, 5),
+        BYTEVECTOR_APPEND("bytevector-append", 0, -1, Result.NEW_OBJECT),
+        UTF8_TO_STRING("utf8->string", 1, 3, Result.NEW_OBJECT),
+        STRING_TO_UTF8("string->utf8", 1, 3, Result.NEW_OBJECT);
+
+        final PrimitiveSpec spec;
+
+        Primitive(String name, int minArgs, int maxArgs) {
+            this(name, minArgs, maxArgs, Result.VALUE);
+        }
+
+        Primitive(String name, int minArgs, int maxArgs, Result result) {
+            this.spec = new PrimitiveSpec(name, minArgs, maxArgs, this, result);
+        }
+
+        @Override
+        public PrimitiveNode get() {
+            return (PrimitiveNode) node();
+        }
+
+        /**
+         * The primitive's node: a {@code return} in each case, typed {@code Object}, so that the
+         * JVM's verifier needn't load every node class to check what is returned (a switch
+         * expression's cases would join as {@code PrimitiveNode}). Each is loaded when it is made.
+         */
+        private Object node() {
+            switch (this) {
+                case IS_BYTEVECTOR:
+                    return new TypePredicate(x -> x instanceof SBytevector);
+                case BYTEVECTOR:
+                    return new MakeBytevector();
+                case MAKE_BYTEVECTOR:
+                    return new MakeBytevectorOfLength();
+                case BYTEVECTOR_LENGTH:
+                    return new BytevectorLength();
+                case BYTEVECTOR_U8_REF:
+                    return new BytevectorRef();
+                case BYTEVECTOR_U8_SET:
+                    return new BytevectorSet();
+                case BYTEVECTOR_COPY:
+                    return new BytevectorCopy();
+                case BYTEVECTOR_COPY_INTO:
+                    return new BytevectorCopyInto();
+                case BYTEVECTOR_APPEND:
+                    return new BytevectorAppend();
+                case UTF8_TO_STRING:
+                    return new Utf8ToString();
+                case STRING_TO_UTF8:
+                    return new StringToUtf8();
+            }
+            throw new AssertionError(this);
+        }
     }
 
     /** {@code (bytevector byte ...)}. */

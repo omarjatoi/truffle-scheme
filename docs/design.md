@@ -2075,8 +2075,8 @@ Each entry: the decision, why, and what was rejected.
     classes from the jars took about half (`ModuleReader.read` reads each
     class into a 16 KB buffer, then copies it), linking lambdas and other
     `invokedynamic` call sites 13 MB (8 MB of it the 310 lambdas of the 283
-    primitives' `PrimitiveSpec`s, which the first context links, in about
-    30 ms), and the engine, the context and the prelude image's restore most
+    primitives' `PrimitiveSpec`s, which the first context linked, in about
+    30 ms, until the primitives' registry had none: below), and the engine, the context and the prelude image's restore most
     of the rest. The AOT cache (below) brings those classes and lambdas
     linked: with it the program allocates 8 MB as it starts (the used figure
     with `-XX:-UseTLAB`; 10 MB of the heap is resident, the cache's archived
@@ -2111,6 +2111,39 @@ Each entry: the decision, why, and what was rejected.
     threads: 1.03, 1.01, 0.97 and 0.90; with 3: 1.00, 1.02, 0.95 and 0.89.
     A hello-world program took 321 ms and 233 MB against 398 ms and 342 MB
     (31 interleaved runs, the medians).
+  - **The primitives' registry.** An area's primitives are the constants of
+    an enum in its builtins file (`NumberPrimitives.Primitive`, ...): each
+    has the primitive's name, its arity and what its calls give
+    (`PrimitiveSpec.Result`), and is the factory of its node, which a
+    `switch` on the constant makes. A primitive's `PrimitiveRootNode` makes
+    its node on the primitive's first call, not when the context makes the
+    root. Each name is written once, and `PrimitiveRegistryTest` checks every
+    primitive against the registry as it was before (`primitives.txt`).
+    - *Why.* The areas' lists had a lambda or a constructor reference per
+      primitive as its factory, 310 for 283 primitives, and the first context
+      linked every one, a hidden class each, and then made every node. Without
+      the AOT cache, `Builtins.primitives()`'s first call in a fresh JVM took
+      56-62 ms and allocated 12.2 MB; it takes 5 ms and 1.3 MB. A hello-world
+      program (`bazel-bin/scheme`'s `java` command, 21 interleaved runs, the
+      medians, load 4-5) took 325 ms against 352 (the fastest runs 306
+      against 338), allocated 54 MB against 65 (`-XX:-UseTLAB`), and peaked
+      at 230 MB against 244. With the AOT cache, which had them linked, it
+      is the same: 141 ms against 143, 8.6 MB allocated against 8.8. The
+      native launcher pre-initializes its context: 9.7 ms either way (31
+      runs), its executable 80 KB smaller.
+    - *A `return` in each case.* The `switch` is a statement in a method
+      typed `Object`, not a switch expression: javac joins a switch
+      expression's cases as their common class `PrimitiveNode`, and the
+      JVM's verifier then loads every node class (151) to check that each
+      case's is one, as it verifies the enum. That took 14 ms and 4.1 MB of
+      `primitives()`'s first call. Returned as `Object`, a node class is
+      loaded only when a node of it is made. The cost: javac doesn't check
+      that the cases cover the constants, so the test makes every node.
+    - *Rejected:* a `switch` on the name beside the list (each name twice);
+      method handles made on a primitive's first call (reflection, which the
+      native image restricts: D10); a table generated at build time (the
+      Truffle DSL processor makes none, and a processor of our own is more
+      machinery than an enum).
   - **The AOT cache.** JDK 25's AOT cache (JEPs 483, 514 and 515, the successor
     of AppCDS): the classes a training run loaded, parsed, verified and
     linked, the module graph, and their profiles, mapped from a file as the

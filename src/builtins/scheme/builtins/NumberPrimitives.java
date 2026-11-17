@@ -1,12 +1,15 @@
 package scheme.builtins;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Supplier;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 
 import scheme.reader.NumberParser;
 import scheme.runtime.PrimitiveNode;
 import scheme.runtime.PrimitiveSpec;
+import scheme.runtime.PrimitiveSpec.Result;
 import scheme.runtime.SchemeError;
 import scheme.runtime.printer.Printer;
 import scheme.runtime.value.MultipleValues;
@@ -37,94 +40,264 @@ final class NumberPrimitives {
         Object apply(Object x, Object y);
     }
 
-    /** This area's primitives: the one list to add to. */
+    /** This area's primitives, as {@code Builtins} registers them. */
     static List<PrimitiveSpec> primitives() {
-        return List.of(
-                        new PrimitiveSpec("+", 0, -1, Add::new).allocating(),
-                        new PrimitiveSpec("-", 1, -1, Sub::new).allocating(),
-                        new PrimitiveSpec("*", 0, -1, Mul::new).allocating(),
-                        new PrimitiveSpec("/", 1, -1, Div::new).allocating(),
-                        new PrimitiveSpec("=", 1, -1, () -> new Compare("=", Compare.EQ)),
-                        new PrimitiveSpec("<", 1, -1, () -> new Compare("<", Compare.LT)),
-                        new PrimitiveSpec(">", 1, -1, () -> new Compare(">", Compare.GT)),
-                        new PrimitiveSpec("<=", 1, -1, () -> new Compare("<=", Compare.LE)),
-                        new PrimitiveSpec(">=", 1, -1, () -> new Compare(">=", Compare.GE)),
-                        // Predicates (R7RS §6.2.6)
-                        new PrimitiveSpec("number?", 1, 1, () -> new TypePredicate(Arithmetic::isNumber)),
-                        new PrimitiveSpec("complex?", 1, 1, () -> new TypePredicate(Arithmetic::isNumber)),
-                        new PrimitiveSpec("real?", 1, 1, () -> new TypePredicate(Arithmetic::isReal)),
-                        new PrimitiveSpec("rational?", 1, 1, () -> new TypePredicate(x -> Arithmetic.isReal(x) && !(x instanceof Double d && !Double.isFinite(d)))),
-                        new PrimitiveSpec("integer?", 1, 1, () -> new TypePredicate(Arithmetic::isInteger)),
-                        new PrimitiveSpec("exact-integer?", 1, 1, () -> new TypePredicate(Arithmetic::isExactInteger)),
-                        unary("exact?", x -> Arithmetic.isExact(Arithmetic.check("exact?", x))),
-                        unary("inexact?", x -> !Arithmetic.isExact(Arithmetic.check("inexact?", x))),
-                        unary("finite?", x -> finite(x, true)),
-                        unary("infinite?", x -> infinite(x)),
-                        unary("nan?", x -> nan(x)),
-                        unary("zero?", x -> Arithmetic.numericEquals("zero?", x, 0L)),
-                        unary("positive?", x -> Arithmetic.compare("positive?", x, 0L) == 1),
-                        unary("negative?", x -> Arithmetic.compare("negative?", x, 0L) == -1),
-                        unary("odd?", x -> !even("odd?", x)),
-                        unary("even?", x -> even("even?", x)),
-                        new PrimitiveSpec("max", 1, -1, () -> new Extremum("max", 1)),
-                        new PrimitiveSpec("min", 1, -1, () -> new Extremum("min", -1)),
-                        unary("abs", x -> x instanceof Double d ? Math.abs(d) : Arithmetic.sign("abs", Arithmetic.checkReal("abs", x)) < 0 ? Arithmetic.sub(0L, x) : x),
-                        unary("square", x -> Arithmetic.mul(x, x)),
-                        // Integer division
-                        binary("quotient", (n, d) -> Arithmetic.divide("quotient", n, d, false)[0]),
-                        binary("remainder", (n, d) -> Arithmetic.divide("remainder", n, d, false)[1]),
-                        binary("modulo", (n, d) -> Arithmetic.divide("modulo", n, d, true)[1]),
-                        binary("truncate-quotient", (n, d) -> Arithmetic.divide("truncate-quotient", n, d, false)[0]),
-                        binary("truncate-remainder", (n, d) -> Arithmetic.divide("truncate-remainder", n, d, false)[1]),
-                        binary("floor-quotient", (n, d) -> Arithmetic.divide("floor-quotient", n, d, true)[0]),
-                        binary("floor-remainder", (n, d) -> Arithmetic.divide("floor-remainder", n, d, true)[1]),
-                        binary("truncate/", (n, d) -> new MultipleValues(Arithmetic.divide("truncate/", n, d, false))),
-                        binary("floor/", (n, d) -> new MultipleValues(Arithmetic.divide("floor/", n, d, true))),
-                        new PrimitiveSpec("gcd", 0, -1, () -> new Fold(0L, Arithmetic::gcd)),
-                        new PrimitiveSpec("lcm", 0, -1, () -> new Fold(1L, Arithmetic::lcm)),
-                        unary("numerator", x -> fraction("numerator", x, true)),
-                        unary("denominator", x -> fraction("denominator", x, false)),
-                        // Rounding
-                        unary("floor", x -> Arithmetic.round("floor", Arithmetic.Rounding.FLOOR, x)),
-                        unary("ceiling", x -> Arithmetic.round("ceiling", Arithmetic.Rounding.CEILING, x)),
-                        unary("truncate", x -> Arithmetic.round("truncate", Arithmetic.Rounding.TRUNCATE, x)),
-                        unary("round", x -> Arithmetic.round("round", Arithmetic.Rounding.ROUND, x)),
-                        binary("rationalize", Arithmetic::rationalize),
-                        // Transcendental functions
-                        unary("exp", Arithmetic::exp),
-                        new PrimitiveSpec("log", 1, 2, Log::new),
-                        unary("sin", x -> Arithmetic.trig("sin", x)),
-                        unary("cos", x -> Arithmetic.trig("cos", x)),
-                        unary("tan", x -> Arithmetic.trig("tan", x)),
-                        unary("asin", x -> Arithmetic.trig("asin", x)),
-                        unary("acos", x -> Arithmetic.trig("acos", x)),
-                        new PrimitiveSpec("atan", 1, 2, Atan::new),
-                        unary("sqrt", Arithmetic::sqrt),
-                        unary("exact-integer-sqrt", NumberPrimitives::exactIntegerSqrt),
-                        binary("expt", Arithmetic::expt),
-                        // Complex numbers
-                        binary("make-rectangular", (a, b) -> SComplex.make(Arithmetic.checkReal("make-rectangular", a), Arithmetic.checkReal("make-rectangular", b))),
-                        binary("make-polar", Arithmetic::makePolar),
-                        unary("real-part", x -> Arithmetic.realPart(Arithmetic.check("real-part", x))),
-                        unary("imag-part", x -> Arithmetic.imagPart(Arithmetic.check("imag-part", x))),
-                        unary("magnitude", Arithmetic::magnitude),
-                        unary("angle", Arithmetic::angle),
-                        // Exactness
-                        unary("exact", x -> Arithmetic.exact("exact", x)),
-                        unary("inexact", x -> Arithmetic.inexact(Arithmetic.check("inexact", x))),
-                        unary("exact->inexact", x -> Arithmetic.inexact(Arithmetic.check("exact->inexact", x))),
-                        unary("inexact->exact", x -> Arithmetic.exact("inexact->exact", x)),
-                        // Numbers and strings
-                        new PrimitiveSpec("number->string", 1, 2, NumberToString::new).allocating(),
-                        new PrimitiveSpec("string->number", 1, 2, StringToNumber::new).allocating());
+        List<PrimitiveSpec> specs = new ArrayList<>();
+        for (Primitive primitive : Primitive.values()) {
+            specs.add(primitive.spec);
+        }
+        return specs;
     }
 
-    private static PrimitiveSpec unary(String name, F1 f) {
-        return new PrimitiveSpec(name, 1, 1, () -> new Unary(f));
-    }
+    /**
+     * This area's primitives: the one list to add to. A constant has the primitive's name and
+     * arity, and {@link #node} makes its node when it is first called: no lambda per primitive for
+     * the JVM to link as a context starts (design.md D17, "The primitives' registry").
+     */
+    enum Primitive implements Supplier<PrimitiveNode> {
+        ADD("+", 0, -1, Result.NEW_OBJECT),
+        SUBTRACT("-", 1, -1, Result.NEW_OBJECT),
+        MULTIPLY("*", 0, -1, Result.NEW_OBJECT),
+        DIVIDE("/", 1, -1, Result.NEW_OBJECT),
+        NUMBER_EQ("=", 1, -1),
+        NUMBER_LT("<", 1, -1),
+        NUMBER_GT(">", 1, -1),
+        NUMBER_LE("<=", 1, -1),
+        NUMBER_GE(">=", 1, -1),
+        // Predicates (R7RS §6.2.6)
+        IS_NUMBER("number?", 1, 1),
+        IS_COMPLEX("complex?", 1, 1),
+        IS_REAL("real?", 1, 1),
+        IS_RATIONAL("rational?", 1, 1),
+        IS_INTEGER("integer?", 1, 1),
+        IS_EXACT_INTEGER("exact-integer?", 1, 1),
+        IS_EXACT("exact?", 1, 1),
+        IS_INEXACT("inexact?", 1, 1),
+        IS_FINITE("finite?", 1, 1),
+        IS_INFINITE("infinite?", 1, 1),
+        IS_NAN("nan?", 1, 1),
+        IS_ZERO("zero?", 1, 1),
+        IS_POSITIVE("positive?", 1, 1),
+        IS_NEGATIVE("negative?", 1, 1),
+        IS_ODD("odd?", 1, 1),
+        IS_EVEN("even?", 1, 1),
+        MAX("max", 1, -1),
+        MIN("min", 1, -1),
+        ABS("abs", 1, 1),
+        SQUARE("square", 1, 1),
+        // Integer division
+        QUOTIENT("quotient", 2, 2),
+        REMAINDER("remainder", 2, 2),
+        MODULO("modulo", 2, 2),
+        TRUNCATE_QUOTIENT("truncate-quotient", 2, 2),
+        TRUNCATE_REMAINDER("truncate-remainder", 2, 2),
+        FLOOR_QUOTIENT("floor-quotient", 2, 2),
+        FLOOR_REMAINDER("floor-remainder", 2, 2),
+        TRUNCATE_DIVIDE("truncate/", 2, 2),
+        FLOOR_DIVIDE("floor/", 2, 2),
+        GCD("gcd", 0, -1),
+        LCM("lcm", 0, -1),
+        NUMERATOR("numerator", 1, 1),
+        DENOMINATOR("denominator", 1, 1),
+        // Rounding
+        FLOOR("floor", 1, 1),
+        CEILING("ceiling", 1, 1),
+        TRUNCATE("truncate", 1, 1),
+        ROUND("round", 1, 1),
+        RATIONALIZE("rationalize", 2, 2),
+        // Transcendental functions
+        EXP("exp", 1, 1),
+        LOG("log", 1, 2),
+        SIN("sin", 1, 1),
+        COS("cos", 1, 1),
+        TAN("tan", 1, 1),
+        ASIN("asin", 1, 1),
+        ACOS("acos", 1, 1),
+        ATAN("atan", 1, 2),
+        SQRT("sqrt", 1, 1),
+        EXACT_INTEGER_SQRT("exact-integer-sqrt", 1, 1),
+        EXPT("expt", 2, 2),
+        // Complex numbers
+        MAKE_RECTANGULAR("make-rectangular", 2, 2),
+        MAKE_POLAR("make-polar", 2, 2),
+        REAL_PART("real-part", 1, 1),
+        IMAG_PART("imag-part", 1, 1),
+        MAGNITUDE("magnitude", 1, 1),
+        ANGLE("angle", 1, 1),
+        // Exactness
+        EXACT("exact", 1, 1),
+        INEXACT("inexact", 1, 1),
+        EXACT_TO_INEXACT("exact->inexact", 1, 1),
+        INEXACT_TO_EXACT("inexact->exact", 1, 1),
+        // Numbers and strings
+        NUMBER_TO_STRING("number->string", 1, 2, Result.NEW_OBJECT),
+        STRING_TO_NUMBER("string->number", 1, 2, Result.NEW_OBJECT);
 
-    private static PrimitiveSpec binary(String name, F2 f) {
-        return new PrimitiveSpec(name, 2, 2, () -> new Binary(f));
+        final PrimitiveSpec spec;
+
+        Primitive(String name, int minArgs, int maxArgs) {
+            this(name, minArgs, maxArgs, Result.VALUE);
+        }
+
+        Primitive(String name, int minArgs, int maxArgs, Result result) {
+            this.spec = new PrimitiveSpec(name, minArgs, maxArgs, this, result);
+        }
+
+        @Override
+        public PrimitiveNode get() {
+            return (PrimitiveNode) node();
+        }
+
+        /**
+         * The primitive's node: a {@code return} in each case, typed {@code Object}, so that the
+         * JVM's verifier needn't load every node class to check what is returned (a switch
+         * expression's cases would join as {@code PrimitiveNode}). Each is loaded when it is made.
+         */
+        private Object node() {
+            switch (this) {
+                case ADD:
+                    return new Add();
+                case SUBTRACT:
+                    return new Sub();
+                case MULTIPLY:
+                    return new Mul();
+                case DIVIDE:
+                    return new Div();
+                case NUMBER_EQ:
+                    return new Compare("=", Compare.EQ);
+                case NUMBER_LT:
+                    return new Compare("<", Compare.LT);
+                case NUMBER_GT:
+                    return new Compare(">", Compare.GT);
+                case NUMBER_LE:
+                    return new Compare("<=", Compare.LE);
+                case NUMBER_GE:
+                    return new Compare(">=", Compare.GE);
+                case IS_NUMBER:
+                    return new TypePredicate(Arithmetic::isNumber);
+                case IS_COMPLEX:
+                    return new TypePredicate(Arithmetic::isNumber);
+                case IS_REAL:
+                    return new TypePredicate(Arithmetic::isReal);
+                case IS_RATIONAL:
+                    return new TypePredicate(x -> Arithmetic.isReal(x) && !(x instanceof Double d && !Double.isFinite(d)));
+                case IS_INTEGER:
+                    return new TypePredicate(Arithmetic::isInteger);
+                case IS_EXACT_INTEGER:
+                    return new TypePredicate(Arithmetic::isExactInteger);
+                case IS_EXACT:
+                    return new Unary(x -> Arithmetic.isExact(Arithmetic.check("exact?", x)));
+                case IS_INEXACT:
+                    return new Unary(x -> !Arithmetic.isExact(Arithmetic.check("inexact?", x)));
+                case IS_FINITE:
+                    return new Unary(x -> finite(x, true));
+                case IS_INFINITE:
+                    return new Unary(x -> infinite(x));
+                case IS_NAN:
+                    return new Unary(x -> nan(x));
+                case IS_ZERO:
+                    return new Unary(x -> Arithmetic.numericEquals("zero?", x, 0L));
+                case IS_POSITIVE:
+                    return new Unary(x -> Arithmetic.compare("positive?", x, 0L) == 1);
+                case IS_NEGATIVE:
+                    return new Unary(x -> Arithmetic.compare("negative?", x, 0L) == -1);
+                case IS_ODD:
+                    return new Unary(x -> !even("odd?", x));
+                case IS_EVEN:
+                    return new Unary(x -> even("even?", x));
+                case MAX:
+                    return new Extremum("max", 1);
+                case MIN:
+                    return new Extremum("min", -1);
+                case ABS:
+                    return new Unary(x -> x instanceof Double d ? Math.abs(d) : Arithmetic.sign("abs", Arithmetic.checkReal("abs", x)) < 0 ? Arithmetic.sub(0L, x) : x);
+                case SQUARE:
+                    return new Unary(x -> Arithmetic.mul(x, x));
+                case QUOTIENT:
+                    return new Binary((n, d) -> Arithmetic.divide("quotient", n, d, false)[0]);
+                case REMAINDER:
+                    return new Binary((n, d) -> Arithmetic.divide("remainder", n, d, false)[1]);
+                case MODULO:
+                    return new Binary((n, d) -> Arithmetic.divide("modulo", n, d, true)[1]);
+                case TRUNCATE_QUOTIENT:
+                    return new Binary((n, d) -> Arithmetic.divide("truncate-quotient", n, d, false)[0]);
+                case TRUNCATE_REMAINDER:
+                    return new Binary((n, d) -> Arithmetic.divide("truncate-remainder", n, d, false)[1]);
+                case FLOOR_QUOTIENT:
+                    return new Binary((n, d) -> Arithmetic.divide("floor-quotient", n, d, true)[0]);
+                case FLOOR_REMAINDER:
+                    return new Binary((n, d) -> Arithmetic.divide("floor-remainder", n, d, true)[1]);
+                case TRUNCATE_DIVIDE:
+                    return new Binary((n, d) -> new MultipleValues(Arithmetic.divide("truncate/", n, d, false)));
+                case FLOOR_DIVIDE:
+                    return new Binary((n, d) -> new MultipleValues(Arithmetic.divide("floor/", n, d, true)));
+                case GCD:
+                    return new Fold(0L, Arithmetic::gcd);
+                case LCM:
+                    return new Fold(1L, Arithmetic::lcm);
+                case NUMERATOR:
+                    return new Unary(x -> fraction("numerator", x, true));
+                case DENOMINATOR:
+                    return new Unary(x -> fraction("denominator", x, false));
+                case FLOOR:
+                    return new Unary(x -> Arithmetic.round("floor", Arithmetic.Rounding.FLOOR, x));
+                case CEILING:
+                    return new Unary(x -> Arithmetic.round("ceiling", Arithmetic.Rounding.CEILING, x));
+                case TRUNCATE:
+                    return new Unary(x -> Arithmetic.round("truncate", Arithmetic.Rounding.TRUNCATE, x));
+                case ROUND:
+                    return new Unary(x -> Arithmetic.round("round", Arithmetic.Rounding.ROUND, x));
+                case RATIONALIZE:
+                    return new Binary(Arithmetic::rationalize);
+                case EXP:
+                    return new Unary(Arithmetic::exp);
+                case LOG:
+                    return new Log();
+                case SIN:
+                    return new Unary(x -> Arithmetic.trig("sin", x));
+                case COS:
+                    return new Unary(x -> Arithmetic.trig("cos", x));
+                case TAN:
+                    return new Unary(x -> Arithmetic.trig("tan", x));
+                case ASIN:
+                    return new Unary(x -> Arithmetic.trig("asin", x));
+                case ACOS:
+                    return new Unary(x -> Arithmetic.trig("acos", x));
+                case ATAN:
+                    return new Atan();
+                case SQRT:
+                    return new Unary(Arithmetic::sqrt);
+                case EXACT_INTEGER_SQRT:
+                    return new Unary(NumberPrimitives::exactIntegerSqrt);
+                case EXPT:
+                    return new Binary(Arithmetic::expt);
+                case MAKE_RECTANGULAR:
+                    return new Binary((a, b) -> SComplex.make(Arithmetic.checkReal("make-rectangular", a), Arithmetic.checkReal("make-rectangular", b)));
+                case MAKE_POLAR:
+                    return new Binary(Arithmetic::makePolar);
+                case REAL_PART:
+                    return new Unary(x -> Arithmetic.realPart(Arithmetic.check("real-part", x)));
+                case IMAG_PART:
+                    return new Unary(x -> Arithmetic.imagPart(Arithmetic.check("imag-part", x)));
+                case MAGNITUDE:
+                    return new Unary(Arithmetic::magnitude);
+                case ANGLE:
+                    return new Unary(Arithmetic::angle);
+                case EXACT:
+                    return new Unary(x -> Arithmetic.exact("exact", x));
+                case INEXACT:
+                    return new Unary(x -> Arithmetic.inexact(Arithmetic.check("inexact", x)));
+                case EXACT_TO_INEXACT:
+                    return new Unary(x -> Arithmetic.inexact(Arithmetic.check("exact->inexact", x)));
+                case INEXACT_TO_EXACT:
+                    return new Unary(x -> Arithmetic.exact("inexact->exact", x));
+                case NUMBER_TO_STRING:
+                    return new NumberToString();
+                case STRING_TO_NUMBER:
+                    return new StringToNumber();
+            }
+            throw new AssertionError(this);
+        }
     }
 
     static final class Unary extends PrimitiveNode {
