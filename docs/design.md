@@ -359,25 +359,23 @@ full R7RS-small conformance comes first.
     the interpreter (`not_compiled_exception_handler` at
     `OptimizedDirectCallNode.call`, bci 27, in 4 to 5 recompilations), against
     one with the capture. `HostJitPitfallsTest` checks that such a program
-    throws nothing. Measured against throwing (a fresh JVM per run,
-    interleaved, medians, an Apple M3 Max shared with other agents, load 6-12):
-    in the interpreter, at a tenth of the counts, `puzzle` 0.96, `quicksort`
-    0.97, `maze` 0.98, `ctak` 1.03, `fibc` 0.98; the 24 programs of M8-03 at
-    the report's interpreter counts, 0.971 (`puzzle` 0.81). With the JIT, at a tenth of
-    the counts, first iteration and best of the next two: `puzzle` 0.38 and
-    1.10, `maze` 0.93 and 0.91, `quicksort`, `ctak` and `fibc` within noise;
-    the 24 programs of M8-03, 1.015 and 1.008 (noise: the programs that
-    don't escape moved as much). At its own count (5 iterations, 3 runs)
-    `puzzle`'s first iteration is 0.79 times (2.37 s to 1.86 s) and its later
-    ones about 1.12 times (1.43 s to 1.62 s): a trade-off. The compiled
-    shape changes, not the cost of an escape: throwing from compiled code
-    and returning only in the interpreter (`CompilerDirectives.inInterpreter`)
-    measured the same, and so did returning at once from the driver when the
-    procedure it calls escapes to it. With the throw, the trial loop's
-    first-tier compilation was invalidated at once and recompiled; with the
-    capture the loop is compiled into `%call/ec`'s second-tier compilation
-    only. `bench-check`'s `puzzle` is 1.17 times its baseline, within its
-    threshold.
+    throws nothing. Measured against throwing, on the code after #178
+    (which contified `puzzle`'s loop; a fresh JVM per run, interleaved,
+    medians, an Apple M3 Max shared with other agents, load 7-12): in the
+    interpreter, at a tenth of the counts, `puzzle` 0.93, `quicksort` 0.98,
+    `maze` 0.98, `ctak` 0.99, `fibc` 0.97. With the JIT, at a tenth of the
+    counts, first iteration and best of the next two: `puzzle` 0.33 and
+    1.20, `quicksort` 0.86 and 1.07, `maze` 1.00 and 0.88, `ctak` and `fibc`
+    within noise; the 24 programs of M8-03, 1.012 and 0.972 (noise: programs
+    that never escape moved as much). At its own count (5 iterations, 3
+    runs) `puzzle`'s first iteration is 0.68 times (2.72 s to 1.84 s) and its
+    later ones about 1.06 times (best 1.32 s to 1.40 s; `quicksort`'s 1.00):
+    a trade-off. Before #178 it was 0.79 and 1.12. It is the compiled shape,
+    not the cost of an escape: throwing from compiled code and returning only
+    in the interpreter (`CompilerDirectives.inInterpreter`) measured the
+    same, and so did returning at once from the driver when the procedure
+    it calls escapes to it. `bench-check`: `puzzle` 1.07 times its baseline,
+    `quicksort`, `ctak` and `fibc` 0.99-1.01.
 - **Segments are immutable once shared.** Each resume of a segment that a
   continuation can reach copies the frame. This is correct only because of
   assignment conversion (D2): the frame holds no mutable Scheme variables,

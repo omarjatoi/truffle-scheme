@@ -1000,8 +1000,9 @@ collector); each task measures with interleaved A/B runs.
     loop showed no host-profile trap in any program tried (design.md
     "The driver's loop and the host profile"), and the test checks that
     HotSpot OSR-compiles it. Benchmarks: the 24 programs within noise;
-    `puzzle`'s first iteration 0.38 times at a tenth of its count (0.79 at
-    its own), its steady state about 1.1 times, a trade-off recorded there.
+    `puzzle`'s first iteration 0.33 times at a tenth of its count (0.68 at
+    its own), its later iterations about 1.06 times at its own count, a
+    trade-off recorded there.
 - [x] **M9-05 · Smaller compiler wins** *(early)*
   - `assq`/`assv` of quoted lists compiled like M8-05's `memv` (#140);
     contify loops whose only unknown non-tail call is an escape-only `k`
