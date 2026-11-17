@@ -641,6 +641,35 @@ Each entry: the decision, why, and what was rejected.
   before expansion, so a cycle handed to another macro is an error even if
   that macro would quote it (§2.4 allows cycles only in literals). Shared
   structure that isn't circular is fine. Data read by `read` is not checked.
+- **§6's "it is an error" cases (the §6 audit).** Where a standard procedure
+  is given what R7RS §6 calls an error, the primitive signals one when the
+  check is cheap, and the R7RS errata decide what counts as an error:
+  - `boolean=?` and `symbol=?` signal on non-booleans and non-symbols
+    (errata 3 and 29: *"it is an error to apply boolean=? to
+    non-booleans"*). `list-ref` signals when k isn't less than the length
+    (erratum 20: *"(list-ref '(x) 1) is an error"*), as do `list-tail` past
+    the end and `list-set!`.
+  - So do a bad index, length or range (start after end), a byte outside
+    0–255, a radix other than 2, 8, 10 or 16, a non-scalar value for
+    `integer->char`, an argument of the wrong type, and mutating a literal
+    or `symbol->string`'s result (§6.5); `exact` of an infinity or a NaN,
+    `exact-integer-sqrt` of anything but a non-negative exact integer, and
+    integer division (`floor/`, `truncate/`, `quotient`, `modulo`, ...) by
+    any zero; `utf8->string` of invalid UTF-8 (§6.9: *"It is an error for
+    bytevector to contain invalid UTF-8 byte sequences"*).
+  - Not signalled, on purpose: `/` with an exact zero divisor and an inexact
+    argument gives IEEE's result (`(/ 5. 0)` is `+inf.0`; §6.2.6: *"It is an
+    error if any argument of / other than the first is an exact zero"*), so
+    the typed flonum paths (M7-03) need no extra test. `(expt 0 z)` with a
+    negative real part returns a number when z is inexact (`(expt 0 -1.)` is
+    `0.0`; §6.2.6 allows *"either an error is signalled or an unspecified
+    number is returned"*). `memq`, `memv`, `member`, `assq`, `assv` and
+    `assoc` return `#f` at an improper list's tail, and `map` and `for-each`
+    stop there (a non-list argument is an empty list). `number->string` of
+    `-0.0` in radix 2, 8 or 16, which no string reads back as (§6.2.7: *"It
+    is an error if no possible result makes this expression true"*), is
+    `"#i-0"`. A parameter object called with one argument sets its value, as
+    chibi's do; R7RS's take none (§4.2.6).
 - `exit` runs all outstanding after-thunks through `rewind`, then exits the
   context through Truffle. `emergency-exit` skips the after-thunks.
 - `delay`, `delay-force` and `make-promise` use the space-safe reference
