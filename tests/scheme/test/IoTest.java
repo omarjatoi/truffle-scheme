@@ -1,18 +1,23 @@
 package scheme.test;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
+import static org.junit.Assume.assumeTrue;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.ref.WeakReference;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Stream;
@@ -24,6 +29,9 @@ import org.graalvm.polyglot.io.IOAccess;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
+
+import scheme.runtime.SchemeContext;
+import scheme.runtime.value.SPort;
 
 /**
  * M4-06: input and output (R7RS §6.13): string, bytevector and file ports, textual and binary
@@ -378,5 +386,262 @@ public class IoTest {
             }
             assertEquals("hello Ada bye", out.text());
         }
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // Open output file ports are written out with standard output (design.md D10, "Open file
+    // ports").
+
+    /** Text that fills more than one buffer, so a lost tail shows as a truncated file. */
+    private static final String LONG_TEXT = "0123456789".repeat(2000) + "end";
+
+    /**
+     * A program that opens a textual and a binary file port, writes more than a buffer to each and
+     * never closes them, then does {@code ending}.
+     */
+    private String unclosedPorts(String ending) {
+        return """
+                        (define text (open-output-file %s))
+                        (write-string (make-string 20000 #\\a) text)
+                        (write-string "end" text)
+                        (define binary (open-binary-output-file %s))
+                        (write-bytevector (make-bytevector 20000 7) binary)
+                        (write-u8 1 binary) (write-u8 2 binary) (write-u8 3 binary)
+                        %s""".formatted(file("text.txt"), file("binary.bin"), ending);
+    }
+
+    private void assertPortsWritten(String what) throws IOException {
+        assertEquals(what, "a".repeat(20000) + "end", Files.readString(dir.resolve("text.txt")));
+        byte[] expected = new byte[20003];
+        Arrays.fill(expected, 0, 20000, (byte) 7);
+        expected[20000] = 1;
+        expected[20001] = 2;
+        expected[20002] = 3;
+        assertArrayEquals(what, expected, Files.readAllBytes(dir.resolve("binary.bin")));
+    }
+
+    /** When the program ends, its file ports hold everything written to them, closed or not. */
+    @Test
+    public void unclosedFilePortsAreWrittenWhenTheProgramEnds() throws IOException {
+        try (Context context = Context.newBuilder(SCHEME).allowIO(IOAccess.ALL).build()) {
+            context.eval(SCHEME, unclosedPorts(""));
+            assertPortsWritten("before the context closes");
+        }
+        assertPortsWritten("after the context closes");
+    }
+
+    /** So do {@code exit} and {@code emergency-exit} (R7RS 6.14; design.md D10). */
+    @Test
+    public void unclosedFilePortsAreWrittenOnExit() throws IOException {
+        for (String exit : new String[]{"(exit 3)", "(emergency-exit 3)", "(dynamic-wind (lambda () #f) (lambda () (emergency-exit 3)) (lambda () #f))"}) {
+            try (Context context = Context.newBuilder(SCHEME).allowIO(IOAccess.ALL).build()) {
+                context.eval(SCHEME, unclosedPorts(exit));
+                fail(exit + " should exit");
+            } catch (PolyglotException e) {
+                assertTrue(exit, e.isExit());
+                assertEquals(exit, 3, e.getExitStatus());
+            }
+            assertPortsWritten(exit);
+        }
+    }
+
+    /** So does an uncaught error, before the context closes (the REPL and embedders go on). */
+    @Test
+    public void unclosedFilePortsAreWrittenAfterAnUncaughtError() throws IOException {
+        try (Context context = Context.newBuilder(SCHEME).allowIO(IOAccess.ALL).build()) {
+            try {
+                context.eval(SCHEME, unclosedPorts("(car 1)"));
+                fail("car of a number");
+            } catch (PolyglotException e) {
+                assertTrue(e.isGuestException());
+            }
+            assertPortsWritten("after the error");
+            // The ports are still open: what is written next is written out in turn.
+            context.eval(SCHEME, "(write-string \"more\" text) (write-u8 4 binary)");
+            assertEquals("a".repeat(20000) + "endmore", Files.readString(dir.resolve("text.txt")));
+            assertEquals(20004, Files.size(dir.resolve("binary.bin")));
+        }
+    }
+
+    /**
+     * Closing the context closes the file ports the program left open: their descriptors are
+     * released at once, not when the ports are collected.
+     */
+    @Test
+    public void closingTheContextClosesTheFilePorts() throws IOException {
+        assumeTrue(Files.isDirectory(OPEN_DESCRIPTORS));
+        Context context = Context.newBuilder(SCHEME).allowIO(IOAccess.ALL).build();
+        context.initialize(SCHEME);
+        long before = openDescriptors();
+        context.eval(SCHEME, """
+                        (define (name i) (string-append %s (number->string i)))
+                        (define ports
+                          (let loop ((i 0) (ports '()))
+                            (if (= i 50)
+                                ports
+                                (let ((p (if (even? i) (open-output-file (name i)) (open-binary-output-file (name i)))))
+                                  (if (even? i) (write-string "text" p) (write-u8 i p))
+                                  (loop (+ i 1) (cons p ports))))))""".formatted(file("port-")));
+        assertTrue("50 files are open", openDescriptors() >= before + 50);
+        context.close();
+        long after = openDescriptors();
+        assertTrue("open descriptors: " + before + " before, " + after + " after", after < before + 10);
+        for (int i = 0; i < 50; i++) {
+            Path p = dir.resolve("port-" + i);
+            if (i % 2 == 0) {
+                assertEquals("text", Files.readString(p));
+            } else {
+                assertArrayEquals(new byte[]{(byte) i}, Files.readAllBytes(p));
+            }
+        }
+    }
+
+    /** Lists the process's open file descriptors on Linux and macOS. */
+    private static final Path OPEN_DESCRIPTORS = Path.of("/dev/fd");
+
+    private static long openDescriptors() throws IOException {
+        try (Stream<Path> fds = Files.list(OPEN_DESCRIPTORS)) {
+            return fds.count();
+        }
+    }
+
+    /**
+     * A port the program drops without closing it is written out and closed after it is collected:
+     * the context tracks it weakly, so it doesn't keep it alive.
+     */
+    @Test
+    public void aDroppedPortIsWrittenWhenItIsCollected() throws Exception {
+        try (Context context = Context.newBuilder(SCHEME).allowIO(IOAccess.ALL).build()) {
+            context.initialize(SCHEME);
+            context.enter();
+            try {
+                SchemeContext scheme = SchemeContext.get(null);
+                Path text = dir.resolve("dropped.txt");
+                Path binary = dir.resolve("dropped.bin");
+                WeakReference<SPort> textPort = dropTextPort(scheme, text);
+                WeakReference<SPort> binaryPort = dropBinaryPort(scheme, binary);
+                for (int i = 0; i < 100 && (textPort.get() != null || binaryPort.get() != null); i++) {
+                    System.gc();
+                }
+                assertNull("the text port is collected", textPort.get());
+                assertNull("the binary port is collected", binaryPort.get());
+                // The collected ports' buffers are written out on the context's thread, the next
+                // time the context flushes its ports (or opens one).
+                for (int i = 0; i < 200 && scheme.openFiles().size() > 0; i++) {
+                    scheme.flushOutput();
+                    Thread.sleep(10);
+                }
+                assertEquals(0, scheme.openFiles().size());
+                assertEquals(LONG_TEXT, Files.readString(text));
+                assertArrayEquals(LONG_TEXT.getBytes(StandardCharsets.UTF_8), Files.readAllBytes(binary));
+            } finally {
+                context.leave();
+            }
+        }
+    }
+
+    private static WeakReference<SPort> dropTextPort(SchemeContext scheme, Path path) throws IOException {
+        SPort port = scheme.openFiles().textOutput(scheme.getEnv().getPublicTruffleFile(path.toString()).newOutputStream());
+        port.write(LONG_TEXT);
+        return new WeakReference<>(port);
+    }
+
+    private static WeakReference<SPort> dropBinaryPort(SchemeContext scheme, Path path) throws IOException {
+        SPort port = scheme.openFiles().binaryOutput(scheme.getEnv().getPublicTruffleFile(path.toString()).newOutputStream());
+        byte[] bytes = LONG_TEXT.getBytes(StandardCharsets.UTF_8);
+        port.writeBytes(bytes, 0, bytes.length);
+        return new WeakReference<>(port);
+    }
+
+    /**
+     * A port that was closed, then collected, is no longer tracked, and doesn't disturb the flush of
+     * the ports still open when the program exits.
+     */
+    @Test
+    public void aClosedAndCollectedPortDoesNotBreakTheExitFlush() throws Exception {
+        try (Context context = Context.newBuilder(SCHEME).allowIO(IOAccess.ALL).build()) {
+            context.eval(SCHEME, """
+                            (let ((p (open-output-file %s))) (write-string "closed" p) (close-port p))
+                            (let ((p (open-binary-output-file %s))) (write-u8 9 p) (close-port p))""".formatted(file("closed.txt"), file("closed.bin")));
+            for (int i = 0; i < 3; i++) {
+                System.gc();
+            }
+            context.eval(SCHEME, unclosedPorts("(exit 0)"));
+            fail("exit");
+        } catch (PolyglotException e) {
+            assertTrue(e.isExit());
+        }
+        assertEquals("closed", Files.readString(dir.resolve("closed.txt")));
+        assertArrayEquals(new byte[]{9}, Files.readAllBytes(dir.resolve("closed.bin")));
+        assertPortsWritten("after exit");
+    }
+
+    /**
+     * 10,000 ports opened and dropped without closing don't pile up: the context tracks them weakly,
+     * so they are collected, and their files written and closed. Every file has its content.
+     */
+    @Test
+    public void droppedPortsDoNotLeak() throws Exception {
+        int chunks = 10;
+        int perChunk = 1000;
+        try (Context context = Context.newBuilder(SCHEME).allowIO(IOAccess.ALL).build()) {
+            Value openMany = context.eval(SCHEME, """
+                            (lambda (from to)
+                              (do ((i from (+ i 1))) ((= i to))
+                                (let ((name (string-append %s (number->string i))))
+                                  (if (even? i)
+                                      (write-string (number->string i) (open-output-file name))
+                                      (write-bytevector (string->utf8 (number->string i)) (open-binary-output-file name))))))""".formatted(file("many-")));
+            int most = 0;
+            for (int c = 0; c < chunks; c++) {
+                openMany.execute(c * perChunk, (c + 1) * perChunk);
+                System.gc();
+                most = Math.max(most, trackedPorts(context));
+            }
+            assertTrue("ports tracked at most: " + most, most < chunks * perChunk);
+            int tracked = trackedPorts(context);
+            for (int i = 0; i < 200 && tracked > 0; i++) {
+                System.gc();
+                Thread.sleep(10);
+                tracked = trackedPorts(context);
+            }
+            assertEquals("ports still tracked", 0, tracked);
+        }
+        for (int i = 0; i < chunks * perChunk; i++) {
+            assertEquals(Integer.toString(i), Files.readString(dir.resolve("many-" + i)));
+        }
+    }
+
+    /** The ports the context tracks, once it has written out (and dropped) the collected ones. */
+    private static int trackedPorts(Context context) {
+        context.enter();
+        try {
+            SchemeContext scheme = SchemeContext.get(null);
+            scheme.flushOutput();
+            return scheme.openFiles().size();
+        } finally {
+            context.leave();
+        }
+    }
+
+    /**
+     * Binary file output ports are buffered, as textual ones are: their file holds nothing until
+     * {@code flush-output-port} (or closing the port) writes the buffer out.
+     */
+    @Test
+    public void binaryFilePortsAreBuffered() {
+        String out = runWithFiles("""
+                        (define f %s)
+                        (define (contents) (call-with-port (open-binary-input-file f) (lambda (p) (read-bytevector 100 p))))
+                        (define p (open-binary-output-file f))
+                        (write-u8 1 p) (write-bytevector #u8(2 3) p)
+                        (write (contents))
+                        (flush-output-port p)
+                        (write (contents))
+                        (write-u8 4 p)
+                        (write (contents))
+                        (close-port p)
+                        (write (contents))""".formatted(file("buffered.bin")));
+        assertEquals("#<eof>#u8(1 2 3)#u8(1 2 3)#u8(1 2 3 4)", out);
     }
 }

@@ -470,18 +470,23 @@ final class IoPrimitives {
         @Override
         public Object invoke(Object[] args) {
             String who = NAMES[mode];
-            return open(SchemeContext.get(this).getEnv(), who, mode, string(who, args[1]));
+            return open(SchemeContext.get(this), who, mode, string(who, args[1]));
         }
 
+        /**
+         * Output ports, textual and binary, are buffered, and the context tracks them, to write out
+         * what they hold when control returns to the caller, on exit and when the context closes,
+         * even if the program never closes them (design.md D10, "Open file ports").
+         */
         @TruffleBoundary
-        private static SPort open(TruffleLanguage.Env env, String who, int mode, SString name) {
-            TruffleFile file = file(env, who, name);
+        private static SPort open(SchemeContext context, String who, int mode, SString name) {
+            TruffleFile file = file(context.getEnv(), who, name);
             try {
                 return switch (mode) {
                     case TEXT_IN -> SPort.textInput(file.newBufferedReader(StandardCharsets.UTF_8), false);
                     case BINARY_IN -> SPort.binaryInput(file.newInputStream());
-                    case TEXT_OUT -> SPort.textOutput(file.newBufferedWriter(StandardCharsets.UTF_8));
-                    default -> SPort.binaryOutput(file.newOutputStream());
+                    case TEXT_OUT -> context.openFiles().textOutput(file.newOutputStream());
+                    default -> context.openFiles().binaryOutput(file.newOutputStream());
                 };
             } catch (IOException | SecurityException | UnsupportedOperationException e) {
                 throw fileError(who + ": cannot open file", name);
