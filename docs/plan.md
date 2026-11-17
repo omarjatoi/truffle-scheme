@@ -845,7 +845,7 @@ load rule.
     programs (3 interleaved rounds against `main`): first run 0.918 times,
     steady state 0.993 times; the report itself is regenerated at the
     milestone's exit. `pi`'s bignums are M8-05's.
-- [ ] **M8-04 · Interpreter** *(needs M8-03)*
+- [x] **M8-04 · Interpreter** *(needs M8-03)*
   - The interpreter passes 52 of 57 programs within the report's timeout;
     `string` became about 5% slower in it with M7-03's boxing elimination.
     Look at the Bytecode DSL's uncached interpreter and quickening costs for
@@ -894,12 +894,33 @@ load rule.
     error handler 6-7%; each frame slot about 1% (8 more slots made `fib`
     10% slower). Removing `LoopHead` and a branch per call (above) saved
     nothing on `tak`.
-- [ ] **M8-05 · Steady-state outliers** *(needs M8-01)*
+  - Done (2026-11-17), against the M7 report, the milestone's baseline, in
+    the report regenerated at M8's exit (`docs/benchmarks.md`, same scale and
+    60 s limit): the interpreter's geometric mean ×fastest is 43.87 instead of
+    49.59, and its own times 0.84 of the M7 report's over the 52 programs both
+    finished (the other implementations' 0.96-0.98, so not the machine);
+    `string` takes 0.16 s instead of 0.34; 54 programs finish instead of 52
+    (`tak` 55.9 s, `ack` 51.5 s, both close to the limit). Most of that is not
+    this task's own work: the serial collector (M8-05) and M8-01's spills had
+    already brought `tak` and `ack` under 60 s, and this task's changes
+    measured ×1.00 and then 0.985 against the code before them (above). What
+    an interpreted call costs is recorded above for a later milestone.
+- [x] **M8-05 · Steady-state outliers** *(needs M8-01)*
   - Profile the remaining steady-state outliers after M8-01 (`graphs`,
     `sboyer`, `cpstak`, `paraffins`, `lattice`, `pi`) and fix what the
     profiles show, one PR per cause.
   - **Done when** each fixed program improves and the steady-state geometric
     mean improves in a regenerated report.
+  - Done (2026-11-17): profiled all six (#140 has the findings); fixed
+    `case`'s `memv` (#140, `lattice`), the collector (#157, the serial one)
+    and the trampoline's cache after the first tail call (#163, `cpstak`);
+    `paraffins` and `sboyer` were M8-01's deep recursion, `pi` is Java's
+    `BigInteger` (left as it is). In the report regenerated at M8's exit,
+    against the M7 report, steady state: `lattice` 1.36 s to 0.57, `graphs`
+    4.02 to 2.14, `cpstak` 13.40 to 10.40 (`ctak` 1.83 to 1.29), `tak` 4.33 to
+    1.93, `paraffins` 1.89 to 0.18, `sboyer` 4.86 to 2.52, `pi` 0.039 to
+    0.034; the steady-state geometric mean ×fastest 2.34 to 1.72 (our steady
+    times 0.71 of the M7 report's over all 57).
 - [x] **M8-06 · Interrupting the REPL** *(early)*
   - Ctrl-C during a computation interrupts it (Truffle safepoints,
     `Context.interrupt` from the launcher) and returns to the prompt instead of
@@ -916,3 +937,20 @@ load rule.
 **Exit:** every task above is done; `docs/benchmarks.md` and
 `bench/thresholds.json` are regenerated on the final M8 code; both suites pass
 in every mode, including through the native launcher.
+
+**Exit met** (2026-11-17, at `fce44f339b49`, locally): every task is ticked
+(M8-04's Done-when holds against the M7 report, mostly through the other
+tasks' changes: its notes say how much was its own); `bench/thresholds.json`
+was re-measured on that code (12 runs, 1-minute load 1.8-4.9); `docs/benchmarks.md`
+was regenerated on it (its commit, `8ba9552296ee`, is that code plus the new
+thresholds), geometric mean ×fastest against the M7 report: JIT first run
+5.58 → 4.14, steady state 2.34 → 1.72, interpreter 49.59 → 43.87 with 54 of
+57 within its 60 s limit instead of 52, the others within 2% of theirs (Chez
+1.10 → 1.10); median peak RSS of our JIT 1628 → 1063 MB (`nboyer` 13.9 GB →
+2.5, `sboyer` 9.9 → 1.3), and the median live heap is 7 MB; steady state,
+`ack` 38× → 2.4× the fastest, `divrec` 22× → 2.3×, `primes` 18× → 1.5×; `pi`'s
+first run 31× → 24×, steady 7.3× → 6.2×. The native launcher (`bazel-bin/scheme-native`, built on the M3 Max)
+passes chibi 1225/1225 and Larceny 2162/2166 (the four listed exceptions)
+both interpreted and with `--compile`, and `//tests:conformance_native`,
+`//tests:readme_native` and `//tests:space_native` pass. No later milestone is
+written yet: the next one needs drafting.
