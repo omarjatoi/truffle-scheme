@@ -530,6 +530,9 @@ public final class SchemeMain extends AbstractLanguageLauncher {
                     TerminalInput terminal, Interrupter interrupter) {
         String name = "<repl:" + firstLine + ">";
         Source source = Source.newBuilder(LANGUAGE, input.toString(), name).interactive(true).cached(false).buildLiteral();
+        if (terminal != null) {
+            terminal.running(input.toString());
+        }
         if (interrupter != null) {
             interrupter.begin();
         }
@@ -558,6 +561,9 @@ public final class SchemeMain extends AbstractLanguageLauncher {
             if (interrupter != null) {
                 interrupter.end();
             }
+            if (terminal != null) {
+                terminal.running(null);
+            }
         }
         done(input, terminal);
         return null;
@@ -573,7 +579,8 @@ public final class SchemeMain extends AbstractLanguageLauncher {
 
     /**
      * A second Ctrl-C finds the first one's interrupt still waiting (plan.md M8-06): ends the
-     * process, as SIGINT does by default, after saving the history and giving the terminal back.
+     * process, as SIGINT does by default, after saving the history (the running input with it)
+     * and giving the terminal back.
      * It halts: the evaluation still runs, and a shutdown hook could wait for it.
      */
     private static void giveUp(TerminalInput terminal, PrintStream errors) {

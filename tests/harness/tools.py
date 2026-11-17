@@ -15,8 +15,9 @@ tests/tools/:
   (the language reports them, M7-07).
 - `terminal`: the REPL on a pseudo-terminal (M7-07): line editing, the history and its file (an
   input over several lines is one entry, M8-06), the continuation prompt, Ctrl-C dropping the
-  input typed so far and interrupting a running input (M8-06), and `read-line` reading what is
-  typed next. It runs the launcher
+  input typed so far with one fresh prompt and interrupting a running input (M8-06), `read-line`
+  reading what is typed next, and a second Ctrl-C giving up on an input stuck in host code (exit
+  130, the input saved in the history). It runs the launcher
   without the tools, and runs `SCHEME_NATIVE_LAUNCHER` the same way if that variable names an
   executable (the native launcher, `bazel-bin/scheme-native`).
 
@@ -598,6 +599,17 @@ def _terminal_session(workdir, command, label):
     history = join(workdir, 'history-' + label)
     env = dict(os.environ, SCHEME_HISTORY=history, TERM='xterm')
     term = _Terminal(command, workdir, env)
+
+    def ctrl_c_at_prompt(what):
+        """Ctrl-C, then an input: the prompt shows once between the two, and the input runs alone."""
+        start = term.seen
+        term.send('\x03')
+        term.expect(r'> $', f'a fresh prompt after {what}')
+        term.send('(+ 2 2)\r')
+        term.expect(r'\n4\n> $', f'the input after {what}')
+        between = term.text()[start:term.text().index('(+ 2 2)', start)]
+        _check(between.count('> ') == 1, f'terminal ({label}): {what} should show one prompt:\n{between!r}')
+
     try:
         term.expect(r'> $', 'the first prompt')
         # JLine reaches the terminal through the FFM API: without native access for it (the
@@ -634,10 +646,14 @@ def _terminal_session(workdir, command, label):
         # Ctrl-C drops the unfinished input: else (+ 1 (+ 2 2)) would be 5.
         term.send('(+ 1\r')
         term.expect(r'\n  $', 'the continuation prompt again')
-        term.send('\x03')
-        term.expect(r'> $', 'a fresh prompt after Ctrl-C')
-        term.send('(+ 2 2)\r')
-        term.expect(r'\n4\n> $', 'the input after Ctrl-C')
+        ctrl_c_at_prompt('Ctrl-C after a line of an unfinished input')
+        # Ctrl-C at an empty prompt, and in a partly typed line, shows one fresh prompt (it showed
+        # two, now and then: the second Ctrl-C of the same key ended the next line read too).
+        for _ in range(4):
+            ctrl_c_at_prompt('Ctrl-C at an empty prompt')
+        term.send('(+ 1')
+        term.expect(r'\(\+ 1$', 'a line partly typed')
+        ctrl_c_at_prompt('Ctrl-C in a partly typed line')
         # Ctrl-C during an evaluation interrupts it, and the session goes on (M8-06): a loop of tail calls,
         term.send('(define (spin) (spin))\r')
         term.expect(r'> $', 'the prompt after defining a loop')
@@ -682,12 +698,48 @@ def _terminal_session(workdir, command, label):
     log(f'  terminal ({label}): editing, history, continuation prompt, Ctrl-C, interrupts, read-line, Ctrl-D')
 
 
+# Interrupter.PATIENCE: how long an interrupt waits before a second Ctrl-C gives up on it.
+_INTERRUPT_PATIENCE = 1.0
+
+
+def _terminal_give_up(workdir, command, label):
+    """A second Ctrl-C gives up on an interrupt that doesn't stop the evaluation (M8-06): the
+    session exits with 130, and the input that was running is in the history file."""
+    history = join(workdir, 'history-give-up-' + label)
+    # Opening a FIFO for reading waits, in host code that polls no safepoint, for a writer: none comes.
+    fifo = 'fifo-' + label
+    os.mkfifo(join(workdir, fifo))
+    env = dict(os.environ, SCHEME_HISTORY=history, TERM='xterm')
+    term = _Terminal(command, workdir, env)
+    try:
+        term.expect(r'> $', 'the first prompt')
+        term.send('(+ 1 2)\r')
+        term.expect(r'\n3\n> $', 'a value before the stuck input')
+        term.send(f'(begin (display "opening") (newline) (open-input-file "{fifo}"))\r')
+        term.expect(r'\nopening\n', 'the input stuck opening a FIFO')
+        term.send('\x03')
+        time.sleep(_INTERRUPT_PATIENCE + 1)
+        term.send('\x03')
+        term.expect(r'\nInterrupt failed: exiting\n', 'giving up on the interrupt')
+        status = term.wait()
+    finally:
+        term.kill()
+    _check(status == 130, f'terminal ({label}): giving up should exit 130, not {status}\n{term.text()[-1500:]!r}')
+    with open(history, encoding='utf-8') as f:
+        saved = f.read()
+    _check(re.search(r'\(\+ 1 2\)\n(\d+:)?\(begin \(display "opening"\).*\(open-input-file "' + fifo + r'"\)\)$', saved, re.MULTILINE),
+           f'terminal ({label}): the history file should end with the input that was running:\n{saved}')
+    log(f'  terminal ({label}): a second Ctrl-C gives up on a stuck input, exit 130, the input in the history')
+
+
 def _terminal(workdir, commands):
     _terminal_session(workdir, commands.bare([]), 'JVM')
+    _terminal_give_up(workdir, commands.bare([]), 'JVM')
     native = os.environ.get('SCHEME_NATIVE_LAUNCHER')
     if native:
         _check(os.path.isfile(native), f'SCHEME_NATIVE_LAUNCHER={native} is not a file')
         _terminal_session(workdir, [native], 'native')
+        _terminal_give_up(workdir, [native], 'native')
 
 
 def _help(workdir, commands):
