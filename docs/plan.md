@@ -1657,7 +1657,7 @@ measures with interleaved A/B runs.
     row for each, with the R7RS text it departs from (§6.2.6, and §3.4 for
     a literal changed in place, as for `/` of negative bignums), and the
     fuzzer's generator avoids the crash if it can produce it.
-- [ ] **M12-03 · D17's `RuntimeOptionParser` sentence** *(early)*
+- [x] **M12-03 · D17's `RuntimeOptionParser` sentence** *(early)*
   - #250's follow-up: design.md D17 "Options" says SubstrateVM's
     `RuntimeOptionParser` "has a list of HotSpot options it ignores for
     compatibility". In 25.5 that list applies only in a
