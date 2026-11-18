@@ -283,24 +283,25 @@ final class Arithmetic {
     }
 
     /**
-     * -1, 0 or 1. Real numbers only. -0.0 and NaN are 0, as {@link #compare} with an exact 0 has
-     * them. A flonum or fixnum needs no exact arithmetic, so only the others cross a boundary.
+     * -1, 0 or 1: the sign of an exact real number. Not of a flonum, which has cases a sign doesn't
+     * tell apart: a NaN is no zero, and -0.0 is a zero that IEEE 754 and R7RS §6.2.4 treat apart
+     * in transcendental functions, so each caller tests a flonum's cases itself (#242's follow-up).
      */
-    static int sign(String who, Object x) {
-        if (x instanceof Double d) {
-            double v = d;
-            return v > 0 ? 1 : v < 0 ? -1 : 0;
-        }
+    static int sign(Object x) {
         if (x instanceof Long l) {
             return Long.signum(l);
         }
-        return signExact(who, x);
+        return x instanceof SBigInteger b ? b.value.signum() : ((SRational) x).numerator.signum();
     }
 
-    @TruffleBoundary
-    private static int signExact(String who, Object x) {
-        int c = compare(who, x, 0L);
-        return c == UNORDERED ? 0 : c;
+    /** Whether a real number is a zero, exact or inexact (-0.0 too, not a NaN). */
+    static boolean isZero(Object x) {
+        return x instanceof Long l ? l == 0 : x instanceof Double d && d == 0;
+    }
+
+    /** Whether a flonum is -0.0. */
+    static boolean isNegativeZero(Object x) {
+        return x instanceof Double d && Double.doubleToRawLongBits(d) == Long.MIN_VALUE;
     }
 
     // ------------------------------------------------------------------------------------------
@@ -420,15 +421,15 @@ final class Arithmetic {
         }
         Object ex = exact("rationalize", x);
         Object ey = exact("rationalize", y);
-        if (sign("rationalize", ey) < 0) {
+        if (sign(ey) < 0) {
             ey = sub(0L, ey);
         }
         Object lo = sub(ex, ey);
         Object hi = add(ex, ey);
         Object result;
-        if (sign("rationalize", lo) > 0) {
+        if (sign(lo) > 0) {
             result = simplest(lo, hi);
-        } else if (sign("rationalize", hi) < 0) {
+        } else if (sign(hi) < 0) {
             result = sub(0L, simplest(sub(0L, hi), sub(0L, lo)));
         } else {
             result = 0L;
@@ -476,8 +477,13 @@ final class Arithmetic {
     @TruffleBoundary
     static Object log(Object z) {
         check("log", z);
-        // -0.0 is on the negative side of the branch cut: (log -0.0) is -inf.0+pi*i.
-        if (!(z instanceof SComplex) && sign("log", z) >= 0 && !(z instanceof Double d && d == 0.0 && Double.doubleToRawLongBits(d) != 0)) {
+        if (z instanceof Double d) {
+            // -0.0 is on the negative side of the branch cut: (log -0.0) is -inf.0+pi*i (R7RS
+            // §6.2.6). A NaN is NaN (§6.2.4).
+            if (!(d < 0) && !isNegativeZero(d)) {
+                return StrictMath.log(d);
+            }
+        } else if (!(z instanceof SComplex) && sign(z) >= 0) {
             return StrictMath.log(flo(z));
         }
         return complexResult(StrictMath.log(magnitudeDouble(z)), angleDouble(z));
@@ -494,8 +500,12 @@ final class Arithmetic {
     @TruffleBoundary
     static Object magnitude(Object z) {
         check("magnitude", z);
+        if (z instanceof Double d) {
+            // "The same as abs for a real argument" (R7RS §6.2.6): (magnitude -0.0) is 0.0.
+            return Math.abs(d);
+        }
         if (!(z instanceof SComplex c)) {
-            return sign("magnitude", z) < 0 ? sub(0L, z) : z;
+            return sign(z) < 0 ? sub(0L, z) : z;
         }
         Object squares = add(mul(c.real, c.real), mul(c.imag, c.imag));
         return sqrt(squares);
@@ -508,7 +518,7 @@ final class Arithmetic {
             if (z instanceof Double d) {
                 return StrictMath.atan2(0.0, d);
             }
-            return sign("angle", z) < 0 ? Math.PI : (Object) 0L;
+            return sign(z) < 0 ? Math.PI : (Object) 0L;
         }
         return angleDouble(z);
     }
@@ -518,7 +528,7 @@ final class Arithmetic {
     static Object sqrt(Object z) {
         check("sqrt", z);
         if (isExact(z) && !(z instanceof SComplex)) {
-            boolean negative = sign("sqrt", z) < 0;
+            boolean negative = sign(z) < 0;
             Object a = negative ? sub(0L, z) : z;
             BigInteger[] n = numerator(a).sqrtAndRemainder();
             BigInteger[] d = denominator(a).sqrtAndRemainder();
@@ -622,23 +632,45 @@ final class Arithmetic {
             }
             return e >= 0 ? result : div(1L, result);
         }
-        if (isReal(base) && isReal(power) && sign("expt", base) >= 0) {
-            if (sign("expt", base) == 0) {
-                return sign("expt", power) == 0 ? (isExact(base) && isExact(power) ? (Object) 1L : (Object) 1.0) : (isExact(base) && isExact(power) ? (Object) 0L : (Object) 0.0);
-            }
-            return StrictMath.pow(flo(base), flo(power));
+        if (isZero(realPart(base)) && isZero(imagPart(base))) {
+            return zeroToThe(isExact(base) && isExact(power), power);
         }
-        if (sign("expt", realPart(base)) == 0 && sign("expt", imagPart(base)) == 0) {
-            return isExact(base) && isExact(power) ? (Object) 0L : (Object) 0.0;
+        if (isReal(base) && isReal(power)) {
+            double b = flo(base);
+            double p = flo(power);
+            // IEEE 754's pow: x^0 is 1 for every x, also a NaN, an infinity or a negative x, whose
+            // e^(0 log x) would be complex or NaN; a NaN power gives NaN (R7RS §6.2.4). A positive
+            // or NaN base's power is real; a negative base's goes through log below.
+            if (p == 0) {
+                return 1.0;
+            } else if (Double.isNaN(p) || !(b < 0)) {
+                return StrictMath.pow(b, p);
+            }
         }
         return exp(mul(power, log(base)));
+    }
+
+    /**
+     * {@code (expt 0 z)}, R7RS §6.2.6: "The value of 0^z is 1 if (zero? z), 0 if (real-part z) is
+     * positive, and an error otherwise. Similarly for 0.0^z, with inexact results." Otherwise it is
+     * 0 here too, an unspecified number (design.md D9), but a NaN in z gives NaN (§6.2.4).
+     */
+    private static Object zeroToThe(boolean exact, Object power) {
+        Object re = realPart(power);
+        Object im = imagPart(power);
+        if (isZero(re) && isZero(im)) {
+            return exact ? (Object) 1L : (Object) 1.0;
+        } else if (re instanceof Double x && Double.isNaN(x) || im instanceof Double y && Double.isNaN(y)) {
+            return Double.NaN;
+        }
+        return exact ? (Object) 0L : (Object) 0.0;
     }
 
     @TruffleBoundary
     static Object makePolar(Object magnitude, Object angle) {
         checkReal("make-polar", magnitude);
         checkReal("make-polar", angle);
-        if (isExact(angle) && sign("make-polar", angle) == 0) {
+        if (isExact(angle) && sign(angle) == 0) {
             return magnitude;
         }
         double m = flo(magnitude);

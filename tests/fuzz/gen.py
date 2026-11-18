@@ -1274,7 +1274,10 @@ class Gen:
     def t_flo(self, t):
         def arith(t, d, env):
             op = self.pick(['+', '-', '*', 'max', 'min'])
-            return [op] + self.args([FLO] * self.r.randint(1, 3), d, env)
+            e = [op] + self.args([FLO] * self.r.randint(1, 3), d, env)
+            # Plus 0.0, which makes -0.0 0.0: R7RS doesn't say which of -0.0 and 0.0 max and min
+            # return; chibi-scheme returns the first, ours what IEEE 754-2019's maximum and minimum do.
+            return ['+', e, '0.0'] if op in ('max', 'min') else e
 
         def mixed(t, d, env):
             r = self.fresh('r')
