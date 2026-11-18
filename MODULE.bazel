@@ -8,11 +8,12 @@ module(name = "truffle_scheme")
 # nixpkgs in flake.lock (the dev shell's GraalVM) together.
 TRUFFLE_VERSION = "25.5.5.0.3"
 
+# Each module moves to a new release once it is two weeks old (design.md D11, "Other versions").
 # apple_support first: its Xcode C++ toolchain must be registered before rules_cc's autodetected one
 # (which rules_java and others bring in), so it is the one a macOS target resolves to.
 bazel_dep(name = "apple_support", version = "2.11.0")
 bazel_dep(name = "platforms", version = "1.1.0")
-bazel_dep(name = "rules_cc", version = "0.2.17")
+bazel_dep(name = "rules_cc", version = "0.2.27")
 bazel_dep(name = "rules_java", version = "9.9.0")
 bazel_dep(name = "toolchains_buildbuddy", version = "0.0.4")
 bazel_dep(name = "rules_jvm_external", version = "7.2")
@@ -96,11 +97,12 @@ maven.install(
 use_repo(maven, "eclipse_formatter", "lint")
 
 # --- Python: the commands and checks in tests/harness, on rules_python's hermetic interpreter ----
+# The dev shell's python3 (flake.lock) is the same minor version.
 
 python = use_extension("@rules_python//python/extensions:python.bzl", "python")
 python.toolchain(
     is_default = True,
-    python_version = "3.13",
+    python_version = "3.14",
 )
 
 # --- chibi-scheme (differential tests): built from source by bazel/chibi.bzl ------------------
