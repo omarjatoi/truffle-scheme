@@ -513,10 +513,16 @@ harness_test(
     args = [
         "--runtime=$(rlocationpath //:launcher_runtime)",
         "--aot-runtime=$(rlocationpath //:scheme_runtime)",
+        # Another language for --vm.p (design.md D20, "The launchers"): SL, test-only.
+        "--language-jars",
+        "$(rlocationpath @jvm//:org_graalvm_truffle_truffle_sl)",
+        "$(rlocationpath @jvm//:org_antlr_antlr4_runtime)",
     ],
     data = [
         "//:launcher_runtime",
         "//:scheme_runtime",
+        "@jvm//:org_antlr_antlr4_runtime",
+        "@jvm//:org_graalvm_truffle_truffle_sl",
     ],
     size = "small",
 )

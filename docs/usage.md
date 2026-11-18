@@ -262,8 +262,10 @@ context closes, or after the program drops it.
 
 As GraalVM's language launchers do, the launcher takes the JVM's own options
 as `--vm.<option>`, among its options (before the program file): `--vm.Xmx2g`,
-`--vm.XX:+UseG1GC`, `--vm.Dname=value`, and `--vm.cp=<path>` (or
-`--vm.classpath=<path>`) for the class path. `bazel-bin/scheme` starts the
+`--vm.XX:+UseG1GC`, `--vm.Dname=value`, `--vm.cp=<path>` (or
+`--vm.classpath=<path>`) for the class path, and `--vm.p=<path>` (or
+`--vm.-module-path=<path>`), which the launcher appends to its module path
+(another language's jars, [Other languages and Java](#other-languages-and-java)). `bazel-bin/scheme` starts the
 JVM with each one as `-<option>` (design.md D17, "VM options"). An argument
 file, `--vm.@<file>`, holds VM options as `java` takes them (`-Xmx2g
 -XX:+UseG1GC`, with `#` comments), and is `java`'s `@<file>`; the native
@@ -339,8 +341,13 @@ languages, share the polyglot bindings with them, call their functions and
 Java's methods, and read foreign arrays, objects and maps (design.md D20;
 [embedding.md](embedding.md#scheme-calling-other-languages-and-java) lists
 the procedures). A program that doesn't import it sees none of it. The
-launcher allows all of it, as GraalVM's own launchers do, but only Scheme is
-on its module path, so the other languages are the ones an embedder adds:
+launcher allows all of it, as GraalVM's own launchers do. Java's classes are
+there. Of GraalVM's languages, only Scheme is on the launcher's module path:
+add another language's jars to it with `--vm.p=<path>` (or
+`--vm.-module-path=<path>`), as GraalVM's language launchers take them on
+the JVM, and `polyglot-eval` reaches that language too. The native launcher
+is Scheme alone, as GraalVM's native standalones are ([Native
+image](#native-image); design.md D20, "The launchers"):
 
 <!-- readme: run -->
 ```sh
