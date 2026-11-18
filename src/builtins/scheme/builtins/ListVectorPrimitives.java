@@ -12,9 +12,12 @@ import scheme.runtime.PrimitiveSpec.Result;
 import scheme.runtime.SchemeError;
 import scheme.runtime.printer.Printer;
 import scheme.runtime.value.LiteralPair;
+import scheme.runtime.value.SBigInteger;
 import scheme.runtime.value.SChar;
+import scheme.runtime.value.SComplex;
 import scheme.runtime.value.SConstant;
 import scheme.runtime.value.SPair;
+import scheme.runtime.value.SRational;
 import scheme.runtime.value.SString;
 import scheme.runtime.value.SVector;
 
@@ -574,22 +577,55 @@ final class ListVectorPrimitives {
             return find(who, compare, alist, args[1], args[2]);
         }
 
+        /** How {@link #find} compares the key: {@link #same}'s generic comparison, ... */
+        private static final int GENERIC = 0;
+        /** ... the identity of a key that {@code eq?} and {@code eqv?} compare by it, ... */
+        private static final int IDENTITY = 1;
+        /** ... or a character's code point. */
+        private static final int CHAR = 2;
+
+        /**
+         * The loop dispatches on the key's kind once, before it starts, rather than {@code eqv?}'s
+         * type tests on every element: the native image compiles this method ahead of time,
+         * without the profile and inlining with which HotSpot compiles it, so each element cost
+         * the generic comparison's call and its tests (design.md D17, "The native launcher's
+         * steady state": {@code case} on characters with more than {@code ConstantMember.LIMIT}
+         * datums in a clause, as in {@code parsing}).
+         */
         @TruffleBoundary
         private static Object find(String who, int compare, boolean alist, Object x, Object list) {
+            int kind = GENERIC;
+            int codePoint = 0;
+            if (compare != EQUAL) {
+                if (x instanceof SChar c) {
+                    kind = CHAR;
+                    codePoint = c.codePoint;
+                } else if (!(x instanceof Long || x instanceof Double || x instanceof Boolean || x instanceof SBigInteger || x instanceof SRational ||
+                                x instanceof SComplex)) {
+                    kind = IDENTITY;
+                }
+            }
             Object slow = list;
             Object rest = list;
             long n = 0;
             for (SPair p; (p = SPair.asPair(rest)) != null;) {
+                Object y;
                 if (alist) {
                     SPair entry = SPair.asPair(p.car);
                     if (entry == null) {
                         throw Lists.notAPair(who, p.car);
                     }
-                    if (same(compare, x, entry.car)) {
-                        return entry;
-                    }
-                } else if (same(compare, x, p.car)) {
-                    return p;
+                    y = entry.car;
+                } else {
+                    y = p.car;
+                }
+                boolean hit = switch (kind) {
+                    case IDENTITY -> y == x;
+                    case CHAR -> y instanceof SChar c && c.codePoint == codePoint;
+                    default -> same(compare, x, y);
+                };
+                if (hit) {
+                    return alist ? p.car : p;
                 }
                 rest = p.cdr;
                 if ((++n & 1) == 0) {
