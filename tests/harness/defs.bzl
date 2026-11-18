@@ -26,9 +26,17 @@ def harness_test(name, check, args, data, deps = [], size = "medium", tags = [])
 def _runtime(runtime):
     return "--runtime=$(rlocationpath %s)" % runtime
 
+# The whole environment of a tests/diff program, under chibi-scheme (a build action) and under ours
+# (the Diff test's child JVM): the same everywhere. Without it they differ by platform: an action
+# gets no variable of its own (a local Mac sandbox gives it none, so chibi saw no PATH; a remote
+# executor gives it its image's), and a test gets Bazel's test environment (PATH, TEST_*, ...).
+# The PATH is the one --incompatible_strict_action_env gives tests.
+PROGRAM_ENV = {"PATH": "/bin:/usr/bin:/usr/local/bin"}
+
 def _chibi_output_impl(ctx):
     chibi = ctx.attr.chibi[DefaultInfo]
     ctx.actions.run_shell(
+        env = PROGRAM_ENV,
         inputs = depset([ctx.file.src], transitive = [chibi.default_runfiles.files]),
         tools = [chibi.files_to_run],
         outputs = [ctx.outputs.out, ctx.outputs.err, ctx.outputs.status],
@@ -53,7 +61,7 @@ def diff_tests(name, srcs, module, chibi):
     """`<name>_<program>`, `<name>_torture_<program>` and `<name>_torture_owned_<program>`: the same
     stdout and exit status as chibi-scheme, whose output for each program is a build action
     (`<name>_chibi_<program>`), so it reruns only when the program or chibi-scheme changes. The tests
-    run tests/driver's Diff, in the pinned JDK."""
+    run tests/driver's Diff, in the pinned JDK. Both run in PROGRAM_ENV."""
     tests = []
     for src in srcs:
         base = src.rsplit("/", 1)[-1].removesuffix(".scm")
@@ -64,6 +72,7 @@ def diff_tests(name, srcs, module, chibi):
                 name = name + "_" + torture + base,
                 args = ["--file=$(rlocationpath %s)" % src] +
                        ["--chibi-%s=$(rlocationpath :%s.%s)" % (part, expected, part) for part in ("out", "err", "status")] +
+                       ["--env=%s=%s" % (k, v) for k, v in PROGRAM_ENV.items()] +
                        (["--torture=" + torture.removesuffix("_")] if torture else []),
                 data = [src] + [":%s.%s" % (expected, part) for part in ("out", "err", "status")],
                 main = "Diff",
