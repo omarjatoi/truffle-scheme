@@ -7,6 +7,7 @@ import org.graalvm.options.OptionDescriptors;
 import org.graalvm.options.OptionKey;
 import org.graalvm.options.OptionStability;
 import org.graalvm.options.OptionType;
+import org.graalvm.polyglot.SandboxPolicy;
 
 import com.oracle.truffle.api.Assumption;
 import com.oracle.truffle.api.CallTarget;
@@ -30,7 +31,10 @@ import scheme.runtime.value.SClosure;
 // breakpoint, and the Bytecode DSL rejects a tag the language doesn't provide. No node carries it.
 @ProvidedTags({DebuggerTags.AlwaysHalt.class, StandardTags.RootTag.class, StandardTags.RootBodyTag.class, StandardTags.StatementTag.class, StandardTags.CallTag.class,
                 StandardTags.ExpressionTag.class})
-@TruffleLanguage.Registration(id = SchemeLanguage.ID, name = "R7RS Scheme", defaultMimeType = SchemeLanguage.MIME_TYPE, characterMimeTypes = SchemeLanguage.MIME_TYPE, contextPolicy = TruffleLanguage.ContextPolicy.EXCLUSIVE)
+// SandboxPolicy.CONSTRAINED: the language reaches no host resource but through the Env (design.md
+// D10), so a context under that policy can use it (docs/graalvm-configuration.md, "Sandboxing").
+@TruffleLanguage.Registration(id = SchemeLanguage.ID, name = "R7RS Scheme", defaultMimeType = SchemeLanguage.MIME_TYPE, characterMimeTypes = SchemeLanguage.MIME_TYPE, contextPolicy = TruffleLanguage.ContextPolicy.EXCLUSIVE, //
+                sandbox = SandboxPolicy.CONSTRAINED, fileTypeDetectors = SchemeFileTypeDetector.class)
 public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
 
     public static final String ID = "scheme";
@@ -40,11 +44,12 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
     private static final LanguageReference<SchemeLanguage> REFERENCE = LanguageReference.create(SchemeLanguage.class);
 
     // The options follow @Option's recommendations (docs/graalvm-configuration.md, "Language
-    // options"): each help text ends with the default, and each has a usage syntax.
+    // options"): each help text ends with the default, and each has a usage syntax. The ones an
+    // embedder sets can be set under SandboxPolicy.CONSTRAINED; SpillDepth, for tests, can't.
 
     /** Where user libraries are found (design.md D7): directories, separated by the path separator. */
     @Option(name = "LibraryPath", help = "Directories to search for libraries, separated by the path separator; the launcher's -I adds to them (default: none).", //
-                    category = OptionCategory.USER, stability = OptionStability.STABLE, usageSyntax = "<dir>:<dir>:...") //
+                    category = OptionCategory.USER, stability = OptionStability.STABLE, usageSyntax = "<dir>:<dir>:...", sandbox = SandboxPolicy.CONSTRAINED) //
     public static final OptionKey<String> LIBRARY_PATH = new OptionKey<>("");
 
     /**
@@ -52,7 +57,7 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
      * false expands them, and the context takes no part in building a per-JVM image.
      */
     @Option(name = "PreludeImage", help = "Restore the standard libraries from the prelude image instead of expanding them (default: true).", //
-                    category = OptionCategory.INTERNAL, stability = OptionStability.STABLE, usageSyntax = "true|false") //
+                    category = OptionCategory.INTERNAL, stability = OptionStability.STABLE, usageSyntax = "true|false", sandbox = SandboxPolicy.CONSTRAINED) //
     public static final OptionKey<Boolean> PRELUDE_IMAGE = new OptionKey<>(true);
 
     /**
@@ -70,7 +75,7 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
      * launcher passes its evaluation thread's (design.md D17).
      */
     @Option(name = "StackSize", help = "The Java stack size of the thread the context is created on, such as 256m; 0 if unknown, when it is measured as needed (default: 0).", //
-                    category = OptionCategory.EXPERT, stability = OptionStability.STABLE, usageSyntax = "<size>") //
+                    category = OptionCategory.EXPERT, stability = OptionStability.STABLE, usageSyntax = "<size>", sandbox = SandboxPolicy.CONSTRAINED) //
     public static final OptionKey<Long> STACK_SIZE = new OptionKey<>(0L, new OptionType<>("size", StackBudget::parseStackSize));
 
     /**
@@ -78,7 +83,7 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
      * off when stdin and stdout are a terminal, where each write then shows at once, as before.
      */
     @Option(name = "BufferOutput", help = "Buffer standard output; it is written when Scheme reads standard input, writes to standard error, flushes or exits, and when control returns to the caller; false writes each write at once (default: true).", //
-                    category = OptionCategory.USER, stability = OptionStability.STABLE, usageSyntax = "true|false") //
+                    category = OptionCategory.USER, stability = OptionStability.STABLE, usageSyntax = "true|false", sandbox = SandboxPolicy.CONSTRAINED) //
     public static final OptionKey<Boolean> BUFFER_OUTPUT = new OptionKey<>(true);
 
     /** A {@code scheme.SpillDepth}: a number of nested calls, 0 or more. */

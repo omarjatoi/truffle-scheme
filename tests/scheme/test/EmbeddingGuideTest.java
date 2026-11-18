@@ -19,6 +19,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.Engine;
 import org.graalvm.polyglot.PolyglotException;
+import org.graalvm.polyglot.ResourceLimits;
 import org.graalvm.polyglot.Source;
 import org.graalvm.polyglot.Value;
 import org.graalvm.polyglot.io.IOAccess;
@@ -121,6 +122,21 @@ public class EmbeddingGuideTest {
                     assertEquals("Hello from a library, Ada!", context.eval(program).asString());
                 }
             }
+        }
+        // readme-snippet-end
+    }
+
+    @Test
+    public void limits() {
+        // readme-snippet: limits
+        ResourceLimits limits = ResourceLimits.newBuilder().statementLimit(1_000_000, null).build();
+        try (Context context = Context.newBuilder("scheme").resourceLimits(limits).build()) {
+            assertEquals(55, context.eval("scheme", "(let loop ((i 0) (sum 0)) (if (> i 10) sum (loop (+ i 1) (+ sum i))))").asInt());
+            context.eval("scheme", "(let loop () (loop))");
+            fail("the loop ended");
+        } catch (PolyglotException e) {
+            // The context is cancelled: it can't be used again.
+            assertTrue(e.isResourceExhausted());
         }
         // readme-snippet-end
     }
