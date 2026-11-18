@@ -329,8 +329,13 @@ public final class ProgramCompiler implements SchemeCompiler {
     /** {@code topLevel}: what each root records as the top level it was compiled in, or null for the interaction environment's. */
     private static RootCallTarget generate(SchemeLanguage language, Ast.Lambda program, Object topLevel) {
         SchemeRootNode[] root = new SchemeRootNode[1];
-        // With source information, so guest stack traces and tools see file, line and column (D13).
-        BytecodeRootNodes<SchemeRootNode> nodes = SchemeRootNodeGen.create(language, BytecodeConfig.WITH_SOURCE, b -> root[0] = new CodeGenerator(b, topLevel).generate(program));
+        // With source information, so guest stack traces and tools see file, line and column (D13);
+        // under UNTRUSTED with every tag too, so that the sandbox's walk sees how deep the root is
+        // (design.md D10, "sandbox.MaxASTDepth under UNTRUSTED"). A workaround for a Truffle 25.5 bug,
+        // reproduced by scheme.test.upstream.UpstreamAstDepthTest (docs/upstream.md): when that test
+        // fails after a Truffle upgrade, WITH_SOURCE does for every policy.
+        BytecodeConfig config = SchemeContext.get(null).materializesTags() ? BytecodeConfig.COMPLETE : BytecodeConfig.WITH_SOURCE;
+        BytecodeRootNodes<SchemeRootNode> nodes = SchemeRootNodeGen.create(language, config, b -> root[0] = new CodeGenerator(b, topLevel).generate(program));
         // Every root of the unit is loaded (its call target made, which is when instruments see a
         // root) with the outermost, not when its first closure is made: a debugger resolves a line
         // breakpoint to the nearest statement among the roots loaded so far, so a line in a lambda

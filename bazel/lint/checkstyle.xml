@@ -10,6 +10,12 @@
     <property name="files" value="[\\/](src[\\/]launcher|tests)[\\/]"/>
     <property name="checks" value="IllegalImport"/>
   </module>
+  <!-- The polyglot isolate library's resource implements Truffle's InternalResource, whose methods
+       take java.nio.file.Path; it does no I/O of its own (InternalResource.Env does). -->
+  <module name="SuppressionSingleFilter">
+    <property name="files" value="[\\/]src[\\/]isolate[\\/]"/>
+    <property name="checks" value="IllegalImport"/>
+  </module>
   <module name="RegexpSingleline">
     <property name="format" value="\s+$"/>
     <property name="message" value="Trailing whitespace"/>

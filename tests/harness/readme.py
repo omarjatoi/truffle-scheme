@@ -9,7 +9,8 @@ that says how CI checks it; a block without one fails the step:
 - `<!-- readme: run server -->`: the block starts a server (`--inspect`, `--dap`). It runs until
   its output (stdout and stderr) matches the block's `output` block, then it is killed.
 - `<!-- readme: run native -->`: the block needs GraalVM's native-image, which takes minutes and
-  gigabytes, so only `//tests:readme_native` (manual) runs it, against `//:scheme-native`.
+  gigabytes, so only `//tests:readme_native` (manual) runs it, against `//:scheme-native` and
+  `//:scheme_isolate_jars`.
 - `<!-- readme: output -->` after a run block: what the block prints on stdout (on stdout and
   stderr for a server). `...` matches any text, newlines included; trailing spaces don't count.
 - `<!-- readme: file PATH -->` or `<!-- readme: file PATH#NAME -->`: the block is the file's text,

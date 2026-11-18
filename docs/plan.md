@@ -1537,7 +1537,7 @@ that may change performance measures with interleaved A/B runs.
     125.4-126.1). The steady state's gain is `mperm`'s and `paraffins`'
     collections; without them the flag costs 2-3% (`earley` 1.30), so the
     launcher's default is unchanged.
-- [ ] **M11-11 · `ISOLATED` and `UNTRUSTED` sandbox policies**
+- [x] **M11-11 · `ISOLATED` and `UNTRUSTED` sandbox policies**
   - #226 declared `SandboxPolicy.CONSTRAINED`. The stricter policies run the
     guest in a polyglot isolate, which on Community Edition needs the
     language built as an isolate library (`-isolate-community`), and need

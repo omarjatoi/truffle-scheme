@@ -9,6 +9,8 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.util.function.Consumer;
 
+import org.graalvm.polyglot.SandboxPolicy;
+
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.TruffleLanguage;
 import com.oracle.truffle.api.TruffleLanguage.ContextReference;
@@ -225,6 +227,16 @@ public final class SchemeContext {
 
     public TruffleLanguage.Env getEnv() {
         return env;
+    }
+
+    /**
+     * Whether the compiler builds its roots with every tag materialized: under
+     * {@code SandboxPolicy.UNTRUSTED}, which requires {@code sandbox.MaxASTDepth}, a limit the
+     * sandbox enforces on a Bytecode DSL root only once its tags are materialized (design.md D10,
+     * "sandbox.MaxASTDepth under UNTRUSTED"; docs/upstream.md, "MaxASTDepth on Bytecode DSL roots").
+     */
+    public boolean materializesTags() {
+        return env.getSandboxPolicy() == SandboxPolicy.UNTRUSTED;
     }
 
     /** The current dynamic environment (design.md "Dynamic environment"). */

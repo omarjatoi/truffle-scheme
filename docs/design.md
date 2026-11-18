@@ -2188,17 +2188,19 @@ Each entry: the decision, why, and what was rejected.
   - Scheme code does not reach into other languages or the host in v1, so
     no host frame ever sits between two Scheme frames (D5): a call from Java
     is always the outermost prompt.
-- **Sandboxing.** The language declares `SandboxPolicy.CONSTRAINED`
-  (`Registration.sandbox`), and so do the options an embedder sets
-  (`scheme.LibraryPath`, `scheme.BufferOutput`, `scheme.StackSize`,
-  `scheme.PreludeImage`; not `scheme.SpillDepth`, for tests): everything it
+- **Sandboxing.** The language declares `SandboxPolicy.UNTRUSTED`, the
+  strictest (`Registration.sandbox`; `CONSTRAINED` from #226 until M11-11),
+  and so do the options an embedder sets (`scheme.LibraryPath`,
+  `scheme.BufferOutput`, `scheme.StackSize`; `scheme.PreludeImage` up to
+  `ISOLATED`, below; not `scheme.SpillDepth`, for tests): everything it
   reaches of the host goes through the Env (the rules above), `exit` is
-  Truffle's (D9), and Scheme reaches no host object. Until then a
+  Truffle's (D9), and Scheme reaches no host object. Until #226 a
   `CONSTRAINED` context couldn't use it at all. `ISOLATED` and `UNTRUSTED`
-  need the language built as a polyglot isolate, which nothing builds.
-  Truffle's limits work as GraalVM documents them (statements, CPU time,
-  output size, stack frames, interrupt and cancel); `sandbox.MaxASTDepth`
-  isn't enforced on Bytecode DSL roots (docs/upstream.md).
+  run it in a polyglot isolate, `//:scheme_isolate` (below). Truffle's
+  limits work as GraalVM documents them (statements, CPU time, output size,
+  stack frames, heap, threads, interrupt and cancel); `sandbox.MaxASTDepth`
+  isn't enforced on Bytecode DSL roots (docs/upstream.md) but under
+  `UNTRUSTED`, where we work around it (below).
   docs/graalvm-configuration.md has the audit; `SandboxTest` the checks.
   - *`sandbox.MaxStackFrames` counts the program's frames, on the Java stack
     or on the heap.* The limit is on the program's stack depth, so a frame
@@ -2317,8 +2319,9 @@ Each entry: the decision, why, and what was rejected.
     40 nested additions until the change below.
   - *How it is built: as mx builds a language's isolate*
     (`truffle/mx.truffle/mx_truffle.py`, `PolyglotIsolateProject` and
-    `register_polyglot_isolate_distributions`, at the 25.5 tag), in Bazel
-    rules beside //:scheme-native's (`native_library`, D17):
+    `register_polyglot_isolate_distributions`, at the 25.5 tag), by the
+    rule `polyglot_isolate` (bazel/java_module.bzl), beside //:scheme-native's
+    `native_library` (D17), as `bazel-bin/scheme_isolate.jar`:
     1. `libpolyglotisolate.{so,dylib}`: native-image `--shared` of the
        `scheme` module, with `org.graalvm.truffle.runtime` and
        `org.graalvm.nativebridge` added, and mx's options:
@@ -2330,17 +2333,24 @@ Each entry: the decision, why, and what was rejected.
        isolate arguments. The module path is a list of jars: given as a
        directory, native-image reads no jar's `native-image.properties`, so
        the `truffle-svm` macro, and with it the feature, is missing
-       (measured: *"User-enabled Feature ... class not found"*).
+       (measured: *"User-enabled Feature ... class not found"*). The build
+       enforces the bound on runtime-compiled methods as `native_library`
+       does (D17, "Runtime-compiled methods"): the isolate has 2,654 on
+       Linux x86-64, under the same 3,000.
     2. A jar, the module `scheme.isolate`, that holds the library as an
        optional internal resource of the engine, as mx's
-       `polyglot_isolate_resource.template` does: a class implementing
-       `InternalResource` with `@InternalResource.Id(value =
+       `polyglot_isolate_resource.template` does: `IsolateResource`
+       (src/isolate), an `InternalResource`, and a subclass of it for the
+       target platform with `@InternalResource.Id(value =
        "scheme-isolate-<os>-<arch>", componentId = "engine", optional =
        true)` and `@PolyglotIsolateLanguages(value = "scheme", os = ...,
        cpuArchitecture = ...)`, whose provider the Truffle DSL processor
-       generates, and the library under
+       generates (one subclass per platform, since the annotation's values
+       are constants; the jar holds the target's only), and the library under
        `META-INF/resources/engine/scheme-isolate-<os>-<arch>/libvm/` with the
-       `sha256` and `files` lists `InternalResource.Env` reads. Truffle finds
+       `sha256` and `files` lists `InternalResource.Env` reads (the
+       library's digest, which names the version unpacked, and a
+       `Properties` of path and permissions). Truffle finds
        it as an `InternalResourceProvider` service
        (`PolyglotIsolateHostSupport.computeAvailablePolyglotIsolateResources`),
        unpacks it to its resource cache on first use (the user's cache
@@ -2365,11 +2375,16 @@ Each entry: the decision, why, and what was rejected.
       deferred, as for `scheme.jar`.
     - *Built only when named*, like //:scheme-native: the library is a
       native-image build of the whole language, redone for every change to
-      it (a minute and a few GB on the large executor), and AGENTS.md keeps
-      native images out of CI. So the tests that run contexts in the isolate
-      are a target of their own, tagged `manual`, run before a PR that
-      touches the sandbox or the native-image configuration; CI compiles
-      them with the other tests' sources (the lint tests).
+      it (2 min 35 s on an executor for Linux, about 1 min 50 s on this Mac;
+      about 49 MB), and AGENTS.md keeps native images out of CI. So the tests that
+      run contexts in the isolate are a target of their own, tagged
+      `manual`: `//tests:unit_isolate_SandboxTest` (`SandboxTest.Isolated`,
+      a nested class JUnit runs only when it is named, with
+      `scheme_isolate.jar` on the module path and a resource cache in the
+      test's temporary directory), run before a PR that touches the sandbox
+      or the native-image configuration, and `//tests:readme_native` runs
+      docs/embedding.md's sample. CI compiles them with the other tests'
+      sources (the lint tests).
     - *Not provided:* `engine.IsolateMode=external` (experimental), which
       needs GraalVM's isolate launcher executable: mx copies it into each
       `-isolate` jar from `NATIVEBRIDGE_LAUNCHER_RESOURCES`, which isn't
@@ -2379,13 +2394,24 @@ Each entry: the decision, why, and what was rejected.
       native image (Truffle then reads internal resources at its build time)
       is untested.
   - *The language declares `UNTRUSTED`*, and so do the options an embedder
-    sets (`scheme.LibraryPath`, `scheme.BufferOutput`, `scheme.StackSize`,
-    `scheme.PreludeImage`): the stricter policies take away nothing the
-    language uses. It reaches the host only through the Env (its streams,
+    sets (`scheme.LibraryPath`, `scheme.BufferOutput`, `scheme.StackSize`),
+    but `scheme.PreludeImage`, `ISOLATED` (below): the stricter policies take
+    away nothing the language uses. It reaches the host only through the Env (its streams,
     which the host redirects, and its file system, which the embedder
     gives), reaches no host object, and enters the context on one thread
     only; the stack probe (`StackBudget`) is a thread that never enters it,
     and `MaxThreads=1` let a recursion that spills run (measured above).
+    The constant options for tests and the build (`scheme.Torture`,
+    `scheme.PreludeImageFile`, `scheme.PreludeImageWrite`; D17, "Constant
+    options") stay `CONSTRAINED`: the isolate's are fixed when the library
+    is built (off, none), so a host process that sets one as
+    `-Dpolyglot.scheme.<name>` can't change them there, and Truffle refuses
+    the stricter context instead, naming the option (measured: with
+    `-Dpolyglot.scheme.Torture=shared`, or even `=off`, docs/embedding.md's
+    `UNTRUSTED` sample fails with *"The option scheme.Torture can only be
+    used up to the CONSTRAINED sandbox policy"*; with
+    `-Dpolyglot.scheme.PreludeImage=false`, the same for `ISOLATED`). The
+    isolate tests' JVM sets none.
   - *The limits.* Truffle's sandbox instrument enforces every limit, in the
     isolate as on the host; ours are its inputs: statements (D13's tags),
     stack frames (`PendingFramesNode`, above), and AST depth, below.
@@ -2406,12 +2432,22 @@ Each entry: the decision, why, and what was rejected.
     *"AST depth limit of 10 nodes exceeded. AST depth: 43."*, and 6 ran).
     The depth is per root: a lambda's body is a root of its own. The
     prelude, restored from its image (D13), keeps its configuration: it is
-    the language's code, not the guest's. Under the other policies, where
-    the limit is optional, it stays unenforced: the language can't tell
-    whether it is set (an instrument's options aren't the language's), and
-    materializing every tag would cost every sandboxed context. The cost
-    under `UNTRUSTED` is measured in M11-11. When `UpstreamAstDepthTest`
-    fails after a Truffle upgrade, the bug is fixed and this goes.
+    the language's code, not the guest's. So `scheme.PreludeImage` can't be
+    set under `UNTRUSTED` (its `sandbox` is `ISOLATED`): expanded instead,
+    the standard libraries would be compiled with their tags, and a limit
+    the guest's code meets could stop `map`. Under the other policies,
+    where the limit is optional, it stays unenforced: the language can't
+    tell whether it is set (an instrument's options aren't the language's),
+    and materializing every tag would cost every sandboxed context.
+    (`SchemeContext.materializesTags`, `ProgramCompiler.generate`.)
+    - *Cost*, under `UNTRUSTED` only, measured on this Mac with the library
+      built both ways, three contexts each: compiled code is the same
+      (`(fib 27)` took 21 ms and `(tak 18 12 6)` 2 ms either way, the best of
+      15), and the interpreter is slower until then, where the tag
+      instructions run: defining `fib` and `tak` and the first `(fib 20)`
+      took 12 ms against 5 (21 against 15 in the first context).
+    - When `UpstreamAstDepthTest` fails after a Truffle upgrade, the bug is
+      fixed and this goes.
 - **Out of scope:** Scheme-side access to other languages and the host,
   threads, and SRFIs. Avoid reflection and dynamic class loading: the native
   launcher (D17) is built without any reflection configuration.

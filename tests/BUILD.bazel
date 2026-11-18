@@ -1,7 +1,7 @@
 load("@rules_java//java:defs.bzl", "java_library")
 load("//bazel:java.bzl", "SCHEME_JAVACOPTS", "scheme_java_library")
 load("//bazel:java_module.bzl", "java_module_jar")
-load("//bazel:jvm_test.bzl", "java_driver_test")
+load("//bazel:jvm_test.bzl", "java_driver_test", "junit_test")
 load("//bazel:junit.bzl", "unit_tests")
 load("//tests/harness:defs.bzl", "conformance_tests", "diff_tests", "harness_test", "space_test", "spec_tests", "tools_tests")
 
@@ -113,6 +113,20 @@ unit_tests(
         "scheme/test/*Test.java",
         "scheme/test/upstream/*Test.java",
     ]),
+)
+
+# SandboxTest.Isolated: contexts under the ISOLATED and UNTRUSTED sandbox policies, which run the
+# language in //:scheme_isolate's polyglot isolate (design.md D10, "ISOLATED and UNTRUSTED"). Only
+# when named, like the native launcher's tests: the library is a native-image build. Truffle unpacks
+# it to a resource cache in the test's temporary directory.
+junit_test(
+    name = "unit_isolate_SandboxTest",
+    size = "large",
+    jvm_flags = ["-Dpolyglot.engine.userResourceCache=$TEST_TMPDIR/resources"],
+    module = ":unit_module_SandboxTest",
+    modules = ["//:scheme_isolate"],
+    tags = ["manual"],
+    test_class = "scheme.test.SandboxTest$Isolated",
 )
 
 # The test drivers (diff, spec and space programs, conformance sections), in Java: they run in
@@ -361,13 +375,19 @@ harness_test(
     ],
 )
 
-# The native-image blocks, against //:scheme-native.
+# The native-image blocks, against //:scheme-native and //:scheme_isolate_jars.
 harness_test(
     name = "readme_native",
     check = "readme",
-    args = _README_ARGS + ["--native=$(rlocationpath //:scheme-native)"],
+    args = _README_ARGS + [
+        "--native=$(rlocationpath //:scheme-native)",
+        "--isolate-jars $(rlocationpaths //:scheme_isolate_jars)",
+    ],
     deps = ["readme"],
-    data = _README_DATA + ["//:scheme-native"],
+    data = _README_DATA + [
+        "//:scheme-native",
+        "//:scheme_isolate_jars",
+    ],
     tags = ["manual"],
 )
 

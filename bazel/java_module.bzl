@@ -11,6 +11,8 @@ module_dir       a module path's jars in one directory, for running or embedding
 native_library   a launcher class's module as a shared library, for GraalVM's thin launcher
                  (design.md D17), on the target's C toolchain's execution platform.
 native_setting   a string flag native_library reads: its collector, its GraalVM distribution.
+polyglot_isolate the language as a polyglot isolate library, in a jar that carries it as an
+                 internal resource of the engine (design.md D10, "ISOLATED and UNTRUSTED").
 """
 
 load("@rules_cc//cc:find_cc_toolchain.bzl", "use_cc_toolchain")
@@ -370,6 +372,126 @@ native_library = rule(
                                        "`<name>.log`, native-image's output and exit status, " +
                                        "instead of the library"),
         "_linux": attr.label(default = "@platforms//os:linux"),
+    },
+    toolchains = use_cc_toolchain(mandatory = True),
+)
+
+def _polyglot_isolate_impl(ctx):
+    jdk = ctx.attr.jdk[java_common.JavaRuntimeInfo]
+    has = lambda attr: ctx.target_platform_has_constraint(attr[platform_common.ConstraintValueInfo])
+    os = "linux" if has(ctx.attr._linux) else "darwin"
+    arch = "amd64" if has(ctx.attr._x86_64) else "aarch64"
+    platform = "%s_%s" % (os, arch)
+    if platform not in ctx.attr.resources:
+        fail("no polyglot isolate resource for %s: add one to `resources`" % platform)
+
+    # The library, as mx builds a language's isolate (truffle/mx.truffle/mx_truffle.py,
+    # PolyglotIsolateProject): the guest side of polyglot isolates (PolyglotIsolateGuestFeature,
+    # from native-image's truffle-svm macro, which truffle-runtime's native-image.properties
+    # enables), its entry points' prefix, and an isolate the host initializes (-H:-InitializeVM).
+    # Runtime options stay parsed: the host passes engine.MaxIsolateMemory and UNTRUSTED's
+    # mitigations as the isolate's arguments. The bound on runtime-compiled methods is enforced, as
+    # in native_library (design.md D17, "Runtime-compiled methods").
+    name = "libpolyglotisolate"
+    library = ctx.actions.declare_file("%s/%s.%s" % (ctx.label.name, name, "so" if os == "linux" else "dylib"))
+    module_path = _module_path([ctx.attr.module])
+    args = ctx.actions.args()
+    args.add(jdk.java_home)
+    args.add(library)
+    args.add_joined(module_path, join_with = ctx.configuration.host_path_separator)
+    args.add_joined(ctx.attr.add_modules, join_with = ",")
+    args.add(name)
+    args.add_all([
+        "--shared",
+        "--features=com.oracle.svm.truffle.PolyglotIsolateGuestFeature",
+        "-H:APIFunctionPrefix=truffle_isolate_",
+        "-H:+UnlockExperimentalVMOptions",
+        "-H:+CopyLanguageResources",
+        "-H:-InitializeVM",
+        "-H:+EnforceMaxRuntimeCompileMethods",
+        "-H:-UnlockExperimentalVMOptions",
+    ])
+    args.add_all(ctx.attr.options)
+    ctx.actions.run_shell(
+        # As native_library's: the image's working files go to a temporary directory, and
+        # native-image compiles and links with the C compiler on the action's PATH, on the
+        # execution platform the target's C++ toolchain chose. The module path is a list of jars:
+        # given a directory instead, native-image reads none of their native-image.properties.
+        command = 'home="$1" out="$2" mp="$3" module="$4" name="$5"; shift 5; tmp="$(mktemp -d)"; ' +
+                  '"$home/bin/native-image" -p "$mp" --add-modules="$module" -o "$tmp/$name" "$@" && ' +
+                  'cp "$tmp/$(basename "$out")" "$out"',
+        arguments = [args],
+        inputs = depset(transitive = [module_path, jdk.files]),
+        outputs = [library],
+        mnemonic = "NativeImage",
+        progress_message = "Building the polyglot isolate library %{label}",
+        use_default_shell_env = True,
+    )
+
+    # The jar: the library as an internal resource (scheme.isolate.IsolateResource), its digest,
+    # which names the version Truffle unpacks, and the files to unpack, a java.util.Properties of
+    # path = permissions (InternalResource.Env.unpackResourceFiles).
+    base = "META-INF/resources/engine/scheme-isolate-%s-%s/libvm/" % (os, arch)
+    digest = ctx.actions.declare_file("%s/sha256" % ctx.label.name)
+    ctx.actions.run_shell(
+        command = '{ sha256sum "$1" 2>/dev/null || shasum -a 256 "$1"; } | cut -c1-64 > "$2"',
+        arguments = [library.path, digest.path],
+        inputs = [library],
+        outputs = [digest],
+        mnemonic = "Digest",
+        progress_message = "Digesting %{input}",
+    )
+    files = ctx.actions.declare_file("%s/files" % ctx.label.name)
+    ctx.actions.write(files, "%s%s = rwxr-xr-x\n" % (base, library.basename))
+    jar = ctx.actions.declare_file(ctx.label.name + ".jar")
+    deps_path = _module_path(ctx.attr.deps)
+    class_jars = [o.class_jar for lib in ctx.attr.libs + [ctx.attr.resources[platform]] for o in lib[JavaInfo].java_outputs]
+    jar_args = ctx.actions.args()
+    jar_args.add("--out", jar)
+    jar_args.add("--name", ctx.attr.module_name)
+    jar_args.add_joined("--module-path", deps_path, join_with = ctx.configuration.host_path_separator)
+    jar_args.add_all(ctx.attr.requires, before_each = "--requires")
+    for f in [library, digest, files]:
+        jar_args.add("--resource", "%s%s=%s" % (base, f.basename, f.path))
+    jar_args.add_all(class_jars)
+    ctx.actions.run(
+        executable = ctx.executable._tool,
+        arguments = [jar_args],
+        inputs = depset(class_jars + [library, digest, files], transitive = [deps_path]),
+        outputs = [jar],
+        mnemonic = "JavaModuleJar",
+        progress_message = "Building module %s" % ctx.attr.module_name,
+    )
+    return [
+        DefaultInfo(files = depset([jar])),
+        JavaModuleInfo(jar = jar, module_path = depset([jar], transitive = [deps_path])),
+        OutputGroupInfo(library = depset([library])),
+    ]
+
+polyglot_isolate = rule(
+    implementation = _polyglot_isolate_impl,
+    doc = "`<name>.jar`, the module `module_name`: `module`, built by the pinned GraalVM's " +
+          "native-image as a polyglot isolate library for the target platform " +
+          "(`<name>/libpolyglotisolate.{so,dylib}`), carried as an internal resource of the " +
+          "engine, as GraalVM's `-isolate` jars carry their languages' (design.md D10, " +
+          "\"ISOLATED and UNTRUSTED\"). Its module path is the jar and `deps`'. Like " +
+          "native_library, it runs on the execution platform of the target's C++ toolchain.",
+    attrs = {
+        "add_modules": attr.string_list(mandatory = True, doc = "the modules native-image builds: the language's, and what it needs added"),
+        "deps": attr.label_list(doc = "The modules the jar needs.", providers = [[JavaModuleInfo], [JavaInfo]]),
+        "jdk": attr.label(mandatory = True, providers = [java_common.JavaRuntimeInfo], doc = "whose native-image builds it"),
+        "libs": attr.label_list(providers = [JavaInfo], doc = "The jar's classes, on every platform."),
+        "module": attr.label(mandatory = True, providers = [JavaModuleInfo], doc = "the language's module, and its module path"),
+        "module_name": attr.string(mandatory = True),
+        "options": attr.string_list(doc = "more native-image options"),
+        "requires": attr.string_list(),
+        "resources": attr.string_keyed_label_dict(
+            providers = [JavaInfo],
+            doc = "{platform: the classes that say the library is for it}, platforms as `linux_amd64`",
+        ),
+        "_linux": attr.label(default = "@platforms//os:linux"),
+        "_tool": attr.label(default = "//bazel:module_jar", executable = True, cfg = "exec"),
+        "_x86_64": attr.label(default = "@platforms//cpu:x86_64"),
     },
     toolchains = use_cc_toolchain(mandatory = True),
 )

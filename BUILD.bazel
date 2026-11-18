@@ -1,7 +1,7 @@
 load("@rules_python//python:defs.bzl", "py_binary")
 load("@graalvm//:version.bzl", GRAALVM_VERSION = "VERSION")
 load("@rules_cc//cc:defs.bzl", "cc_binary")
-load("//bazel:java_module.bzl", "java_module_jar", "module_dir", "native_library", "native_setting", "prelude_image", "scheme_runtime")
+load("//bazel:java_module.bzl", "java_module_jar", "module_dir", "native_library", "native_setting", "polyglot_isolate", "prelude_image", "scheme_runtime")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -248,6 +248,56 @@ native_library(
     should_fail = True,
     tags = ["manual"],
     visibility = ["//tests:__pkg__"],
+)
+
+# `bazel-bin/scheme_isolate.jar`, the module scheme.isolate: the language as a polyglot isolate
+# library for the target platform, which a context runs it in under the ISOLATED and UNTRUSTED
+# sandbox policies, carried as an internal resource of the engine, as GraalVM's `-isolate` jars carry
+# their languages' (design.md D10, "ISOLATED and UNTRUSTED"). The library is native-image's
+# --shared build of scheme.jar with the optimizing runtime and polyglot isolates' guest side. Built
+# only when named, like //:scheme-native, on the same executors; on x86-64 Linux for the baseline
+# CPU, as //:schemevm.
+polyglot_isolate(
+    name = "scheme_isolate",
+    add_modules = [
+        "scheme",
+        "org.graalvm.nativebridge",
+        "org.graalvm.truffle.runtime",
+    ],
+    exec_properties = {
+        "EstimatedCPU": "8",
+        "EstimatedMemory": "12GB",
+    },
+    jdk = "@bazel_tools//tools/jdk:current_java_runtime",
+    libs = ["//src/isolate"],
+    module = ":scheme_module",
+    module_name = "scheme.isolate",
+    options = select({
+        "//bazel:linux_x86_64": ["-march=compatibility"],
+        "//conditions:default": [],
+    }),
+    # Truffle loads the resource (org.graalvm.truffle) and isolates through nativebridge, which it
+    # requires only statically.
+    requires = [
+        "org.graalvm.nativebridge",
+        "org.graalvm.truffle",
+    ],
+    resources = {
+        "darwin_aarch64": "//src/isolate:darwin_aarch64",
+        "linux_aarch64": "//src/isolate:linux_aarch64",
+        "linux_amd64": "//src/isolate:linux_amd64",
+    },
+    tags = ["manual"],
+    deps = ["//bazel:truffle_modules"],
+)
+
+# `bazel-bin/scheme_isolate_jars/`: an embedder's module path for the ISOLATED and UNTRUSTED
+# policies: Truffle's jars and //:scheme_isolate, but not scheme.jar, since the language runs in the
+# isolate (docs/embedding.md).
+module_dir(
+    name = "scheme_isolate_jars",
+    module = ":scheme_isolate",
+    tags = ["manual"],
 )
 
 # `--//:native_gc=serial|epsilon|G1`: //:scheme-native's collector. G1 needs Oracle GraalVM.

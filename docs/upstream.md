@@ -40,7 +40,7 @@ instrumentation and one trivial operation (the DSL warns if a root has none).
 | [Interrupting a Bytecode DSL root as it returns](#interrupting-a-bytecode-dsl-root-as-it-returns) | `UpstreamInterruptTest` | `InterruptTest`'s static initializer (`tests/scheme/test/`) |
 | [Context pre-initialization with synchronous compilation](#context-pre-initialization-with-synchronous-compilation) | `UpstreamPreinitializationDeadlockTest` | `ContextPreinitializationTest`'s child JVMs (`tests/scheme/test/`) |
 | [Instrumented compilations fail in libgraal](#instrumented-compilations-fail-in-libgraal) | none yet (a launcher command, below) | `bazel-bin/scheme` runs Graal compiled for HotSpot for it (`launcher_vm_args`, `tests/harness/harness.py`); `SchemeMain` rejects it with libgraal and in the native launcher |
-| [MaxASTDepth on Bytecode DSL roots](#maxastdepth-on-bytecode-dsl-roots) | `UpstreamAstDepthTest` | None: docs/graalvm-configuration.md lists the limit as not enforced, and docs/embedding.md doesn't offer it |
+| [MaxASTDepth on Bytecode DSL roots](#maxastdepth-on-bytecode-dsl-roots) | `UpstreamAstDepthTest` | Under `UNTRUSTED` only, which requires the limit: the compiler builds the guest's roots with `BytecodeConfig.COMPLETE` (`ProgramCompiler.generate`, `SchemeContext.materializesTags`); elsewhere the limit isn't enforced |
 | [Continuation roots are never internal](#continuation-roots-are-never-internal) | `UpstreamContinuationRootTest` | `PromptDriver.unwind` and `SchemeError.location` (`src/runtime/scheme/runtime/`) |
 | [An engine that closes as the JVM exits](#an-engine-that-closes-as-the-jvm-exits) | none (a race; the reproducer is below) | `SchemeMain`'s warm-up closes under a lock the program's thread takes before the JVM exits (`src/launcher/scheme/launcher/`) |
 
@@ -822,11 +822,17 @@ runs.
   holds only the tags that some binding has asked for. The sandbox's binding
   asks for `RootTag` alone, so the walk sees the root's tag and nothing it
   contains.
-- **Our workaround:** none. Scheme's roots are Bytecode DSL roots with
-  `StatementTag`s and `ExpressionTag`s (D13), so the limit isn't enforced on
-  Scheme programs either; docs/graalvm-configuration.md says so, and
-  docs/embedding.md doesn't offer the limit. It matters for `ISOLATED` and
-  `UNTRUSTED`, which require `sandbox.MaxASTDepth` to be set.
+- **Our workaround:** under `UNTRUSTED`, which requires `sandbox.MaxASTDepth`
+  to be set (M11-11, design.md D10, "sandbox.MaxASTDepth under UNTRUSTED"),
+  the compiler builds the guest's roots with `BytecodeConfig.COMPLETE`, which
+  materializes every tag the language provides as the root is built, as the
+  test's debugger session does: 40 nested additions under a limit of 10 are
+  refused (*"AST depth limit of 10 nodes exceeded. AST depth: 43."*;
+  `SandboxTest.Isolated`). Under the other policies, where the limit is
+  optional, Scheme's roots are Bytecode DSL roots with `StatementTag`s and
+  `ExpressionTag`s (D13) and the limit isn't enforced;
+  docs/graalvm-configuration.md says so. When this is fixed, `WITH_SOURCE`
+  does for every policy.
 
 ### Issue text
 
