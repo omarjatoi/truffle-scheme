@@ -315,6 +315,14 @@ a load average of 22 on its 16 cores, most benchmarks took 2 to 4 times as long.
 1-minute load above 10 at their start or end are left out; the committed runs (M9's exit) had a load of
 3.6 to 5.9, so none was (the file's note says so).
 
+Don't build in the same workspace while a benchmark runs. Since Bazel 9 (#276), a build or test
+there may remove outputs it doesn't need from `bazel-out` and the runfiles, such as the JDK's
+`bin/java` that `bazel-bin/scheme` and the benchmark commands start. A `bazel run` command no
+longer holds Bazel's lock once its program runs, so a benchmark then fails with `No such file or
+directory`. Seen in M12-04, where launchers started from `bazel-bin` while another build ran.
+To compare builds, copy their jars and the native launcher somewhere else first, and run them
+with the GraalVM in Bazel's external repository.
+
 The thresholds apply on the platform they were measured on (`darwin-arm64`, recorded in the
 file). Elsewhere, such as on Linux, `bench-check` still runs everything and prints the table, but
 only warns about benchmarks past their thresholds; it fails for a program that fails, a benchmark

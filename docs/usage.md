@@ -709,9 +709,12 @@ collecting (`earley`, with 1.2 GB live, three quarters). Two other policies,
 differently (design.md D17 has the measurements):
 
 - `BySpaceAndTime` keeps a fixed young generation (a tenth of the maximum
-  heap, at most 256 MB): ecraven's `paraffins` and `mperm` ran in half the
-  time and `earley` in two thirds, but a program that allocates a few hundred
-  MB peaks about 200 MB higher, and `nboyer` was 10% slower.
+  heap, at most 256 MB). It is the flag to try for a program that allocates
+  and keeps a lot: ecraven's `paraffins` and `mperm` ran in half the time and
+  `earley` in two thirds, and once compiled `paraffins` 2.2 times as fast,
+  `sboyer` 1.6 times, and `earley` at `--vm.Xmx2g` 2.6 times. But a program
+  that allocates a few hundred MB peaks about 200 MB higher, and `nboyer` was
+  10 to 35% slower, so it isn't the default.
 - `Proportionate` sizes the young generation as HotSpot's serial collector
   does: `earley` and `nboyer` peaked at 1.4 GB and 0.7 GB instead of 3.7 and
   1.7, but deep recursions and `nboyer` were 20 to 60% slower.

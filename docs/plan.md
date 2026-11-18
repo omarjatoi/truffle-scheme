@@ -1674,7 +1674,7 @@ measures with interleaved A/B runs.
   - **Done when** D17 says what 25.5 does, citing the source it read, and
     the native launcher's checks of ignored options (M10-04, M11-03) still
     match it.
-- [ ] **M12-04 · The native launcher's steady state**
+- [x] **M12-04 · The native launcher's steady state**
   - M11's report: the native launcher's steady state is 2.24 ×fastest
     (geometric mean) against the JVM's 1.74 (M10's: 2.21 and 1.76), with
     the same Graal compiler and the serial collector in both; the gap is
@@ -1690,6 +1690,17 @@ measures with interleaved A/B runs.
     native launcher's steady state on those programs measured interleaved
     before and after, or recorded in design.md D17 with its evidence;
     `//tests:conformance_native` and `bench-check` pass.
+  - Done (D17, "The native launcher's steady state"): `ray` and `simplex`
+    were `BigInteger` arithmetic behind flonum comparisons (#289; `ray`
+    1.393 to 0.050 s natively, 0.822 to 0.047 on the JVM); `parsing` was
+    `memv`'s loop, compiled ahead of time (#291, #292: 0.719 to 0.443 s
+    natively, 0.433 to 0.286 on the JVM), and its rest is recompilations
+    after null-check deoptimizations (M12-12); `graphs` is argument
+    profiling on megamorphic indirect calls, recorded; `paraffins`,
+    `earley`, `mperm`, `nboyer`, `sboyer` and `gcbench` are the serial
+    collector's default policy, recorded with `BySpaceAndTime` (up to 2.6
+    times as fast, 130-300 MB more RSS on moderate programs) as the
+    recommended flag next to G1.
 - [ ] **M12-05 · The JIT's slowest programs**
   - M11's report, steady state ×fastest: `pi` 7.5, `cpstak` 6.7, `ray` 6.0,
     `compiler` 5.6, `graphs` 5.2, `sboyer` 4.8, `simplex` 4.3; first run:
@@ -1781,6 +1792,19 @@ measures with interleaved A/B runs.
     design.md D10); and running the isolate test in CI is measured (its
     build time on the executors, cached and not) and decided in design.md
     D11, in a PR of its own (AGENTS.md), and applied if taken.
+- [ ] **M12-12 · `parsing`'s null-check deoptimizations in the native launcher**
+  - M12-04's follow-up (design.md D17, "The native launcher's steady
+    state"): the native launcher invalidates `parsing`'s large
+    compilations (`parse-data`, `parse-datum`, `parse-list2`) about 8
+    times where the JVM does twice, each a `NullCheckException`
+    deoptimization (`InvalidateReprofile`) at `BoxRef`'s `box.value` in
+    inlined code, a check that most likely ran ahead of the condition
+    that guards the read; each recompilation takes 1.0 to 1.6 s.
+  - **Done when** the null's origin is found (IGV of the failing
+    compilation, `--engine.TraceTransferToInterpreter` with node source
+    positions), and fixed with `parsing`'s native steady state and its
+    count of invalidations measured before and after, or recorded in D17
+    with its evidence.
 
 **Exit:** every task above is done, or its note records what was measured and
 why it isn't; `docs/benchmarks.md` and `bench/thresholds.json` are regenerated
