@@ -1597,3 +1597,172 @@ interpreted and with `--compile`; `//tests:readme_native`,
 `//tests:launcher_vm_native` and `//tests:compile_bound_native` pass, as
 does `//tests:launcher_vm_native` for this Mac
 (`--platforms=//bazel/platforms:macos_arm64`). M12 is not drafted here.
+
+## M12 · Edges, steady state and tools
+
+What M11's exit (#274, `docs/benchmarks.md` at `459e380bf32b`) and the
+follow-ups of M11's PRs (#248-#264) left: complex division and the branch
+cuts' signs of zero (#249), chibi-scheme's departures #249 found, a sentence
+of D17 (#250), the native launcher's steady state against the JVM's and the
+JIT's slowest programs (M11's report), the debugger and the profilers across
+escapes, spills and resumptions (#261, #271), `exit`'s source location
+(#258), the launcher without its JDK and Bazel's output directories per
+platform (#248), the console port's decoding (#257), and the isolate
+library's tests and start-up (#256, #263). Performance comes first on the
+JIT and the native image (design.md's preamble, #270): tasks measure the
+JIT's and the native launcher's first runs and steady state, and none sets
+an interpreter-only target, though the interpreter must not become slow.
+Not here: the polyglot library's follow-ups (D20's open questions, cached
+interop at call sites, foreign frames' stack accounting, `java-type` in
+native images), in progress outside the milestone since #236 and #237
+(#265-#273); and, the maintainer's to decide, literal pairs (M10-07, #245),
+shipping the insight tools (#261, #271: Maven artifacts), the CI image
+(#232), Bazel 9 and GraalVM 25.6. Filing upstream issues (docs/upstream.md)
+stays a human's call. Benchmarks are local (bench/README.md: the load rule,
+`-Xmx2g`, the serial collector); each task that may change performance
+measures with interleaved A/B runs.
+
+- [ ] **M12-01 · Complex division and branch cuts' signs of zero** *(early)*
+  - #249's follow-ups, against R7RS §6.2 (with its errata), C99 Annex G
+    and IEEE 754. Numbers area only (AGENTS.md "Areas").
+  - A division by a complex number squares the divisor's parts, a real
+    dividend included: `(/ 1. (make-rectangular +inf.0 1.))` is
+    +nan.0-0.0i, where Annex G.5.1's `_Cdivd` gives 0.0-0.0i, and
+    `(/ 1. 1e200+1e200i)` underflows to 0.0-0.0i instead of about
+    5e-201-5e-201i. `_Cdivd` scales the divisor and recovers infinities
+    (or Smith's, or Baudin and Smith's, algorithm).
+  - `sqrt` of a complex number ignores a -0.0 imaginary part (`y < 0`):
+    `(sqrt (make-rectangular -4. -0.))` is 0.0+2.0i, where C99's csqrt
+    (G.6.4.2, csqrt(conj(z)) = conj(csqrt(z))) gives 0.0-2.0i. The same
+    holds for `log`, `asin`, `acos` and `atan`'s cuts; R7RS §6.2.6 gives
+    the cuts but not their signs of zero.
+  - **Done when** each has a test in `NumbersTest` and, where chibi-scheme
+    agrees, a `tests/diff/numbers-*.scm` case: division keeps finite
+    quotients of large and infinite parts (`_Cdivd`'s cases), and each
+    function's cut follows the sign of a zero imaginary part as C99's
+    conjugate symmetry says; design.md D1 records the algorithm and the
+    sign-of-zero rule with the text they rest on; `bench-check` passes.
+- [ ] **M12-02 · chibi-scheme's departures from #249** *(early)*
+  - #249 found that chibi-scheme crashes (SIGSEGV) on `(- 1/2 1+2i)`, and
+    that its `-` of a real and a complex number negates the complex
+    number's real part in place, so a literal flonum inside
+    `(make-rectangular 1. -0.)` changes. `tests/diff/numbers-complex-edges.scm`
+    works around both.
+  - **Done when** tests/fuzz/README.md's table of chibi's departures has a
+    row for each, with the R7RS text it departs from (§6.2.6, and §3.4 for
+    a literal changed in place, as for `/` of negative bignums), and the
+    fuzzer's generator avoids the crash if it can produce it.
+- [ ] **M12-03 · D17's `RuntimeOptionParser` sentence** *(early)*
+  - #250's follow-up: design.md D17 "Options" says SubstrateVM's
+    `RuntimeOptionParser` "has a list of HotSpot options it ignores for
+    compatibility". In 25.5 that list applies only in a
+    HotSpot-compatibility mode; otherwise `JNI_CreateJavaVM` leaves the
+    options it doesn't parse unconsumed and doesn't fail on them
+    (non-strict mode, `CEntryPointSnippets`).
+  - **Done when** D17 says what 25.5 does, citing the source it read, and
+    the native launcher's checks of ignored options (M10-04, M11-03) still
+    match it.
+- [ ] **M12-04 · The native launcher's steady state**
+  - M11's report: the native launcher's steady state is 2.24 ×fastest
+    (geometric mean) against the JVM's 1.74 (M10's: 2.21 and 1.76), with
+    the same Graal compiler and the serial collector in both; the gap is
+    widest on `ray` (10.1 against 6.0), `graphs` (7.8, 5.2), `parsing`
+    (6.6, 3.2) and `paraffins` (5.8). (`peval`'s and `bv2string`'s native
+    numbers in that report are load: #274.) Candidates: the image's runtime-compilation
+    options and inlining budget, its collector and heap sizing at
+    `--vm.Xmx2g`, code the image's points-to analysis left out of partial
+    evaluation, and SubstrateVM's slower paths for what HotSpot intrinsifies.
+  - **Done when** the cause of each program's gap is found (compilation
+    logs, `--engine.TraceCompilation`, `--vm.XX:+PrintGC` and the
+    native-image build report compared with the JVM's), and fixed with the
+    native launcher's steady state on those programs measured interleaved
+    before and after, or recorded in design.md D17 with its evidence;
+    `//tests:conformance_native` and `bench-check` pass.
+- [ ] **M12-05 · The JIT's slowest programs**
+  - M11's report, steady state ×fastest: `pi` 7.5, `cpstak` 6.7, `ray` 6.0,
+    `compiler` 5.6, `graphs` 5.2, `sboyer` 4.8, `simplex` 4.3; first run:
+    `chudnovsky` 23.1 and `pi` 20.1 (bignums, mostly warm-up: `chudnovsky`'s
+    steady state is 3.8), `compiler` 12.5, `matrix` 10.7, `dynamic` 9.6.
+  - **Done when** each is profiled (the CPU sampler, compilation and
+    deoptimization traces, IGV for the hottest root) and what it spends its
+    time on is recorded in bench/README.md or design.md; fixes kept with a
+    test and interleaved A/B runs of the JIT's and the native launcher's
+    first runs and steady state on the report's subset, and `bench-check`
+    re-measured if a threshold is left far too loose.
+- [ ] **M12-06 · Stepping through a continuation's escape**
+  - #261's and #271's follow-up: a call site that receives an abandoning
+    capture (ESCAPE, APPLY) suspends its frame, which `Capture.addSegment`
+    then drops. The debugger takes that yield for a generator's suspension
+    and waits for a resumption that never comes, so a step over `(k v)`
+    never completes. Returning the capture instead of suspending would end
+    the frame as the debugger expects. `CallSiteEmitter` (rule 2).
+  - **Done when** a test in `DebuggerTest` steps over an escaping `(k v)`
+    and stops at the next statement after the prompt; every torture mode
+    passes; `ctak` and `fibc` on the JIT and the native launcher, first
+    runs and steady state, unchanged or faster (interleaved A/B), and
+    `bench-check` passes.
+- [ ] **M12-07 · The tools across spills and resumptions**
+  - #261's follow-ups: stepping across a spill stops again at the resumed
+    frame's statement and returns to the prompt rather than to its spilled
+    caller; and the CPU tracer and coverage (shipped since #271) count a
+    resumed frame as an entry, since upstream's tools leave
+    `onYield`/`onResume` to their defaults (`onResume` calls `onEnter`).
+    docs/usage.md "What each tool sees" lists both.
+  - **Done when** stepping out of a frame resumed from a spill returns to
+    its caller, with a test, and the tracer's and coverage's counts of a
+    deep recursion that spills equal its calls, with a test, or each is
+    recorded in docs/upstream.md with a reproducer and issue text (filing
+    it is a human's call), and docs/usage.md's table says what's left.
+- [ ] **M12-08 · `exit`'s source location**
+  - #258's follow-up: a `PolyglotException` from `exit` is located at the
+    prelude's `exit` (the root of `emergency-exit`'s caller), since
+    `closeExited` takes a node and a primitive run in place has none for
+    its call. Its stack trace shows the program's frames already.
+  - **Done when** an `exit` in a program is located at the program's call,
+    with an `EmbeddingTest` assertion (and the same through `emergency-exit`
+    and a primitive run through the trampoline), and design.md D8's "Not
+    done" note goes.
+- [ ] **M12-09 · The launcher without its JDK, and output directories per platform**
+  - #248's follow-ups: `bazel-bin/scheme` with its JDK missing (after a
+    `bazel clean`, or the output base pruned) ends in a Python traceback,
+    against the usability rule; it should say to run `bazel build
+    //:scheme`. And `--experimental_platform_in_output_dir` would give the
+    Linux platform its own output directory, so a Linux-platform test no
+    longer replaces this Mac's files (M11-02's JDK copy, AOT cache and
+    `scheme-native`), with `bazel-bin` then following each command's
+    platform: a D11 decision, in a PR of its own first (AGENTS.md).
+  - **Done when** `bazel-bin/scheme` without its JDK exits with a one-line
+    message naming the command and a non-zero status, with a check in
+    `//tests:tools` or the launcher's tests; and design.md D11 records the
+    platform-directory decision with what it measured (rebuilds after a
+    switch, where `bazel-bin` points), applied if taken.
+- [ ] **M12-10 · The console port decodes UTF-8 itself**
+  - #257's follow-ups: file ports decode UTF-8 themselves (M11-06); the
+    console port still goes through the JDK's `InputStreamReader`, for a
+    `ready()` that asks the stream. Decoding standard input the same way
+    needs `available()` for `char-ready?` and a lazy LF skip after a CR
+    typed at a terminal. And a `read-string` of more than 8 KB from a
+    stream whose `available()` is 0 (an embedder's file system that doesn't
+    implement it) grows its array by doubling and trims it.
+  - **Done when** standard input decodes like a file port, malformed input
+    replaced as today, with `IoTest` cases for `char-ready?`, a CR LF
+    split across reads and a multi-byte sequence split across two buffers
+    (or design.md D10 records why not, with measurements of a large piped
+    input on the JIT and the native launcher); and a long `read-string` on
+    a stream without `available()` is measured and sized ahead or recorded
+    as is.
+- [ ] **M12-11 · The isolate library in CI, pre-initialized**
+  - #256's and #263's follow-ups: `//tests:unit_isolate_SandboxTest` runs
+    only locally (a manual test), since AGENTS.md keeps native images out
+    of CI; and the first `ISOLATED` context takes 0.6-0.8 s to build, where
+    `//:scheme-native` pre-initializes a context (`PreinitializeContexts`).
+  - **Done when** the isolate library pre-initializes a context, with the
+    first `ISOLATED` context's time measured before and after (in
+    design.md D10); and running the isolate test in CI is measured (its
+    build time on the executors, cached and not) and decided in design.md
+    D11, in a PR of its own (AGENTS.md), and applied if taken.
+
+**Exit:** every task above is done, or its note records what was measured and
+why it isn't; `docs/benchmarks.md` and `bench/thresholds.json` are regenerated
+on the final M12 code; both suites pass in every mode, including through the
+native launcher.
