@@ -446,6 +446,40 @@ of them (#219): they run with `bazel-bin/scheme`.
 | Insight: `--insight` | Not shipped; unusable from Scheme | `org.graalvm.tools:insight-tool`. Its scripts are JavaScript, Python, Ruby, or any language that can call the `insight` object's `on` with a function: GraalVM CE has no JavaScript here, and Scheme would need two things it lacks, `insight` bound as a script's argument (Truffle passes it as a named argument of the script's parse, which the language ignores) and calling a foreign object's members (the `(graalvm polyglot)` library, #237). |
 | Heap dump: `--heap.dump` | Not shipped | `org.graalvm.tools:insight-heap-tool`, driven by an Insight script's `heap.dump(...)`: what Insight needs, then this. |
 
+### Logging
+
+The language logs what it does rarely through Truffle's logging, at level
+`FINE`, so `--log.scheme.level=FINE` shows all of it and
+`--log.scheme.<logger>.level=FINE` one logger's:
+
+| Logger | What it logs |
+|---|---|
+| `scheme.spill` | each time a deep recursion moves frames to the heap, and the stack measurement that sets when it does (design.md "Stack-depth spill") |
+| `scheme.continuations` | each continuation captured (`call/cc`, a composable one up to its prompt), re-entered in place of the current one, or reinstated |
+| `scheme.prelude` | whether the standard libraries were restored from the prelude image or expanded, and how long it took (design.md D13) |
+| `scheme.library` | each library loaded, from which file and how long it took, and a library not found, with where it was looked for |
+
+Each line names its logger (`[scheme::spill] FINE: ...`). Logs go to
+standard error, or to the file `--log.file=<path>` names. With no level set,
+the loggers cost nothing: the check folds away in compiled code.
+
+<!-- readme: run -->
+```sh
+bazel-bin/scheme --log.scheme.spill.level=FINE docs/examples/deep.scm 2>&1
+```
+
+<!-- readme: output -->
+```text
+...[scheme::spill] FINE: the stack of thread ... is ... bytes (scheme.StackSize), so recursion on it spills past ... bytes
+...[scheme::spill] FINE: spill 1: ... frames moved to the heap (the limit: ... bytes of stack)
+...1000000
+```
+
+An embedder sets the same options on the context's builder,
+`.option("log.scheme.level", "FINE")`, and can give it a `java.util.logging`
+`Handler` or a stream for them (`Context.Builder.logHandler`), or a file
+(`.option("log.file", path)`).
+
 ## Native image
 
 `bazel build //:scheme-native` builds the launcher as a native executable,

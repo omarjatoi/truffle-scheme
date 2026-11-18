@@ -25,6 +25,7 @@ import scheme.runtime.SchemeCompiler;
 import scheme.runtime.SchemeContext;
 import scheme.runtime.SchemeError;
 import scheme.runtime.SchemeLanguage;
+import scheme.runtime.SchemeLogs;
 import scheme.runtime.SchemeRootNode;
 import scheme.runtime.SchemeRootNodeGen;
 import scheme.runtime.printer.Printer;
@@ -51,12 +52,16 @@ public final class ProgramCompiler implements SchemeCompiler {
      */
     @Override
     public void initializeContext(SchemeLanguage language, SchemeContext context) {
+        long start = System.nanoTime();
         PreludeImage image = PreludeImage.get(context);
         if (image != null) {
             PreludeImage.Restored restored = image.restore(language, context, state -> newLibraries(language, context, state));
             context.compilerState = restored.state();
             for (SchemeRootNode body : restored.bodies()) {
                 language.withPrompt(body.getCallTarget()).call();
+            }
+            if (SchemeLogs.on(SchemeLogs.PRELUDE)) {
+                SchemeLogs.PRELUDE.fine("restored the standard libraries from the prelude image in " + SchemeLogs.millisSince(start));
             }
             return;
         }
@@ -69,6 +74,9 @@ public final class ProgramCompiler implements SchemeCompiler {
         }
         Source imports = Source.newBuilder(SchemeLanguage.ID, INTERACTION_IMPORTS, "interaction-environment").internal(true).build();
         language.withPrompt(compile(language, context, imports, false)).call();
+        if (SchemeLogs.on(SchemeLogs.PRELUDE)) {
+            SchemeLogs.PRELUDE.fine("expanded and ran the standard libraries in " + SchemeLogs.millisSince(start));
+        }
         if (build) {
             List<CompilerState.LibraryBody> bodies = state.recordedBodies;
             state.recordedBodies = null;

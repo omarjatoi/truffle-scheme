@@ -19,6 +19,7 @@ import scheme.reader.Syntax;
 import scheme.runtime.Features;
 import scheme.runtime.GlobalCell;
 import scheme.runtime.GlobalEnvironment;
+import scheme.runtime.SchemeLogs;
 import scheme.runtime.printer.Printer;
 import scheme.runtime.value.SConstant;
 import scheme.runtime.value.SPair;
@@ -207,12 +208,18 @@ final class Libraries {
         if (loading.contains(key)) {
             throw errors.syntaxError("library imports itself", name);
         }
+        long start = System.nanoTime();
+        String from = "a define-library evaluated before";
         Declared declaration = declared.get(key);
         if (declaration == null) {
             Object[] found = locate(parts);
             if (found == null) {
+                if (SchemeLogs.on(SchemeLogs.LIBRARY)) {
+                    SchemeLogs.LIBRARY.fine("library " + key + " not found: no " + String.join("/", parts) + ".sld in the library path " + path);
+                }
                 throw errors.syntaxError("library not found", name);
             }
+            from = ((Source) found[0]).getPath() != null ? ((Source) found[0]).getPath() : ((Source) found[0]).getName();
             declaration = new Declared(findDefinition((Source) found[0], key, errors, name), (SourceDir) found[1]);
         }
         loading.add(key);
@@ -222,6 +229,9 @@ final class Libraries {
             loading.remove(key);
         }
         loaded.put(key, library);
+        if (SchemeLogs.on(SchemeLogs.LIBRARY)) {
+            SchemeLogs.LIBRARY.fine("library " + key + " loaded from " + from + " in " + SchemeLogs.millisSince(start));
+        }
         return library;
     }
 

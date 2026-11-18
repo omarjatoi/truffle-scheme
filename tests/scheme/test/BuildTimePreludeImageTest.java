@@ -117,7 +117,7 @@ public class BuildTimePreludeImageTest {
         assertNotNull("the tests run on the module path", modulePath);
         List<String> command = new ArrayList<>(List.of(java, "--module-path", modulePath, "--enable-native-access=org.graalvm.truffle", "--sun-misc-unsafe-memory-access=allow"));
         command.addAll(jvmArgs);
-        command.addAll(List.of("-m", "scheme.launcher/scheme.launcher.SchemeMain", "--log.scheme.preludeImage.level=FINE"));
+        command.addAll(List.of("-m", "scheme.launcher/scheme.launcher.SchemeMain", "--log.scheme.prelude.level=FINE"));
         command.addAll(List.of(args));
         Path out = folder.newFile().toPath();
         Path err = folder.newFile().toPath();

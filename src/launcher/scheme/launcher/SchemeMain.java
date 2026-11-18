@@ -565,7 +565,11 @@ public final class SchemeMain extends AbstractLanguageLauncher {
             }
         } else {
             boolean warmUp = compilation && !profilingGiven && !isAOT() && Runtime.getRuntime().availableProcessors() >= WARM_UP_MIN_PROCESSORS;
-            status = runProgram(builder, file, programArguments, System.err, endStatus, warmUp ? SchemeMain::startWarmUp : null);
+            try {
+                status = runProgram(builder, file, programArguments, System.err, endStatus, warmUp ? SchemeMain::startWarmUp : null);
+            } finally {
+                abandonWarmUp();
+            }
         }
         System.out.flush();
         if (status != 0) {
@@ -591,12 +595,60 @@ public final class SchemeMain extends AbstractLanguageLauncher {
         thread.start();
     }
 
-    /** Runs {@link #WARM_UP} in a context of {@code builder}'s, with no I/O; drops its failures. */
+    /**
+     * Runs {@link #WARM_UP} in a context of {@code builder}'s, with no I/O; drops its failures. Closes
+     * the context unless the program's run is over ({@link WarmUpClose}).
+     */
     public static void warmUp(Context.Builder builder) {
-        try (Context context = builder.in(InputStream.nullInputStream()).out(OutputStream.nullOutputStream()).err(OutputStream.nullOutputStream()).build()) {
+        Context context;
+        try {
+            context = builder.in(InputStream.nullInputStream()).out(OutputStream.nullOutputStream()).err(OutputStream.nullOutputStream()).build();
+        } catch (RuntimeException e) {
+            return; // Only ever a warm-up: the program's run doesn't depend on it.
+        }
+        try {
             context.eval(Source.newBuilder(LANGUAGE, WARM_UP, "<warm-up>").internal(true).buildLiteral());
         } catch (RuntimeException e) {
-            // Only ever a warm-up: the program's run doesn't depend on it.
+            // As above.
+        } finally {
+            WarmUpClose.close(context);
+        }
+    }
+
+    /** The program's run is over: a warm-up still running is left open for the JVM's exit to end. */
+    private static void abandonWarmUp() {
+        WarmUpClose.abandon();
+    }
+
+    /**
+     * The warm-up's context closes under this class's lock, and not at all once the program has
+     * run ({@link #abandon}). Closing a context closes its engine, and Truffle's shutdown hook
+     * flushes the log handler of every engine it found open as the JVM began to exit: of one that
+     * closed in the meantime, the closed handler fails an assertion, which it prints
+     * ("AssertionError: The log handler is closed.", docs/upstream.md, "An engine that closes as
+     * the JVM exits"). The warm-up's engine is the only one that can close while the launcher
+     * exits, so the program's thread, once the program has run, waits for a close in progress and
+     * stops any later one, before the JVM exits. A class of its own, so that SchemeMain's fields
+     * aren't shared between threads.
+     */
+    private static final class WarmUpClose {
+        private static boolean abandoned;
+
+        private WarmUpClose() {
+        }
+
+        static synchronized void close(Context context) {
+            if (!abandoned) {
+                try {
+                    context.close();
+                } catch (RuntimeException e) {
+                    // Only ever a warm-up: the program's run doesn't depend on it.
+                }
+            }
+        }
+
+        static synchronized void abandon() {
+            abandoned = true;
         }
     }
 

@@ -134,6 +134,9 @@ final class PromptDriver extends Node {
                                 SegmentList outer = pending;
                                 pending = SegmentList.concat(capture.continuation.segments, capture.segmentsBefore(pending));
                                 enterPending(frame, pending, outer);
+                                if (SchemeLogs.on(SchemeLogs.CONTINUATIONS)) {
+                                    logContinuation("reinstated a composable continuation of ", capture.continuation.segments, null, "");
+                                }
                                 value = capture.takeValue();
                                 continue;
                             }
@@ -146,6 +149,9 @@ final class PromptDriver extends Node {
                                 leavePending(frame, pending, null);
                                 pending = capture.continuation.segments;
                                 enterPending(frame, pending, null);
+                                if (SchemeLogs.on(SchemeLogs.CONTINUATIONS)) {
+                                    logContinuation("re-entered a continuation of ", pending, null, ", in place of the current one");
+                                }
                                 context.setDynamicEnv(capture.continuation.dynEnv);
                                 value = capture.takeValue();
                                 continue;
@@ -200,6 +206,9 @@ final class PromptDriver extends Node {
                                 SegmentList outer = pending;
                                 pending = capture.segmentsBefore(pending);
                                 enterPending(frame, pending, outer);
+                                if (SchemeLogs.on(SchemeLogs.SPILL)) {
+                                    logSpill(context, pending, outer);
+                                }
                                 Object[] arguments = (Object[]) capture.takeValue();
                                 frame.setObject(PENDING_SLOT, pending);
                                 value = callWithProcedure(arguments[0], arguments);
@@ -211,6 +220,9 @@ final class PromptDriver extends Node {
                                     return capture;
                                 }
                                 Continuation k = Continuation.capture(capture.segmentsBefore(pending), capture.dynEnv, false, context);
+                                if (SchemeLogs.on(SchemeLogs.CONTINUATIONS)) {
+                                    logContinuation("captured a continuation of ", k.segments, null, "");
+                                }
                                 enterPending(frame, k.segments, pending);
                                 pending = k.segments;
                                 frame.setObject(PENDING_SLOT, pending);
@@ -236,12 +248,18 @@ final class PromptDriver extends Node {
                                     // frames before it leave with the continuation.
                                     enterPending(frame, all, outer);
                                     leavePending(frame, split.before(), null);
+                                    if (SchemeLogs.on(SchemeLogs.CONTINUATIONS)) {
+                                        logContinuation("captured a composable continuation of ", split.before(), null, ", up to a prompt inside");
+                                    }
                                     pending = split.after();
                                     frame.setObject(PENDING_SLOT, pending);
                                     value = receive(context, capture.receiver, Continuation.capture(split.before(), capture.dynEnv, true, context), capture.dynEnv, split.marker().dynEnv());
                                 } else {
                                     // This prompt: abort to it.
                                     leavePending(frame, outer, null);
+                                    if (SchemeLogs.on(SchemeLogs.CONTINUATIONS)) {
+                                        logContinuation("captured a composable continuation of ", all, null, ", up to this prompt");
+                                    }
                                     pending = null;
                                     frame.setObject(PENDING_SLOT, pending);
                                     value = receive(context, capture.receiver, Continuation.capture(all, capture.dynEnv, true, context), capture.dynEnv, promptEnv);
@@ -473,6 +491,33 @@ final class PromptDriver extends Node {
             rethrown(error, segment.root().getCallTarget(), location, copy(segment.frame()), error);
         }
         return error;
+    }
+
+    /**
+     * Logs a spill (design.md "Stack-depth spill"): the frames that just moved to the heap, those
+     * before {@code outer} in {@code pending}.
+     */
+    @TruffleBoundary
+    private static void logSpill(SchemeContext context, SegmentList pending, SegmentList outer) {
+        SchemeLogs.SPILL.fine("spill " + context.spills + ": " + SchemeLogs.frames(frames(pending, outer)) + " moved to the heap (the limit: " + context.stackLimit +
+                        (context.spillDepthFixed ? " calls)" : " bytes of stack)"));
+    }
+
+    /** Logs a continuation's capture or invocation: {@code prefix}, its frames before {@code end}, {@code suffix}. */
+    @TruffleBoundary
+    private static void logContinuation(String prefix, SegmentList segments, SegmentList end, String suffix) {
+        SchemeLogs.CONTINUATIONS.fine(prefix + SchemeLogs.frames(frames(segments, end)) + suffix);
+    }
+
+    /** The frames (segments, not prompt markers) of {@code list} before {@code end}. */
+    private static int frames(SegmentList list, SegmentList end) {
+        int count = 0;
+        for (SegmentList l = list; l != end && l != null; l = l.tail) {
+            if (l.head instanceof Capture.Segment) {
+                count++;
+            }
+        }
+        return count;
     }
 
     /** Calls {@code target}, which throws {@code error} (any other exception goes on). */

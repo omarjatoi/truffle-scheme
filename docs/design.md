@@ -2737,6 +2737,42 @@ Each entry: the decision, why, and what was rejected.
     serves nothing (`Capture.addSegment` drops an abandoning capture's
     frames): a call site that returned such a capture instead of suspending
     would end the debugger's wait (a follow-up of the call sites').
+- **Logging.** The language logs through Truffle (`TruffleLogger`), so
+  `--log.scheme.level=FINE` (the launcher), `-Dpolyglot.log.scheme.level=FINE`
+  or `Context.Builder.option("log.scheme.level", "FINE")` turns it on, and
+  `--log.file` or the builder's `logHandler` says where it goes
+  (docs/usage.md, "Logging"). One logger per component, each a static final
+  `TruffleLogger` (`SchemeLogs`), so `--log.scheme.<component>.level` turns
+  on one:
+  - `scheme.spill`: each spill (how many frames moved to the heap, and the
+    limit), and the stack measurement or `scheme.StackSize` that set the
+    limit ("Stack-depth spill");
+  - `scheme.continuations`: a full continuation captured and re-entered, a
+    composable one captured up to its prompt (which every `guard` that
+    catches does, D4) and reinstated, each with its number of frames;
+  - `scheme.prelude`: whether the standard libraries were restored from the
+    prelude image (and why the build-time image wasn't used, if it wasn't)
+    or expanded, and how long it took; it was `scheme.preludeImage` (M7-05);
+  - `scheme.library`: each library loaded, from which file, and how long it
+    took; a library not found, with the directories it was looked for in.
+  - *Only rare events, all at `FINE`.* Not a call, a resume of a pending
+    frame or a primitive's error: a recursion a million deep spills about 40
+    times, and a line per frame would be a million. *Cost when off: none.*
+    Each site tests `isLoggable(Level.FINE)` on the static final logger, which
+    partial evaluation folds to a constant (its level is compilation final,
+    under an assumption that a level change invalidates), and logs in a
+    `@TruffleBoundary` method; the prompt driver's sites are on its capture
+    and spill paths, never on a return. Measured, the build before and after
+    (interleaved, fresh JVMs, the median of each JVM's rounds 4 to 11, load
+    4.1 to 7.5): the `guard`/`raise` micro-benchmark of D8 within 2% each way
+    (a raised symbol 26.1 and 26.4 ms, `(car i)` caught 67.8 and 67.1, an
+    error 10 frames down 94.0 and 95.8), a recursion a million deep 73.3
+    and 73.5 ms, and 20,000 `call/cc`s captured 10 frames down and re-entered
+    twice 67.1 and 66.6 ms; `bench-check` passes (machine factor 1.03, every benchmark
+    within 0.80 to 1.07 of its baseline adjusted, load 8.5 to 10.0).
+  - *Rejected:* a logger per context or per root node (Truffle binds a static
+    logger to the current context's options itself); `FINER` for every
+    pending frame resumed (a line per frame even when asked only for spills).
 - **Allocations (M7-07).** The language reports the Scheme objects it makes
   to the context's `AllocationReporter`, which the memory tracer
   (`--memtracer`) listens to: closures and rest-argument lists where the
@@ -2818,7 +2854,7 @@ Each entry: the decision, why, and what was rejected.
     rest. The language reads the bundled image once per JVM and uses it only
     if each of those files is byte for byte the one it bundles, the core
     forms and a context's primitives are the same, and the checksum matches;
-    otherwise it logs why (`--log.scheme.preludeImage.level=FINE`) and
+    otherwise it logs why (`--log.scheme.prelude.level=FINE`) and
     expands. The comparison costs one read of the prelude files, which the
     prelude's `Source`s are then made from. Changes to the compiler itself
     are the build's to catch: the image is rebuilt with every build of the
@@ -3110,6 +3146,13 @@ Each entry: the decision, why, and what was rejected.
   with the launcher took. `--engine.Compilation=false` (as an option or a
   `polyglot.engine.Compilation` system property), the native launcher (whose
   compiler's graphs are built into the image) and the REPL go without.
+  - *Its close and the JVM's exit.* The warm-up closes its context when it
+    ends, under a lock that the evaluation thread takes once the program
+    has run, and after which it is left open: a close that met the JVM's
+    exit made Truffle's shutdown hook flush the closed engine's log handler,
+    which printed `AssertionError: The log handler is closed.`
+    (docs/upstream.md, "An engine that closes as the JVM exits"). The
+    program's thread waits at most for a close in progress.
   - *Why.* A process's first Truffle compilations are slow: 30-140 ms each
     for procedures that take 2-3 ms once a few others have been compiled (the
     compiler parses and caches, once per process, the interpreter's methods
