@@ -2608,7 +2608,7 @@ Each entry: the decision, why, and what was rejected.
     (63 MiB in all). On a good agent that took 7–30 s, but in about half of
     the jobs of builds 349–390 it ran at about 100 KB/s and took 593–823 s.
     So the jobs
-    run in an image of ours instead (`.buildkite/image.nix`, flake.nix's
+    run in an image of ours instead (`nix/image.nix`, flake.nix's
     `packages.x86_64-linux.ciImage`), the `linux-small` queue's agent image:
     Determinate Nix (flake input `determinate`) and every store path
     `nix print-dev-env .#ci` reads, registered in the image's Nix database:

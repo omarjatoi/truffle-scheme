@@ -6,7 +6,7 @@
     # with GraalVM 25.5. The stable channel (`/0`) still ships 25.0.
     nixpkgs.url = "https://flakehub.com/f/NixOS/nixpkgs/0.1";
     flake-utils.url = "github:numtide/flake-utils";
-    # Determinate Nix for CI's agent image (.buildkite/image.nix). Only `nix build .#ciImage`
+    # Determinate Nix for CI's agent image (nix/image.nix). Only `nix build .#ciImage`
     # fetches it, so the CI shell doesn't.
     determinate.url = "https://flakehub.com/f/DeterminateSystems/determinate/3.24.2";
   };
@@ -62,8 +62,8 @@
         };
       }) // {
         # CI's agent image: Determinate Nix with the `.#ci` shell already in its store
-        # (.buildkite/image.nix; `.buildkite/push-image.sh` builds and pushes it).
-        packages.x86_64-linux.ciImage = import ./.buildkite/image.nix {
+        # (nix/image.nix; `.buildkite/push-image.sh` builds and pushes it).
+        packages.x86_64-linux.ciImage = import ./nix/image.nix {
           pkgs = nixpkgs.legacyPackages.x86_64-linux;
           nix = determinate.inputs.nix;
           ciShell = self.devShells.x86_64-linux.ci;

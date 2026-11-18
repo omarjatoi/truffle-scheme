@@ -1,6 +1,6 @@
 # CI, uploaded by the pipeline's settings (`buildkite-agent pipeline upload`), for every commit,
 # on Buildkite's hosted linux-small agents (2 vCPUs, the default queue), in CI's agent image (the
-# queue's image: .buildkite/image.nix, Determinate Nix with the CI dev shell in its store).
+# queue's image: nix/image.nix, Determinate Nix with the CI dev shell in its store).
 # hooks/pre-command loads the CI dev shell (flake.nix .#ci: just Bazel) and writes Bazel's CI
 # settings and the BuildBuddy key (the cluster secret BUILDBUDDY_API_KEY) to the agent's
 # ~/.bazelrc, so the steps are plain `bazel` commands. Actions and tests run on BuildBuddy's
@@ -42,7 +42,7 @@ steps:
     if_changed:
       - flake.nix
       - flake.lock
-      - .buildkite/image.nix
+      - nix/image.nix
     depends_on:
       - checks
       - tests

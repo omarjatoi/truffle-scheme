@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Builds CI's agent image (flake.nix `packages.x86_64-linux.ciImage`, .buildkite/image.nix) and
+# Builds CI's agent image (flake.nix `packages.x86_64-linux.ciImage`, nix/image.nix) and
 # pushes it to the Buildkite package registry that the hosted queue pulls it from, as
 # `<repository>:<hash of the image>` and `<repository>:latest` (docs/design.md D11).
 #
 # On main, the pipeline's `image` step runs it whenever flake.nix, flake.lock or
-# .buildkite/image.nix changes. There it logs in with an OIDC token that buildkite-agent requests
+# nix/image.nix changes. There it logs in with an OIDC token that buildkite-agent requests
 # for the registry, which the registry's OIDC policy lets main builds of this pipeline write with.
 # By hand, for the first push (before the queue runs the image) or to push again:
 #

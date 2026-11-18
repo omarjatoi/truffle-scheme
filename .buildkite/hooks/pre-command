@@ -3,7 +3,7 @@
 # settings in this agent's ~/.bazelrc, with the BuildBuddy key from the cluster secret. Steps then
 # run plain `bazel`.
 #
-# The jobs run in CI's agent image (.buildkite/image.nix, the queue's image), which has Determinate
+# The jobs run in CI's agent image (nix/image.nix, the queue's image), which has Determinate
 # Nix and every store path the shell needs, so here Nix only evaluates the flake: nothing is
 # installed or downloaded. Any other image is a misconfigured queue, and the hook stops. When
 # flake.lock or the shell changed since the image was built, Nix downloads what changed and the
@@ -12,7 +12,7 @@ set -eo pipefail
 if ! command -v nix >/dev/null; then
   echo "^^^ +++"
   echo "There's no nix on PATH: this queue must run the CI image, see docs/design.md D11" \
-    "(.buildkite/image.nix, pushed by .buildkite/push-image.sh)." >&2
+    "(nix/image.nix, pushed by .buildkite/push-image.sh)." >&2
   exit 1
 fi
 
