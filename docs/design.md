@@ -662,9 +662,10 @@ follow it or deviate, with the decision below that says why.
     `quicksort`, `ctak` and `fibc` 0.99-1.01.
   - *With tools, the frames it abandons throw (M12-06).* In bytecode with
     tags, a frame that gets an APPLY or ESCAPE capture at a call site ends
-    by throwing it to the prompt, so that the tools see it end (D13,
-    "Ending an escaped frame for tools"). Code without tags, which is what
-    the JIT and the native image run, returns as above.
+    by throwing it to the prompt, as the Bytecode DSL's unwind exception,
+    so that the tools see it end (D13, "Ending an escaped frame for
+    tools"). Code without tags, which is what the JIT and the native image
+    run, returns as above.
 - **Segments are immutable once shared.** Each resume of a segment that a
   continuation can reach copies the frame. This is correct only because of
   assignment conversion (D2): the frame holds no mutable Scheme variables,
@@ -3294,90 +3295,94 @@ Each entry: the decision, why, and what was rejected.
   - *Ending an escaped frame for tools (M12-06).* A frame that a
     continuation's invocation abandons (an APPLY or ESCAPE capture) has
     nothing to suspend for: `Capture.addSegment` drops it. So in bytecode
-    with tags (a tool asked for them), a call site that gets such a
-    capture throws it instead, as `AbandonedFrames`, a Truffle exception
-    (`IsValue`, and the root for an `Intrinsics` operation whose `raise`
-    came back with one, `AbandonedFrame`). It leaves every frame the
-    capture abandons, each of whose tags reports an exceptional return,
-    and the prompt that the frames return to catches it and goes on with
-    the capture, as if the frame below had returned it (the prompt
-    driver's calls and resumes, and the root prompt's call of the
-    program). To the debugger the frames have ended, as for an exception,
-    so a step over `(k v)` stops at the next statement that runs: for an
-    escape-only `k`, the statement after the `call/cc` in the frame that
-    called it; for a full continuation, the statement the resumed frame
-    is in (a `let`'s, whose binding takes the value), then the next one.
-    A step out of the frame that called `k` stops at the same place. No
-    Scheme code sees the exception, and it is no guest exception to
-    interop (`isException` is false).
-    - *Only with tools.* Without tags nothing changes: the check is on
-      the capture path of `IsValue` only, and the code the JIT and the
-      native image compile has no tags (the native launcher has no
-      tools). Nor under `UNTRUSTED`, whose bytecode has every tag from the
-      start for the sandbox's limits (D10) and whose isolate has no
-      debugger: there the frames suspend as before, which the sandbox
-      counts as returns.
+    with tags (a tool asked for them), a call site that gets such a capture
+    throws it instead, as `AbandonedFrames` (from `IsValue`, and from the
+    root for an `Intrinsics` operation whose `raise` came back with one,
+    `AbandonedFrame`). It is a `ControlFlowException` and the Bytecode DSL's
+    one *unwind exception* (`GenerateBytecode.unwindExceptions`, Truffle
+    25.5): the generated interpreter passes it to the tags around the throw,
+    which report an exceptional return, and to nothing else (no interception
+    hook, no guest handler, no `EpilogExceptional`; our bytecode has no
+    `finally` handlers). It leaves every frame the capture abandons, and the
+    prompt that the frames return to catches it and goes on with the
+    capture, as if the frame below had returned it (the prompt driver's
+    calls and resumes, and the root prompt's call of the program). To the
+    debugger the frames have ended, as for an exception, so a step over
+    `(k v)` stops at the next statement that runs: for an escape-only `k`, the
+    statement after the `call/cc` in the frame that called it; for a full
+    continuation, the statement the resumed frame is in (a `let`'s, whose
+    binding takes the value), then the next one. A step out of the frame
+    that called `k` stops at the same place. A control-flow exception is no
+    guest exception, so exception breakpoints don't stop at it (Truffle's
+    `Breakpoint` leaves them out), and no Scheme code sees it.
+    - *Only with tools.* Without tags nothing changes: the check is on the
+      capture path of `IsValue` only, and the code the JIT and the native
+      image compile has no tags (the native launcher has no tools). Nor
+      under `UNTRUSTED`, whose bytecode has every tag from the start for the
+      sandbox's limits (D10) and whose isolate has no debugger: there the
+      frames suspend as before, which the sandbox counts as returns. The CPU
+      tracer's and the coverage tool's counts, and
+      `sandbox.MaxStackFrames`'s, are as before: they count entries, and a
+      yield was a return to them too.
     - *What it costs with tools.* An escape that leaves frames is a Java
-      exception through the host-compiled interpreter, which deoptimizes
-      as M9-04 found ("Escape-only `k` returns too"). With the coverage
-      tool on (JIT, 15 iterations, 3 runs each, interleaved), `puzzle`'s
-      first iteration took 0.83-1.08 s against 0.27-0.31 s, and its later
-      ones 0.04 s against 0.05 s; `ctak` and `fibc` were unchanged.
-    - *What tools see.* An exception breakpoint ("pause on exceptions",
-      caught or uncaught) stops at each escape, with the message *"a
-      continuation was invoked: its frames up to the prompt are
-      abandoned"*: Truffle's debugger leaves out only control-flow
-      exceptions (and `ThreadDeath`), and an exception that is no guest
-      exception counts as uncaught. The CPU tracer's and the coverage
-      tool's counts are as before (they count entries; a yield was a
-      return to them too), and so is `sandbox.MaxStackFrames`'s (an
-      exceptional return is a return).
-    - *Why not a control-flow exception*, which tools would see end each
-      frame without an exception breakpoint stopping, as an AST
-      interpreter's wrapper node reports one: the Bytecode DSL passes a
-      `ControlFlowException` to no tag. The generated `continueAt`
-      rethrows it before it looks for a handler (`resolveThrowable`), a
-      tag's included, so no tool sees the frame end and the debugger's
-      depth drifts by one per frame (#285's second attempt; docs/upstream.md,
-      "A control-flow exception skips a root's tags", with
-      `UpstreamControlFlowTagsTest`). When that is fixed, `AbandonedFrames`
-      can be one, and exception breakpoints won't stop.
+      exception through the host-compiled interpreter, which deoptimizes as
+      M9-04 found ("Escape-only `k` returns too"). With the coverage tool on
+      (JIT, a process each, interleaved), `puzzle`'s first iteration took
+      0.24-0.27 s in 6 runs of 8 and 0.69-0.74 s in 2 (`main` 0.26-0.28 s in
+      all 8), and its later ones 0.041 s against 0.044 s; `ctak` and `fibc`
+      were the same (3 runs each).
+    - *Why an unwind exception.* Any other control-flow exception reaches no
+      tag: the generated `continueAt` rethrows it before it looks for a
+      handler (`resolveThrowable`), so no tool sees the frame end and the
+      debugger's depth drifts by one per frame (#285's second attempt, with
+      `AbandonedFrame`). A Truffle exception (`AbstractTruffleException`)
+      reaches the tags too, and a prototype with one stepped the same way,
+      but an exception breakpoint ("pause on exceptions", caught or
+      uncaught) stopped at every escape: Truffle's debugger leaves out only
+      control-flow exceptions and `ThreadDeath`, and counts an exception
+      that is no guest exception as uncaught.
     - *Rejected: a return from the call site, with the prompt roots
       internal* (#285's first attempt and its "what a fix needs").
       `CallSiteEmitter` emitted `CallSite(Call(...),
-      Block(IfThen(Abandons(), Return(Abandon())), Resumed(SuspendFrame())))`,
-      10 instructions after the call against M7-02's 6 (`CallSiteTest`),
-      and `PromptRootNode`, `EscapeRootNode` and `PromptProcedureRootNode`
-      were internal, so that the debugger looks past them for the caller.
-      It cost nothing measurable either (below), but a normal return
-      makes the debugger stop after the call in the caller, with the
-      returned capture as the value: a step over `(k 5)` stopped first
-      after `call/cc` with `#<capture>`, and when `k` was invoked from a
-      procedure the receiver called, once more in each abandoned frame
-      (`<lambda>:11=#<capture>`, after the call of that procedure, which
-      never finishes). The internal prompts took `<prompt>`, `call/cc`
-      and `%call-with-prompt` out of guest stack traces (the error
-      messages were the same), and a step out of a frame resumed from the
-      heap then ran to the end instead of stopping in `<prompt>` (M12-07's
-      `SteppingTest`). So M7-02's budget stays 6 and the prompts stay
-      external.
-    - *Measured* (prototypes on #294's `main`: the return with internal
-      prompts, and the exception; copies of each build, an Apple M3 Max
-      shared with other agents). Each program in a process of its own,
-      15 iterations at `bench-check`'s workloads, the first iteration and
-      the median of the last five; rounds of main, return, exception,
-      main, so each round has an A/A pair; runs whose 1-minute load was
-      above 10 left out. `fib`, `tak`, `ctak` and `fibc`, 8 rounds, load
-      3.9-7.4, JIT and native launcher: every median within 1.5% of
-      main's, as were the A/A pairs (`ctak` steady state 98.1 ms on main,
-      98.5 with the return, 99.0 with the exception; natively 99.2, 99.7,
-      98.9; `fibc` 61.7, 62.3, 61.4 and 57.2, 57.1, 57.2). The other 16
-      programs of `bench-check`, 4 rounds, load 3.5-12.7 (22 of 512 runs
-      left out): each within its A/A pair's spread, up to 10% at that load.
-      `continueAt`'s host compilations (`-Djdk.graal.PrintCompilation=true`,
-      interpreted `ctak` and `parsing`, two runs each) were the same sizes
-      on all three: 40-42 KB of bytecode and 12-16 KB of code for the
-      first, 47-85 KB and 21-38 KB for the later ones.
+      Block(IfThen(Abandons(), Return(Abandon())),
+      Resumed(SuspendFrame())))`, 10 instructions after the call against
+      M7-02's 6 (`CallSiteTest`), and `PromptRootNode`, `EscapeRootNode` and
+      `PromptProcedureRootNode` were internal, so that the debugger looks
+      past them for the caller. It cost nothing measurable either (below),
+      but a normal return makes the debugger stop after the call in the
+      caller, with the returned capture as the value: a step over `(k 5)`
+      stopped first after `call/cc` with `#<capture>`, and when `k` was
+      invoked from a procedure the receiver called, once more in each
+      abandoned frame (`<lambda>:11=#<capture>`, after the call of that
+      procedure, which never finishes). The internal prompts took
+      `<prompt>`, `call/cc` and `%call-with-prompt` out of guest stack
+      traces (the error messages were the same), and a step out of a frame
+      resumed from the heap then ran to the end instead of stopping in
+      `<prompt>` (M12-07's `SteppingTest`). So M7-02's budget stays 6 and
+      the prompts stay external.
+    - *Measured.* Copies of each build, an Apple M3 Max shared with other
+      agents. Each program in a process of its own, 15 iterations at
+      `bench-check`'s workloads, the first iteration and the median of the
+      last five, in rounds that run `main` twice (an A/A pair); runs whose
+      1-minute load was above 10 left out. The unwind exception, against
+      #295's `main`: `fib`, `tak`, `ctak`, `fibc` and `puzzle`, JIT and
+      native launcher, 6 rounds (load 5.4-15.6, 51 of 180 runs left out),
+      and `ctak` and `fibc` in 6 more (load 4.8-6.5): every median within
+      1.5% of `main`'s and within its A/A pair's spread (`ctak`'s steady
+      state 98.9 ms on `main` and 98.4 with it, natively 99.3 and 98.9;
+      `fibc`'s 61.6 and 61.4, natively 57.0 and 57.1; their first iterations
+      274 and 270, 168 and 170, 216 and 217, 118 and 118), and
+      `continueAt`'s host compilations the same sizes as `main`'s (below).
+      The return and the Truffle exception, against #294's `main`: `fib`,
+      `tak`, `ctak` and `fibc`, 8 rounds, load 3.9-7.4, JIT and native
+      launcher, every median within 1.5% of `main`'s, as were the A/A pairs;
+      the other 16 programs of `bench-check`, 4 rounds, load 3.5-12.7 (22 of
+      512 runs left out), each within its A/A pair's spread, up to 10% at
+      that load. `continueAt`'s host compilations
+      (`-Djdk.graal.PrintCompilation=true`, interpreted `ctak` and
+      `parsing`, two runs each) were the same sizes for all of them: 40-42
+      KB of bytecode and 12-16 KB of code for the first, 47-85 KB and 21-38
+      KB for the later ones.
 - **Logging.** The language logs through Truffle (`TruffleLogger`), so
   `--log.scheme.level=FINE` (the launcher), `-Dpolyglot.log.scheme.level=FINE`
   or `Context.Builder.option("log.scheme.level", "FINE")` turns it on, and
