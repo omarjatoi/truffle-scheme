@@ -4810,8 +4810,9 @@ and so neither can the Scheme frames below them.
     isolate is built is needed to tell the isolate from the native
     launcher: the check below, for an image without reflection metadata,
     reads a class's members only when the class is an object of the image
-    itself (`Env.isHostObject`, `asHostObject`), never a handle to the
-    host's.
+    itself. Interop tells them apart: `InteropLibrary.asHostObject` throws
+    `HeapIsolationException` *"if the guest object represents a host object
+    located in a foreign heap, for example in a polyglot isolate"*.
 - **The launchers.** The `scheme` launcher's context is the launcher
   framework's, `allowAllAccess(true)` (D17), as GraalVM's own launchers'
   are, so a script can use all of the library. What it reaches is what
@@ -4852,8 +4853,11 @@ and so neither can the Scheme frames below them.
     class, rather than answer a class whose every use is then "not
     supported". An interface passes (one with no methods is legitimate,
     and `foreign-instance?` needs only the class). In an embedder's image
-    built with metadata for the class, `java-type` works as on the JVM.
-    (Until the review below, it refused in every native image.)
+    built with metadata for the class, `java-type` works as on the JVM:
+    `//tests:polyglot_native` builds the launcher's library with metadata
+    for two classes, as an embedder's jar gives it, and runs `java-type`
+    through it. (Until the review below, it refused in every native
+    image.)
 
 **Testing with a second language.** The tests need another Truffle language.
 `org.graalvm.truffle:truffle-sl`, GraalVM's SimpleLanguage, is on Maven
