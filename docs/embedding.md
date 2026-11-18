@@ -172,8 +172,9 @@ try (Engine engine = Engine.newBuilder("scheme").option("scheme.LibraryPath", li
 ## Sandboxing and resource limits
 
 Scheme reaches files, standard streams and environment variables only
-through what the context allows (design.md D10), and can't reach Java
-objects or other languages. So it runs under GraalVM's
+through what the context allows (design.md D10), and Java objects and other
+languages only through `(graalvm polyglot)`, with what the context allows
+([below](#scheme-calling-other-languages-and-java)). So it runs under GraalVM's
 [`SandboxPolicy.CONSTRAINED`](https://www.graalvm.org/latest/security-guide/sandboxing/),
 for code you trust but whose access to the host you want to regulate:
 `Context.newBuilder("scheme").sandbox(SandboxPolicy.CONSTRAINED)` with
@@ -181,8 +182,9 @@ for code you trust but whose access to the host you want to regulate:
 `file-error?` answers, unless you give the context a file system of your own
 (`IOAccess.newBuilder().fileSystem(...)`, such as a zip file's through
 `FileSystem.newFileSystem`), from which libraries are then read too;
-`get-environment-variable` finds none; and `exit` ends the context, not the
-JVM. `scheme.LibraryPath`, `scheme.BufferOutput` and `scheme.StackSize` can
+`get-environment-variable` finds none; `exit` ends the context, not the
+JVM; and `java-type` is refused, whatever the class filter allows (design.md
+D20). `scheme.LibraryPath`, `scheme.BufferOutput` and `scheme.StackSize` can
 be set under it, and under the stricter policies below.
 
 With or without a policy, Truffle's limits stop a context that runs too long
@@ -356,9 +358,12 @@ values: integers (including a `BigInteger`) are exact integers, `float` and
 Anything else, Java's `null` included, stays a *foreign value*. Scheme can
 store it, return it (Java gets the same object back) and compare it with
 `eq?`, `eqv?` and `equal?` (identity); `write` shows it as `#<foreign ...>`.
-Every type predicate is false for it, so a primitive given one raises a
-Scheme error, and calling one is a "not a procedure" error. Scheme code can't
-call into Java or other languages in this version (D10).
+Every type predicate is false for it but `procedure?`, which is true of an
+executable one (a Java lambda, another language's function): Scheme can call
+it. A primitive given one raises a Scheme error, and calling one that isn't
+executable is a "not a procedure" error. Scheme code reaches into Java and
+other languages through `(graalvm polyglot)`
+([below](#scheme-calling-other-languages-and-java)).
 
 <!-- readme: file tests/scheme/test/EmbeddingGuideTest.java#java-values -->
 ```java
@@ -543,3 +548,84 @@ assertEquals("a", next.execute().toString());
 assertEquals("b", next.execute().toString());
 assertEquals("done", next.execute().toString());
 ```
+
+## Scheme calling other languages and Java
+
+A program that imports `(graalvm polyglot)` reaches the other languages of
+the context, the polyglot bindings and Java classes, with what the context
+allows (design.md D20); a program that doesn't import it sees none of it.
+
+| Procedure | |
+|---|---|
+| `(polyglot-eval language source)`, `(polyglot-eval-file language path)` | Evaluates code of another language of the context: `allowPolyglotAccess`, and the language permitted (`Context.newBuilder("scheme", "js")`). |
+| `(polyglot-language-available? language)` | Whether `polyglot-eval` may evaluate that language. |
+| `(polyglot-import name)`, `(polyglot-export name value)` | The polyglot bindings, `context.getPolyglotBindings()` in Java (`allowPolyglotAccess`); `polyglot-import` answers `#f` for a name nothing exports. |
+| `(java-type name)` | A Java class (`allowHostClassLookup`), refused under `SandboxPolicy.CONSTRAINED` and the stricter policies, and in a native image (the native launcher, a polyglot isolate). |
+| `(foreign? x)`, `(foreign-null? x)` | Whether `x` is a foreign value, and a foreign null (Java's `null`). |
+| `(foreign-ref obj key)`, `(foreign-set! obj key value)` | An array element (an exact integer key), a map's value (`HostAccess` with map access), or a member: a field, a method, another language's property (a string or symbol key). |
+| `(foreign-length obj)`, `(foreign-keys obj)` | An array's or a map's size; a map's keys, or an object's member names. |
+| `(foreign->list obj)`, `(foreign->vector obj)` | An array's or an iterable's elements, copied. |
+| `(foreign-invoke obj member arg ...)`, `(foreign-new class arg ...)` | A method call, and `new`. |
+| `(foreign-instance? obj type)` | `instanceof`. |
+
+What comes back is converted as an argument from Java is ([Java values in
+Scheme](#java-values-in-scheme)): numbers, strings, characters and booleans
+become Scheme values, anything else stays a foreign value. A foreign array,
+list or map is not a vector or a list: read it with `foreign-ref`, or copy it
+with `foreign->list`. A foreign function is a procedure. A foreign exception
+is raised in Scheme as itself, so `guard` catches it: `error-object?` is
+true of it, with its message as `error-object-message`; one that Scheme
+doesn't catch reaches Java as it was thrown.
+
+<!-- readme: file tests/scheme/test/EmbeddingGuideTest.java#polyglot -->
+```java
+Context.Builder builder = Context.newBuilder("scheme");
+builder.allowPolyglotAccess(PolyglotAccess.ALL); // polyglot-eval, polyglot-import and -export
+builder.allowHostAccess(HostAccess.ALL); // the members of Java objects
+builder.allowHostClassLookup(name -> name.startsWith("java.util.")); // what java-type may find
+try (Context context = builder.build()) {
+    context.getPolyglotBindings().putMember("greeting", "Hello");
+    Value program = context.eval("scheme", """
+                    (import (scheme base) (graalvm polyglot))
+                    (define names (foreign-new (java-type "java.util.ArrayList")))
+                    (foreign-invoke names 'add "Ada")
+                    (foreign-invoke names 'add "Grace")
+                    (polyglot-export "greet"
+                      (lambda (name) (string-append (polyglot-import "greeting") ", " name "!")))
+                    (map (lambda (name) (string-length name)) (foreign->list names))
+                    """);
+    assertEquals("(3 5)", program.toString());
+    Value greet = context.getPolyglotBindings().getMember("greet");
+    assertEquals("Hello, Ada!", greet.execute("Ada").asString());
+
+    // A Java lambda is a procedure to Scheme, and a Java exception is raised there.
+    Value probe = context.eval("scheme", """
+                    (import (scheme base) (graalvm polyglot))
+                    (lambda (f items)
+                      (list (f (foreign-invoke items 'get 0))
+                            (guard (e ((error-object? e) 'caught)) (foreign-invoke items 'get 5))))
+                    """);
+    Function<Object, String> describe = x -> "got " + x;
+    assertEquals("(\"got 1\" caught)", probe.execute(describe, List.of(1, 2)).toString());
+}
+```
+
+When another language calls a Scheme procedure (a callback), the procedure
+runs under a prompt of its own, as a call from Java does, and without the
+exception handlers of the Scheme code that called that language: an error
+the procedure doesn't handle leaves it through the other
+language's frames (which can catch it) and is raised again where Scheme
+called that language. A continuation can't cross the other language's
+frames: invoking, inside a callback, one captured outside it, or, after the
+foreign call has returned, one captured in its callback, is a Scheme error
+(design.md D20, "Continuations across foreign frames").
+
+Under `ISOLATED` and `UNTRUSTED` ([above](#isolated-and-untrusted)), Scheme
+runs in the isolate, which holds no other language: `polyglot-eval` reaches
+only Scheme, and a context that permits another language with Scheme can't
+be built (*"No native isolate library is available for the requested
+language(s)"*). `java-type` is refused. The polyglot bindings, values you
+hand Scheme (proxies, Java objects under the policy's `HostAccess`, which has
+no list, array or map access by default) and functions it calls back work
+as on the JVM, through the isolate's handles, and so do errors and the
+continuation rules above (design.md D20, "Permissions and the sandbox").

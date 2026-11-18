@@ -15,6 +15,7 @@ import com.oracle.truffle.api.staticobject.StaticProperty;
 import scheme.runtime.Capture;
 import scheme.runtime.Continuation;
 import scheme.runtime.DynEnv;
+import scheme.runtime.Foreign;
 import scheme.runtime.Intrinsics;
 import scheme.runtime.PrimitiveNode;
 import scheme.runtime.PrimitiveRootNode;
@@ -152,7 +153,8 @@ final class ControlPrimitives {
                 case BOOLEAN_EQ:
                     return new BooleanEquals();
                 case IS_PROCEDURE:
-                    return new TypePredicate(x -> x instanceof SClosure);
+                    // A foreign executable is a procedure too (design.md D20).
+                    return new TypePredicate(x -> x instanceof SClosure || Foreign.isProcedure(x));
                 case VALUES:
                     return new Values();
                 case VALUES_TO_LIST:
@@ -400,6 +402,9 @@ final class ControlPrimitives {
                 case COMPOSABLE:
                     return k.composable;
                 default:
+                    // %continue asks for it before it rewinds: so a continuation that can't be
+                    // invoked here fails before any dynamic-wind thunk runs (design.md D20).
+                    k.checkInvocable(SchemeContext.get(this));
                     return k.dynEnv;
             }
         }
@@ -636,13 +641,17 @@ final class ControlPrimitives {
             Object x = args[1];
             switch (op) {
                 case TEST:
-                    return x instanceof SErrorObject;
+                    // A foreign exception is an error object too (design.md D20).
+                    return x instanceof SErrorObject || Foreign.isException(x);
                 case READ:
                     return x instanceof SErrorObject e && e.kind == SErrorObject.Kind.READ;
                 case FILE:
                     return x instanceof SErrorObject e && e.kind == SErrorObject.Kind.FILE;
                 default:
                     if (!(x instanceof SErrorObject e)) {
+                        if (Foreign.isException(x)) {
+                            return op == MESSAGE ? Foreign.exceptionMessage(x) : SConstant.EMPTY_LIST;
+                        }
                         throw notA(op == MESSAGE ? "error-object-message" : "error-object-irritants", "error object", x);
                     }
                     return op == MESSAGE ? e.message : e.irritants;

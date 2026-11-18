@@ -329,7 +329,7 @@ final class PromptDriver extends Node {
                         pending = null;
                         throw unwind(e, unwound);
                     }
-                    value = new PendingRaise(e.getErrorObject());
+                    value = new PendingRaise(e.getRaised());
                 }
             }
         } finally {
@@ -428,7 +428,7 @@ final class PromptDriver extends Node {
         while (true) {
             Object unwind = context.unwindRoot;
             if (context.getDynamicEnv().winders == outer.winders || !(unwind instanceof SClosure)) {
-                throw leaving;
+                throw Foreign.leaving(leaving);
             }
             Object result;
             try {
@@ -440,7 +440,7 @@ final class PromptDriver extends Node {
             if (result != UNWOUND) {
                 return result;
             }
-            throw leaving;
+            throw Foreign.leaving(leaving);
         }
     }
 
@@ -597,16 +597,9 @@ final class PromptDriver extends Node {
 
     /** Index 0 of {@code arguments} is (or is set to) the procedure. */
     Object callWithProcedure(Object procedure, Object[] arguments) {
-        if (!(procedure instanceof SClosure closure)) {
-            throw notAProcedure(procedure);
-        }
-        arguments[0] = closure;
-        return calls.executeCall(closure, arguments);
-    }
-
-    @TruffleBoundary
-    private static SchemeError notAProcedure(Object value) {
-        return new SchemeError("not a procedure: " + Printer.print(value, Printer.Mode.WRITE));
+        // Not a closure: a foreign executable, or the "not a procedure" error (Foreign.call).
+        arguments[0] = procedure;
+        return calls.executeCall(procedure, arguments);
     }
 
     /** Torture mode: the original frame of a resumed segment still equals a copy taken before. */

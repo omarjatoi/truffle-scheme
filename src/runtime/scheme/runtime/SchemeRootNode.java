@@ -308,7 +308,7 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
         if (!e.isRaisable() || !(raise instanceof SClosure closure)) {
             throw e;
         }
-        return trampoline.run(trampoline.executeCall(closure, new Object[]{closure, e.getErrorObject()}));
+        return trampoline.run(trampoline.executeCall(closure, new Object[]{closure, e.getRaised()}));
     }
 
     /**
@@ -443,9 +443,10 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
             }
         }
 
+        /** A foreign executable is a procedure (design.md D20); anything else is not. */
         @Fallback
-        static Object doNotAProcedure(Object procedure, @SuppressWarnings("unused") @Variadic(startOffset = 1) Object[] arguments) {
-            throw notAProcedure(procedure);
+        static Object doOther(Object procedure, @Variadic(startOffset = 1) Object[] arguments) {
+            return Foreign.call(procedure, arguments);
         }
 
         /**

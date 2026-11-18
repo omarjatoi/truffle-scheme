@@ -15,9 +15,12 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Function;
 
 import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.Engine;
+import org.graalvm.polyglot.HostAccess;
+import org.graalvm.polyglot.PolyglotAccess;
 import org.graalvm.polyglot.PolyglotException;
 import org.graalvm.polyglot.ResourceLimits;
 import org.graalvm.polyglot.Source;
@@ -315,5 +318,40 @@ public class EmbeddingGuideTest {
             assertEquals("done", next.execute().toString());
             // readme-snippet-end
         }
+    }
+
+    @Test
+    public void polyglot() {
+        // readme-snippet: polyglot
+        Context.Builder builder = Context.newBuilder("scheme");
+        builder.allowPolyglotAccess(PolyglotAccess.ALL); // polyglot-eval, polyglot-import and -export
+        builder.allowHostAccess(HostAccess.ALL); // the members of Java objects
+        builder.allowHostClassLookup(name -> name.startsWith("java.util.")); // what java-type may find
+        try (Context context = builder.build()) {
+            context.getPolyglotBindings().putMember("greeting", "Hello");
+            Value program = context.eval("scheme", """
+                            (import (scheme base) (graalvm polyglot))
+                            (define names (foreign-new (java-type "java.util.ArrayList")))
+                            (foreign-invoke names 'add "Ada")
+                            (foreign-invoke names 'add "Grace")
+                            (polyglot-export "greet"
+                              (lambda (name) (string-append (polyglot-import "greeting") ", " name "!")))
+                            (map (lambda (name) (string-length name)) (foreign->list names))
+                            """);
+            assertEquals("(3 5)", program.toString());
+            Value greet = context.getPolyglotBindings().getMember("greet");
+            assertEquals("Hello, Ada!", greet.execute("Ada").asString());
+
+            // A Java lambda is a procedure to Scheme, and a Java exception is raised there.
+            Value probe = context.eval("scheme", """
+                            (import (scheme base) (graalvm polyglot))
+                            (lambda (f items)
+                              (list (f (foreign-invoke items 'get 0))
+                                    (guard (e ((error-object? e) 'caught)) (foreign-invoke items 'get 5))))
+                            """);
+            Function<Object, String> describe = x -> "got " + x;
+            assertEquals("(\"got 1\" caught)", probe.execute(describe, List.of(1, 2)).toString());
+        }
+        // readme-snippet-end
     }
 }

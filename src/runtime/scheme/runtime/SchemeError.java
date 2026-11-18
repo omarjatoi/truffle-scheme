@@ -67,9 +67,13 @@ public final class SchemeError extends AbstractTruffleException {
     }
 
     private SchemeError(String message, Object raised) {
+        this(message, raised, false);
+    }
+
+    private SchemeError(String message, Object raised, boolean raisable) {
         super(message);
         this.errorObject = raised instanceof SErrorObject e ? e : null;
-        this.uncaught = raised;
+        this.uncaught = raisable ? null : raised;
         this.raised = raised;
         this.syntax = false;
         this.incompleteSource = false;
@@ -259,6 +263,24 @@ public final class SchemeError extends AbstractTruffleException {
     @TruffleBoundary
     public static SchemeError uncaught(String message, Object raised) {
         return new SchemeError(message, raised);
+    }
+
+    /**
+     * An error that a call site raises as {@code raised} itself, whatever it is (design.md D20): a
+     * foreign exception, or what a callback raised and left uncaught, raised again at the foreign
+     * call's site.
+     */
+    @TruffleBoundary
+    public static SchemeError raising(Object raised, String message) {
+        return new SchemeError(message, raised, true);
+    }
+
+    /**
+     * What a call site passes to Scheme {@code raise} for a raisable error: the error object, or what
+     * {@link #raising} was given.
+     */
+    public Object getRaised() {
+        return raised;
     }
 
     /** Whether a call site passes this error to Scheme {@code raise} (not uncaught, not syntax). */

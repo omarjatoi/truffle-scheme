@@ -337,9 +337,10 @@ public final class Trampoline extends Node {
             return callNode.call(procedure.callTarget, arguments);
         }
 
+        /** A foreign executable is a procedure (design.md D20); anything else is not. */
         @Fallback
-        static Object doNotAProcedure(Object procedure, @SuppressWarnings("unused") Object[] arguments) {
-            throw SchemeRootNode.notAProcedure(procedure);
+        static Object doOther(Object procedure, Object[] arguments) {
+            return Foreign.call(procedure, arguments);
         }
 
         static PrimitiveSpec inPlace(RootCallTarget target) {

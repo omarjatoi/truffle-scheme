@@ -8,6 +8,8 @@ import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.nodes.RootNode;
 
+import scheme.runtime.value.SConstant;
+
 /**
  * A Scheme procedure called through interop ({@code InteropLibrary.execute}: an embedder, another
  * language, a tool), design.md D10. The arguments are {@code [procedure, arg...]}, already Scheme
@@ -28,7 +30,10 @@ import com.oracle.truffle.api.nodes.RootNode;
  * </ul>
  *
  * Hand-written, like {@link PromptRootNode}: it is a driver loop, not Scheme code. It is not a
- * builtin (rule 1): no Scheme frame sits below it, since Scheme code can't call foreign code (D10).
+ * builtin (rule 1). Scheme frames sit below it only when foreign code that Scheme called calls back
+ * (a callback, design.md D20): its prompt delimits every capture inside, a continuation can't cross
+ * the foreign frames ({@link Continuation#checkInvocable}), and it starts with no exception
+ * handlers, so an error leaves it for the foreign call's site.
  */
 final class InteropCallRootNode extends RootNode {
 
@@ -43,6 +48,12 @@ final class InteropCallRootNode extends RootNode {
         Object[] arguments = frame.getArguments();
         SchemeContext context = SchemeContext.get(this);
         DynEnv caller = context.getDynamicEnv();
+        if (context.foreignDepth > 0 && caller.handlers != SConstant.EMPTY_LIST) {
+            // A callback from foreign code (design.md D20): in the foreign call's dynamic
+            // environment, but with no handlers, so that a raise it doesn't handle leaves it, through
+            // the foreign frames, and is raised again at the foreign call's site.
+            context.setDynamicEnv(new DynEnv(caller.winders, caller.parameterization, SConstant.EMPTY_LIST));
+        }
         StackBudget.enterRoot(context);
         try {
             Object first = driver.callWithProcedure(arguments[0], arguments);

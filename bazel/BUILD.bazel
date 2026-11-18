@@ -75,6 +75,19 @@ java_library(
     ],
 )
 
+# TEST ONLY: a second Truffle language for the polyglot tests (design.md D20), GraalVM's
+# SimpleLanguage and the ANTLR runtime it requires. Only the "polyglot" kind of unit test
+# (bazel/junit.bzl) puts it on the module path: nothing the language, the launcher or the native
+# image is built from depends on it.
+java_library(
+    name = "test_languages",
+    testonly = True,
+    runtime_deps = [
+        "@jvm//:org_antlr_antlr4_runtime",
+        "@jvm//:org_graalvm_truffle_truffle_sl",
+    ],
+)
+
 # Builds a module's jar (java_module.bzl).
 java_binary(
     name = "module_jar",

@@ -18,11 +18,13 @@
     "org.graalvm.truffle:truffle-compiler": -669081846,
     "org.graalvm.truffle:truffle-dsl-processor": -171150633,
     "org.graalvm.truffle:truffle-runtime": 900507457,
+    "org.graalvm.truffle:truffle-sl": -2134102128,
     "org.hamcrest:hamcrest-core": -1351165872,
     "repositories": -1949687017
   },
   "__RESOLVED_ARTIFACTS_HASH": {
     "junit:junit": -1256429642,
+    "org.antlr:antlr4-runtime": 460090011,
     "org.graalvm.polyglot:polyglot": 2028572980,
     "org.graalvm.sdk:collections": 1089635172,
     "org.graalvm.sdk:jniutils": 13115543,
@@ -39,12 +41,19 @@
     "org.graalvm.truffle:truffle-compiler": -57205897,
     "org.graalvm.truffle:truffle-dsl-processor": 336564130,
     "org.graalvm.truffle:truffle-runtime": -1381511972,
+    "org.graalvm.truffle:truffle-sl": 891559953,
     "org.hamcrest:hamcrest-core": 649657847
   },
   "artifacts": {
     "junit:junit": {
       "shasums": {
         "jar": "8e495b634469d64fb8acfa3495a065cbacc8a0fff55ce1e31007be4c16dc57d3"
+      },
+      "version": "4.13.2"
+    },
+    "org.antlr:antlr4-runtime": {
+      "shasums": {
+        "jar": "dd3e8a13a2d669bf84fb8d834de35ce4875f27157698d206241ec8488aadcaf7"
       },
       "version": "4.13.2"
     },
@@ -144,6 +153,12 @@
       },
       "version": "25.5.5.0.3"
     },
+    "org.graalvm.truffle:truffle-sl": {
+      "shasums": {
+        "jar": "4f37d9a0e0ebf90a9f497e845b96b55feeeec748e4d7d425bfd04ae962fc0368"
+      },
+      "version": "25.5.5.0.3"
+    },
     "org.hamcrest:hamcrest-core": {
       "shasums": {
         "jar": "66fdef91e9739348df7a096aa384a5685f4e875584cce89386a7a47251c4d8e9"
@@ -200,6 +215,10 @@
     "org.graalvm.truffle:truffle-runtime": [
       "org.graalvm.truffle:truffle-api",
       "org.graalvm.truffle:truffle-compiler"
+    ],
+    "org.graalvm.truffle:truffle-sl": [
+      "org.antlr:antlr4-runtime",
+      "org.graalvm.truffle:truffle-api"
     ]
   },
   "packages": {
@@ -236,6 +255,15 @@
       "org.junit.runners.model",
       "org.junit.runners.parameterized",
       "org.junit.validator"
+    ],
+    "org.antlr:antlr4-runtime": [
+      "org.antlr.v4.runtime",
+      "org.antlr.v4.runtime.atn",
+      "org.antlr.v4.runtime.dfa",
+      "org.antlr.v4.runtime.misc",
+      "org.antlr.v4.runtime.tree",
+      "org.antlr.v4.runtime.tree.pattern",
+      "org.antlr.v4.runtime.tree.xpath"
     ],
     "org.graalvm.polyglot:polyglot": [
       "org.graalvm.home",
@@ -405,6 +433,19 @@
       "com.oracle.truffle.runtime.jfr.impl",
       "com.oracle.truffle.runtime.serviceprovider"
     ],
+    "org.graalvm.truffle:truffle-sl": [
+      "com.oracle.truffle.sl",
+      "com.oracle.truffle.sl.builtins",
+      "com.oracle.truffle.sl.bytecode",
+      "com.oracle.truffle.sl.nodes",
+      "com.oracle.truffle.sl.nodes.controlflow",
+      "com.oracle.truffle.sl.nodes.expression",
+      "com.oracle.truffle.sl.nodes.interop",
+      "com.oracle.truffle.sl.nodes.local",
+      "com.oracle.truffle.sl.nodes.util",
+      "com.oracle.truffle.sl.parser",
+      "com.oracle.truffle.sl.runtime"
+    ],
     "org.hamcrest:hamcrest-core": [
       "org.hamcrest",
       "org.hamcrest.core",
@@ -414,6 +455,7 @@
   "repositories": {
     "https://repo1.maven.org/maven2/": [
       "junit:junit",
+      "org.antlr:antlr4-runtime",
       "org.graalvm.polyglot:polyglot",
       "org.graalvm.sdk:collections",
       "org.graalvm.sdk:jniutils",
@@ -430,6 +472,7 @@
       "org.graalvm.truffle:truffle-compiler",
       "org.graalvm.truffle:truffle-dsl-processor",
       "org.graalvm.truffle:truffle-runtime",
+      "org.graalvm.truffle:truffle-sl",
       "org.hamcrest:hamcrest-core"
     ]
   },
@@ -537,6 +580,11 @@
       ],
       "com.oracle.truffle.runtime.jfr.EventFactory$Provider": [
         "com.oracle.truffle.runtime.jfr.impl.ProviderImpl"
+      ]
+    },
+    "org.graalvm.truffle:truffle-sl": {
+      "com.oracle.truffle.api.provider.TruffleLanguageProvider": [
+        "com.oracle.truffle.sl.SLLanguageProvider"
       ]
     }
   },
