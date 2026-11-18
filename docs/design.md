@@ -1221,7 +1221,7 @@ Each entry: the decision, why, and what was rejected.
 | char | `SChar` (`int` code point), with a cache for 0–255 |
 | string | `SString`: Latin-1 `byte[]` until a character above 255 is stored, then UTF-32 `int[]`. Indexing and `string-set!` are O(1). Literals carry an immutable flag. `substring`, `string-append` and `string-copy!` copy between strings of one storage with an array copy (M8-04). A string from Java text (a `String`, or a reader's `char[]`) is built in one pass: Latin-1 bytes until the first unit above 255, then code points, each run of units between surrogates copied by a widening loop of its own (#216 and #220, after M10-05; `codePoints().toArray()` and two more passes until then). A decoder that fills the arrays itself hands them over (`ofLatin1`, `ofCodePoints`, M11-06), copied only to leave out unused room. |
 | symbol | `SSymbol`, interned per context (held weakly, so a symbol nothing refers to is collected; M8-02), name is a `TruffleString` |
-| pair | `SPair`, mutable `car`/`cdr` fields; literal pairs aren't marked immutable yet (below) |
+| pair | `SPair`, mutable `car`/`cdr` fields; a literal's pairs are `LiteralPair`s, a final subclass that `set-car!`, `set-cdr!` and `list-set!` refuse (below) |
 | vector / bytevector | `SVector` (`long[]` while every element is a fixnum, `double[]` while every element is a flonum, otherwise `Object[]`, generalizing for good on the first store that doesn't fit; M5-06) / `SBytevector` (`byte[]`), each with an immutable flag for literals |
 | empty list, unspecified, eof, default object | singletons |
 | procedure | `SClosure { RootCallTarget, Object[] captured }` |
@@ -1426,59 +1426,107 @@ Each entry: the decision, why, and what was rejected.
     fast paths, with overflow checks on the `long` path. `SBigInteger`,
     `SRational` and `SComplex` go through one generic path marked
     `@TruffleBoundary`, so compiled code stays small for the common cases.
-- **Literal pairs aren't marked immutable (yet).** R7RS §3.4 (*"literal
+- **Literal pairs are immutable (M10-07).** R7RS §3.4 (*"literal
   constants ... are immutable ... it is an error to attempt to store a new
   value into a location that is denoted by an immutable object"*) and
   §4.1.2 (*"it is an error to attempt to alter a constant (i.e. the value
   of a literal expression) using a mutation procedure like `set-car!` or
-  `string-set!`"*) allow not detecting it, and for now nothing does:
-  literal strings, vectors and bytevectors carry an immutable flag and
-  their mutators signal, but `(set-car! '(1 2) 9)` succeeds, so
-  `(define (g) '(constant-list))` returns a list a `set-car!` changed for
-  every later call. The maintainer's decision (November 2026): keep that
-  until marking them costs nothing, since catching the bug matters. Two
-  representations were built and measured, each with interleaved A/B runs
-  against (A), today's final `SPair` with no marking:
-  - **(B) A `final boolean immutable` field on `SPair`** (#169, closed).
-    - Free on HotSpot: a pair is 24 bytes either way (a 12-byte header and
-      two compressed references, padded; the boolean fits in the padding).
-    - In the native launcher (D17, 8-byte header) every pair goes from 16
-      to 24 bytes: consing 10 million pairs allocated 229.61 MB instead of
-      152.92 MB.
-    - `destruc`, mostly `set-car!` and `set-cdr!`, was 3–4% slower in the
-      JIT, from the check itself (without it the field cost nothing). A
-      slow-path hint (`injectBranchProbability`) and a deoptimizing
-      seen-a-literal profile didn't help.
-  - **(C) A `final class LiteralPair extends SPair`** with no field of its
-    own (branch `literal-pair-subclass` at 9c24853, not a PR; 7 variants
-    measured, 5 interleaved rounds each). A literal's pairs are
-    `LiteralPair`s; `set-car!`, `set-cdr!` and `list-set!` take the fast
-    path only for exactly `SPair` (one compare of the class, which is also
-    the type check), and `car`, `cdr`, `pair?` and the list primitives'
-    loops compare the exact class with each of the two rather than use
-    `instanceof`.
-    - Memory: none. Natively, 10 million conses are 152.92 MB on both; on
-      HotSpot the class histogram is identical.
-    - JIT: neutral or faster (`destruc` 0.95×, `mazefun` 0.98×, a `length`
-      loop 0.84×).
-    - Interpreter: slower on programs that mix literal and run-time pairs:
-      `paraffins` 1.056× (every round 1.02–1.06), `browse` 1.089×
-      (0.94–1.12), a micro-benchmark mixing literal and run-time pairs
-      +24%.
-    - The native launcher's first runs: `destruc` 1.044×, `nboyer` 1.046×.
-    - The cause is the host compilation of the Bytecode DSL interpreter
-      loop (`continueAt`; "The host compiler"), not the checks: JFR spreads
-      the extra time across the loop, and one variant stopped HotSpot
-      inlining `Call.doPrimitive` and `SetPair.invoke` into it.
-    - Variants v2–v7 (generalising `car`/`cdr` with `replaces`,
-      `@ForceQuickening`, `getClass() ==` casts) each traded the
-      interpreter's cost for the JIT's: +4–10% on the JIT's `set-car!`
-      micro-benchmark.
-  - (C) is the preferred direction: its cost is in how the host compiles
-    the interpreter loop, which M10-02 changes, so it is re-measured after
-    M10-02 (plan.md M10-07). (B)'s native memory cost is in the
-    representation and won't go away. Also rejected: a weak identity set of
-    literal pairs (a hash lookup in every `set-car!`).
+  `string-set!`"*) allow not detecting it; literal strings, vectors and
+  bytevectors carry an immutable flag, and the maintainer's decision
+  (November 2026) was to catch the pair case too, so that
+  `(define (g) '(constant-list))` can't return a list a `set-car!` changed,
+  at the cost recorded below, which the maintainer accepted.
+  - *The representation.* A literal's pairs are `LiteralPair`s, a `final`
+    subclass of `SPair` with no field of its own (the class is the mark).
+    `set-car!`, `set-cdr!` and `list-set!` take their fast path only for
+    exactly `SPair` (`SPair.isMutable`: one compare of the class, which is
+    also the type check) and raise *"set-car!: pair is immutable (a
+    literal)"* (D8) on a `LiteralPair`. `car`, `cdr` and `pair?` have a
+    specialization for each class (`Intrinsics.Car.doPair` on exactly
+    `SPair`, `doLiteral` on `LiteralPair`), and the list primitives' loops
+    compare the exact class with each of the two (`SPair.asPair`) rather
+    than use `instanceof`, which `SPair`'s subclass would make a load of a
+    supertype. Everything else (`equal?`, `eqv?`, printing, `append`'s
+    shared last argument) takes a literal's pair as any pair.
+  - *What is a literal.* `quote`'s datum at any depth (circular ones too),
+    a self-evaluating vector's elements, quasiquote's constant parts
+    (§4.2.8: *"Portions that do not need to be rebuilt are always
+    literal"*; its folded `list->vector` constants are now immutable
+    vectors too), so also a `syntax-rules` template's quoted data and
+    `case`'s data; the literals of `eval`'s, `load`'s and `include`'s code
+    and of library bodies; the prelude image keeps the class (format 3).
+    Not: what `read`, `cons`, `list`, `list-copy` (of a literal too),
+    `append`'s copies, `map`, `vector->list` and rest lists make, and
+    quasiquote's rebuilt parts. Interop's `car` and `cdr` members (D10) are
+    read-only on a literal's pairs. The expander makes them
+    (`Syntax.toLiteral`, the copy `Syntax.toDatum` already made of a
+    literal's syntax).
+  - *Memory: none.* Natively (D17), consing 10 million pairs allocates
+    153.41 MB with and without it (`--vm.XX:+PrintGCSummary`); on HotSpot a
+    pair is 24 bytes either way.
+  - *Speed, measured on `main` at 2fef8c8* (M10-02 done), interleaved: this
+    design, `main`, and `main` again as an A/A floor, 5 rounds, the
+    benchmarks' JVM options (`-Xmx2g`, serial collector, 4 compiler
+    threads), an Apple M3 Max shared with other agents, 1-minute load
+    2.6-7.3. Ratios to `main`, the median of the per-round ratios [their
+    range], A/A in parentheses:
+    - JIT (programs' own counts, 10 iterations; first, then the median of
+      the last 5): first 0.953 by the geometric mean (A/A 0.997), steady
+      0.993 (1.009); `destruc` 0.969 [0.97-0.97] steady, a `length` loop
+      0.849, the `set-car!` micro-benchmark (a mutated list, and a sum over
+      a literal and a run-time list) 1.014 [1.00-1.03] (0.998 [0.99-1.00]).
+    - Interpreter, later iterations (4 iterations at a reduced count, the
+      median of the last 3; `nboyer` at size 4): 0.995 by the geometric
+      mean, as the A/A (0.995); but the `set-car!` micro-benchmark 1.057
+      (0.993), with each iteration 10 times as long to resolve it.
+    - Interpreter, first runs: `paraffins` 1.036 [1.02-1.05] (0.996
+      [0.98-1.00]), the rest within the A/A; geometric mean 1.005 (0.989).
+      `paraffins` compiles the bytecode interpreter's loop (`continueAt`)
+      4-5 times in its first run instead of 3 (310-400 ms against 230), and
+      `browse` 4 instead of 2-4 (JFR): `doLiteral` is a branch in the `car`
+      and `cdr` handlers that the host's profile of the loop, which every
+      site shares, hasn't seen when the loop is first compiled, so the
+      first literal to reach a `car` in compiled code traps there
+      ("The interpreter's first runs").
+    - The native launcher's first runs (3 iterations, the first): 1.002 by
+      the geometric mean (0.995), but `destruc` 1.016 [1.01-1.02], `mazefun`
+      1.013 [1.01-1.02], `browse` 1.009 [1.00-1.02], where the A/A is 1.000
+      [0.98-1.01] or tighter (before M10-02, `destruc` and `nboyer` were
+      1.044 and 1.046).
+  - *Designs measured against it*, each the same way (its own A/B rounds):
+    - One specialization for both classes in `car`, `cdr` and `pair?`,
+      `instanceof` in the interpreter and the two exact compares compiled
+      (branch `literal-pair-one-specialization`, dc745a4): the
+      interpreter as `main` (the same `continueAt` compilations; the
+      `set-car!` micro-benchmark 0.996), but the JIT 1.10-1.15 on `browse`
+      and 1.08 steady on `paraffins`: compiled, every `car` compares the
+      class twice and loses the exact class for the next operation.
+    - The same with `instanceof` compiled too: the JIT's `set-car!`
+      micro-benchmark 1.06.
+    - The same with a per-site speculation, in compiled code only, that the
+      site sees exactly `SPair` (66e8dd6, an `Assumption` per site,
+      invalidated by compiled code when a literal reaches it): `browse` as
+      `main`, but `paraffins` steady 1.76 and the micro-benchmark 1.055.
+      A `@CompilationFinal` flag instead looped on deoptimization: the
+      Bytecode DSL resumes an operation at its start in the interpreter,
+      which never sets the flag, and OSR code isn't invalidated by
+      `transferToInterpreterAndInvalidate`.
+  - Rejected: **(B) a `final boolean immutable` field on `SPair`** (#169,
+    closed): every pair 16 → 24 bytes natively (10 million conses 229.61
+    MB instead of 152.92), and `destruc` 3-4% slower in the JIT from the
+    check. A weak identity set of literal pairs: a hash lookup in every
+    `set-car!`.
+  - *Accepted by the maintainer* (plan.md M10-07, 2026-11-18): the JIT is
+    neutral or faster and memory unchanged, but the interpreter's
+    `set-car!` micro-benchmark is 5.7% slower in its later iterations,
+    `paraffins`' first interpreted run 3.6%, and the native launcher's first
+    runs of `destruc` and `mazefun` 1-2%, each beyond its A/A floor; none of
+    the designs above removes one cost without adding another. Under the
+    performance priorities at the top of this document (the JIT and the
+    native image first, the interpreter after), the maintainer accepted
+    them and merged this design as it is (#245): the JIT is neutral or
+    faster, memory is unchanged, and the native first runs' cost is under
+    2%.
 - **Records (M7-04)** are static objects (Truffle's Static Object Model):
   their fields are fields of the object itself, so a record is one
   allocation and a field access is a field load. A language has one
@@ -1863,7 +1911,7 @@ Each entry: the decision, why, and what was rejected.
   - So do a bad index, length or range (start after end), a byte outside
     0–255, a radix other than 2, 8, 10 or 16, a non-scalar value for
     `integer->char`, an argument of the wrong type, and mutating a literal
-    string, vector or bytevector (not yet a literal pair: D1) or
+    string, vector, bytevector or pair (D1) or
     `symbol->string`'s result (§6.5); `exact` of an infinity or a NaN,
     `exact-integer-sqrt` of anything but a non-negative exact integer, and
     integer division (`floor/`, `truncate/`, `quotient`, `modulo`, ...) by
@@ -2131,8 +2179,9 @@ Each entry: the decision, why, and what was rejected.
     (polyglot prefers members to iterators), and a list must stay an
     `Iterable` there. `hasMembers` walks the cdr chain each time interop asks
     (Floyd's cycle detection; nothing is cached on `SPair`, and `set-cdr!`
-    can change the answer). The members are writable, since `set-car!` and
-    `set-cdr!` can write any pair: pairs carry no literal flag (D1). Records are objects with their fields as
+    can change the answer). The members are writable, as `set-car!` and
+    `set-cdr!` write them, except a literal's pair's, which are read-only
+    (D1). Records are objects with their fields as
     read-only members.
   - Procedures are executables. Each `execute` runs the procedure under a
     root prompt of its own, as a program or REPL input runs (D6), so tail
@@ -4526,7 +4575,7 @@ errata (r7rs.org):
 | R7RS | "It is an error ..." | Here |
 |---|---|---|
 | §2.4 | circular references in code, except in literals | syntax error (D9) |
-| §3.4, §4.1.2 | altering a constant (the value of a literal expression) with a mutation procedure like `set-car!` or `string-set!` | error when the mutation runs on a literal string, vector or bytevector (each flagged immutable; D9); not signalled yet on a literal pair, which `set-car!`, `set-cdr!` and `list-set!` change (D1, plan.md M10-07) |
+| §3.4, §4.1.2 | altering a constant (the value of a literal expression) with a mutation procedure like `set-car!` or `string-set!` | error when the mutation runs on a literal string, vector or bytevector (each flagged immutable) or a literal's pair (a `LiteralPair`, which `set-car!`, `set-cdr!` and `list-set!` refuse; D1, D9) |
 | §4.1.4, §5.3 | a variable more than once in `lambda`'s or `define-values`' formals | syntax error, at the top level too (`define-values` receives its values with a `lambda` of its formals) |
 | §5.3.2 | defining the same identifier more than once in a body | syntax error |
 | §5.5 | the same identifier as two field names, or as two accessor/modifier names | syntax error, at the top level too (the type's definition holds a never-called `lambda` of each) |

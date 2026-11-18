@@ -27,7 +27,7 @@ final class Lists {
         ArrayList<Object> items = new ArrayList<>();
         Object slow = list;
         Object rest = list;
-        while (rest instanceof SPair p) {
+        for (SPair p; (p = SPair.asPair(rest)) != null;) {
             items.add(p.car);
             rest = p.cdr;
             if ((items.size() & 1) == 0) {

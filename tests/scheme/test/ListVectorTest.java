@@ -5,14 +5,23 @@ import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.util.List;
 
 import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.PolyglotException;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
+
+import scheme.launcher.SchemeMain;
 
 /** M4-03: the list and vector procedures of R7RS §6.4 and §6.8, and (scheme cxr). */
 public class ListVectorTest {
+
+    @Rule public TemporaryFolder folder = new TemporaryFolder();
 
     private static String write(String expr) {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
@@ -235,5 +244,116 @@ public class ListVectorTest {
             context.eval("scheme", circular("(display c)"));
         }
         assertTrue(out.toString(StandardCharsets.UTF_8), out.toString(StandardCharsets.UTF_8).startsWith("#0=(1 2 3 . #0#)"));
+    }
+
+    /** What expr raises, as its error object's message, or its value. */
+    private static String message(String expr) {
+        return write("(guard (e ((error-object? e) (error-object-message e))) " + expr + ")");
+    }
+
+    private static final String SET_CAR = "\"set-car!: pair is immutable (a literal)\"";
+    private static final String SET_CDR = "\"set-cdr!: pair is immutable (a literal)\"";
+    private static final String LIST_SET = "\"list-set!: pair is immutable (a literal)\"";
+
+    /**
+     * R7RS §3.4: "literal constants ... are immutable ... it is an error to attempt to store a new
+     * value into a location that is denoted by an immutable object". Literal pairs are immutable,
+     * like literal strings, vectors and bytevectors (design.md D1, D9): mutating one signals an
+     * error naming the procedure, however the literal reached the program.
+     */
+    @Test
+    public void literalPairsAreImmutable() {
+        assertEquals(SET_CAR, message("(set-car! '(1 2) 9)"));
+        assertEquals(SET_CDR, message("(set-cdr! (quote (a . b)) 1)"));
+        assertEquals(LIST_SET, message("(list-set! '(1 2) 1 9)"));
+        // Every pair of the literal, at any depth, and in a self-evaluating vector (§4.1.2).
+        assertEquals(SET_CDR, message("(set-cdr! (cddr '(1 2 3)) 9)"));
+        assertEquals(SET_CAR, message("(set-car! (cadr '(1 (2 3))) 9)"));
+        assertEquals(SET_CAR, message("(set-car! (vector-ref '#((1) 2) 0) 9)"));
+        assertEquals(SET_CAR, message("(set-car! (vector-ref #((1) 2) 0) 9)"));
+        // The same literal every time a procedure returns it (R7RS §4.1.2's (g) example).
+        assertEquals(SET_CAR, message("(let () (define (g) '(constant-list)) (set-car! (g) 3))"));
+        // A circular literal (datum labels, §2.4).
+        assertEquals(SET_CDR, message("(set-cdr! '#0=(a . #0#) 1)"));
+        // A syntax-rules template's quoted data, constant or with pattern variables inside, is a
+        // quote form in the expansion, so a literal; so are case's data.
+        assertEquals(SET_CAR, message("(let () (define-syntax m (syntax-rules () ((_) '(1 2)))) (set-car! (m) 9))"));
+        assertEquals(SET_CAR, message("(let () (define-syntax m (syntax-rules () ((_ x ...) '(x ... end)))) (set-car! (m a b) 9))"));
+        assertEquals(SET_CAR, message("(let ((k 'a)) (case k ((a b) (set-car! (memv k '(a b)) 9))))"));
+        // eval's quoted data is a literal of the evaluated program, even when built at run time.
+        assertEquals(SET_CAR, message("(set-car! (eval ''(1 2) (environment '(scheme base))) 9)"));
+        assertEquals(SET_CAR, message("(set-car! (eval (list 'quote (list 1 2)) (environment '(scheme base))) 9)"));
+        // quasiquote (§4.2.8): "Portions that do not need to be rebuilt are always literal".
+        assertEquals(SET_CAR, message("(set-car! `(1 2) 9)"));
+        assertEquals(SET_CAR, message("(let ((x 0)) (set-car! (cadr `(,x (1 2))) 9))"));
+        assertEquals(SET_CAR, message("(let ((x 0)) (set-car! (cdr `(,x 2)) 9))"));
+        assertEquals("(9 2)", write("(let* ((x 0) (l `(,x 2))) (set-car! l 9) l)"));
+        assertEquals("(9 2)", write("(let* ((x '(2)) (l `(1 ,@x))) (set-car! l 9) l)"));
+        // The error is an error object (D8), raised before anything changes.
+        assertEquals("((1 2) #t)", write("(let ((l '(1 2))) (list (guard (e (#t l)) (set-car! l 9)) (error-object? (guard (e (#t e)) (set-cdr! l 9)))))"));
+    }
+
+    /** Pairs made at run time stay mutable: cons, list, list-copy (even of a literal), read, ... */
+    @Test
+    public void runTimePairsAreMutable() {
+        assertEquals("((9 . 2) (9 2) (9 2) (9 2) (9 2) (9 . 8) (9 2) (9 2) (9 2) (9 1))", write("""
+                        (let ((l (list (cons 1 2) (list 1 2) (list-copy '(1 2)) (append '(1) '(2))
+                                       (read (open-input-string "(1 2)")) (list-copy '(1 . 2))
+                                       (vector->list #(1 2)) (map car '((1) (2))) (reverse '(2 1)) (make-list 2 1))))
+                          (for-each (lambda (p) (set-car! p 9)) l)
+                          (set-cdr! (list-ref l 5) 8)
+                          l)"""));
+        // append copies all but its last argument, which it shares: a literal's pairs stay literal.
+        assertEquals(SET_CAR, message("(set-car! (cdr (append (list 1) '(2))) 9)"));
+        assertEquals("(0 x 2)", write("(let ((l (list 0 1 2))) (list-set! l 1 'x) l)"));
+    }
+
+    /** Immutability shows only when mutating: equal?, eqv?, eq? and printing are as for any pair. */
+    @Test
+    public void literalPairsCompareLikeAnyPairs() {
+        assertEquals("(#t #t #t #f #t (1 (2 . 3)))",
+                        write("(let ((l '(1 (2 . 3)))) (list (equal? l (list 1 (cons 2 3))) (eq? l l) (eqv? l l) (eqv? l (list-copy l)) (equal? l (list-copy l)) l))"));
+    }
+
+    /**
+     * A literal's pairs are a class of their own (design.md D1), which car, cdr, pair? and the list
+     * primitives take as they take pairs made at run time, at the same call site, before and after
+     * it has seen the other kind; set-car! at a site that has seen literals still stores into a
+     * run-time pair. Under unit_compile the procedures run compiled.
+     */
+    @Test
+    public void callSitesTakeBothKindsOfPairs() {
+        assertEquals("(6 6 6 6 #t #t (9 2 3) \"set-car!: pair is immutable (a literal)\" 3 3 (2 3) (b . 2))", write("""
+                        (let ()
+                          (define (sum l) (if (pair? l) (+ (car l) (sum (cdr l))) 0))
+                          (define (bump! p) (set-car! p 9) p)
+                          (define (try p) (guard (e ((error-object? e) (error-object-message e))) (bump! p)))
+                          (define lit '(1 2 3))
+                          (let* ((a (sum (list 1 2 3))) (b (sum lit)) (c (sum (list 1 2 3))) (d (sum lit)))
+                            (list a b c d (pair? lit) (pair? (list 1)) (try (list 1 2 3)) (try lit)
+                                  (length lit) (length (list 1 2 3)) (memv 2 lit) (assq 'b '((a . 1) (b . 2))))))"""));
+    }
+
+    private String run(String program) {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try (Context context = SchemeMain.newContext(List.of(folder.getRoot().getPath())).out(out).build()) {
+            context.eval("scheme", program);
+        }
+        return out.toString(StandardCharsets.UTF_8);
+    }
+
+    /** Literals in an included or loaded file, or in a library, are literals too. */
+    @Test
+    public void literalPairsInFilesAndLibraries() throws IOException {
+        Files.writeString(folder.getRoot().toPath().resolve("lit.scm"), "(define lit '(1 2))", StandardCharsets.UTF_8);
+        Files.writeString(folder.getRoot().toPath().resolve("lit-lib.sld"),
+                        "(define-library (lit-lib) (import (scheme base)) (export lib-lit) (begin (define lib-lit '(1 2))))", StandardCharsets.UTF_8);
+        String file = folder.getRoot().toPath().resolve("lit.scm").toString().replace("\\", "\\\\");
+        String guard = "(guard (e ((error-object? e) (write (error-object-message e)))) (set-car! %s 9))";
+        assertEquals(SET_CAR, run("(import (scheme base) (scheme write)) (include \"" + file + "\") " + guard.formatted("lit")));
+        // load defines into the interaction environment (design.md D15).
+        assertEquals(SET_CAR, run("(import (scheme base) (scheme write) (scheme load) (scheme eval) (scheme repl)) (load \"" + file + "\") " +
+                        guard.formatted("(eval 'lit (interaction-environment))")));
+        assertEquals(SET_CAR, run("(import (scheme base) (scheme write) (lit-lib)) " + guard.formatted("lib-lit")));
     }
 }
