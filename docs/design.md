@@ -1079,8 +1079,14 @@ Each entry: the decision, why, and what was rejected.
   The list primitives' loops (`length`, `list?`, `memq`, `assq`,
   `list-copy`, ...) compare a value's class with each of the two
   (`SPair.asPair`) rather than use `instanceof`. Measured against the
-  final `SPair` without literal pairs (the PR that made them a class):
-  MEASUREMENTS.
+  final `SPair` without literal pairs (interleaved A/B, 5 rounds, November
+  2026): memory is unchanged (natively, 10 million conses allocate
+  152.92 MB on both; on HotSpot, 1,001,429 pairs are 24,034,296 bytes on
+  both), and the JIT's steady state and first runs are within noise or
+  faster (destruc 0.95, mazefun 0.98, the `length` loop 0.84), but the
+  interpreter is slower on programs that mix literal and run-time pairs
+  (paraffins 1.06, browse 1.09), and so are the native launcher's first
+  runs (destruc and nboyer 1.04). Not merged for that (#169 stays open).
 - **Records (M7-04)** are static objects (Truffle's Static Object Model):
   their fields are fields of the object itself, so a record is one
   allocation and a field access is a field load. A language has one
