@@ -446,12 +446,17 @@ final class PromptDriver extends Node {
      * this driver, though: so the error first passes through a hidden root ({@link UnwindRootNode})
      * called with the first pending frame's bytecode as its location. A loop: Java stack depth stays
      * constant (AGENTS.md rule 4).
+     *
+     * <p>Frames of internal code (the prelude's: a {@code map} the recursion went through) are left
+     * out, as stack traces leave out internal frames: a resumed frame's root is the Bytecode DSL's
+     * continuation root, which is never internal (docs/upstream.md), so the trace would show them.
+     * The frame outside one is then the location of the one inside it: its call of the prelude's code.
      */
     @TruffleBoundary
     private SchemeError unwind(SchemeError error, SegmentList pending) {
         List<Capture.Segment> frames = new ArrayList<>();
         for (SegmentList l = pending; l != null && frames.size() < MAX_TRACED_FRAMES; l = l.tail) {
-            if (l.head instanceof Capture.Segment segment) {
+            if (l.head instanceof Capture.Segment segment && !((RootNode) segment.root().getSourceRootNode()).isInternal()) {
                 frames.add(segment);
             }
         }

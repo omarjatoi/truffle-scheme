@@ -4,17 +4,21 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.TruffleStackTrace;
 import com.oracle.truffle.api.TruffleStackTraceElement;
 import com.oracle.truffle.api.bytecode.BytecodeNode;
+import com.oracle.truffle.api.bytecode.ContinuationRootNode;
 import com.oracle.truffle.api.exception.AbstractTruffleException;
 import com.oracle.truffle.api.interop.ExceptionType;
 import com.oracle.truffle.api.interop.InteropLibrary;
 import com.oracle.truffle.api.interop.UnsupportedMessageException;
+import com.oracle.truffle.api.library.CachedLibrary;
 import com.oracle.truffle.api.library.ExportLibrary;
 import com.oracle.truffle.api.library.ExportMessage;
+import com.oracle.truffle.api.nodes.RootNode;
 import com.oracle.truffle.api.source.SourceSection;
 
 import scheme.runtime.value.SConstant;
 import scheme.runtime.value.SErrorObject;
 import scheme.runtime.value.SString;
+import scheme.runtime.value.SchemeType;
 
 /**
  * A Scheme-level error raised by Java code (design.md D8). It carries the {@link SErrorObject} that
@@ -149,17 +153,21 @@ public final class SchemeError extends AbstractTruffleException {
     }
 
     /**
-     * Embedders get the guest stack trace from the exception itself ({@code TruffleStackTrace}, what
-     * {@code PolyglotException} shows), not as an interop object.
+     * The guest stack trace as Truffle makes it for any {@code AbstractTruffleException}
+     * ({@code createGuestStackTrace}): an array of the frames the error left, each with its
+     * executable name and source location (design.md D8). They are the frames
+     * {@code PolyglotException.getPolyglotStackTrace()} shows, a spill's and a resumed
+     * continuation's included (design.md "Spilled frames in tools"). Made when asked for.
      */
     @ExportMessage
     boolean hasExceptionStackTrace() {
-        return false;
+        return true;
     }
 
     @ExportMessage
-    Object getExceptionStackTrace() throws UnsupportedMessageException {
-        throw UnsupportedMessageException.create();
+    @TruffleBoundary
+    Object getExceptionStackTrace() {
+        return createGuestStackTrace(this);
     }
 
     @ExportMessage
@@ -183,12 +191,25 @@ public final class SchemeError extends AbstractTruffleException {
         return location;
     }
 
-    /** A syntax error's form, or the location of the innermost Scheme frame with one. */
+    /**
+     * A syntax error's form, or the location of the innermost Scheme frame with one whose code isn't
+     * internal: the frame the guest stack trace starts with, which leaves out the prelude's (a
+     * {@code map} or a {@code raise} the error left), design.md D8. A frame resumed from a
+     * continuation runs in the Bytecode DSL's continuation root, which is never internal
+     * (docs/upstream.md): its procedure's root says.
+     */
     private SourceSection location() {
         if (syntax) {
             return syntaxLocation;
         }
         for (TruffleStackTraceElement element : TruffleStackTrace.getStackTrace(this)) {
+            RootNode root = element.getTarget().getRootNode();
+            if (root instanceof ContinuationRootNode continuation) {
+                root = (RootNode) continuation.getSourceRootNode();
+            }
+            if (root.isInternal()) {
+                continue;
+            }
             BytecodeNode bytecode = BytecodeNode.get(element);
             if (bytecode != null) {
                 SourceSection section = bytecode.getSourceLocation(element.getBytecodeIndex());
@@ -198,6 +219,40 @@ public final class SchemeError extends AbstractTruffleException {
             }
         }
         return null;
+    }
+
+    // The raised object's language, meta object and display string. A raised long, double or
+    // boolean has no language of its own, so these come from Scheme's view of it (LanguageView):
+    // an uncaught (raise #t) shows as #t, with the meta object boolean (design.md D8).
+
+    private boolean raisedIsPrimitive() {
+        return raised instanceof Long || raised instanceof Double || raised instanceof Boolean;
+    }
+
+    @ExportMessage
+    boolean hasLanguageId(@CachedLibrary("this.raised") InteropLibrary interop) {
+        return raisedIsPrimitive() || interop.hasLanguageId(raised);
+    }
+
+    @ExportMessage
+    String getLanguageId(@CachedLibrary("this.raised") InteropLibrary interop) throws UnsupportedMessageException {
+        return raisedIsPrimitive() ? SchemeLanguage.ID : interop.getLanguageId(raised);
+    }
+
+    @ExportMessage
+    boolean hasMetaObject(@CachedLibrary("this.raised") InteropLibrary interop) {
+        return raisedIsPrimitive() || interop.hasMetaObject(raised);
+    }
+
+    @ExportMessage
+    Object getMetaObject(@CachedLibrary("this.raised") InteropLibrary interop) throws UnsupportedMessageException {
+        return raisedIsPrimitive() ? SchemeType.of(raised) : interop.getMetaObject(raised);
+    }
+
+    @ExportMessage
+    @TruffleBoundary
+    Object toDisplayString(boolean allowSideEffects, @CachedLibrary("this.raised") InteropLibrary interop) {
+        return raisedIsPrimitive() ? InteropValues.display(raised) : interop.toDisplayString(raised, allowSideEffects);
     }
 
     /** {@code raise} found no handler for {@code raised}: ends the program with this message. */
