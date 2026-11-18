@@ -3,6 +3,7 @@ package scheme.builtins;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.math.RoundingMode;
+import java.util.function.UnaryOperator;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 
@@ -178,6 +179,9 @@ final class Arithmetic {
             case MUL -> SComplex.make(real(who, Op.SUB, real(who, Op.MUL, ar, br), real(who, Op.MUL, ai, bi)),
                             real(who, Op.ADD, real(who, Op.MUL, ar, bi), real(who, Op.MUL, ai, br)));
             case DIV -> {
+                if (!isExact(a) || !isExact(b)) {
+                    yield quotient(flo(ar), flo(ai), false, flo(br), flo(bi));
+                }
                 Object d = real(who, Op.ADD, real(who, Op.MUL, br, br), real(who, Op.MUL, bi, bi));
                 Object re = real(who, Op.ADD, real(who, Op.MUL, ar, br), real(who, Op.MUL, ai, bi));
                 Object im = real(who, Op.SUB, real(who, Op.MUL, ai, br), real(who, Op.MUL, ar, bi));
@@ -208,11 +212,73 @@ final class Arithmetic {
             case DIV -> {
                 if (complexFirst) {
                     yield SComplex.make(real(who, Op.DIV, u, x), real(who, Op.DIV, v, x));
+                } else if (!isExact(x) || !isExact(z)) {
+                    yield quotient(flo(x), 0.0, true, flo(u), flo(v));
                 }
                 Object d = real(who, Op.ADD, real(who, Op.MUL, u, u), real(who, Op.MUL, v, v));
                 yield SComplex.make(real(who, Op.DIV, real(who, Op.MUL, x, u), d), real(who, Op.DIV, real(who, Op.MUL, x, negate(v)), d));
             }
         };
+    }
+
+    /**
+     * (a+ib)/(c+id) in flonums: C99 Annex G.5.1's {@code _Cdivd} (EXAMPLE 2, M12-01). The divisor's
+     * parts are scaled by 2^-k, k = logb(max(|c|, |d|)), before they are squared, and the quotient's
+     * parts by 2^-k after, so squares that would overflow or underflow don't, and a quotient whose
+     * parts are finite comes out finite; a power of 2 scales exactly, so an ordinary quotient has
+     * the same bits as the textbook ((ac+bd) + i(bc-ad))/(c²+d²). A NaN+NaN i result is then
+     * recomputed by G.5.1 paragraph 4's infinity properties: a nonzero number over a zero is an
+     * infinity, an infinity over a finite number an infinity, a finite number over an infinity a
+     * zero (an infinity being a value with an infinite part, G.3). A real dividend ({@code real})
+     * is a times the divisor's conjugate, without the terms that would multiply its 0 imaginary
+     * part (M11-01), so {@code b} is unused, and a NaN in either part is recomputed, since the
+     * missing terms can't spread a NaN from one part to the other.
+     */
+    private static Object quotient(double a, double b, boolean real, double c, double d) {
+        double logbw = logb(fmax(Math.abs(c), Math.abs(d)));
+        int k = 0;
+        if (Double.isFinite(logbw)) {
+            k = (int) logbw;
+            c = Math.scalb(c, -k);
+            d = Math.scalb(d, -k);
+        }
+        double denominator = c * c + d * d;
+        double x = Math.scalb((real ? a * c : a * c + b * d) / denominator, -k);
+        double y = Math.scalb((real ? a * -d : b * c - a * d) / denominator, -k);
+        if (real ? Double.isNaN(x) || Double.isNaN(y) : Double.isNaN(x) && Double.isNaN(y)) {
+            if (denominator == 0.0 && (!Double.isNaN(a) || !Double.isNaN(b))) {
+                double infinity = StrictMath.copySign(Double.POSITIVE_INFINITY, c);
+                x = infinity * a;
+                y = infinity * b;
+            } else if ((Double.isInfinite(a) || Double.isInfinite(b)) && Double.isFinite(c) && Double.isFinite(d)) {
+                a = StrictMath.copySign(Double.isInfinite(a) ? 1.0 : 0.0, a);
+                b = StrictMath.copySign(Double.isInfinite(b) ? 1.0 : 0.0, b);
+                x = Double.POSITIVE_INFINITY * (real ? a * c : a * c + b * d);
+                y = Double.POSITIVE_INFINITY * (real ? a * -d : b * c - a * d);
+            } else if (logbw == Double.POSITIVE_INFINITY && Double.isFinite(a) && Double.isFinite(b)) {
+                c = StrictMath.copySign(Double.isInfinite(c) ? 1.0 : 0.0, c);
+                d = StrictMath.copySign(Double.isInfinite(d) ? 1.0 : 0.0, d);
+                x = 0.0 * (real ? a * c : a * c + b * d);
+                y = 0.0 * (real ? a * -d : b * c - a * d);
+            }
+        }
+        return SComplex.make(x, y);
+    }
+
+    /** C's fmax: the larger, or the other if one is a NaN. */
+    private static double fmax(double x, double y) {
+        return Double.isNaN(x) ? y : Double.isNaN(y) ? x : Math.max(x, y);
+    }
+
+    /** C's logb of a non-negative x: its exponent, a subnormal's too; -inf for 0, +inf for +inf. */
+    private static double logb(double x) {
+        if (Double.isNaN(x) || Double.isInfinite(x)) {
+            return x;
+        } else if (x == 0) {
+            return Double.NEGATIVE_INFINITY;
+        }
+        int e = Math.getExponent(x);
+        return e >= Double.MIN_EXPONENT ? e : Math.getExponent(x * 0x1p54) - 54;
     }
 
     private static Object real(String who, Op op, Object a, Object b) {
@@ -589,7 +655,12 @@ final class Arithmetic {
         double r = StrictMath.hypot(x, y);
         double re = Math.sqrt((r + x) / 2);
         double im = Math.sqrt((r - x) / 2);
-        return complexResult(re, y < 0 ? -im : im);
+        // On the cut, the negative real axis, either zero gives the positive imaginary axis: R7RS
+        // §6.2.6, "a zero real part and a non-negative imaginary part" (and the chibi suite's
+        // (sqrt -1.0-0.0i)), where C99's csqrt takes -0.0 below the cut. Elsewhere csqrt(conj z) =
+        // conj csqrt(z) (G.6.4.2), the signs of zeros included, which R7RS leaves open (M12-01,
+        // design.md D1). StrictMath's copySign takes a NaN as +.
+        return complexResult(re, x < 0 && y == 0 ? im : StrictMath.copySign(im, y));
     }
 
     /**
@@ -644,21 +715,63 @@ final class Arithmetic {
                 return complexResult(StrictMath.cos(x) * StrictMath.cosh(y), -StrictMath.sin(x) * StrictMath.sinh(y));
             case "tan":
                 return div(trig("sin", z), trig("cos", z));
-            case "asin": {
-                // -i log(iz + sqrt(1 - z^2))
-                Object iz = mul(SComplex.make(0.0, 1.0), inexact(z));
-                Object w = log(add(iz, sqrt(sub(1.0, mul(z, z)))));
-                return mul(SComplex.make(0.0, -1.0), w);
-            }
+            case "asin":
+                // On the cut, beyond ±1 on the real axis, either zero gives the real number's value,
+                // as sqrt does its cut's, through which R7RS defines asin (M12-01, design.md D1).
+                return bySymmetry(y == 0 && Math.abs(x) > 1 ? realPart(z) : z, w -> timesMinusI(log(add(timesI(inexact(w)), sqrt(sub(1.0, mul(w, w)))))));
             case "acos":
                 // pi/2 - asin z
                 return sub(Math.PI / 2, trig("asin", z));
-            default: {
-                // (log(1 + iz) - log(1 - iz)) / 2i
-                Object iz = mul(SComplex.make(0.0, 1.0), inexact(z));
-                return div(sub(log(add(1.0, iz)), log(sub(1.0, iz))), SComplex.make(0.0, 2.0));
-            }
+            default:
+                return bySymmetry(z, w -> {
+                    Object iw = timesI(inexact(w));
+                    return div(timesMinusI(sub(log(add(1.0, iw)), log(sub(1.0, iw)))), 2.0);
+                });
         }
+    }
+
+    /**
+     * f(z) for an odd f with C99 Annex G.6's conjugate symmetry, f(conj z) = conj f(z), and f(-z) =
+     * -f(z): R7RS §6.2.6's formula {@code f} on the quadrant whose real part's sign is + and
+     * imaginary part's - (a real z counts as there), and elsewhere by the symmetries, so that both
+     * hold bit for bit, the signs of zeros included (M12-01). So the sign of the zero real part of
+     * a z on atan's cut says which side it is on (C99 §7.3.3). asin and atan are odd (G.6: casin(z)
+     * = -i casinh(iz), catan(z) = -i catanh(iz), and casinh and catanh are odd). For asin there the
+     * formula's sums, iz + sqrt(1 - z²), add parts of one sign: elsewhere they cancel, an ulp off
+     * at (asin -2.).
+     */
+    private static Object bySymmetry(Object z, UnaryOperator<Object> f) {
+        double x = flo(realPart(z));
+        double y = flo(imagPart(z));
+        boolean negated = signBit(x);
+        boolean conjugated = z instanceof SComplex && !Double.isNaN(y) && signBit(y) == negated;
+        Object w = negated ? negate(z) : z;
+        Object result = f.apply(conjugated ? conjugate(w) : w);
+        result = conjugated ? conjugate(result) : result;
+        return negated ? negate(result) : result;
+    }
+
+    /** Whether a flonum's sign is -: -0.0 included, a NaN not. */
+    private static boolean signBit(double x) {
+        return x < 0 || x == 0 && 1 / x < 0;
+    }
+
+    private static Object conjugate(Object z) {
+        return z instanceof SComplex c ? SComplex.make(c.real, negate(c.imag)) : z;
+    }
+
+    /**
+     * i·z for an inexact z, as C99 Annex G.5.1 multiplies by an imaginary number, part by part:
+     * i(x+iy) = -y + ix. Not (0+i)(x+iy), whose 0·x and 0·y lose the signs of zeros, and make a
+     * NaN of an infinite part.
+     */
+    private static Object timesI(Object z) {
+        return z instanceof SComplex c ? SComplex.make(negate(c.imag), c.real) : SComplex.make(0.0, z);
+    }
+
+    /** -i·z, part by part as {@link #timesI}: -i(x+iy) = y - ix. */
+    private static Object timesMinusI(Object z) {
+        return z instanceof SComplex c ? SComplex.make(c.imag, negate(c.real)) : SComplex.make(0.0, negate(z));
     }
 
     /** {@code (expt z1 z2)}: exact for an exact base and exact integer power. */

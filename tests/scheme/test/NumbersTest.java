@@ -524,6 +524,119 @@ public class NumbersTest {
         assertWrites(cases);
     }
 
+    /**
+     * M12-01 (#249's follow-up). A division by an inexact complex number is C99 Annex G.5.1's
+     * {@code _Cdivd} (its EXAMPLE 2): the divisor's parts are scaled by a power of 2 (exactly)
+     * before they are squared, so a quotient whose parts are finite stays finite and nonzero where
+     * the squares overflow or underflow, and a NaN+NaN i result is recomputed from the infinity
+     * properties of G.5.1 paragraph 4: a finite number over an infinity is a zero, an infinity over
+     * a finite number an infinity, a nonzero number over a zero an infinity (G.3: a complex value
+     * with an infinite part is an infinity, even if the other part is a NaN). A real dividend is
+     * the real times the divisor's conjugate (M11-01), so {@code (/ 1. (make-rectangular +inf.0
+     * 1.))} is 0.0-0.0i, as 1/z is conj(z)/|z|²; it was +nan.0-0.0i. The finite expected values
+     * are the correctly rounded quotients (exact rational arithmetic), but for (1e-300+1e-300i) /
+     * (3e-300+4e-300i), whose correctly rounded quotient is 0.27999999999999997-0.039999999999999994i:
+     * the textbook formula rounds 4 times, and bc - ad cancels (it was +nan.0+nan.0i).
+     */
+    @Test
+    public void complexDivisionScalesTheDivisorAndRecoversInfinities() {
+        String[][] cases = {
+                        // squares that overflow or underflow: the quotient keeps its finite parts
+                        {"(/ 1. (make-rectangular 1e200 1e200))", "5.0e-201-5.0e-201i"}, {"(/ (make-rectangular 1. 1.) (make-rectangular 1e200 1e200))", "1.0e-200+0.0i"},
+                        {"(/ (make-rectangular 1e300 1e300) (make-rectangular 1e300 1e300))", "1.0+0.0i"},
+                        {"(/ (make-rectangular 1e-300 1e-300) (make-rectangular 1e-300 1e-300))", "1.0+0.0i"},
+                        {"(/ 1. (make-rectangular 1e-200 1e-200))", "5.0e+199-5.0e+199i"}, {"(/ (make-rectangular 1e-300 1e-300) (make-rectangular 3e-300 4e-300))",
+                                        "0.28-0.03999999999999997i"},
+                        {"(/ 1e300 (make-rectangular 3e300 4e300))", "0.12-0.16i"},
+                        {"(/ (make-rectangular 1e300 1e300) (make-rectangular 3e300 4e300))", "0.28-0.04i"}, {"(/ 1 (make-rectangular 1e200 1e200))", "5.0e-201-5.0e-201i"},
+                        {"(/ 1. (make-rectangular 5e-324 0.))", "+inf.0-0.0i"}, {"(/ (make-rectangular 1. 2.) (make-rectangular 3e-320 4e-320))", "+inf.0+inf.0i"},
+                        // a finite number over an infinity is a zero
+                        {"(/ 1. (make-rectangular +inf.0 1.))", "0.0-0.0i"}, {"(/ 1. (make-rectangular 1. -inf.0))", "0.0+0.0i"},
+                        {"(/ (make-rectangular 1. 1.) (make-rectangular +inf.0 1.))", "0.0+0.0i"}, {"(/ (make-rectangular 1. -1.) (make-rectangular +inf.0 1.))", "0.0-0.0i"},
+                        {"(/ (make-rectangular 1. 1.) (make-rectangular +inf.0 +inf.0))", "0.0+0.0i"}, {"(/ (make-rectangular -1. 2.) (make-rectangular 3. -inf.0))", "-0.0-0.0i"},
+                        // an infinity over a finite number, and a nonzero number over a zero, are infinities
+                        {"(/ (make-rectangular +inf.0 +inf.0) (make-rectangular 1. 0.))", "+inf.0+inf.0i"},
+                        {"(/ (make-rectangular +inf.0 -inf.0) (make-rectangular 0. 1.))", "-inf.0-inf.0i"},
+                        {"(/ (make-rectangular +inf.0 1.) (make-rectangular 1. 1.))", "+inf.0-inf.0i"}, {"(/ (make-rectangular 1. 1.) (make-rectangular 0. 0.))", "+inf.0+inf.0i"},
+                        {"(/ (make-rectangular 1. 1.) (make-rectangular -0. 0.))", "-inf.0-inf.0i"}, {"(/ 1. (make-rectangular 0. 0.))", "+inf.0+nan.0i"},
+                        // ... a NaN part with an infinite one too, but a NaN otherwise stays NaN
+                        {"(/ 1. (make-rectangular +nan.0 +inf.0))", "0.0-0.0i"}, {"(/ (make-rectangular +nan.0 1.) (make-rectangular 1. 1.))", "+nan.0+nan.0i"},
+                        // ordinary quotients: the same bits as the textbook formula
+                        {"(/ 3.+4.i 1.+2.i)", "2.2-0.4i"}, {"(/ 1. 3.+4.i)", "0.12-0.16i"}, {"(/ 1. (make-rectangular 1. 0.))", "1.0-0.0i"},
+                        {"(/ 2. (make-rectangular 0. 1.))", "0.0-2.0i"}, {"(/ 1+2i 3.+4.i)", "0.44+0.08i"}, {"(/ 1+2i 3+4i)", "11/25+2/25i"},
+        };
+        assertWrites(cases);
+    }
+
+    /**
+     * M12-01 (#249's follow-up). The sign of a zero part on a branch cut. R7RS §6.2.6 makes log's
+     * imaginary part lie "from −π (inclusive if -0.0 is distinguished, exclusive otherwise) to π
+     * (inclusive)", so log, and atan, which R7RS defines through log alone, take the side the zero's
+     * sign gives, as C99 §7.3.3 has it: "the sign of zero distinguishes one side of a cut from
+     * another". But R7RS's sqrt has "either a positive real part, or a zero real part and a
+     * non-negative imaginary part" (and the chibi suite tests {@code (sqrt -1.0-0.0i)} =
+     * 0.0+1.0i), where C99's csqrt gives -0.0i's side the negative imaginary axis; so on sqrt's
+     * cut either zero gives the positive imaginary axis, and on asin's and acos's, which R7RS
+     * defines through that sqrt, either zero gives the real number's value. Off those cuts each
+     * function has Annex G.6's conjugate symmetry, f(conj z) = conj f(z), bit for bit with the signs
+     * of zeros, and asin and atan are odd (casin(z) = −i casinh(iz), catan(z) = −i catanh(iz)),
+     * which R7RS leaves open. A real argument is on the side R7RS's formulas give it, as before.
+     */
+    @Test
+    public void branchCutsAndTheSignOfAZero() {
+        String[][] cases = {
+                        // sqrt: the negative real axis, the positive imaginary axis from either side (R7RS)
+                        {"(sqrt (make-rectangular -4. -0.))", "0.0+2.0i"}, {"(sqrt (make-rectangular -4. 0.))", "0.0+2.0i"}, {"(sqrt -4.)", "0.0+2.0i"},
+                        {"(sqrt (make-rectangular -1e-300 -0.))", "0.0+1.0e-150i"}, {"(sqrt (make-rectangular -1. -0.))", "0.0+1.0i"},
+                        // ... and off it, conjugate symmetry
+                        {"(sqrt (make-rectangular 4. -0.))", "2.0-0.0i"}, {"(sqrt (make-rectangular -0. -0.))", "0.0-0.0i"}, {"(sqrt 3.-4.i)", "2.0-1.0i"},
+                        // log: the negative real axis, -π below and π above
+                        {"(log (make-rectangular -4. -0.))", "1.3862943611198906-3.141592653589793i"}, {"(log (make-rectangular -4. 0.))", "1.3862943611198906+3.141592653589793i"},
+                        {"(log (make-rectangular 4. -0.))", "1.3862943611198906-0.0i"}, {"(log (make-rectangular -0. -0.))", "-inf.0-3.141592653589793i"},
+                        // asin and acos: the real axis beyond ±1, the real number's value from either side
+                        {"(asin (make-rectangular 2. 0.))", "1.5707963267948966-1.3169578969248166i"}, {"(asin (make-rectangular 2. -0.))", "1.5707963267948966-1.3169578969248166i"},
+                        {"(asin (make-rectangular -2. 0.))", "-1.5707963267948966+1.3169578969248166i"}, {"(asin (make-rectangular -2. -0.))", "-1.5707963267948966+1.3169578969248166i"},
+                        {"(asin 2.)", "1.5707963267948966-1.3169578969248166i"}, {"(asin -2.)", "-1.5707963267948966+1.3169578969248166i"},
+                        {"(acos (make-rectangular 2. 0.))", "0.0+1.3169578969248166i"}, {"(acos (make-rectangular -2. -0.))", "3.141592653589793-1.3169578969248166i"},
+                        {"(acos 2.)", "0.0+1.3169578969248166i"}, {"(acos -2.)", "3.141592653589793-1.3169578969248166i"},
+                        // ... and off it, conjugate symmetry and oddness (asin's sums no longer cancel: (asin 2.+1.i) was ...854i)
+                        {"(asin 2.+1.i)", "1.0634400235777521+1.4693517443681852i"}, {"(asin 2.-1.i)", "1.0634400235777521-1.4693517443681852i"},
+                        {"(asin -2.+1.i)", "-1.0634400235777521+1.4693517443681852i"}, {"(acos 2.-1.i)", "0.5073563032171444+1.4693517443681852i"}, // π/2 - asin z: the nearest is ...445
+
+                        // atan: the imaginary axis beyond ±i, where the real part's zero tells the side
+                        {"(atan (make-rectangular 0. 2.))", "1.5707963267948966+0.5493061443340548i"}, {"(atan (make-rectangular -0. 2.))", "-1.5707963267948966+0.5493061443340548i"},
+                        {"(atan (make-rectangular 0. -2.))", "1.5707963267948966-0.5493061443340548i"}, {"(atan (make-rectangular -0. -2.))", "-1.5707963267948966-0.5493061443340548i"},
+                        {"(atan +2.i)", "1.5707963267948966+0.5493061443340548i"},
+                        // ... and off it, conjugate symmetry with the signs of zeros
+                        {"(atan (make-rectangular 1. 0.))", "0.7853981633974483+0.0i"}, {"(atan (make-rectangular 1. -0.))", "0.7853981633974483-0.0i"},
+        };
+        assertWrites(cases);
+        // f(conj z) = conj f(z) and, for the odd ones, f(-z) = -f(z), bit for bit, on a grid that
+        // crosses every cut, signed zeros and infinities included; on sqrt's, asin's and acos's cuts
+        // (a zero imaginary part), f(conj z) = f(z) instead
+        assertEquals("()", write("""
+                        (let ((parts '(-inf.0 -1e300 -2. -1. -0.5 -1e-300 -0. 0. 1e-300 0.5 1. 2. 1e300 +inf.0))
+                              (conj (lambda (z) (make-rectangular (real-part z) (- (imag-part z)))))
+                              (same? (lambda (a b) (and (eqv? (real-part a) (real-part b)) (eqv? (imag-part a) (imag-part b)))))
+                              (bad '()))
+                          (for-each (lambda (x)
+                                      (for-each (lambda (y)
+                                                  (let ((z (make-rectangular x y)))
+                                                    (for-each (lambda (f name odd cut?)
+                                                                (let ((w (f z)))
+                                                                  (unless (or (nan? w) (same? (f (conj z)) (if (cut? x y) w (conj w))))
+                                                                    (set! bad (cons (list name z 'conj) bad)))
+                                                                  (unless (or (not odd) (nan? w) (same? (f (- z)) (- w)))
+                                                                    (set! bad (cons (list name z 'odd) bad)))))
+                                                              (list sqrt log asin acos atan) '(sqrt log asin acos atan) '(#f #f #t #f #t)
+                                                              (list (lambda (x y) (and (zero? y) (< x 0))) (lambda (x y) #f)
+                                                                    (lambda (x y) (and (zero? y) (> (abs x) 1))) (lambda (x y) (and (zero? y) (> (abs x) 1)))
+                                                                    (lambda (x y) #f)))))
+                                                parts))
+                                    parts)
+                          bad)"""));
+    }
+
     /** Runs each case's expression, a thunk each, and compares what it writes (or its error's message). */
     private static void assertWrites(String[][] cases) {
         StringBuilder program = new StringBuilder("(for-each (lambda (thunk) (write (guard (e ((error-object? e) (error-object-message e))) (thunk))) (newline)) (list");
