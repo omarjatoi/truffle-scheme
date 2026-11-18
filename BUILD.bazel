@@ -6,6 +6,7 @@ load("//bazel:java_module.bzl", "java_module_jar", "module_dir", "native_library
 package(default_visibility = ["//visibility:public"])
 
 exports_files([
+    "docs/examples/polyglot.scm",
     "docs/plan.md",
     "docs/usage.md",
     "maven_install.json",
@@ -246,6 +247,31 @@ native_library(
     module = ":launcher_module",
     options = _SCHEMEVM_OPTIONS + ["-H:MaxRuntimeCompileMethods=-1000"],
     should_fail = True,
+    tags = ["manual"],
+    visibility = ["//tests:__pkg__"],
+)
+
+# The same library built with reflection metadata for a few Java classes, as an embedder's own native
+# image is when its jars carry `META-INF/native-image/.../reachability-metadata.json` (design.md D20,
+# "The launchers"): //tests:polyglot_native runs `java-type` through it, which finds those classes'
+# constructors and methods there and says that the image has no metadata in //:schemevm.
+native_library(
+    name = "schemevm_reflection",
+    testonly = True,
+    exec_properties = {
+        "EstimatedCPU": "8",
+        "EstimatedMemory": "12GB",
+    },
+    gc = ":native_gc",
+    graalvm = ":native_graalvm",
+    jdk = select({
+        ":oracle_graalvm": "@graalvm//:oracle_jdk",
+        "//conditions:default": "@bazel_tools//tools/jdk:current_java_runtime",
+    }),
+    main = "scheme.launcher/scheme.launcher.SchemeMain",
+    metadata = "//tests:polyglot/reachability-metadata.json",
+    module = ":launcher_module",
+    options = _SCHEMEVM_OPTIONS,
     tags = ["manual"],
     visibility = ["//tests:__pkg__"],
 )

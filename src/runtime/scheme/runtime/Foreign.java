@@ -1,18 +1,19 @@
 package scheme.runtime;
 
 import java.io.IOException;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
 import org.graalvm.nativeimage.ImageInfo;
-import org.graalvm.polyglot.SandboxPolicy;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.TruffleLanguage;
 import com.oracle.truffle.api.exception.AbstractTruffleException;
 import com.oracle.truffle.api.interop.ArityException;
 import com.oracle.truffle.api.interop.ExceptionType;
+import com.oracle.truffle.api.interop.HeapIsolationException;
 import com.oracle.truffle.api.interop.InteropException;
 import com.oracle.truffle.api.interop.InteropLibrary;
 import com.oracle.truffle.api.interop.InvalidArrayIndexException;
@@ -221,32 +222,67 @@ public final class Foreign {
         return env;
     }
 
-    /** {@code (java-type name)}: through {@code Env.lookupHostSymbol}, never under a sandbox. */
+    /**
+     * {@code (java-type name)}: through {@code Env.lookupHostSymbol}, as the context's class filter
+     * and {@code HostAccess} allow, under every sandbox policy (design.md D20, "Permissions and the
+     * sandbox").
+     */
     @TruffleBoundary
     public static Object javaType(String name) {
         TruffleLanguage.Env env = SchemeContext.get(null).getEnv();
-        SandboxPolicy policy = env.getSandboxPolicy();
-        if (policy != SandboxPolicy.TRUSTED) {
-            throw new SchemeError("java-type: host class lookup is refused under the " + policy + " sandbox policy");
-        }
-        if (ImageInfo.inImageRuntimeCode()) {
-            // A native image has a Java class's constructors, methods and fields only if it was built
-            // with reflection metadata for them, and ours has none (design.md D17): a class it found
-            // would be one nothing can be done with.
-            throw new SchemeError("java-type: Java classes are not available in a native image, which is built without their reflection metadata: " + name);
-        }
         if (!env.isHostLookupAllowed()) {
             throw new SchemeError("java-type: the context doesn't allow host class lookup (Context.Builder.allowHostClassLookup): " + name);
         }
         SchemeContext context = SchemeContext.get(null);
         int use = enter(context);
+        Object type;
         try {
-            return env.lookupHostSymbol(name);
+            type = env.lookupHostSymbol(name);
         } catch (AbstractTruffleException | IllegalArgumentException | SecurityException e) {
             throw new SchemeError(new SErrorObject(SString.of("java-type: no such class, or not accessible: " + e.getMessage()), new SPair(SString.of(name), SConstant.EMPTY_LIST),
                             SErrorObject.Kind.OTHER));
         } finally {
             exit(context, use);
+        }
+        if (ImageInfo.inImageRuntimeCode() && withoutReflectionMetadata(type)) {
+            throw new SchemeError(new SErrorObject(SString.of("java-type: this native image has no reflection metadata for the class (reachability-metadata.json), so it has none of its " +
+                            "constructors, methods or fields"), new SPair(SString.of(name), SConstant.EMPTY_LIST), SErrorObject.Kind.OTHER));
+        }
+        return type;
+    }
+
+    /**
+     * Whether {@code type}, a class that a native image found, is one of the image's own classes of
+     * which reflection, and so host interop, sees no public constructor, method (but
+     * {@code Object}'s) or field: the image was built without reflection metadata for it (design.md
+     * D20, "The launchers"). A class of a polyglot isolate's host is in the host's heap
+     * ({@link HeapIsolationException}), with its members on the host's JVM, and is never one; nor is
+     * an interface, which may legitimately have none.
+     */
+    private static boolean withoutReflectionMetadata(Object type) {
+        InteropLibrary interop = InteropLibrary.getUncached();
+        Object host;
+        try {
+            host = interop.isHostObject(type) ? interop.asHostObject(type) : null;
+        } catch (HeapIsolationException | UnsupportedMessageException e) {
+            return false;
+        }
+        if (!(host instanceof Class<?> c) || c.isInterface() || c.isArray() || c.isPrimitive()) {
+            return false;
+        }
+        try {
+            if (c.getConstructors().length > 0 || c.getFields().length > 0) {
+                return false;
+            }
+            for (Method m : c.getMethods()) {
+                if (m.getDeclaringClass() != Object.class) {
+                    return false;
+                }
+            }
+            return true;
+        } catch (LinkageError e) {
+            // A native image built to throw on missing metadata (MissingReflectionRegistrationError).
+            return true;
         }
     }
 

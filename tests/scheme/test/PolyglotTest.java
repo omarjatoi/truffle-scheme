@@ -407,14 +407,27 @@ public class PolyglotTest {
     }
 
     @Test
-    public void javaTypeIsRefusedUnderASandbox() {
+    public void javaTypeUnderASandboxIsTheEmbeddersHostAccess() {
+        // No sandbox policy restricts host class lookup (D20): under CONSTRAINED, java-type finds what
+        // the class filter allows, and HostAccess.CONSTRAINED, the policy's default, gives it only the
+        // members annotated @HostAccess.Export, none of a JDK class's.
         try (Engine engine = Engine.newBuilder(SCHEME).sandbox(SandboxPolicy.CONSTRAINED).useSystemProperties(false).out(OutputStream.nullOutputStream()).err(
                         OutputStream.nullOutputStream()).build();
                         Context context = Context.newBuilder(SCHEME).engine(engine).sandbox(SandboxPolicy.CONSTRAINED).out(new ByteArrayOutputStream()).err(
-                                        new ByteArrayOutputStream()).allowHostClassLookup(name -> !name.isEmpty()).build()) {
-            assertEquals("\"java-type: host class lookup is refused under the CONSTRAINED sandbox policy\"", show(context, """
-                            (guard (e ((error-object? e) (error-object-message e))) (java-type "java.util.ArrayList"))
-                            """));
+                                        new ByteArrayOutputStream()).allowHostClassLookup(name -> name.startsWith("java.util.")).build()) {
+            Value probe = run(context, """
+                            (lambda (items)
+                              (define (message thunk) (guard (e ((error-object? e) (error-object-message e))) (thunk)))
+                              (define ArrayList (java-type "java.util.ArrayList"))
+                              (list (foreign? ArrayList)
+                                    (foreign-instance? items ArrayList)
+                                    (foreign-instance? items (java-type "java.util.HashMap"))
+                                    (message (lambda () (foreign-new ArrayList)))
+                                    (message (lambda () (foreign-invoke items 'size)))
+                                    (message (lambda () (java-type "java.io.File")))))
+                            """);
+            assertEquals("(#t #t #f \"foreign-new: not supported by this foreign value\" \"foreign-invoke: no such member: size\" \"java-type: no such class, or not accessible: Access to host class java.io.File is not allowed.\")",
+                            probe.execute(new ArrayList<>(List.of(1))).toString());
         }
     }
 
@@ -651,25 +664,34 @@ public class PolyglotTest {
         }
 
         @Test
-        public void javaTypeIsRefusedUnderBothPolicies() {
-            try (Context context = isolated().build()) {
-                assertEquals("\"java-type: host class lookup is refused under the ISOLATED sandbox policy\"", message(context, "(java-type \"java.util.ArrayList\")"));
-            }
-            try (Context context = untrusted().build()) {
-                assertEquals("\"java-type: host class lookup is refused under the UNTRUSTED sandbox policy\"", message(context, "(java-type \"java.util.ArrayList\")"));
+        public void javaTypeLooksTheClassUpInTheHostUnderBothPolicies() {
+            // The lookup goes through the isolate to this JVM (D20): the class is there, with what the
+            // policy's HostAccess exports of it, none of a JDK class's members.
+            for (Context.Builder builder : List.of(isolated(), untrusted())) {
+                try (Context context = builder.build()) {
+                    assertEquals("(#t \"foreign-new: not supported by this foreign value\")", show(context, """
+                                    (let ((ArrayList (java-type "java.util.ArrayList")))
+                                      (list (foreign? ArrayList)
+                                            (guard (e ((error-object? e) (error-object-message e))) (foreign-new ArrayList))))
+                                    """));
+                }
             }
         }
 
         @Test
-        public void anIsolateUnderTrustedRefusesJavaTypeAsANativeImageDoes() {
-            // engine.SpawnIsolate runs the language in the isolate under any policy. The isolate is
-            // a native image, so java-type refuses as it does in the native launcher, though its
-            // lookups would go to this JVM (D20's open questions); a Java object handed in works,
-            // under the embedder's HostAccess.
+        public void javaTypeWorksInAnIsolateUnderTrusted() {
+            // engine.SpawnIsolate runs the language in the isolate under any policy. The isolate is a
+            // native image without reflection metadata, but the class is this JVM's, reached through
+            // the isolate, so it has all its members under HostAccess.ALL; a Java object handed in
+            // works the same way.
             try (Context context = Context.newBuilder(SCHEME).out(out).err(out).option("engine.SpawnIsolate", "true").allowHostAccess(HostAccess.ALL).allowHostClassLookup(
                             name -> !name.isEmpty()).build()) {
-                assertEquals("\"java-type: Java classes are not available in a native image, which is built without their reflection metadata: java.util.ArrayList\"",
-                                message(context, "(java-type \"java.util.ArrayList\")"));
+                assertEquals("(#t 2 (1 \"two\") 7)", show(context, """
+                                (let ((l (foreign-new (java-type "java.util.ArrayList"))))
+                                  (foreign-invoke l 'add 1)
+                                  (foreign-invoke l 'add "two")
+                                  (list (foreign? l) (foreign-length l) (foreign->list l) (foreign-invoke (java-type "java.lang.Math") 'max 3 7)))
+                                """));
                 List<Object> list = new ArrayList<>();
                 Value add = run(context, "(lambda (l) (foreign-invoke l 'add \"x\") (list (foreign-length l) (foreign->list l)))");
                 assertEquals("(1 (\"x\"))", add.execute(list).toString());

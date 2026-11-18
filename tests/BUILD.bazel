@@ -10,6 +10,9 @@ load("//tests/harness:defs.bzl", "conformance_tests", "diff_tests", "harness_tes
 
 package(default_visibility = ["//visibility:public"])
 
+# The reflection metadata //:schemevm_reflection is built with (design.md D20, "The launchers").
+exports_files(["polyglot/reachability-metadata.json"])
+
 # --- JUnit (tests/scheme/test) -----------------------------------------------------------------
 
 # All of it, compiled together for the lint tests (format, Checkstyle, ECJ) only.
@@ -269,6 +272,26 @@ harness_test(
         "cpu:2",
         "manual",
     ],
+)
+
+# design.md D20, "The launchers": `java-type` in a native image with reflection metadata for the
+# class (the native launcher's executable with //:schemevm_reflection) finds its constructors and
+# methods, as on the JVM; //tests:readme_native runs the same program through the native launcher,
+# which has none. Only when named, like the other native tests.
+harness_test(
+    name = "polyglot_native",
+    check = "polyglot_native",
+    args = [
+        "--native=$(rlocationpath //:scheme-native)",
+        "--library=$(rlocationpath //:schemevm_reflection)",
+        "--program=$(rlocationpath //:docs/examples/polyglot.scm)",
+    ],
+    data = [
+        "//:docs/examples/polyglot.scm",
+        "//:scheme-native",
+        "//:schemevm_reflection",
+    ],
+    tags = ["manual"],
 )
 
 # --- Conformance -------------------------------------------------------------------------------
