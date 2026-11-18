@@ -23,6 +23,7 @@ import com.oracle.truffle.api.bytecode.Instruction;
 import scheme.compiler.ProgramCompiler;
 import scheme.runtime.GlobalCell;
 import scheme.runtime.SchemeContext;
+import scheme.runtime.SchemeLanguage;
 import scheme.runtime.value.SClosure;
 
 /**
@@ -202,7 +203,7 @@ public class CallSiteTest {
     public void mapAndForEachAreSplitPerCallSite() throws IOException {
         // Under torture each loop iteration after a call goes on in a copy of the loop's frame,
         // resumed by the program's prompt, not called from the call site that called map.
-        Assume.assumeFalse("torture mode", Boolean.getBoolean("scheme.torture"));
+        Assume.assumeFalse("torture mode", SchemeLanguage.constant(SchemeLanguage.TORTURE) != SchemeLanguage.Torture.OFF);
         // Five callers each, each with a procedure of its own: more than a call site's cache holds,
         // so the site in map's (for-each's) loop goes megamorphic, and Truffle splits the procedure
         // for each caller, whose copy's site sees one procedure.

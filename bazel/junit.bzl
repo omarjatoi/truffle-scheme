@@ -15,10 +15,11 @@ _UNIT_MODES = {
         "-Dpolyglot.engine.BackgroundCompilation=false",
         "-Dpolyglot.engine.CompilationFailureAction=Throw",
     ], "large", []),
-    "torture": (["-Dscheme.torture=true"], "medium", ["cpu:2"]),
+    # Torture (the constant option scheme.Torture, design.md D17 "Constant options").
+    "torture": (["-Dpolyglot.scheme.Torture=shared"], "medium", ["cpu:2"]),
     # Torture whose captures stay owned, so the frames are resumed in place (design.md "Owned
     # segments"); what a continuation reaches is still copied and checked.
-    "torture_owned": (["-Dscheme.torture=true", "-Dscheme.torture.owned=true"], "medium", ["cpu:2"]),
+    "torture_owned": (["-Dpolyglot.scheme.Torture=owned"], "medium", ["cpu:2"]),
 }
 
 def unit_tests(name, tests, support, kinds, resources = {}, extra_srcs = {}):
@@ -73,7 +74,9 @@ def unit_tests(name, tests, support, kinds, resources = {}, extra_srcs = {}):
             test = "%s_%s_%s" % (name, mode, cls)
             junit_test(
                 name = test,
-                jvm_flags = flags,
+                # Only Truffle runs the upstream tests: the language isn't there, so its options
+                # (the tortures' scheme.Torture) would be unknown ones, which Truffle refuses.
+                jvm_flags = [f for f in flags if not f.startswith("-Dpolyglot.scheme.")] if kind == "upstream" else flags,
                 module = ":%s_module_%s" % (name, cls),
                 size = size,
                 tags = tags,

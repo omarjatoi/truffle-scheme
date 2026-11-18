@@ -5,7 +5,8 @@ properties and the stack size take effect. Every argument after the program file
 it. The executable takes VM options only as `--vm.` ones; a collector (chosen when the executable is
 built), a class path and an option the isolate would ignore are errors. Every class of option takes
 effect or fails clearly (plan.md M10-04, docs/usage.md "Options"), and so does every option in an
-argument file, `--vm.@file` (plan.md M11-03)."""
+argument file, `--vm.@file` (plan.md M11-03). Constant options are fixed when the image is built
+(plan.md M11-07)."""
 
 import argparse
 import os
@@ -83,6 +84,19 @@ def launcher_vm_native(o):
     out, _ = run([native, '--vm.Xss2m', '--vm.Xmx1g', programs['garbage']])
     check(out == 'done', f'--vm.Xss2m --vm.Xmx1g: {out!r}')
     log('--vm.D and --vm.Xss')
+
+    # Constant options (design.md D17, "Constant options"): the image fixed them when it was built
+    # (scheme.Torture: off), so a run may repeat that value but neither its command line nor its
+    # system properties can change it.
+    out, _ = run([native, '--help:scheme:internal'])
+    check('--scheme.Torture=off|shared|owned' in out, f'--help:scheme:internal should list scheme.Torture:\n{out}')
+    out, _ = run([native, '--scheme.Torture=off', programs['garbage']])
+    check(out == 'done', f'--scheme.Torture=off, the image\'s value, should run the program: {out!r}')
+    for option in ('--scheme.Torture=shared', '--vm.Dpolyglot.scheme.Torture=owned'):
+        _, err = run([native, option, programs['garbage']], status=1)
+        check("ERROR: Option 'scheme.Torture' is constant and is already fixed to 'off'" in err and 'native image: native-image build' in err,
+              f'{option} should be an error: the image fixed scheme.Torture when it was built:\n{err}')
+    log('constant options: fixed when the image was built')
 
     # Every argument after the file is the program's, as given: the isolate parses only the
     # options the thin launcher gives it, never the process's command line.

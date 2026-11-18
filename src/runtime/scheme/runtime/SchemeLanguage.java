@@ -1,7 +1,10 @@
 package scheme.runtime;
 
+import java.lang.invoke.MethodHandles;
+import java.util.Locale;
 import java.util.ServiceLoader;
 
+import org.graalvm.options.ConstantOptionKey;
 import org.graalvm.options.OptionCategory;
 import org.graalvm.options.OptionDescriptors;
 import org.graalvm.options.OptionKey;
@@ -85,6 +88,63 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
     @Option(name = "BufferOutput", help = "Buffer standard output; it is written when Scheme reads standard input, writes to standard error, flushes or exits, and when control returns to the caller; false writes each write at once (default: true).", //
                     category = OptionCategory.USER, stability = OptionStability.STABLE, usageSyntax = "true|false", sandbox = SandboxPolicy.CONSTRAINED) //
     public static final OptionKey<Boolean> BUFFER_OUTPUT = new OptionKey<>(true);
+
+    // Constant options (design.md D17, "Constant options"): fixed for the process before the
+    // polyglot runtime starts, from -Dpolyglot.<name>=<value> as the generated descriptors' class
+    // is initialized (in a native image, when the image is built); an engine or context may repeat
+    // the value but not change it. Read them with constant(). They are STABLE, so the system
+    // property, which every engine of the process reads, needs no experimental options, and
+    // CONSTRAINED, so a sandboxed context of a process that sets one still starts (it can't change it).
+
+    /**
+     * Torture mode (M2-06, AGENTS.md rules 2 and 3; {@code SchemeRootNode.TORTURE}): capture and
+     * resume at every non-tail call, the captured frames shared (resumed from copies) or owned
+     * (resumed in place).
+     */
+    @Option(name = "Torture", help = "Capture up to the root prompt and resume after every non-tail call, the captured frames shared (resumed from copies) or owned (resumed in place); for tests, fixed for the process: -Dpolyglot.scheme.Torture=<value> (default: off).", //
+                    category = OptionCategory.INTERNAL, stability = OptionStability.STABLE, usageSyntax = "off|shared|owned", sandbox = SandboxPolicy.CONSTRAINED, constant = true) //
+    public static final ConstantOptionKey<Torture> TORTURE = new ConstantOptionKey<>(Torture.OFF);
+
+    /** A file to restore the standard libraries from instead of the bundled prelude image (tests). */
+    @Option(name = "PreludeImageFile", help = "A prelude image file to use instead of the bundled one; for tests, fixed for the process: -Dpolyglot.scheme.PreludeImageFile=<file> (default: none).", //
+                    category = OptionCategory.INTERNAL, stability = OptionStability.STABLE, usageSyntax = "<file>", sandbox = SandboxPolicy.CONSTRAINED, constant = true) //
+    public static final ConstantOptionKey<String> PRELUDE_IMAGE_FILE = new ConstantOptionKey<>("");
+
+    /**
+     * Where the build's context writes the prelude image it builds (design.md D13, M7-05): with
+     * it, a context expands the standard libraries and writes them.
+     */
+    @Option(name = "PreludeImageWrite", help = "Expand the standard libraries and write the prelude image to this file; for the build, fixed for the process: -Dpolyglot.scheme.PreludeImageWrite=<file> (default: none).", //
+                    category = OptionCategory.INTERNAL, stability = OptionStability.STABLE, usageSyntax = "<file>", sandbox = SandboxPolicy.CONSTRAINED, constant = true) //
+    public static final ConstantOptionKey<String> PRELUDE_IMAGE_WRITE = new ConstantOptionKey<>("");
+
+    /** The values of {@code scheme.Torture}. */
+    public enum Torture {
+        OFF,
+        /** Every capture shared: every resume from copies, checked. */
+        SHARED,
+        /** The captures' frames owned by the root prompt's driver: resumed in place (design.md "Owned segments"). */
+        OWNED;
+
+        @Override
+        public String toString() {
+            return name().toLowerCase(Locale.ROOT);
+        }
+    }
+
+    /**
+     * A constant option's value. The class of the descriptors that the option processor generates
+     * sets it as it is initialized, which this makes sure of first: whichever class reads it first
+     * (when the language is built into a native image, in any order) gets the value.
+     */
+    public static <T> T constant(ConstantOptionKey<T> key) {
+        try {
+            MethodHandles.lookup().ensureInitialized(SchemeLanguageOptionDescriptors.class);
+        } catch (IllegalAccessException e) {
+            throw new IllegalStateException(e);
+        }
+        return key.getConstantValue();
+    }
 
     /** A {@code scheme.SpillDepth}: a number of nested calls, 0 or more. */
     private static Integer parseSpillDepth(String value) {

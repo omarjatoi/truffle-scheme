@@ -1487,7 +1487,7 @@ that may change performance measures with interleaved A/B runs.
     faster, ASCII ones no slower, malformed input is handled as today, and
     `IoTest`'s buffer tests pass, with a new one for a multi-byte sequence
     split across two buffers.
-- [ ] **M11-07 · Constant options for the test and build switches**
+- [x] **M11-07 · Constant options for the test and build switches**
   - docs/graalvm-configuration.md, "Follow-ups": `scheme.torture`,
     `scheme.torture.owned` and `scheme.preludeImage` (`.write`, `.file`)
     are system properties the runtime reads. 25.1's `@Option(constant =

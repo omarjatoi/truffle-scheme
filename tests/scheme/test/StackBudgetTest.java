@@ -12,6 +12,8 @@ import java.util.function.Supplier;
 import org.graalvm.polyglot.Context;
 import org.junit.Test;
 
+import scheme.runtime.SchemeLanguage;
+
 /**
  * M8-01: the stack-depth spill (design.md "Continuations") happens when the Java stack the nested
  * calls use approaches what the thread has, not after a fixed number of calls. A recursion that fits
@@ -194,7 +196,7 @@ public class StackBudgetTest {
             });
             // (Under torture, each call's frame goes to the heap when it returns, so nothing nests
             // deep enough to spill.)
-            assertTrue(size + " bytes, spills: " + result[0] + ", " + result[1], Boolean.getBoolean("scheme.torture") || result[0] > 0 && result[1] > 0);
+            assertTrue(size + " bytes, spills: " + result[0] + ", " + result[1], SchemeLanguage.constant(SchemeLanguage.TORTURE) != SchemeLanguage.Torture.OFF || result[0] > 0 && result[1] > 0);
         }
     }
 

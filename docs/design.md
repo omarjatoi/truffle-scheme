@@ -667,10 +667,11 @@ follow it or deviate, with the decision below that says why.
     capture, plain torture, a composable continuation's frames) is shared
     from the start. Tools only read pending frames (M6-04), and an error that unwinds
     through pending frames resumes copies, so neither changes ownership.
-  - *Checked by two torture modes.* Torture (`-Dscheme.torture=true`)
+  - *Checked by two torture modes*, the constant option `scheme.Torture`
+    (D17, "Constant options"). Torture (`-Dpolyglot.scheme.Torture=shared`)
     shares every capture, so every resume is from a copy, checked against
-    the original (AGENTS.md rule 3). Owned torture (with
-    `-Dscheme.torture.owned=true` too) keeps a torture capture's segments
+    the original (AGENTS.md rule 3). Owned torture
+    (`-Dpolyglot.scheme.Torture=owned`) keeps a torture capture's segments
     owned, as a spill's (the driver claims them, and doesn't bump the epoch),
     so every non-tail call's return resumes frames in place, and whatever a
     continuation then reaches is copied and checked. In both, a segment
@@ -2844,7 +2845,8 @@ Each entry: the decision, why, and what was rejected.
   needs a record kind and a new format number (`PreludeImage.FORMAT`).
   - **Built at build time (M7-05).** The build runs a context of the
     language's classes (`prelude_image` in `bazel/java_module.bzl`), which
-    writes the image as it initializes (`-Dscheme.preludeImage.write`), into
+    writes the image as it initializes (the constant option
+    `scheme.PreludeImageWrite`, D17 "Constant options"), into
     `scheme.jar` beside the prelude (`scheme/prelude/prelude.image`). Bazel
     builds it again whenever a class or prelude file it is made from changes. So the first context of a
     process restores too.
@@ -2863,15 +2865,20 @@ Each entry: the decision, why, and what was rejected.
     the second context of a JVM that instantiates the libraries the normal
     way builds an image in memory, and later contexts restore from it. The
     first builds nothing, so a program run once pays nothing for it.
-  - `-Dscheme.preludeImage=false` turns both off, and the internal option
-    `scheme.PreludeImage=false` turns them off for one context (it then
-    expands, and takes no part in building an image). `-Dscheme.preludeImage.file`
-    names an image file to use instead of the bundled one (tests).
+  - The internal option `scheme.PreludeImage=false` turns both off for a
+    context (it then expands, and takes no part in building an image), and
+    for every context of a process as `-Dpolyglot.scheme.PreludeImage=false`,
+    which every engine reads. The constant option `scheme.PreludeImageFile`
+    names an image file to use instead of the bundled one (tests). (Before
+    M11-07 a system property, `scheme.preludeImage=false`, turned them off
+    for the process; the option as a system property does the same, but the
+    bundled image is still read, once, as `PreludeImage` is initialized.)
   - Numbers (M7-05) on an Apple M3 Max shared with other jobs (load 10 to
     20), medians of 15 (JVM) and 30 (native) fresh processes, the two
     variants interleaved; "expanding" is the same build with the image off
-    (`-Dscheme.preludeImage=false`, given to native-image for the native
-    launcher), which is what the first context did before:
+    (`-Dscheme.preludeImage=false`, the system property M11-07 replaced,
+    given to native-image for the native launcher), which is what the first
+    context did before:
 
     | | Expanding | Restoring |
     |---|---:|---:|
@@ -3913,6 +3920,79 @@ Each entry: the decision, why, and what was rejected.
   - Checked by `//tests:launcher_vm`, `LauncherTest.processOptionsTakeEffectOrFailClearly`
     and `//tests:launcher_vm_native` (here and on the executors): an option of
     each class, its effect or its error and status.
+- **Constant options (M11-07).** The switches fixed for a process, which
+  tests and the build set, are Truffle's constant options (25.1's
+  `@Option(constant = true)` with a `ConstantOptionKey`), INTERNAL options
+  of the language that `--help:scheme:internal` lists (the framework's
+  `--help:internal` is deprecated for `--help:[id]:internal`):
+  `scheme.Torture=off|shared|owned` (torture mode, "Owned segments"),
+  `scheme.PreludeImageFile=<file>` (an image to restore from instead of the
+  bundled one, tests) and `scheme.PreludeImageWrite=<file>` (where the
+  build's context writes the prelude image, D13). They replace five system
+  properties the runtime read into `static final` fields, which nothing
+  listed or validated.
+  - *How a value is set.* `ConstantOptionKey`'s Javadoc: *"The option value
+    is initialized from the system property `-Dpolyglot.<option-name>=<value>`,
+    which must be set before the polyglot runtime is initialized (i.e. before
+    the containing class is loaded) ... On HotSpot, this means the property
+    must be present on the JVM command line. In a GraalVM native image, the
+    property is read during image building, so the value is baked into the
+    image."* The option processor generates the reading: the static
+    initializer of `SchemeLanguageOptionDescriptors` calls
+    `initConstantOption`, which converts `System.getProperty("polyglot." +
+    name)` with the option's type, or takes the default, and calls
+    `setConstantValue`, which throws at image run time. The language's
+    packages are initialized when the image is built, that class with them,
+    so `-Dpolyglot.scheme.Torture=shared` given to native-image would build a
+    torturing image; `//:scheme-native` gives none, so its values are the
+    defaults. `getConstantValue()` on a `static final` key folds to a
+    constant in compiled code; `SchemeRootNode.TORTURE` and `PreludeImage`'s
+    fields read it once anyway. They read it through `SchemeLanguage.constant`,
+    which initializes the descriptors' class first: whichever class reads a
+    value first gets it, in native-image's order of initialization too.
+  - *Validated.* An engine or context may repeat the fixed value
+    (`Context.Builder.option`, the launcher's `--scheme.Torture=...`, or the
+    `polyglot.scheme.Torture` system property, which every engine reads),
+    but not change it: *"Option 'scheme.Torture' is constant and is already
+    fixed to 'off'. ... To choose a different value, set
+    -Dpolyglot.scheme.Torture=<value> before the polyglot runtime is
+    initialized (HotSpot: JVM command line; native image: native-image
+    build)"* (`OptionValuesImpl.put`), an `IllegalArgumentException` that the
+    launcher reports as it is, status 1. A value the type rejects on the
+    command line is the framework's error, status 1. A value it rejects in
+    `-Dpolyglot.<name>` throws in the generated static initializer, so the
+    first engine fails with an internal error (`ExceptionInInitializerError`,
+    status 70) whose printed cause names the value and the valid ones; the
+    launcher can't say it better, as the `PolyglotException` of an internal
+    error carries no cause (`getCause()` is null).
+  - *STABLE and CONSTRAINED.* Each engine of the process takes the system
+    property as an option, so an EXPERIMENTAL one would fail every context
+    that doesn't allow experimental options. On HotSpot, Truffle applies a
+    constant option's system property even to an engine built with
+    `useSystemProperties(false)` (*"we still need to apply constant options
+    to keep values consistent"*, `PolyglotImpl.createEngineOptions`), so a
+    sandboxed (CONSTRAINED) engine of a torture run gets `scheme.Torture`,
+    and would refuse an option allowed only up to TRUSTED; a sandboxed
+    context can't change it.
+  - *One option for both tortures*: `off|shared|owned` instead of two
+    booleans, so owned torture without torture, which the two properties
+    took and ignored, can't be said. *The write switch* is a build-time tool
+    switch, but the build runs the launcher on an empty program with it
+    (`prelude_image` in `bazel/java_module.bzl`), a process whose one value
+    it is: a constant option fits. *The process-wide `scheme.preludeImage=false`
+    is gone*: `-Dpolyglot.scheme.PreludeImage=false`, the per-context option
+    as a system property, which every engine reads, turns the image off for
+    every context of the process (D13).
+  - Checked by `//tests:system_properties` (a lint test: no class of
+    `scheme.jar` but the generated descriptors calls `System.getProperty`,
+    `getProperties`, `Boolean.getBoolean`, `Integer.getInteger` or
+    `Long.getLong`), `LanguageOptionsTest` (the three are the constant
+    options, INTERNAL; repeating the value works and changing it is the
+    error above), `//tests:launcher_vm` (listed; `--scheme.Torture=shared`
+    is an error without `--vm.Dpolyglot.scheme.Torture=shared` and runs
+    with it) and `//tests:launcher_vm_native` (the image fixed `off`:
+    `--scheme.Torture=shared` and `--vm.Dpolyglot.scheme.Torture=owned` are
+    the error).
 - The Chrome inspector, DAP and profiler tools (the CPU sampler and tracer,
   the memory tracer, the heap monitor) are optional modules
   (`//bazel:tools_modules`), which `bazel-bin/scheme` puts on the module
@@ -3936,10 +4016,10 @@ Each entry: the decision, why, and what was rejected.
   provider and the DSL-generated library exports live in the image heap).
   docs/graalvm-configuration.md audits this configuration, the language's
   registration and options, and its embedding against GraalVM's guidance.
-  Static state then keeps its build-time value: `-Dscheme.torture` (and
-  `.owned`) and
-  `-Dscheme.preludeImage` (and its `.file`) have no effect in a native image,
-  so torture mode needs the JVM. No reflection configuration is needed (D10).
+  Static state then keeps its build-time value, the constant options'
+  among it ("Constant options", below): a run can't change
+  `scheme.Torture`, so torture mode needs the JVM. No reflection
+  configuration is needed (D10).
   - The build-time prelude image (D13, M7-05) is read and checked when
     `PreludeImage` is initialized, so at image build time: the checked image,
     its prelude `Source`s included, is in the image heap, the executable

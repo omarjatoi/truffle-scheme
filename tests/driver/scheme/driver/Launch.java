@@ -32,9 +32,10 @@ final class Launch {
     static final List<String> INTERPRETER_VM_ARGS = List.of(
                     "-Dpolyglot.engine.AllowExperimentalOptions=true",
                     "-Dpolyglot.engine.Compilation=false");
-    static final String TORTURE_VM_ARG = "-Dscheme.torture=true";
-    /** With torture: its captures stay owned, so their frames are resumed in place (design.md "Owned segments"). */
-    static final String TORTURE_OWNED_VM_ARG = "-Dscheme.torture.owned=true";
+    /** Torture: the constant option scheme.Torture (design.md D17, "Constant options"). */
+    static final String TORTURE_VM_ARG = "-Dpolyglot.scheme.Torture=shared";
+    /** Torture whose captures stay owned, so their frames are resumed in place (design.md "Owned segments"). */
+    static final String TORTURE_OWNED_VM_ARG = "-Dpolyglot.scheme.Torture=owned";
     static final String LAUNCHER_MAIN = "scheme.launcher/scheme.launcher.SchemeMain";
 
     final String modulePath;
@@ -98,13 +99,11 @@ final class Launch {
     static List<String> vmArgs(boolean compile, String torture) {
         List<String> args = new ArrayList<>(compile ? COMPILE_VM_ARGS : INTERPRETER_VM_ARGS);
         if (torture != null) {
-            args.add(TORTURE_VM_ARG);
-            switch (torture) {
-                case "torture" -> {
-                }
-                case "torture_owned" -> args.add(TORTURE_OWNED_VM_ARG);
+            args.add(switch (torture) {
+                case "torture" -> TORTURE_VM_ARG;
+                case "torture_owned" -> TORTURE_OWNED_VM_ARG;
                 default -> throw fail("unknown torture mode " + torture);
-            }
+            });
         }
         return args;
     }
