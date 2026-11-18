@@ -435,6 +435,10 @@ final class Arithmetic {
 
     // ------------------------------------------------------------------------------------------
     // Transcendental functions (R7RS §6.2.6, with its branch cuts)
+    //
+    // StrictMath (fdlibm), never Math, whose results differ by an ulp between platforms and between
+    // the JVM and native launchers: a program writes the same digits everywhere (design.md D1,
+    // "Transcendental functions are fdlibm's"). Math.sqrt is IEEE 754's, the same everywhere.
 
     /** A flonum or flonum-part complex result, real when the imaginary part is exactly 0.0 from a real argument. */
     private static Object complexResult(double re, double im) {
@@ -445,12 +449,12 @@ final class Arithmetic {
     static Object exp(Object z) {
         check("exp", z);
         if (!(z instanceof SComplex)) {
-            return Math.exp(flo(z));
+            return StrictMath.exp(flo(z));
         }
         double x = flo(realPart(z));
         double y = flo(imagPart(z));
-        double m = Math.exp(x);
-        return complexResult(m * Math.cos(y), m * Math.sin(y));
+        double m = StrictMath.exp(x);
+        return complexResult(m * StrictMath.cos(y), m * StrictMath.sin(y));
     }
 
     @TruffleBoundary
@@ -458,17 +462,17 @@ final class Arithmetic {
         check("log", z);
         // -0.0 is on the negative side of the branch cut: (log -0.0) is -inf.0+pi*i.
         if (!(z instanceof SComplex) && sign("log", z) >= 0 && !(z instanceof Double d && d == 0.0 && Double.doubleToRawLongBits(d) != 0)) {
-            return Math.log(flo(z));
+            return StrictMath.log(flo(z));
         }
-        return complexResult(Math.log(magnitudeDouble(z)), angleDouble(z));
+        return complexResult(StrictMath.log(magnitudeDouble(z)), angleDouble(z));
     }
 
     static double magnitudeDouble(Object z) {
-        return Math.hypot(flo(realPart(z)), flo(imagPart(z)));
+        return StrictMath.hypot(flo(realPart(z)), flo(imagPart(z)));
     }
 
     static double angleDouble(Object z) {
-        return Math.atan2(flo(imagPart(z)), flo(realPart(z)));
+        return StrictMath.atan2(flo(imagPart(z)), flo(realPart(z)));
     }
 
     @TruffleBoundary
@@ -486,7 +490,7 @@ final class Arithmetic {
         check("angle", z);
         if (!(z instanceof SComplex)) {
             if (z instanceof Double d) {
-                return Math.atan2(0.0, d);
+                return StrictMath.atan2(0.0, d);
             }
             return sign("angle", z) < 0 ? Math.PI : (Object) 0L;
         }
@@ -514,7 +518,7 @@ final class Arithmetic {
         // The principal root: Re >= 0, and the cut along the negative real axis.
         double x = flo(realPart(z));
         double y = flo(imagPart(z));
-        double r = Math.hypot(x, y);
+        double r = StrictMath.hypot(x, y);
         double re = Math.sqrt((r + x) / 2);
         double im = Math.sqrt((r - x) / 2);
         return complexResult(re, y < 0 ? -im : im);
@@ -527,32 +531,32 @@ final class Arithmetic {
             double x = flo(z);
             switch (who) {
                 case "sin":
-                    return Math.sin(x);
+                    return StrictMath.sin(x);
                 case "cos":
-                    return Math.cos(x);
+                    return StrictMath.cos(x);
                 case "tan":
-                    return Math.tan(x);
+                    return StrictMath.tan(x);
                 case "asin":
                     if (x >= -1 && x <= 1) {
-                        return Math.asin(x);
+                        return StrictMath.asin(x);
                     }
                     break;
                 case "acos":
                     if (x >= -1 && x <= 1) {
-                        return Math.acos(x);
+                        return StrictMath.acos(x);
                     }
                     break;
                 default:
-                    return Math.atan(x);
+                    return StrictMath.atan(x);
             }
         }
         double x = flo(realPart(z));
         double y = flo(imagPart(z));
         switch (who) {
             case "sin":
-                return complexResult(Math.sin(x) * Math.cosh(y), Math.cos(x) * Math.sinh(y));
+                return complexResult(StrictMath.sin(x) * StrictMath.cosh(y), StrictMath.cos(x) * StrictMath.sinh(y));
             case "cos":
-                return complexResult(Math.cos(x) * Math.cosh(y), -Math.sin(x) * Math.sinh(y));
+                return complexResult(StrictMath.cos(x) * StrictMath.cosh(y), -StrictMath.sin(x) * StrictMath.sinh(y));
             case "tan":
                 return div(trig("sin", z), trig("cos", z));
             case "asin": {
@@ -580,7 +584,7 @@ final class Arithmetic {
         if (isExactInteger(power) && (isExact(base) || base instanceof Double)) {
             BigInteger p = numerator(power);
             if (base instanceof Double d) {
-                return Math.pow(d, p.doubleValue());
+                return StrictMath.pow(d, p.doubleValue());
             }
             if (p.bitLength() > 31) {
                 if (isExactInteger(base) && numerator(base).abs().compareTo(BigInteger.ONE) <= 0) {
@@ -605,7 +609,7 @@ final class Arithmetic {
             if (sign("expt", base) == 0) {
                 return sign("expt", power) == 0 ? (isExact(base) && isExact(power) ? (Object) 1L : (Object) 1.0) : (isExact(base) && isExact(power) ? (Object) 0L : (Object) 0.0);
             }
-            return Math.pow(flo(base), flo(power));
+            return StrictMath.pow(flo(base), flo(power));
         }
         if (sign("expt", realPart(base)) == 0 && sign("expt", imagPart(base)) == 0) {
             return isExact(base) && isExact(power) ? (Object) 0L : (Object) 0.0;
@@ -622,6 +626,6 @@ final class Arithmetic {
         }
         double m = flo(magnitude);
         double a = flo(angle);
-        return complexResult(m * Math.cos(a), m * Math.sin(a));
+        return complexResult(m * StrictMath.cos(a), m * StrictMath.sin(a));
     }
 }
