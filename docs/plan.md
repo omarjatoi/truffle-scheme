@@ -1312,7 +1312,7 @@ measures with interleaved A/B runs.
     #183's code than for #184's with the same host inlining; with #188's 4
     threads both are as fast, so it isn't an inlining change that could
     reverse (design.md "Stack-depth spill", M9-01's last item).
-- [ ] **M10-07 · Literal pairs immutable without a cost** *(needs M10-02)*
+- [x] **M10-07 · Literal pairs immutable without a cost** *(needs M10-02)*
   - `(set-car! '(1 2) 9)` succeeds today (R7RS §3.4, §4.1.2: "it is an
     error", not signalled; design.md D1, "Literal pairs aren't marked
     immutable (yet)"). Of the two representations measured, (C), a `final
@@ -1335,12 +1335,17 @@ measures with interleaved A/B runs.
     `destruc`, `nboyer`, `mazefun`, the `length` and `set-car!`
     micro-benchmarks, and 10 million conses natively), or the remaining
     cost is recorded in design.md D1 and the maintainer decides.
-  - *Measured, awaiting the maintainer's decision (2026-11-18).* #245 rebases
-    the branch onto M10-02 and re-measures: memory unchanged, the JIT
-    neutral, and a cost left in the interpreter (`set-car!`
-    micro-benchmark 1.057 times, `paraffins`' first run 1.036) and the
-    native launcher's first runs (`destruc`, `mazefun` 1.013-1.016), which
-    #245's design.md D1 records. #245 stays open for the maintainer.
+  - Done (2026-11-18) by its second clause: the maintainer accepted the
+    remaining cost under design.md's priority (the JIT and the native image
+    first, #270), and #245 merged. `(set-car! '(1 2) 9)` signals; memory
+    unchanged (10 million conses natively, 153.41 MB on both); the JIT
+    neutral or faster (steady 0.993 by the geometric mean, A/A 1.009); the
+    interpreter's later iterations 0.995 (A/A 0.995), but its `set-car!`
+    micro-benchmark 1.057, `paraffins`' first interpreted run 1.036 (one or
+    two more compilations of `continueAt`), and the native launcher's first
+    runs of `destruc` and `mazefun` 1.016 and 1.013 (design.md D1, "Literal
+    pairs are immutable"). Three other designs each moved the cost to the
+    JIT (D1).
 
 **Exit:** every task above is done, or its note records what was measured and
 why it isn't; `docs/benchmarks.md` and `bench/thresholds.json` are regenerated
