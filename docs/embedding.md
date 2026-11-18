@@ -559,7 +559,7 @@ allows (design.md D20); a program that doesn't import it sees none of it.
 |---|---|
 | `(polyglot-eval language source)`, `(polyglot-eval-file language path)` | Evaluates code of another language of the context: `allowPolyglotAccess`, and the language permitted (`Context.newBuilder("scheme", "js")`). |
 | `(polyglot-language-available? language)` | Whether `polyglot-eval` may evaluate that language. |
-| `(polyglot-import name)`, `(polyglot-export name value)` | The polyglot bindings, `context.getPolyglotBindings()` in Java (`allowPolyglotAccess`); `polyglot-import` answers `#f` for a name nothing exports. |
+| `(polyglot-import name [default])`, `(polyglot-export name value)` | The polyglot bindings, `context.getPolyglotBindings()` in Java (`allowPolyglotAccess`); `polyglot-import` answers `default`, or `#f`, for a name nothing exports, as JavaScript's `Polyglot.import` answers `undefined`. |
 | `(java-type name)` | A Java class (`allowHostClassLookup`), refused under `SandboxPolicy.CONSTRAINED` and the stricter policies, and in a native image (the native launcher, a polyglot isolate). |
 | `(foreign? x)`, `(foreign-null? x)` | Whether `x` is a foreign value, and a foreign null (Java's `null`). |
 | `(foreign-ref obj key)`, `(foreign-set! obj key value)` | An array element (an exact integer key), a map's value (`HostAccess` with map access), or a member: a field, a method, another language's property (a string or symbol key). |

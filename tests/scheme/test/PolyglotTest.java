@@ -121,6 +121,15 @@ public class PolyglotTest {
             context.getPolyglotBindings().putMember("fromJava", 41);
             assertEquals(42, run(context, "(+ 1 (polyglot-import \"fromJava\"))").asInt());
             assertEquals("#f", show(context, "(polyglot-import 'nothing-here)"));
+            // A default tells an exported #f from no binding (D20, "Decided on review").
+            assertEquals("(none #f #t #f)", show(context, """
+                            (polyglot-export "no" #f)
+                            (define unbound (list 'unbound))
+                            (list (polyglot-import 'nothing-here 'none)
+                                  (polyglot-import "no" unbound)
+                                  (eq? (polyglot-import "nothing-here" unbound) unbound)
+                                  (polyglot-import "no"))
+                            """));
             // What Scheme exports, Java and SL import.
             run(context, "(polyglot-export \"fromScheme\" (vector 1 2 3)) (polyglot-export 'square (lambda (x) (* x x)))");
             assertEquals(3, context.getPolyglotBindings().getMember("fromScheme").getArraySize());

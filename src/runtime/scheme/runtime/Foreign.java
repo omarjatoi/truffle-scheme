@@ -179,15 +179,18 @@ public final class Foreign {
                         new SPair(SString.of(language), new SPair(available, SConstant.EMPTY_LIST)), SErrorObject.Kind.OTHER));
     }
 
-    /** {@code (polyglot-import name)}: the binding's value, or #f. */
+    /**
+     * {@code (polyglot-import name [default])}: the binding's value, or {@code unbound} if there is
+     * none, as other languages answer their null for it (design.md D20, "Decided on review").
+     */
     @TruffleBoundary
-    public static Object importSymbol(String name) {
+    public static Object importSymbol(String name, Object unbound) {
         TruffleLanguage.Env env = checkBindings("polyglot-import");
         SchemeContext context = SchemeContext.get(null);
         int use = enter(context);
         try {
             Object value = env.importSymbol(name);
-            return value == null ? Boolean.FALSE : incoming(value);
+            return value == null ? unbound : incoming(value);
         } catch (AbstractTruffleException e) {
             throw raised(e);
         } finally {
