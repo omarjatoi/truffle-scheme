@@ -11,6 +11,10 @@ recommendation: what GraalVM says, what we do, and whether we **follow** it,
 deviated **by mistake** (and the PR that fixed it). Written November 2026,
 against GraalVM CE 25.5 / Truffle 25.5.5.0.3 (design.md D11).
 
+Its companion, [graalvm-configuration.md](graalvm-configuration.md), audits
+how the language is configured, packaged and embedded (options, the
+language's registration, sandboxing, embedding, native-image configuration).
+
 ## Versions
 
 "latest" on graalvm.org is the 25.5 documentation (its version selector lists
