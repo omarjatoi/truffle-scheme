@@ -89,9 +89,10 @@ class Runner:
         digest = hashlib.sha1(text.encode('utf-8')).hexdigest()[:16]
         path = join(self.workdir, f'{digest}.scm')
         if not os.path.exists(path):
-            with open(path + '.tmp', 'w', encoding='utf-8') as f:
+            tmp = f'{path}.{threading.get_ident()}.tmp'  # another thread may write the same file
+            with open(tmp, 'w', encoding='utf-8') as f:
                 f.write(text)
-            os.replace(path + '.tmp', path)
+            os.replace(tmp, path)
         return digest, path
 
     def run_chibi(self, text):
@@ -272,8 +273,6 @@ class Reducer:
             if n >= len(body):
                 break
             n = min(len(body), n * 2)
-        if len(body) == 1 or self.tests >= self.budget:
-            return body
         return body
 
 
@@ -296,7 +295,7 @@ def _replacements(node, depth):
     return out
 
 
-def _paths(tree, prefix=()):
+def _paths(tree):
     """Paths of every node, breadth first, from the top-level forms (after the import)."""
     queue = [(i,) for i in range(1, len(tree))]
     while queue:
@@ -335,7 +334,7 @@ def _delete(tree, path):
 # ---------------------------------------------------------------------------
 
 def fuzz(chibi, runtime, seed, count, modes, start=0, batch=10, jobs=4, depth=5, cases=8, out=None,
-         minimize=True, budget=400, log=print):
+         minimize=True, budget=400, log=harness.log):
     """Runs `count` programs from `start` in each mode; returns the mismatches as
     [(mode, first program, file, minimised file or None, description)]."""
     out = out or join(tempfile.gettempdir(), 'r7rs-fuzz')

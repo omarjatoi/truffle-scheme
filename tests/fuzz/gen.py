@@ -595,7 +595,8 @@ class Gen:
         binds, new = [], []
         inner = env
         for i in range(n):
-            name, bt = self.local(), self.bind_type()
+            # letrec*'s inits see its own variables, so they get names nothing outside has.
+            name, bt = (self.fresh('r') if form == 'letrec*' else self.local()), self.bind_type()
             if any(name == b for b, _ in new):
                 name = self.fresh(name)
             if form == 'let':
@@ -1024,6 +1025,13 @@ class Gen:
         return ['let', [[a, self.expr(t, d, env.calm())], [b, self.expr(t, d, env.calm())]],
                 ['if', test, a, [op, a, divisor]]]
 
+    def string_to_number(self, d, env):
+        """string->number of a string without whitespace: chibi-scheme skips it, and reads
+        "\n100" as 100, not #f."""
+        s = self.fresh('s')
+        return ['let', [[s, self.expr(STR, d, env)]],
+                ['if', ['memv', '#t', ['map', 'char-whitespace?', ['string->list', s]]], '#f', ['string->number', s]]]
+
     def flo_abs(self, d, env):
         """abs of a flonum that isn't -0.0, by adding 0.0: chibi-scheme's (abs -0.0) is -0.0."""
         return ['abs', ['+', self.expr(FLO, d, env), '0.0']]
@@ -1107,7 +1115,7 @@ class Gen:
             if self.chance(0.5):
                 radix = self.pick(['2', '8', '10', '16'])
                 return ['string->number', ['number->string', self.expr(INT, d, env), radix], radix]
-            return ['let', [[x, ['string->number', self.expr(STR, d, env)]]],
+            return ['let', [[x, self.string_to_number(d, env)]],
                     ['if', ['exact-integer?', x], x, self.expr(INT, d, env)]]
 
         def digit(t, d, env):
@@ -1298,7 +1306,7 @@ class Gen:
 
         def from_str(t, d, env):
             x = self.fresh('x')
-            return ['let', [[x, ['string->number', self.expr(STR, d, env.calm())]]],
+            return ['let', [[x, self.string_to_number(d, env.calm())]],
                     ['if', ['and', x, ['inexact?', x], ['real?', x]], x, self.expr(FLO, d, env)]]
 
         return [(4, arith), (1, mixed), (1.5, div), (2, unary), (1, sqrt_), (2, inexact), (1, roundtrip),
@@ -1819,9 +1827,6 @@ class Gen:
             return [rec[1]] + self.args([ft for ft, *_ in rec[3]], d, env)
 
         return [(5, make)]
-
-    def t_none(self, t):
-        return []
 
 
 def generate(seed, index, depth=5, cases=8, exits=True, prefix=None):

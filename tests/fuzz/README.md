@@ -49,12 +49,30 @@ or unspecified: make the generator stay clear of it, and list it below.
 
 ## chibi-scheme's departures from R7RS
 
-The driver undoes the first two in chibi-scheme's stdout before comparing; the
-generator avoids the others.
+The driver undoes the first three in chibi-scheme's stdout before comparing;
+the generator stays clear of the others (`gen.py` says where).
 
 | What | chibi-scheme | R7RS |
 |---|---|---|
 | A flonum of one digit and an exponent | `1e+21` | §6.2.7: the result "contains a decimal point" (D9); ours writes `1.0e+21` |
-| Bytevectors | `#u8(#x28 #xA4)` | §6.9 doesn't fix the notation of the bytes; ours writes `#u8(40 164)` (not a bug) |
-| Reading flonums with an exponent or leading zeros | `1.5e-05` reads as `1.5000000000000002e-05` | §6.2.6: `(string->number (number->string z))` must give z back |
-| `rationalize` when the interval holds 0 | `(rationalize 5 10)` is `-5` | §6.2.6: the simplest rational in the interval, which is 0 |
+| A negative ratio whose denominator is 2^62 | `-1/-4611686018427387904` | §6.2.7, §2.1: `-1/4611686018427387904` |
+| Bytevectors | `#u8(#x28 #xA4)` | §6.9 leaves the notation of the bytes open; ours writes `#u8(40 164)` (not a bug) |
+| `/` by a negative bignum, with a ratio for quotient | negates the divisor **in place**: `(define g -9223372036854775809) (/ 5 g)` leaves `g` positive | §6.2.6: numbers are immutable values |
+| `floor/`, `floor-quotient`, `floor-remainder` with an operand of magnitude 2^62 or more; `truncate/` at ±2^62 | `(floor/ 100 -1022799909500023965235)` is `0 1022799909500023965335` | §6.2.6: `-1 -1022799909500023965135` |
+| `expt` of a non-integer ratio to a negative power | `(expt 2/3 -2)` is `1` | §6.2.6: `9/4` |
+| `rationalize` when the interval holds 0 | `(rationalize 5 10)` is `-5` | §6.2.6: the simplest rational in the interval, 0 |
+| `gcd` and `lcm` of one negative argument; `lcm` of 0 | `(gcd -20)` is `-20`; `(lcm 0 5)` divides by zero | §6.2.6: "always non-negative"; 0 |
+| `abs` of `-0.0` | `-0.0` | §6.2.6: the absolute value, `0.0` |
+| `integer?` of an infinity | `(integer? -inf.0)` is `#t` | §6.2.6: integers are rationals, and `(rational? -inf.0)` is `#f` |
+| Reading flonums with an exponent or leading zeros | `1.5e-05` reads as `1.5000000000000002e-05`, `126.5991` as `126.59909999999999` | §6.2.6: `(string->number (number->string z))` must give z back |
+| `inexact` of a bignum | `(inexact 291803963674569850706)` is `2.9180396367456987e+20` | §6.2.6: the closest inexact number, `2.9180396367456983e+20` |
+| `string->number` in radix 16 of a ratio with a bignum numerator | `#f` | §6.2.7: the number `number->string` wrote |
+| `string->number` of a string with whitespace | `"\n100"` gives `100` | §6.2.7: `#f` for what isn't the notation of a number |
+| `char-upcase` of `ß` | `ẞ` | §6.6: Unicode's simple case mapping, which has none for `ß` |
+| `string-downcase` of `Σ` before a non-letter | `"Σ#"` gives `"ς#"` | §6.7: Unicode's full lowercasing, whose Final_Sigma needs a cased letter before it |
+| `display` of a list with characters or strings, or of a symbol like `\|a b\|` | writes them as `write` does | §6.13.3: as if by `write-char` and `write-string`, symbols not escaped |
+| `write` of `(string->symbol ".5")` or `".3."` | `.5`, `.3.`, which don't read back as those symbols | §6.13.3, §2.1: `\|.5\|`, `\|.3.\|` |
+
+Not bugs, but avoided: what `(+ -0.0 0)` is (R7RS doesn't say whether an
+exact 0 is an identity there), and loops of 10^5 calls through `call/cc`,
+which take chibi-scheme minutes (it copies its stack on each capture).
