@@ -4010,13 +4010,38 @@ Each entry: the decision, why, and what was rejected.
     255); the launcher reports it as an error, status 1.
   - *The native launcher's VM options*: the isolate's creation applies
     `-Xmx`, `-Xms`, `-Xmn`, `-Xss`, `-D` and `-XX:` options, but takes any
-    other and ignores it (`-ea`, `-Xint`, `-verbose:gc`, `-Xlog:gc`, `-Xfoo`:
-    SubstrateVM's `RuntimeOptionParser` has a list of HotSpot options it
-    ignores for compatibility, and `JNI_CreateJavaVM` passes on the rest), and
-    the thin launcher keeps `--vm.p=`, `--vm.-module-path=` and
+    other and ignores it (`-ea`, `-Xint`, `-verbose:gc`, `-Xlog:gc`, `-Xfoo`).
+    In 25.5, `JNI_CreateJavaVM` creates the isolate with the options and
+    the C part's `ignoreUnrecognized`, not for a Java `main`
+    (`JNIInvocationInterface`). `CEntryPointSnippets`
+    (`initializeIsolateInterruptibly1`) hands them to
+    `RuntimeOptionParser.parseAndConsumeAllOptions`, which consumes `-D...`
+    and `-XX:LogFile=`, then `-XX:...`, `-Djdk.graal....` and the `-X` options
+    `XOptions` knows (`-Xmx`, `-Xms`, `-Xmn`, `-Xss`), and returns the rest.
+    `CEntryPointSnippets` fails on what is left only in an image built with
+    `-H:+StrictRuntimeJavaOptions` (*"Unrecognized option"*). Ours isn't
+    (the default: *"When disabled, the VM consumes only the historical
+    options ... Java-looking arguments are ... silently ignored by
+    JNI_CreateJavaVM / graal_create_isolate"*, `SubstrateOptions`), so the
+    rest stays unconsumed and nothing fails (*"GR-73367: Failing here would
+    be disruptive to existing/legacy code"*). `RuntimeOptionParser` has a
+    list of HotSpot options it ignores with a warning (`-ea`, `-esa`,
+    `-Xint`, `-Xmixed`, `-Xbatch`, `-Xcomp`, `-Xverify:all`, `-Xlog:...`,
+    the agents, and some `-XX:` ones such as `+TieredCompilation`:
+    `consumeCompatibilityOptions`), but it applies the list only in a
+    HotSpot-compatibility mode, the system property
+    `CREMA_HOTSPOT_OPTION_COMPATIBILITY=true`. With
+    `--vm.DCREMA_HOTSPOT_OPTION_COMPATIBILITY=true`, `--vm.Xint` prints
+    *"Substrate VM warning: ignoring Java VM option -Xint"* before the
+    launcher's error; without it, nothing. That class isn't in the release's
+    `svm.src.zip`, and 25.5's SubstrateVM isn't on Maven Central, so it was
+    read with `javap -c` from the release's
+    `lib/svm/builder/svm-guest-staging.jar`
+    (`com.oracle.svm.guest.staging.option`); the rest is from `svm.src.zip`
+    (M12-03). The thin launcher keeps `--vm.p=`, `--vm.-module-path=` and
     `--vm.Djava.library.path=` for its JVM mode, which this executable
-    doesn't have. `SchemeMain` sees every `--vm.` option and rejects those,
-    status 1. An `-XX:` option the image doesn't know, a collector's
+    doesn't have. `SchemeMain` sees every `--vm.` option and rejects these
+    and the ones the isolate ignores, status 1. An `-XX:` option the image doesn't know, a collector's
     included, still stops `JNI_CreateJavaVM` with SubstrateVM's *"Could not
     find option"* (status 255) before any Java code runs: the thin
     launcher's C part asks the isolate to ignore unknown options only with
