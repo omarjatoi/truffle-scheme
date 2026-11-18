@@ -1246,7 +1246,7 @@ measures with interleaved A/B runs.
     port left open is closed when the context closes (#200's counting file
     system); and a check shows the parser reads both the serial collector's
     and G1's lines.
-- [ ] **M10-06 · Recompilation after splitting**
+- [x] **M10-06 · Recompilation after splitting**
   - #205's follow-up: in ecraven's `scheme`, each of 8 splits of one closure
     (`gen-combination-2`'s lambda) deoptimizes once after its first
     compilation, through an uncommon trap (not an explicit
@@ -1261,6 +1261,19 @@ measures with interleaved A/B runs.
     it is a host-inlining change that could reverse.
   - **Done when** each cause is found, and fixed with a test or recorded in
     design.md with its evidence.
+  - Done (2026-11-17): the splits' trap was a null check of a wide string's
+    code points that Graal's speculative guard movement hoisted out of
+    `string<?`'s loop (`SString.codePointAt` tested the storage at every
+    character), so it ran for Latin-1 strings too; a split's speculation log
+    is its own, so each split failed it once. `SString.compare` now has a
+    loop per pair of storages: `scheme` at its own count, 12 invalidated
+    compilations → 0, first iteration 5.03 → 4.83 s (0.96×), later ones
+    unchanged; `SplitRecompilationTest` (design.md D1, "Representations
+    chosen outside loops"). `deriv-interpreter`'s 0.81× is the code HotSpot
+    settled on for `continueAt` with 12 host compiler threads, slower for
+    #183's code than for #184's with the same host inlining; with #188's 4
+    threads both are as fast, so it isn't an inlining change that could
+    reverse (design.md "Stack-depth spill", M9-01's last item).
 - [ ] **M10-07 · Literal pairs immutable without a cost** *(needs M10-02)*
   - `(set-car! '(1 2) 9)` succeeds today (R7RS §3.4, §4.1.2: "it is an
     error", not signalled; design.md D1, "Literal pairs aren't marked

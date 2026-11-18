@@ -123,6 +123,17 @@ public class CharStringTest {
     }
 
     @Test
+    public void comparisonsAcrossStorages() {
+        // Latin-1 and wide strings, each against each, by code point (M10-06: a loop per pair of
+        // storages); "ÿ" is 255, the largest Latin-1 code point, and "Ā" 256.
+        assertEquals("(#t #t #f #t #t #f #t #t #f)", write(
+                        "(list (string<? \"ab\" \"aĀ\") (string<? \"aÿ\" \"aĀ\") (string<? \"aĀ\" \"aÿ\") (string>? \"aĀ\" \"ab\")" +
+                                        " (string<? \"aĀ\" \"aā\") (string=? \"aĀ\" \"aā\") (string<? \"aĀ\" \"aĀb\") (string=? \"aĀ\" (string #\\a #\\x100)) (string>? \"aĀ\" \"aĀ\"))"));
+        // A string that becomes wide by string-set! compares by its new code points.
+        assertEquals("(#t #f #t)", write("(let ((s (make-string 2 #\\a))) (string-set! s 1 #\\x100) (list (string>? s \"ab\") (string<? s \"aa\") (string=? s \"aĀ\")))"));
+    }
+
+    @Test
     public void caseMapping() {
         // Full case mapping (D9).
         assertEquals("(\"SSA\" \"ssa\" \"maß\" \"mass\")", write("(list (string-upcase \"ßa\") (string-downcase \"SSA\") (string-downcase \"Maß\") (string-foldcase \"Maß\"))"));

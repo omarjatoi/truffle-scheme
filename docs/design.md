@@ -819,6 +819,37 @@ follow it or deviate, with the decision below that says why.
       would need one, and only `IsValue`'s branch and the return-type
       profile are this runtime's; the rest are the operations' own
       specializations.
+    - *Why the interpreter's `deriv` got faster with it (M10-06).*
+      `bench-check`'s `deriv-interpreter` went from 104.2 to 84.5 ms in
+      #207's thresholds, and the bisection put it on this change alone
+      (107.7 ms at #179, 83.2 at #186), though its bookkeeping only adds
+      work to an interpreted call. It is HotSpot's code for the bytecode
+      interpreter, not ours. The metric is the median of iterations 3 to 6
+      of `deriv`'s count 20,000 in the interpreter, which are bimodal:
+      about 0.085 s, or 0.21 s while `continueAt` runs in HotSpot's first
+      tier (iteration 4, every time, after an uncommon trap makes the
+      compiled `continueAt` not entrant at the end of iteration 3), so the
+      median is the fast mode. With the JVM's default 12 host compiler
+      threads on 16 cores, which the launcher used until #188, #183's code
+      (the commit before) settles at 0.10 to 0.11 s an iteration and stays
+      there (12 iterations), and this change's at 0.085 to 0.09 s (6
+      interleaved rounds, each commit's own jars): the bisection's result.
+      With the launcher's 4 threads since #188, both settle at 0.082 to
+      0.087 s (4 interleaved rounds), and so does `main` with this change's
+      call-path bookkeeping taken out (4 rounds). (Apple M3 Max, 1-minute
+      load 11 to 13 throughout; the differences were the same in every
+      round.) The two commits compile
+      `continueAt` in the same sequence (the same tiers, the same uncommon
+      traps, `-XX:+PrintCompilation`), with the same host inlining
+      (`-Djdk.graal.Log=HostInliningPhase`: the trees are the same but for
+      the new calls, `inFirstDescent` inlined and `enterDescent` and
+      `leaveDescent` cut off), and the methods compiled on their own between
+      interpreted calls (`callBoundary`, `profiledPERoot`,
+      `executeRootNode`, the root's `execute`) end at the same tiers. So what
+      differed was the code HotSpot settled on for the same inlining with
+      12 threads, not an inlining decision that could reverse, and with the
+      4 threads the thresholds since #207 were measured with, #183's code is
+      as fast. Nothing to fix.
   - *Spilling is still per frame.* A frame that doesn't fit is materialized
     when it suspends, and until M8's owned segments was also copied when it
     resumed, about 1 KB allocated and 240 ns per frame (`ack`, M8-01);
@@ -1127,6 +1158,48 @@ Each entry: the decision, why, and what was rejected.
   type and the fields' properties as constants, so call sites run them in
   place (M5-09), and an accessor compiles to a type check and a field load.
   Interop and the debugger see the fields as read-only members (D10).
+- **Representations chosen outside loops (M10-06).** A Java loop that
+  partial evaluation inlines into compiled code (a primitive that runs in
+  place) tests a value's storage once, before the loop, and has a loop per
+  storage, rather than calling an accessor that tests it at every element.
+  `SString.compare` (`string<?` and the other comparisons) has a loop for
+  each pair of storages. It was a loop of `codePointAt`, which reads
+  `latin1`, or else `wide`: Graal's speculative guard movement
+  (`SpeculativeGuardMovementPhase`) moved the null check of `wide`, which is
+  loop-invariant, out of the loop and so above the storage test, where it
+  ran for Latin-1 strings too. The first comparison of two Latin-1 strings
+  hit it, a `null_check` trap that invalidated the code (`--engine.TraceCompilation`:
+  `Invalidated true`, `Reason uncommon trap`; it isn't a transfer to the
+  interpreter, so `TraceTransferToInterpreter` doesn't list it). The
+  speculation log that then keeps the guard in the loop belongs to the call
+  target (`OptimizedCallTarget.speculationLog`), and a split is a call
+  target of its own whose log starts empty. In ecraven's `scheme` at its own
+  count, 11 splits of `gen-combination-2`'s lambda, which run `string<?` in
+  place for the sort's comparison, and `gen-if`'s lambda, which inlined one,
+  each deoptimized once (#205 saw 8 splits at a tenth of the count): 34
+  deoptimized frames with their callers' on the stack. With a loop per
+  storage, none: 12 invalidations → 0, 34 deoptimized frames → 1, 291
+  compilations → 242, and the first iteration 5.03 → 4.83 s (0.96×; later
+  iterations 3.97 and 3.93 s → 3.94 and 3.91 s; medians of 6 interleaved
+  rounds, 3 iterations in a fresh JVM, `-Xmx2g`, the serial collector, an
+  Apple M3 Max at a 1-minute load of 4.6 to 6.4; the first iteration was
+  faster in 5 of the 6).
+  `SplitRecompilationTest` checks that neither code that inlines a
+  comparison nor a split that runs one in place is invalidated.
+  - *How it was found.* `-XX:+UnlockDiagnosticVMOptions -XX:+LogCompilation`
+    logs each `<uncommon_trap>` with its reason, its speculation and its
+    frame state (here the state after the last call before the guard,
+    `OptimizedCallTarget.doInvoke`, since nothing with a side effect is
+    between them). `--vm.Djdk.graal.Dump=Truffle:1
+    --vm.Djdk.graal.PrintGraph=Disable --vm.Djdk.graal.PrintBackendCFG=true
+    --vm.Djdk.graal.TrackNodeSourcePosition=true` writes each Truffle
+    compilation's final schedule as text (a `.cfg` file per compilation,
+    named with HotSpot's compile id), whose deoptimizing nodes carry their
+    reason, speculation and Java source position: the read with the trap's
+    speculation was `codePointAt`'s `wide[index]` (through `StringCompare`
+    and `MakeTailCall.doPrimitive`), scheduled right after the call that
+    returned the string. No IGV is needed. `--engine.TraceDeoptimizeFrame`
+    printed nothing.
 - *Rejected:* `MutableTruffleString` for strings (no compaction, conversion
   costs on every operation); Java `String` (UTF-16, immutable); inexact-only
   complex numbers (the chibi suite assumes the full tower); complex numbers

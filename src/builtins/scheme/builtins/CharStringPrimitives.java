@@ -582,21 +582,9 @@ final class CharStringPrimitives {
             for (int i = 2; i < args.length; i++) {
                 SString a = (SString) args[i - 1];
                 SString b = (SString) args[i];
-                result &= holds(op, ci ? compareFolded(a, b) : compare(a, b));
+                result &= holds(op, ci ? compareFolded(a, b) : SString.compare(a, b));
             }
             return result;
-        }
-
-        static int compare(SString a, SString b) {
-            int n = Math.min(a.length(), b.length());
-            for (int i = 0; i < n; i++) {
-                int x = a.codePointAt(i);
-                int y = b.codePointAt(i);
-                if (x != y) {
-                    return x < y ? -1 : 1;
-                }
-            }
-            return Integer.compare(a.length(), b.length());
         }
 
         @TruffleBoundary
