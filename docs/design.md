@@ -3737,6 +3737,52 @@ Each entry: the decision, why, and what was rejected.
     a field of a JDK functional interface (it may reach every implementation
     in the image), a root's `getName`, and string concatenation outside a
     `@TruffleBoundary` all failed the first build.
+  - **Runtime-compiled methods (M11-09).** native-image compiles every
+    method partial evaluation can reach a second time, for the runtime
+    compiler, and GraalVM's language jars bound how many: each jar's
+    `native-image.properties` adds `-H:MaxRuntimeCompileMethods=<n>`
+    (Truffle's runtime 2700, the SimpleLanguage 250, TRegex 900, Sulong
+    10000, the tools 100 to 300), native-image adds up the values of every
+    jar on the module path (25.5's
+    `RuntimeCompilationFeature.checkMaxRuntimeCompiledMethods`), and a
+    build with `-H:+EnforceMaxRuntimeCompileMethods` fails after its
+    analysis when the count is above the sum. The check is off by default
+    (*"Enforce checking of maximum number of methods allowed for runtime
+    compilation. Useful for checking in the gate that the number of methods
+    does not go up without a good reason."*), so an embedder's image only
+    adds our share to its bound. The language's jar declares a share of
+    300, so `//:scheme-native`'s bound is 3,000, and `native_library`
+    (`bazel/java_module.bzl`) enforces the bound in every image it builds.
+    - *The count* is native-image's own: its build output's *"2,703
+      runtime compiled methods"*, and the list
+      `-H:+PrintRuntimeCompileMethods` prints, at `79b93dc` and again at
+      `1f314fe`: 2,703 on
+      Linux x86-64 and 2,694 on macOS arm64 (Linux's 9 more are 7 of
+      TruffleString's `TStringOps` string scans, `Math.rint` and
+      `Math.copySign`). 732 of them are the language's classes (`scheme.*`,
+      288 in `scheme.runtime.value`), the other 1,971 Truffle's (1,875),
+      the JDK's and Substrate's.
+    - *The margin* is 297 methods over Linux's count (11%), 306 over
+      macOS's. Growth by new specializations and primitives, a few methods
+      at a time, fits in it; a `@TruffleBoundary` missing in front of a
+      Java collection, `BigInteger` arithmetic or string formatting pulls
+      in hundreds of methods at once, and fails the build. The share is
+      300 rather than the 732 methods of our own classes because the
+      shares add up: Truffle's 2,700 is already more than the 1,971 other
+      methods, so a share of 732 plus a margin would let the image grow by
+      more than 1,000 methods unnoticed. A build that passes the bound
+      prints the deepest call path that partial evaluation reaches and
+      *"Number of methods for runtime compilation exceeds the allowed
+      limit: <count> > 3000"*; raising the share is then the PR's
+      decision, with `-H:+PrintRuntimeCompileMethods`'s list as its
+      evidence.
+    - *A build past the bound fails*: `//tests:compile_bound_native` builds
+      the same library with `-H:MaxRuntimeCompileMethods=-1000` added (a
+      bound of 2,000: native-image adds negative values too) and passes
+      when native-image refuses it with that message, which also shows
+      that the language's 300 is in the sum. It stops after the analysis:
+      67 s on the executors, 22 s on this Mac (*"native-image refused 2703
+      runtime-compiled methods over a bound of 2000"*, and 2694 here).
   - Numbers on an Apple M3 Max (16 cores, macOS), median of 10 runs; the
     JVM launcher is the `java` command `bazel-bin/scheme` runs (M6-06;
     since M7-05 the first context restores the prelude image, which D13
@@ -3793,8 +3839,8 @@ Each entry: the decision, why, and what was rejected.
   - CI doesn't build it (D11): the build takes a minute and gigabytes. The
     target and its tests (`//tests:readme_native`,
     `//tests:conformance_native`, `//tests:space_native`,
-    `//tests:launcher_vm_native`) are `manual`; a PR that changes the
-    native-image configuration runs them.
+    `//tests:launcher_vm_native`, `//tests:compile_bound_native`) are
+    `manual`; a PR that changes the native-image configuration runs them.
   - On x86-64 Linux the image targets the baseline CPU
     (`-march=compatibility`): with the default target (AVX2) the image
     uses the JDK's `libsimdsort`, whose libm dependency nixpkgs'

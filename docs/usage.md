@@ -453,8 +453,9 @@ launcher is 0.1 MB and the library 55 MB. It has no tools (they need the JVM lau
 on the platform it was built for: this machine by default (design.md D11). CI doesn't build it: a change to its
 configuration is checked by the tests `//tests:readme_native` (this section's
 commands), `//tests:conformance_native` (both conformance suites through
-the executable), `//tests:space_native` and `//tests:launcher_vm_native`,
-which are run only when named.
+the executable), `//tests:space_native`, `//tests:launcher_vm_native` and
+`//tests:compile_bound_native` (its build fails past its bound on
+runtime-compiled methods), which are run only when named.
 
 The executable sizes its heap as native-image does by default: its young
 generation starts at 48 MB, and grows as a program allocates. A program whose

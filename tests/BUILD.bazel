@@ -316,6 +316,18 @@ harness_test(
     ],
 )
 
+# design.md D17 "Runtime-compiled methods": the native library's build fails past its bound on
+# runtime-compiled methods (//:schemevm_over_bound, which builds it with the bound lowered). Only
+# when named, like the other native tests.
+harness_test(
+    name = "compile_bound_native",
+    check = "compile_bound_native",
+    args = ["$(rlocationpath //:schemevm_over_bound)"],
+    data = ["//:schemevm_over_bound"],
+    size = "small",
+    tags = ["manual"],
+)
+
 # --- The docs' commands (docs/usage.md, docs/embedding.md: tests/harness/readme.py) -----------
 
 _README_ARGS = [

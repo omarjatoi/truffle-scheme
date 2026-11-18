@@ -196,6 +196,19 @@ cc_binary(
 # (and its static libm) out of it. Its collector is native-image's `--gc=`, from --//:native_gc,
 # and --//:native_graalvm=oracle builds it with Oracle GraalVM's native-image, which also has G1
 # (design.md D17, "The native image's collector"; docs/usage.md, "Choosing a garbage collector").
+#
+# A context pre-initialized at build time, which the launcher's context takes over
+# (SchemeLanguage.patchContext): the standard libraries are in the image heap, ready. JLine reaches
+# the terminal through the FFM API, as on the JVM launcher (bazel-bin/scheme): without native
+# access, the executable warns about it on a terminal.
+_SCHEMEVM_OPTIONS = [
+    "-Dpolyglot.image-build-time.PreinitializeContexts=scheme",
+    "--enable-native-access=org.graalvm.shadowed.jline",
+] + select({
+    "//bazel:linux_x86_64": ["-march=compatibility"],
+    "//conditions:default": [],
+})
+
 native_library(
     name = "schemevm",
     exec_properties = {
@@ -210,18 +223,31 @@ native_library(
     }),
     main = "scheme.launcher/scheme.launcher.SchemeMain",
     module = ":launcher_module",
-    # A context pre-initialized at build time, which the launcher's context takes over
-    # (SchemeLanguage.patchContext): the standard libraries are in the image heap, ready. JLine
-    # reaches the terminal through the FFM API, as on the JVM launcher (bazel-bin/scheme): without
-    # native access, the executable warns about it on a terminal.
-    options = [
-        "-Dpolyglot.image-build-time.PreinitializeContexts=scheme",
-        "--enable-native-access=org.graalvm.shadowed.jline",
-    ] + select({
-        "//bazel:linux_x86_64": ["-march=compatibility"],
-        "//conditions:default": [],
-    }),
+    options = _SCHEMEVM_OPTIONS,
     tags = ["manual"],
+)
+
+# The same build with the bound on runtime-compiled methods lowered by 1,000 (from 3,000 to 2,000,
+# design.md D17, "Runtime-compiled methods"): native-image must refuse it after its analysis,
+# before compiling anything. //tests:compile_bound_native checks its output.
+native_library(
+    name = "schemevm_over_bound",
+    exec_properties = {
+        "EstimatedCPU": "8",
+        "EstimatedMemory": "12GB",
+    },
+    gc = ":native_gc",
+    graalvm = ":native_graalvm",
+    jdk = select({
+        ":oracle_graalvm": "@graalvm//:oracle_jdk",
+        "//conditions:default": "@bazel_tools//tools/jdk:current_java_runtime",
+    }),
+    main = "scheme.launcher/scheme.launcher.SchemeMain",
+    module = ":launcher_module",
+    options = _SCHEMEVM_OPTIONS + ["-H:MaxRuntimeCompileMethods=-1000"],
+    should_fail = True,
+    tags = ["manual"],
+    visibility = ["//tests:__pkg__"],
 )
 
 # `--//:native_gc=serial|epsilon|G1`: //:scheme-native's collector. G1 needs Oracle GraalVM.

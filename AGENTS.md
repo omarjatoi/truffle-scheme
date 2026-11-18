@@ -138,7 +138,7 @@ bazel test //tests/fuzz:fuzz_smoke        # a fixed seed's 300 random programs, 
 bazel run //:r7rs -- format               # format Java code (GraalVM's Eclipse formatter settings)
 bazel test //tests:readme                 # docs/usage.md's and docs/embedding.md's commands as written, and their samples
 bazel build //:scheme-native              # the native launcher, bazel-bin/scheme-native (design.md D17; a minute, ~3 GB)
-bazel test //tests:readme_native //tests:conformance_native //tests:space_native //tests:launcher_vm_native   # its docs, both conformance suites, deep recursion and --vm. options through it (Linux, on the executors)
+bazel test //tests:readme_native //tests:conformance_native //tests:space_native //tests:launcher_vm_native //tests:compile_bound_native   # its docs, both conformance suites, deep recursion and --vm. options through it, its bound on runtime-compiled methods (Linux, on the executors)
 bazel test --platforms=//bazel/platforms:macos_arm64 //tests:launcher_vm_native   # a native test for this Mac, run here
 bazel run //:r7rs -- benchmark ecraven:fib         # one benchmark program, JIT (bench/README.md: options, failures)
 bazel run //:r7rs -- benchmark larceny:* --mode=*  # every program of a set, JIT and interpreter
@@ -160,7 +160,7 @@ you touched `src/runtime` or any Bytecode DSL operation, also run `bazel run
 commits new thresholds and says why (bench/README.md "Thresholds"); never
 raise one by hand. If it changes the native-image configuration, run `bazel
 test //tests:readme_native //tests:conformance_native //tests:space_native
-//tests:launcher_vm_native`.
+//tests:launcher_vm_native //tests:compile_bound_native`.
 
 CI runs on Buildkite (`.buildkite/pipeline.yml`), for every commit, and only
 what runs on every commit, one `bazel` command per step: `checks` (the lint
