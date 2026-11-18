@@ -44,7 +44,7 @@ import scheme.runtime.value.SSymbol;
  * ({@link Continuation#checkInvocable}). An exception the foreign code throws is caught as an
  * {@link AbstractTruffleException} and raised in Scheme at the call site ({@link #raised}); an
  * {@link InteropException} is a Scheme error ({@link #interopError}), as InteropLibrary asks of a
- * target language.
+ * target language; so is a Java stack overflow ({@link #stackOverflow}).
  */
 public final class Foreign {
 
@@ -146,6 +146,8 @@ public final class Foreign {
             return incoming(env.parsePublic(source).call());
         } catch (AbstractTruffleException e) {
             throw raised(e);
+        } catch (StackOverflowError e) {
+            throw stackOverflow();
         } finally {
             exit(context, use);
         }
@@ -194,6 +196,8 @@ public final class Foreign {
             return value == null ? unbound : incoming(value);
         } catch (AbstractTruffleException e) {
             throw raised(e);
+        } catch (StackOverflowError e) {
+            throw stackOverflow();
         } finally {
             exit(context, use);
         }
@@ -209,6 +213,8 @@ public final class Foreign {
             env.exportSymbol(name, value);
         } catch (AbstractTruffleException e) {
             throw raised(e);
+        } catch (StackOverflowError e) {
+            throw stackOverflow();
         } finally {
             exit(context, use);
         }
@@ -333,6 +339,19 @@ public final class Foreign {
             // Not an interop exception after all: raise it as it is.
         }
         return SchemeError.raising(e, String.valueOf(e.getMessage()));
+    }
+
+    /**
+     * The Scheme error for a Java stack overflow that left a foreign operation (design.md D20,
+     * "Stack depth across foreign frames"), as GraalVM's languages turn one into an error of their
+     * own: Scheme spills its own frames, but can't spill the foreign frames between them, so a
+     * recursion through another language overflows the Java stack. Raised at the operation's call
+     * site, where {@code guard} catches it once the stack has unwound to it; an overflow while it is
+     * made leaves for the next foreign operation out, which makes it again.
+     */
+    @TruffleBoundary
+    public static SchemeError stackOverflow() {
+        return new SchemeError("stack overflow: too many nested calls through other languages or Java");
     }
 
     /**

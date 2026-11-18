@@ -75,6 +75,8 @@ public final class ForeignNodes {
                 throw Foreign.interopError("call", procedure, e);
             } catch (AbstractTruffleException e) {
                 throw Foreign.raised(e);
+            } catch (StackOverflowError e) {
+                throw Foreign.stackOverflow();
             } finally {
                 Foreign.exit(context, use);
             }
@@ -257,6 +259,8 @@ public final class ForeignNodes {
                 throw Foreign.interopError(WHO, receiver, e);
             } catch (AbstractTruffleException e) {
                 throw Foreign.raised(e);
+            } catch (StackOverflowError e) {
+                throw Foreign.stackOverflow();
             } finally {
                 Foreign.exit(context, use);
             }
@@ -279,6 +283,8 @@ public final class ForeignNodes {
                 throw Foreign.interopError(WHO, receiver, e);
             } catch (AbstractTruffleException e) {
                 throw Foreign.raised(e);
+            } catch (StackOverflowError e) {
+                throw Foreign.stackOverflow();
             } finally {
                 Foreign.exit(context, use);
             }
@@ -316,6 +322,8 @@ public final class ForeignNodes {
                 throw Foreign.interopError(WHO, receiver, e);
             } catch (AbstractTruffleException e) {
                 throw Foreign.raised(e);
+            } catch (StackOverflowError e) {
+                throw Foreign.stackOverflow();
             } finally {
                 Foreign.exit(context, use);
             }
@@ -338,6 +346,8 @@ public final class ForeignNodes {
                 throw Foreign.interopError(WHO, receiver, e);
             } catch (AbstractTruffleException e) {
                 throw Foreign.raised(e);
+            } catch (StackOverflowError e) {
+                throw Foreign.stackOverflow();
             } finally {
                 Foreign.exit(context, use);
             }
@@ -373,6 +383,8 @@ public final class ForeignNodes {
                 throw Foreign.interopError("foreign-length", receiver, e);
             } catch (AbstractTruffleException e) {
                 throw Foreign.raised(e);
+            } catch (StackOverflowError e) {
+                throw Foreign.stackOverflow();
             } finally {
                 Foreign.exit(context, use);
             }
@@ -409,6 +421,8 @@ public final class ForeignNodes {
                 throw Foreign.interopError(WHO, receiver, e);
             } catch (AbstractTruffleException e) {
                 throw Foreign.raised(e);
+            } catch (StackOverflowError e) {
+                throw Foreign.stackOverflow();
             } finally {
                 Foreign.exit(context, use);
             }
@@ -441,6 +455,8 @@ public final class ForeignNodes {
                 throw Foreign.interopError("foreign-new", constructor, e);
             } catch (AbstractTruffleException e) {
                 throw Foreign.raised(e);
+            } catch (StackOverflowError e) {
+                throw Foreign.stackOverflow();
             } finally {
                 Foreign.exit(context, use);
             }
@@ -474,6 +490,8 @@ public final class ForeignNodes {
                 throw Foreign.interopError("foreign-instance?", type, e);
             } catch (AbstractTruffleException e) {
                 throw Foreign.raised(e);
+            } catch (StackOverflowError e) {
+                throw Foreign.stackOverflow();
             } finally {
                 Foreign.exit(context, use);
             }
@@ -552,6 +570,8 @@ public final class ForeignNodes {
                 throw Foreign.interopError(who, receiver, e);
             } catch (AbstractTruffleException e) {
                 throw Foreign.raised(e);
+            } catch (StackOverflowError e) {
+                throw Foreign.stackOverflow();
             } finally {
                 Foreign.exit(context, use);
             }
