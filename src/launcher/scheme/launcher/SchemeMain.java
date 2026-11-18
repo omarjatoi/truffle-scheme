@@ -7,6 +7,8 @@ import java.io.OutputStream;
 import java.io.PrintStream;
 import java.lang.management.ManagementFactory;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.InvalidPathException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -97,24 +99,33 @@ public final class SchemeMain extends AbstractLanguageLauncher {
     /** GraalVM's launchers' option for the host VM's options: {@code --vm.<option>}. */
     private static final String VM_OPTION = "--vm.";
     /**
-     * The native launcher's stack size options, which the isolate also applies to new threads. Only
-     * the launcher sees them: a shared library's isolate reports no input arguments
+     * The native launcher's stack size options ({@code --vm.Xss}, {@code --vm.XX:StackSize=}, or
+     * the same in an argument file), which the isolate also applies to new threads. Only the
+     * launcher sees them: a shared library's isolate reports no input arguments
      * ({@link EvaluationThread#givenToTheVM}).
      */
-    private static final String VM_STACK_SIZE_OPTION = "--vm.Xss";
-    private static final String VM_STACK_SIZE_XX_OPTION = "--vm.XX:StackSize=";
+    private static final String STACK_SIZE_VM_OPTION = "Xss";
+    private static final String STACK_SIZE_XX_VM_OPTION = "XX:StackSize=";
     /** An option that chooses a collector, which a native image has from its build. */
     private static final Pattern NATIVE_GC_CHOICE = Pattern.compile("XX:[+-]Use\\w*GC");
     /**
      * The {@code --vm.} options the native launcher's isolate applies: the heap's and the stack's
      * sizes, system properties, and {@code -XX:} options, which it checks as it is created (one it
      * doesn't know stops it). The thin launcher's C part also takes an argument file
-     * ({@code --vm.@file}) and, on macOS, {@code --vm.XstartOnFirstThread}. The isolate takes any
+     * ({@code --vm.@file}, whose options the launcher checks as it checks these:
+     * {@link ArgumentFile}) and, on macOS, {@code --vm.XstartOnFirstThread}. The isolate takes any
      * other option and ignores it ({@code -ea}, {@code -Xint}, {@code -verbose:gc},
      * {@code -Xlog:gc}, {@code -Xfoo}, ...), so the launcher rejects those (design.md D17, "VM
      * options").
      */
-    private static final Pattern NATIVE_VM_OPTION = Pattern.compile("X(mx|ms|mn|ss).+|D[^=]+(=.*)?|XX:.+|@.+");
+    private static final Pattern NATIVE_VM_OPTION = Pattern.compile("X(mx|ms|mn|ss).+|D[^=]+(=.*)?|XX:.+");
+    /** A VM argument file: {@code --vm.@file}. */
+    private static final String VM_ARGUMENT_FILE_OPTION = "--vm.@";
+    /**
+     * The options the thin launcher's C part takes out of an argument file for its JVM mode
+     * ({@code launcher.cc}, {@code expand_vm_arg_file}), which in the native launcher go nowhere.
+     */
+    private static final Pattern ARGUMENT_FILE_PATH_OPTION = Pattern.compile("--class-path=.*|--module-path=.*|-Djava\\.library\\.path=.*");
     /** The class path and module path options, which only the thin launcher's JVM mode takes. */
     private static final Pattern NATIVE_PATH_OPTION = Pattern.compile("(cp|classpath|p|-module-path)=.*|Djava\\.library\\.path=.*");
     /**
@@ -321,7 +332,9 @@ public final class SchemeMain extends AbstractLanguageLauncher {
      * method kept (otherwise the C part runs the process again with these) and sets none itself.
      * A class path and a collector, which a native image doesn't have at run time, are errors that
      * say what to do instead, and so is an option the isolate would have ignored
-     * ({@link #NATIVE_VM_OPTION}). {@code --vm.Xss} is also the evaluation thread's stack.
+     * ({@link #NATIVE_VM_OPTION}). {@code --vm.Xss} is also the evaluation thread's stack. The
+     * options in an argument file ({@code --vm.@file}) are checked the same way
+     * ({@link #argumentFile}).
      */
     private void vmOption(String arg) {
         String option = arg.substring(VM_OPTION.length());
@@ -329,33 +342,81 @@ public final class SchemeMain extends AbstractLanguageLauncher {
             throw abort("'" + arg + "' argument must be of the form '" + arg + "=<classpath>', not two separate arguments", EXIT_INVALID_OPTION);
         }
         boolean classPath = option.startsWith("cp=") || option.startsWith("classpath=");
+        boolean argumentFile = arg.startsWith(VM_ARGUMENT_FILE_OPTION);
         if (!isAOT()) {
-            String java = classPath ? "-cp " + option.substring(option.indexOf('=') + 1) : "-" + option;
+            // java takes an argument file as @file.
+            String java = classPath ? "-cp " + option.substring(option.indexOf('=') + 1) : argumentFile ? option : "-" + option;
             throw abort(arg + " is an option of the JVM, which has already started without it: give it to java itself (" + java +
                             ", before -m), or run the launcher with bazel-bin/scheme, which starts the JVM with its --vm. options", EXIT_INVALID_OPTION);
         }
         if (classPath) {
             throw abort(arg + ": the native launcher has no class path; the JVM launcher, bazel-bin/scheme, takes " + arg, EXIT_INVALID_OPTION);
         }
+        if (argumentFile) {
+            argumentFile(arg, option.substring(1));
+        } else if (!option.equals("XstartOnFirstThread") || !System.getProperty("os.name", "").startsWith("Mac")) {
+            nativeVmOption(arg, option, VM_OPTION, arg);
+        }
+    }
+
+    /**
+     * Checks the options in an argument file, {@code --vm.@file} (plan.md M11-03, design.md D17,
+     * "Options"). The thin launcher's C part has read the file and created the isolate with its
+     * options, as if each had been given as a {@code --vm.} one, but the framework gives the
+     * launcher only {@code --vm.@file}: so the launcher reads the file as the C part does
+     * ({@link ArgumentFile}) and checks each option, in {@code java}'s form ({@code -Xmx1g}), as
+     * {@link #vmOption} checks the {@code --vm.} one, with the same errors and statuses. An
+     * {@code -Xss} in it is the evaluation thread's stack too. The C part also takes a class path,
+     * a module path and {@code -Djava.library.path=} out of the file for its JVM mode, and in the
+     * native launcher drops them: errors here. One that isn't an option at all (no {@code -}) is
+     * one more the isolate would ignore.
+     */
+    private void argumentFile(String arg, String path) {
+        List<String> options;
+        try {
+            options = ArgumentFile.read(Path.of(path));
+        } catch (IOException | InvalidPathException e) {
+            throw abort(arg + ": could not read " + path + ": " + e, EXIT_INVALID_OPTION);
+        }
+        for (String option : options) {
+            String given = "'" + option + "' in " + arg;
+            if (ARGUMENT_FILE_PATH_OPTION.matcher(option).matches()) {
+                throw abort(given + ": the native launcher has no class or module path and loads no Java libraries; the JVM launcher, bazel-bin/scheme, takes " + arg,
+                                EXIT_INVALID_OPTION);
+            }
+            if (option.length() < 2 || option.charAt(0) != '-') {
+                throw abort(given + ": not a VM option, which an argument file has in java's form (-Xmx1g); the native launcher's VM, a native image, would ignore it",
+                                EXIT_INVALID_OPTION);
+            }
+            nativeVmOption(given, option.substring(1), "-", arg);
+        }
+    }
+
+    /**
+     * Checks one of the native launcher's VM options, {@code option} without its prefix
+     * ({@code --vm.} on the command line, {@code -} in an argument file), {@code given} as it is
+     * named in an error, which the JVM launcher takes as {@code jvm}; and notes a stack size,
+     * which is also the evaluation thread's.
+     */
+    private void nativeVmOption(String given, String option, String prefix, String jvm) {
         if (NATIVE_PATH_OPTION.matcher(option).matches()) {
-            throw abort(arg + ": the native launcher has no module path and loads no Java libraries; the JVM launcher, bazel-bin/scheme, takes " + arg, EXIT_INVALID_OPTION);
+            throw abort(given + ": the native launcher has no module path and loads no Java libraries; the JVM launcher, bazel-bin/scheme, takes " + jvm, EXIT_INVALID_OPTION);
         }
         if (NATIVE_GC_CHOICE.matcher(option).matches()) {
             // Seldom reached: the isolate's creation rejects an option it doesn't know, before the
             // launcher runs, unless the command line has --jvm (then the thin launcher asks it to
             // ignore them, and the framework rejects --jvm).
-            throw abort(arg + ": the native launcher's collector is chosen when it is built (bazel build --//:native_gc=serial|epsilon|G1 //:scheme-native, " +
-                            "docs/usage.md, \"Choosing a garbage collector\"); the JVM launcher, bazel-bin/scheme, takes " + arg, EXIT_INVALID_OPTION);
+            throw abort(given + ": the native launcher's collector is chosen when it is built (bazel build --//:native_gc=serial|epsilon|G1 //:scheme-native, " +
+                            "docs/usage.md, \"Choosing a garbage collector\"); the JVM launcher, bazel-bin/scheme, takes " + jvm, EXIT_INVALID_OPTION);
         }
-        boolean firstThread = option.equals("XstartOnFirstThread") && System.getProperty("os.name", "").startsWith("Mac");
-        if (!firstThread && !NATIVE_VM_OPTION.matcher(option).matches()) {
-            throw abort(arg + ": the native launcher's VM, a native image, would ignore it: it takes --vm.Xmx, --vm.Xms, --vm.Xmn, --vm.Xss, --vm.D<name>=<value> " +
-                            "and the --vm.XX: options --help:vm lists. The JVM launcher, bazel-bin/scheme, takes " + arg, EXIT_INVALID_OPTION);
+        if (!NATIVE_VM_OPTION.matcher(option).matches()) {
+            throw abort(given + ": the native launcher's VM, a native image, would ignore it: it takes " + prefix + "Xmx, " + prefix + "Xms, " + prefix + "Xmn, " + prefix + "Xss, " +
+                            prefix + "D<name>=<value> and the " + prefix + "XX: options --help:vm lists. The JVM launcher, bazel-bin/scheme, takes " + jvm, EXIT_INVALID_OPTION);
         }
-        if (arg.startsWith(VM_STACK_SIZE_OPTION)) {
-            vmStackSize = EvaluationThread.parseSize(arg.substring(VM_STACK_SIZE_OPTION.length()));
-        } else if (arg.startsWith(VM_STACK_SIZE_XX_OPTION)) {
-            vmStackSize = EvaluationThread.parseSize(arg.substring(VM_STACK_SIZE_XX_OPTION.length()));
+        if (option.startsWith(STACK_SIZE_VM_OPTION)) {
+            vmStackSize = EvaluationThread.parseSize(option.substring(STACK_SIZE_VM_OPTION.length()));
+        } else if (option.startsWith(STACK_SIZE_XX_VM_OPTION)) {
+            vmStackSize = EvaluationThread.parseSize(option.substring(STACK_SIZE_XX_VM_OPTION.length()));
         }
     }
 

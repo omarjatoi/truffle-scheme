@@ -3054,7 +3054,8 @@ Each entry: the decision, why, and what was rejected.
     (`tests/harness/scheme.py`): `Runtime.launcher` takes each `--vm.` option
     before the program file out (`split_vm_options`, which parses as
     `SchemeMain.preprocessArguments` does) and starts the JVM with it as
-    `-<option>` (`--vm.cp=` and `--vm.classpath=` as `-cp`), as GraalVM's
+    `-<option>` (`--vm.cp=` and `--vm.classpath=` as `-cp`, `--vm.@<file>`
+    as `@<file>`: "Options", argument files), as GraalVM's
     launcher scripts do (the framework expects them to have taken the
     options out: `Launcher.parsePolyglotOption`). They are JVM options like the command's, so
     the launcher's own (the collector, the compiler threads, the AOT cache)
@@ -3325,6 +3326,66 @@ Each entry: the decision, why, and what was rejected.
     clearer message would need a change to `launcher.cc`, which this project
     takes unmodified. The message names the option, and docs/usage.md says
     the collector is chosen at build time.
+  - *Argument files (M11-03)*: `--vm.@<file>` is GraalVM's launchers' form of
+    `java`'s argument file, `@<file>`, a file of VM options in `java`'s form
+    (`-Xmx1g`), separated by white space, with `#` comments, quotes and, in
+    quotes, escapes (the JDK's `libjli/args.c`). The options in one take
+    effect or fail as the same options given as `--vm.` ones do, on both
+    launchers (`//tests:launcher_vm` and `//tests:launcher_vm_native`,
+    `argument_files`).
+    - *The JVM launcher* passes it to `java` as `@<file>`, as GraalVM's
+      launcher scripts do (`sdk/mx.sdk/vm/launcher_template.sh`,
+      `process_vm_arg`), and `java` reads it and applies or rejects its
+      options as its own (*"Unrecognized option: -Xfoo"*, or *"could not
+      open"* for a file there is none of; status 1). It used to pass
+      `-@<file>`, which `java` rejected whatever the file held. The
+      launcher's defaults (the collector, the compiler threads, Graal
+      compiled for HotSpot, the AOT cache) give way to the file's options
+      as to the command's, so `bazel-bin/scheme` reads the file too, for
+      that alone (`harness.arg_file_options`), and an argument file in
+      `JDK_JAVA_OPTIONS`, which `java` also reads: without that, a file's
+      `-XX:+UseG1GC` would meet the launcher's `-XX:+UseSerialGC`, and the
+      JVM refuses to start with two (*"Multiple garbage collectors
+      selected"*). The launcher started with
+      `java` names `@<file>` as the option to give `java`.
+    - *The native launcher.* The thin launcher's C part reads the file
+      (`launcher.cc`, `expand_vm_arg_file`, with `arg_file_next_token`, its
+      port of `libjli`'s reader) and creates the isolate with its options,
+      so the isolate applies the heap's, the stack's, `-D` and `-XX:` ones,
+      and rejects an `-XX:` one it doesn't know, as it does `--vm.` ones. It
+      passes the others on unchecked, and the framework gives the launcher
+      only `--vm.@<file>`, so `-ea`, `-Xint` or `-verbose:gc` in a file went
+      ignored, and an `-Xss` there set the isolate's first thread's stack
+      but not the evaluation thread's (#219's follow-up). `SchemeMain` now
+      reads the file as the C part does (`ArgumentFile`: `arg_file_next_token`
+      state for state, quirks included: a `#` inside an option comments out
+      the rest of its line, and the option goes on on the next), and checks
+      each option as it checks its `--vm.` form, with the same errors and
+      status (1); an `-Xss` or `-XX:StackSize=` there is the evaluation
+      thread's stack too. The class path, module path and
+      `-Djava.library.path=` that the C part takes out of a file for its JVM
+      mode, and drops in this one, are errors, and so is a word that isn't
+      an option (`Xmx1g`, or a nested `@<file>`, which the C part doesn't
+      expand), which the isolate would ignore. A file the C part can't open
+      is its error (*"could not open"*, status 1), before Java runs.
+    - *Rejected: the isolate's strict option parsing*
+      (`-H:+StrictRuntimeJavaOptions`, an expert native-image option, off by
+      default: *"When enabled, supported Java VM options are parsed,
+      recognized but unsupported options are rejected"*, 25.5's
+      `SubstrateOptions`). It makes the isolate's creation reject
+      `-Xint`, `-verbose:gc`, `-Xlog:gc`, an agent and an option it doesn't
+      know, wherever they come from. But it takes `-ea` as an option it
+      applies, to classes initialized at run time only (`AssertionsSupport`;
+      the language's are initialized when the image is built), and
+      `-verbose:class` and others likewise, and it can't give the launcher
+      an `-Xss`; so the launcher would still read the file, and the
+      command line's errors would become the isolate's (status 255, the
+      option in `java`'s form) instead of the launcher's. *Rejected:
+      reading the isolate's arguments* from
+      `jdk.internal.misc.VM.getRuntimeArguments`, which SubstrateVM
+      substitutes with the options the isolate was created with: an
+      internal API (an `--add-exports` for javac and native-image), and the
+      paths the C part drops from the file never reach it.
   - *The tools*: the native launcher is built without them; their options
     were *"Unrecognized argument"*, and now say the JVM launcher has them
     (`abortUnrecognizedArgument`, the framework's hook).

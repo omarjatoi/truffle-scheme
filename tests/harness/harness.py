@@ -103,7 +103,8 @@ def _launcher_options(args):
 def split_vm_options(args):
     """The `scheme` launcher's arguments, its `--vm.<option>`s taken out as JVM options, as GraalVM's
     launcher scripts take them (the framework ignores them in a JVM, which has already started):
-    `--vm.cp=<path>` and `--vm.classpath=<path>` are the class path, any other the JVM's
+    `--vm.cp=<path>` and `--vm.classpath=<path>` are the class path, `--vm.@<file>` the argument
+    file `@<file>` (java reads it: GraalVM's launcher_template.sh does the same), any other the JVM's
     `-<option>`. Only the launcher's options are: they end where SchemeMain.preprocessArguments
     ends them, at `--` or the program file, and the program's arguments are left alone. Returns
     (the JVM options, the other arguments)."""
@@ -121,6 +122,8 @@ def split_vm_options(args):
         # A bare --vm.cp or --vm.classpath stays, for the launcher to reject.
         if option.startswith(('cp=', 'classpath=')):
             jvm_args += ['-cp', option.split('=', 1)[1]]
+        elif option.startswith('@'):
+            jvm_args.append(option)
         elif option and option not in ('cp', 'classpath'):
             jvm_args.append('-' + option)
         else:
@@ -130,8 +133,65 @@ def split_vm_options(args):
 
 
 def _given_vm_args(jvm_args, env):
-    """The JVM options a launcher's JVM gets besides its defaults: the environment's, then jvm_args."""
-    return ' '.join(env.get(v, '') for v in ('JAVA_TOOL_OPTIONS', 'JDK_JAVA_OPTIONS')).split() + list(jvm_args)
+    """The JVM options a launcher's JVM gets besides its defaults: the environment's, then jvm_args,
+    with the options in their argument files (`@file`, which java reads in JDK_JAVA_OPTIONS and
+    on the command line) in their place, so that the launcher's defaults give way to those too."""
+    given = env.get('JAVA_TOOL_OPTIONS', '').split()
+    for arg in env.get('JDK_JAVA_OPTIONS', '').split() + list(jvm_args):
+        given += arg_file_options(arg[1:]) if arg.startswith('@') else [arg]
+    return given
+
+
+def arg_file_options(path):
+    """The options in a JVM argument file, as java reads them: white space separates options, `#`
+    comments to the end of the line, quotes keep white space, and escapes and line continuations
+    work inside quotes. It follows GraalVM's launcher.cc's port of the JDK's libjli/args.c, as
+    scheme.launcher.ArgumentFile does. Only the launcher's choice of its defaults reads them: java
+    reads the file itself, and reports one it can't read (none here)."""
+    try:
+        with open(path, 'rb') as f:
+            data = f.read()
+    except OSError:
+        return []
+    options, token, state, quote, i = [], bytearray(), 'next', None, 0
+    escapes = {ord('n'): b'\n', ord('r'): b'\r', ord('t'): b'\t', ord('f'): b'\f'}
+
+    def end():
+        options.append(token.decode('utf-8', 'surrogateescape'))
+        token.clear()
+
+    while i < len(data):
+        ch = data[i:i + 1]
+        i += 1
+        if state in ('next', 'skip'):
+            if ch in b' \n\r\t\f':
+                continue
+            state = 'token' if state == 'next' else 'quote'
+        elif state == 'escape':
+            state = 'skip' if ch in b'\n\r' else 'quote'
+            if state == 'quote':
+                token += escapes.get(ch[0], ch)
+            continue
+        elif state == 'comment':
+            if ch in b'\n\r':
+                state = 'next'
+            continue
+        if ch in b' \t\f' and state == 'quote':
+            token += ch
+        elif ch in b' \t\f\n\r':
+            end()
+            state, quote = 'next', None
+        elif ch == b'#' and state != 'quote':
+            state = 'comment'
+        elif ch == b'\\' and state == 'quote':
+            state = 'escape'
+        elif ch in b'\'"' and not (state == 'quote' and quote != ch):
+            state, quote = ('quote', ch) if state == 'token' else ('token', quote)
+        else:
+            token += ch
+    if token:
+        end()
+    return options
 
 
 def launcher_gc_vm_args(jvm_args, env=os.environ):

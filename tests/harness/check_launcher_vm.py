@@ -3,7 +3,8 @@ compiler threads where the JVM would start more, and the AOT cache where it is v
 takes it, unless its JVM options (on the command line, its `--vm.` options, in JDK_JAVA_OPTIONS or
 in JAVA_TOOL_OPTIONS) set those themselves. Its `--vm.<option>`s are the JVM's `-<option>`s ("VM
 options"), and the launcher started with java rejects one the JVM wasn't started with. Every class of
-option takes effect or fails clearly (plan.md M10-04, docs/usage.md "Options")."""
+option takes effect or fails clearly (plan.md M10-04, docs/usage.md "Options"), and so does every
+option in an argument file, `--vm.@file` (plan.md M11-03)."""
 
 import argparse
 import os
@@ -215,6 +216,48 @@ def vm_options(o):
     log('--vm.: the program\'s arguments left alone; one the JVM wasn\'t started with is an error')
 
 
+def argument_files(o):
+    """plan.md M11-03: `--vm.@file` is java's argument file `@file`, as GraalVM's launcher scripts
+    pass it, so java reads the file and applies or rejects its options as it does its own; the
+    launcher's defaults give way to the options in it as to the others (harness.arg_file_options)."""
+    tmp = tempfile.mkdtemp(dir=os.environ.get('TEST_TMPDIR'))
+
+    def arguments(name, text):
+        path = os.path.join(tmp, name)
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(text)
+        return path
+
+    check(split_vm_options(['--vm.@a.args', '--vm.Xmx1g', 'f.scm', '--vm.@b.args']) == (['@a.args', '-Xmx1g'], ['f.scm', '--vm.@b.args']),
+          'a --vm.@file before the program file should be java\'s @file')
+    # 256 MB is a multiple of every heap alignment (aligned_heap), so HotSpot keeps it as given.
+    choices = arguments('choices.args','# The collector, the heap, the compiler threads.\n-XX:+UseG1GC "-Xmx256m"\n-XX:CICompilerCount=2\n')
+    check(launcher_vm_args(['@' + choices], {}, cpus=16) == [], f'the launcher\'s defaults should give way to the options in {choices}')
+    runtime = Runtime.from_manifest(o.runtime)
+    f = flags(runtime, args=['--vm.@' + choices])
+    check(collector(f) == ['G1'], f'-XX:+UseG1GC in an argument file should replace the serial collector, not {collector(f)}')
+    check(f['MaxHeapSize'] == (str(256 << 20), 'command line'), f'-Xmx256m in an argument file should set the maximum heap: {f["MaxHeapSize"]}')
+    check(f['CICompilerCount'][0] == '2', f'-XX:CICompilerCount=2 in an argument file should set the count: {f["CICompilerCount"]}')
+    f = flags(runtime, jdk_java_options='@' + arguments('parallel.args', '-XX:+UseParallelGC\n'))
+    check(collector(f) == ['Parallel'], f'a collector in an argument file in JDK_JAVA_OPTIONS should replace the serial one, not {collector(f)}')
+    prop = arguments('property.args', '"-Dscheme.test.vm=a b" # a comment\n-ea\n')
+    out, _ = run(runtime, ['--vm.@' + prop, '--vm.XshowSettings:properties', '--version'])
+    check(re.search(r'^\s*scheme\.test\.vm = a b$', out, re.M), f'a quoted property in an argument file should be set:\n{out}')
+    log('--vm.@file: a collector, the heap, compiler threads, a property; in JDK_JAVA_OPTIONS too')
+
+    # Errors: java's, for an option it doesn't know and a file there is none of; the launcher
+    # started with java names the @file to give it.
+    out, _ = run(runtime, ['--vm.@' + arguments('unknown.args', '-Xfoo\n'), '--version'], status=1)
+    check('Unrecognized option: -Xfoo' in out, f'an unknown option in an argument file should be java\'s error:\n{out}')
+    missing = os.path.join(tmp, 'missing.args')
+    out, _ = run(runtime, ['--vm.@' + missing, '--version'], status=1)
+    check(f'could not open `{missing}\'' in out, f'a missing argument file should be java\'s error:\n{out}')
+    env = {k: v for k, v in os.environ.items() if k not in ('JDK_JAVA_OPTIONS', 'JAVA_TOOL_OPTIONS')}
+    out = execute(runtime.command([], LAUNCHER_MAIN) + ['--vm.@' + prop, '--version'], env, status=1)
+    check(f'(@{prop}, before -m)' in out, f'an unapplied --vm.@file should be an error naming @file:\n{out}')
+    log('--vm.@file: an unknown option and a missing file, java\'s errors; unapplied, the launcher\'s')
+
+
 # A loop that Truffle compiles with OSR as it runs (a self tail call), whose compiled code transfers
 # to the interpreter when the loop ends; and a boundary (number->string) in it.
 OSR_PROGRAM = """(import (scheme base) (scheme write))
@@ -312,4 +355,5 @@ if __name__ == '__main__':
     launcher_vm(options)
     aot_cache(options)
     vm_options(options)
+    argument_files(options)
     option_classes(options)

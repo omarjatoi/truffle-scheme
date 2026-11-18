@@ -19,9 +19,11 @@ _LAUNCHER_ENV = ('RUNFILES_DIR', 'RUNFILES_MANIFEST_FILE', 'JAVA_RUNFILES', 'PYT
 
 
 def main():
-    command = Runtime.from_manifest(MANIFEST).launcher(sys.argv[1:])
+    runtime = Runtime.from_manifest(MANIFEST)
+    # Before the command: the argument files it reads (--vm.@file) are relative to it too.
     if 'BUILD_WORKING_DIRECTORY' in os.environ:
         os.chdir(os.environ['BUILD_WORKING_DIRECTORY'])
+    command = runtime.launcher(sys.argv[1:])
     env = {k: v for k, v in os.environ.items() if k not in _LAUNCHER_ENV}
     os.execve(command[0], command, env)
 

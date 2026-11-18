@@ -1438,7 +1438,7 @@ that may change performance measures with interleaved A/B runs.
     the platform's rounding of it, which the check computes rather than
     accepts), and `bazel-bin/scheme` uses its AOT cache after a switch of
     configuration (a check, or a stamp Bazel re-creates with the tree).
-- [ ] **M11-03 · `--vm.@argfile` on the native launcher** *(early)*
+- [x] **M11-03 · `--vm.@argfile` on the native launcher** *(early)*
   - #219's follow-up: the thin launcher expands an `@argfile` and passes
     its options to the isolate unchecked, so an option inside the file that
     the isolate ignores (`-ea`, `-Xint`, `-verbose:gc`: M10-04's list)
