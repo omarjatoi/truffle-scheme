@@ -38,8 +38,9 @@ def unit_tests(name, tests, support, kinds, resources = {}, extra_srcs = {}):
     `extra_srcs[Class]`: other test classes it uses."""
     kinds_deps = {
         "core": (["//src/reader", "//src/runtime"], [":core_module"], ["org.graalvm.polyglot", "org.graalvm.truffle", "scheme"]),
+        # jdk.management: the threads' allocation counters (TailCallCacheTest).
         "full": ([":" + support, "//src/compiler", "//src/launcher", "//src/reader", "//src/runtime"], ["//:launcher_module"],
-                 ["org.graalvm.polyglot", "org.graalvm.truffle", "scheme", "scheme.launcher"]),
+                 ["jdk.management", "org.graalvm.polyglot", "org.graalvm.truffle", "scheme", "scheme.launcher"]),
         "polyglot": ([":" + support, "//src/compiler", "//src/launcher", "//src/reader", "//src/runtime"], ["//:launcher_module", "//bazel:test_languages"],
                      ["org.graalvm.polyglot", "org.graalvm.truffle", "scheme", "scheme.launcher"]),
         "upstream": ([], ["//bazel:truffle_modules"], ["org.graalvm.polyglot", "org.graalvm.truffle"]),
