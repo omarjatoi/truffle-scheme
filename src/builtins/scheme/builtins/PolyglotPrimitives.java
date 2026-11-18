@@ -44,7 +44,7 @@ final class PolyglotPrimitives {
         EVAL("%polyglot-eval", 2, 2, Result.NEW_OBJECT),
         EVAL_FILE("%polyglot-eval-file", 2, 2, Result.NEW_OBJECT),
         LANGUAGE_AVAILABLE("%polyglot-language-available?", 1, 1, Result.VALUE),
-        IMPORT("%polyglot-import", 1, 1, Result.NEW_OBJECT),
+        IMPORT("%polyglot-import", 1, 2, Result.NEW_OBJECT),
         EXPORT("%polyglot-export", 2, 2, Result.VALUE),
         JAVA_TYPE("%java-type", 1, 1, Result.VALUE),
         IS_FOREIGN("%foreign?", 1, 1, Result.VALUE),
@@ -126,7 +126,7 @@ final class PolyglotPrimitives {
                 case LANGUAGE_AVAILABLE:
                     return Foreign.isLanguageAvailable(name(op, args[1]));
                 case IMPORT:
-                    return Foreign.importSymbol(name(op, args[1]));
+                    return Foreign.importSymbol(name(op, args[1]), args.length > 2 ? args[2] : Boolean.FALSE);
                 case EXPORT:
                     Foreign.exportSymbol(name(op, args[1]), args[2]);
                     return SConstant.UNSPECIFIED;
