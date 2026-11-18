@@ -20,7 +20,7 @@ Both R7RS conformance suites vendored here pass:
 The per-section numbers are the status block at the top of
 [docs/plan.md](plan.md), which is generated from the suites, and a test
 checks it on every commit. It is for the interpreter; CI also runs both
-suites with every function compiled on first call and under torture, and the
+suites with every function compiled on first call and under both tortures, and the
 native launcher passes the same tests (design.md D17). Proper tail calls run in
 constant space, deep non-tail recursion spills to the heap instead of
 overflowing the Java stack (once it has used most of the thread's stack,
@@ -425,10 +425,11 @@ the rest of 10; the JVM column is the `java` command `bazel-bin/scheme` runs):
 
 The build takes 50 to 90 s and about 3 GB of memory on that machine; the
 launcher is 0.1 MB and the library 55 MB. It has no tools (they need the JVM launcher), and it runs
-on the platform that built it. CI doesn't build it: a change to its
+on the platform it was built for: this machine by default (design.md D11). CI doesn't build it: a change to its
 configuration is checked by the tests `//tests:readme_native` (this section's
-commands) and `//tests:conformance_native` (both conformance suites through
-the executable), which are run only when named.
+commands), `//tests:conformance_native` (both conformance suites through
+the executable), `//tests:space_native` and `//tests:launcher_vm_native`,
+which are run only when named.
 
 The executable sizes its heap as native-image does by default: its young
 generation starts at 48 MB, and grows as a program allocates. A program whose

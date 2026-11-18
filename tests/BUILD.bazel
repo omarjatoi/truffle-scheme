@@ -404,8 +404,8 @@ harness_test(
     tags = ["lint"],
 )
 
-# design.md D17 "The launcher's JVM": its collector, young generation, compiler threads and AOT
-# cache, unless its JVM options (its --vm. options among them) say otherwise; "VM options".
+# design.md D17 "The launcher's JVM": its collector, compiler threads and AOT cache, unless its JVM
+# options (its --vm. options among them) say otherwise; "VM options".
 harness_test(
     name = "launcher_vm",
     check = "launcher_vm",

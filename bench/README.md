@@ -186,7 +186,7 @@ this machine (design.md D17). One command then runs everything and writes
 the page and its data (`docs/benchmarks.json`):
 
 ```
-bazel build --config=local //:scheme-native
+bazel build //:scheme-native
 nix develop .#bench --command bazel run //:r7rs -- bench-report --note "quiet machine"
 nix develop .#bench --command bazel run //:r7rs -- bench-report --benchmarks fib,tak --scale 0.1   # a quick look
 bazel run //:r7rs -- bench-report --render-only   # rewrite the page from the JSON

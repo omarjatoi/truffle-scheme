@@ -708,7 +708,7 @@ def r7rs_bench_report(args):
                              "what is live this often (default 0.5; 0: don't)")
     parser.add_argument('--native', default=join(repo_root(), 'bazel-bin', 'scheme-native'), metavar='FILE',
                         help='the native launcher, for the native column (default: bazel-bin/scheme-native, '
-                             'which `bazel build --config=local //:scheme-native` builds)')
+                             'which `bazel build //:scheme-native` builds)')
     parser.add_argument('--note', default='', help='conditions to state in the report, e.g. how loaded the machine was')
     parser.add_argument('--output', default=join(repo_root(), 'docs', 'benchmarks.md'), metavar='FILE.md')
     parser.add_argument('--json', default=join(repo_root(), 'docs', 'benchmarks.json'), metavar='FILE.json')
@@ -762,7 +762,7 @@ def r7rs_bench_report(args):
                 info['command'] = f'scheme-native {" ".join(_NATIVE_VM_ARGS)} {{src}} < {{input}}'
                 info['notes'].append('`bench/postlude.scm` as the postlude')
                 if not os.access(options.native, os.X_OK):
-                    info['unavailable'] = f'no native launcher at `{options.native}`: `bazel build --config=local //:scheme-native` builds it'
+                    info['unavailable'] = f'no native launcher at `{options.native}`: `bazel build //:scheme-native` builds it'
                     log(f'bench-report: {impl.title}: {info["unavailable"]}')
                 continue
             if impl.name is None:
