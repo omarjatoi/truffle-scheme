@@ -5123,7 +5123,10 @@ Each entry: the decision, why, and what was rejected.
       engine wouldn't take a default of the launcher's. What would help
       `graphs` is fewer megamorphic sites (its folds split per caller, as
       Truffle does when a site reports polymorphism) rather than cheaper
-      indirect calls.
+      indirect calls. M12-05 found its two: caches of later tail calls,
+      which don't report, seeing 9 to 12 procedures past their limit of 8;
+      with 12 ("Calls and tail calls"), `graphs` takes 1.72 s natively
+      instead of 3.16, and 1.67 on the JVM instead of 2.12.
     - *Fixed (M12-12): `parsing`'s recompilations.* The native launcher
       invalidated `parsing`'s large compilations (`parse-data`,
       `parse-datum`, `parse-list2`: 10,000 to 23,000 nodes, 1.0 to 1.6 s
