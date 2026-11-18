@@ -2210,6 +2210,51 @@ Each entry: the decision, why, and what was rejected.
 - **Modules.** `java_module_jar` (`bazel/java_module.bzl`) builds the
   `scheme`, `scheme.launcher` and `scheme.test` modules, and everything runs
   with Truffle on the module path, as embedders run it.
+  - *They export nothing to embedders (M11-08).* GraalVM's module migration
+    guide (step 9): *"If the language or instrument does not expose any
+    API, it is recommended to keep the module as encapsulated as possible
+    and avoid exporting any packages"*, and *"In the case of internal APIs
+    that are exclusively utilized by known modules, it is advised to use
+    qualified exports"*, as the SimpleLanguage's `module-info.java` exports
+    its packages `to org.graalvm.sl.test`. Every package of `scheme` is
+    exported only `to scheme.test` (the unit tests' modules), and
+    `scheme.launcher` only `to org.graalvm.launcher, scheme.test`: the native
+    launcher's `AbstractLanguageLauncher.runLauncher` makes `SchemeMain` by
+    reflection, and without the export `bazel-bin/scheme-native` stops with
+    *"IllegalAccessException: class
+    org.graalvm.launcher.AbstractLanguageLauncher (in module
+    org.graalvm.launcher) cannot access class scheme.launcher.SchemeMain"*
+    (GraalJS's launcher exports `com.oracle.truffle.js.shell to
+    org.graalvm.launcher` the same way). Nothing else needs one: the
+    language is found as a `TruffleLanguageProvider` service, the JVM
+    launcher runs `-m scheme.launcher/...`, and the native image's
+    configuration (build-time initialization, D17) has no reflection.
+  - *But one class.* The Static Object Model (records, M7-04) defines the
+    classes it generates, subclasses of `SRecord` implementing
+    `SRecord.Factory`, with `ClassLoader.defineClass` in class loaders of
+    its own (`GeneratorClassLoaders`), so they are in those loaders'
+    unnamed modules, which no qualified export can name: with
+    `scheme.runtime.value` exported only `to scheme.test`, the first
+    `define-record-type` failed with *"superclass access check failed: class
+    com.oracle.truffle.api.staticobject.GeneratedStaticObject$$1 (in unnamed
+    module @...) cannot access class scheme.runtime.value.SRecord (in module
+    scheme) because module scheme does not export scheme.runtime.value to
+    unnamed module"*. Espresso, the model's main user, exports its static
+    objects' package to everyone for the same reason (`suite.py`:
+    `"com.oracle.truffle.espresso.runtime.staticobject",  # Workaround
+    GR-48132`). So `SRecord` (with its `Factory`) is alone in a package,
+    `scheme.runtime.staticobject`, the one exported to everyone: an embedder
+    can name that class and nothing else, and can't get a record as one
+    (polyglot values are never host objects). Rejected: exporting
+    `scheme.runtime.value` to everyone (two dozen value classes as an API);
+    `opens` (open packages are accessible at run time anyway, and more);
+    exporting to the generated classes' modules with `Module.addExports` at
+    run time (the model's class loaders are internal to Truffle, and a class
+    must be defined in one before its module can be named).
+  - `//tests:module_exports` (a lint test) reads the built jars'
+    descriptors and fails on an open module, an unqualified `opens` or an
+    unqualified `exports` but `scheme.runtime.staticobject`, and on any
+    class in that package but `SRecord`'s.
 - **Nix** (`flake.nix`) provides the dev shell: `bazel` (bazelisk), Python,
   `gh`, chibi-scheme and a GraalVM JDK for running and embedding outside
   Bazel. Bazel doesn't need it: it pins its own JDK and Python, and builds

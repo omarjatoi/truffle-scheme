@@ -9,7 +9,7 @@ import com.oracle.truffle.api.instrumentation.AllocationEventFilter;
 import com.oracle.truffle.api.instrumentation.AllocationListener;
 import com.oracle.truffle.api.instrumentation.TruffleInstrument;
 
-import scheme.runtime.value.SRecord;
+import scheme.runtime.staticobject.SRecord;
 
 /**
  * A Truffle instrument for ToolsTest (plan.md M7-07): records the allocations the language reports

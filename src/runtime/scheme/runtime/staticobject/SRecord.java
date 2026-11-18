@@ -1,4 +1,4 @@
-package scheme.runtime.value;
+package scheme.runtime.staticobject;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.interop.InteropLibrary;
@@ -9,6 +9,9 @@ import com.oracle.truffle.api.library.ExportMessage;
 
 import scheme.runtime.InteropValues;
 import scheme.runtime.SchemeLanguage;
+import scheme.runtime.value.SRecordType;
+import scheme.runtime.value.SString;
+import scheme.runtime.value.SVector;
 
 /**
  * An instance of an {@link SRecordType}: a static object of Truffle's Static Object Model (design.md
@@ -16,6 +19,11 @@ import scheme.runtime.SchemeLanguage;
  * itself (Java fields of a class the model generates, a subclass of this one; arrays in a native
  * image), so a field access compiles to a field load. Only the type's {@link SRecordType#factory}
  * makes one.
+ *
+ * <p>
+ * Alone in its package, the one the language's module exports to everyone: the model defines the
+ * classes it generates in class loaders of its own, so in unnamed modules, which no qualified
+ * export can name (design.md D11, "Modules").
  */
 @ExportLibrary(InteropLibrary.class)
 public class SRecord implements TruffleObject {

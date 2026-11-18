@@ -8,6 +8,7 @@ import com.oracle.truffle.api.library.ExportMessage;
 
 import scheme.runtime.InteropValues;
 import scheme.runtime.SchemeLanguage;
+import scheme.runtime.staticobject.SRecord;
 
 /**
  * A Scheme type as an interop meta object ({@code getMetaObject}, design.md D10): R7RS §3.2's

@@ -9,6 +9,8 @@ import com.oracle.truffle.api.staticobject.DefaultStaticProperty;
 import com.oracle.truffle.api.staticobject.StaticProperty;
 import com.oracle.truffle.api.staticobject.StaticShape;
 
+import scheme.runtime.staticobject.SRecord;
+
 /**
  * A language's Static Object Model shapes for records (design.md D1, plan.md M7-04): one per number
  * of fields, every field an {@code Object}, shared by all the record types with that many fields. A

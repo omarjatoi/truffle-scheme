@@ -28,7 +28,7 @@ import scheme.runtime.value.SPair;
 import scheme.runtime.value.SRational;
 import scheme.runtime.value.SPort;
 import scheme.runtime.value.SPromise;
-import scheme.runtime.value.SRecord;
+import scheme.runtime.staticobject.SRecord;
 import scheme.runtime.value.SRecordType;
 import scheme.runtime.value.SString;
 import scheme.runtime.value.SSymbol;

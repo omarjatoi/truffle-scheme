@@ -9,6 +9,7 @@ import com.oracle.truffle.api.staticobject.StaticProperty;
 
 import scheme.runtime.InteropValues;
 import scheme.runtime.SchemeLanguage;
+import scheme.runtime.staticobject.SRecord;
 
 /**
  * A record type from {@code define-record-type}: each evaluation of a definition makes a new one.
