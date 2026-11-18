@@ -405,7 +405,8 @@ harness_test(
 )
 
 # design.md D17 "The launcher's JVM": its collector, compiler threads and AOT cache, unless its JVM
-# options (its --vm. options among them) say otherwise; "VM options".
+# options (its --vm. options among them) say otherwise; "VM options"; "Options" (Graal compiled for
+# HotSpot with the compiler's instrumentation).
 harness_test(
     name = "launcher_vm",
     check = "launcher_vm",
