@@ -39,6 +39,7 @@ import com.oracle.truffle.api.bytecode.Instruction;
 import com.oracle.truffle.api.dsl.Introspection;
 import com.oracle.truffle.api.dsl.Introspection.SpecializationInfo;
 import com.oracle.truffle.api.interop.InteropLibrary;
+import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.nodes.NodeUtil;
 
 import scheme.runtime.ForeignNodes;
@@ -447,6 +448,42 @@ public class PolyglotTest {
                       (call-back (lambda (i) (+ i 1)) n))
                     """;
 
+    /**
+     * Loops of the foreign-* procedures over an SL object and Java's arrays, lists, maps, fields and
+     * methods, as bench/polyglot/foreign.scm's elements and members: {@code (accessors n)} is
+     * {@code 15 * n}.
+     */
+    private static final String FOREIGN_ACCESSORS = IMPORT + """
+                    (define o (polyglot-eval "sl" "function main() { o = new(); o.x = 5; return o; }"))
+                    (define array (foreign-invoke (foreign-invoke (java-type "java.util.stream.IntStream") 'range 0 10) 'toArray))
+                    (define ArrayList (java-type "java.util.ArrayList"))
+                    (define l (foreign-new ArrayList))
+                    (foreign-invoke l 'add 1)
+                    (define m (foreign-new (java-type "java.util.HashMap")))
+                    (foreign-set! m "a" 1)
+                    (define tokenizer
+                      (foreign-new (java-type "java.io.StreamTokenizer") (foreign-new (java-type "java.io.StringReader") "")))
+                    (define (accessors n)
+                      (let loop ((i 0) (s 0))
+                        (if (= i n)
+                            s
+                            (begin
+                              (foreign-set! o 'x (+ (foreign-ref o 'x) 1))
+                              (foreign-set! array 1 (foreign-ref array 2))
+                              (loop (+ i 1)
+                                    (+ s
+                                       (foreign-ref array 1)                                 ; 2
+                                       (foreign-length array)                                ; 10
+                                       (foreign-ref l 0)                                     ; 1
+                                       (foreign-invoke l 'size)                              ; 1
+                                       (foreign-ref m "a")                                   ; 1
+                                       (foreign-ref tokenizer 'ttype)                        ; -4
+                                       (if (foreign-instance? l ArrayList) 1 0)              ; 1
+                                       (if (foreign-null? (foreign-invoke m 'get "b")) 1 0)  ; 1
+                                       (vector-length (foreign->vector l))                   ; 1
+                                       (length (foreign-keys m))))))))                       ; 1
+                    """;
+
     @Test
     public void foreignCallsUseTheSitesInteropCaches() {
         try (Context context = context()) {
@@ -457,7 +494,7 @@ public class PolyglotTest {
             for (String name : List.of("calls", "tail-calls")) {
                 String program = FOREIGN_LOOPS + "(unless (= (%s 10) 10) (error \"wrong\")) %s".formatted(name, name);
                 context.eval(Source.newBuilder(SCHEME, program, ResultProbe.SOURCE).buildLiteral());
-                List<Object> libraries = foreignCallLibraries((SClosure) probe.last);
+                List<Object> libraries = cachedLibraries((SClosure) probe.last, ForeignNodes.CallNode.class);
                 assertEquals(name, 1, libraries.size());
                 InteropLibrary library = (InteropLibrary) libraries.get(0);
                 assertTrue(name, library.isAdoptable());
@@ -465,8 +502,8 @@ public class PolyglotTest {
         }
     }
 
-    /** The interop libraries cached by the foreign call nodes under the call sites of {@code procedure}'s root. */
-    private static List<Object> foreignCallLibraries(SClosure procedure) {
+    /** The interop libraries cached by the nodes of class {@code type} under the instructions of {@code procedure}'s root. */
+    private static List<Object> cachedLibraries(SClosure procedure, Class<? extends Node> type) {
         BytecodeRootNode root = (BytecodeRootNode) procedure.callTarget.getRootNode();
         List<Object> libraries = new ArrayList<>();
         for (Instruction instruction : root.getBytecodeNode().getInstructions()) {
@@ -474,7 +511,7 @@ public class PolyglotTest {
                 if (argument.getKind() != Instruction.Argument.Kind.NODE_PROFILE || argument.asCachedNode() == null) {
                     continue;
                 }
-                for (ForeignNodes.CallNode node : NodeUtil.findAllNodeInstances(argument.asCachedNode(), ForeignNodes.CallNode.class)) {
+                for (Node node : NodeUtil.findAllNodeInstances(argument.asCachedNode(), type)) {
                     for (SpecializationInfo s : Introspection.getSpecializations(node)) {
                         for (int i = 0; i < s.getInstances(); i++) {
                             for (Object cached : s.getCachedData(i)) {
@@ -491,10 +528,31 @@ public class PolyglotTest {
     }
 
     @Test
-    public void foreignCallsCompileWithoutPerformanceWarnings() throws IOException {
+    public void foreignAccessorsUseTheirInteropCaches() {
+        try (Context context = context()) {
+            ResultProbe probe = context.getEngine().getInstruments().get(ResultProbe.ID).lookup(ResultProbe.class);
+            String program = FOREIGN_ACCESSORS + "(unless (= (accessors 10) 150) (error \"wrong\")) accessors";
+            context.eval(Source.newBuilder(SCHEME, program, ResultProbe.SOURCE).buildLiteral());
+            // Each foreign-ref and foreign-set! in the loop runs in place, with a node of its call
+            // site's own and a cached library for the value it reads or writes: no uncached interop.
+            List<Object> reads = cachedLibraries((SClosure) probe.last, ForeignNodes.ReadNode.class);
+            List<Object> writes = cachedLibraries((SClosure) probe.last, ForeignNodes.WriteNode.class);
+            assertEquals(6, reads.size());
+            assertEquals(2, writes.size());
+            for (Object library : reads) {
+                assertTrue(((InteropLibrary) library).isAdoptable());
+            }
+            for (Object library : writes) {
+                assertTrue(((InteropLibrary) library).isAdoptable());
+            }
+        }
+    }
+
+    @Test
+    public void foreignAccessCompilesWithoutPerformanceWarnings() throws IOException {
         Path log = folder.newFile("engine.log").toPath();
-        Context.Builder builder = Context.newBuilder(SCHEME, SL).out(new ByteArrayOutputStream()).allowPolyglotAccess(PolyglotAccess.ALL).allowExperimentalOptions(true).option("log.file",
-                        log.toString());
+        Context.Builder builder = Context.newBuilder(SCHEME, SL).out(new ByteArrayOutputStream()).allowPolyglotAccess(PolyglotAccess.ALL).allowHostAccess(HostAccess.ALL).allowHostClassLookup(
+                        name -> !name.isEmpty()).allowExperimentalOptions(true).option("log.file", log.toString());
         builder.option("engine.Compilation", "true").option("engine.CompileImmediately", "false").option("engine.BackgroundCompilation", "false");
         builder.option("engine.SingleTierCompilationThreshold", "100").option("engine.FirstTierCompilationThreshold", "100");
         builder.option("engine.LastTierCompilationThreshold", "500");
@@ -513,9 +571,13 @@ public class PolyglotTest {
                                   s
                                   (loop (+ i 1) (+ s (calls 100) (tail-calls 100) (callbacks 100)))))
                             """).asInt());
+            assertEquals(2000 * 15 * 100, c.eval(SCHEME, FOREIGN_ACCESSORS + """
+                            (let loop ((i 0) (s 0))
+                              (if (= i 2000) s (loop (+ i 1) (+ s (accessors 100)))))
+                            """).asInt());
         }
         String engineLog = Files.readString(log);
-        assertTrue(engineLog, engineLog.contains("opt done") && engineLog.contains("calls") && engineLog.contains("tail-calls"));
+        assertTrue(engineLog, engineLog.contains("opt done") && engineLog.contains("calls") && engineLog.contains("tail-calls") && engineLog.contains("accessors"));
         assertFalse(engineLog, engineLog.contains("perf warn"));
     }
 

@@ -7,6 +7,7 @@ import java.util.function.Supplier;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 
 import scheme.runtime.Foreign;
+import scheme.runtime.ForeignNodes;
 import scheme.runtime.PrimitiveNode;
 import scheme.runtime.PrimitiveSpec;
 import scheme.runtime.PrimitiveSpec.Result;
@@ -66,7 +67,30 @@ final class PolyglotPrimitives {
 
         @Override
         public PrimitiveNode get() {
-            return new Op(this);
+            switch (this) {
+                case IS_FOREIGN:
+                    return new IsForeign();
+                case IS_NULL:
+                    return new IsNull();
+                case REF:
+                    return new Ref();
+                case SET:
+                    return new Set();
+                case LENGTH:
+                    return new Length();
+                case KEYS:
+                case TO_LIST:
+                case TO_VECTOR:
+                    return new Elements(this);
+                case INVOKE:
+                    return new Invoke();
+                case NEW:
+                    return new New();
+                case IS_INSTANCE:
+                    return new IsInstance();
+                default:
+                    return new Op(this);
+            }
         }
 
         /** The name the library exports it as, for messages. */
@@ -75,7 +99,10 @@ final class PolyglotPrimitives {
         }
     }
 
-    /** Every primitive of the library: a switch on which one, each a call of {@link Foreign}. */
+    /**
+     * The primitives that reach the context's Env (other languages, the bindings, Java classes): a
+     * switch on which one, each a call of {@link Foreign}, behind a boundary.
+     */
     static final class Op extends PrimitiveNode {
         private final Primitive op;
 
@@ -105,31 +132,10 @@ final class PolyglotPrimitives {
                     return SConstant.UNSPECIFIED;
                 case JAVA_TYPE:
                     return Foreign.javaType(text(op, args[1]));
-                case IS_FOREIGN:
-                    return Foreign.isForeign(args[1]);
-                case IS_NULL:
-                    return Foreign.isNull(args[1]);
-                case REF:
-                    return Foreign.ref(args[1], args[2]);
-                case SET:
-                    Foreign.set(args[1], args[2], args[3]);
-                    return SConstant.UNSPECIFIED;
-                case LENGTH:
-                    return Foreign.length(args[1]);
-                case KEYS:
-                    return Foreign.keys(args[1]);
-                case TO_LIST:
-                    return list(Foreign.elements(op.publicName(), args[1]));
-                case TO_VECTOR:
-                    return new SVector(Foreign.elements(op.publicName(), args[1]), false);
-                case INVOKE:
-                    return Foreign.invoke(args[1], args[2], args, 3);
-                case NEW:
-                    return Foreign.instantiate(args[1], args, 2);
-                case IS_INSTANCE:
-                    return Foreign.isInstance(args[1], args[2]);
+                default:
+                    // The foreign-* procedures are nodes of their own (below).
+                    throw new AssertionError(op);
             }
-            throw new AssertionError(op);
         }
 
         /** A language id or a binding name: a string or a symbol. */
@@ -146,6 +152,75 @@ final class PolyglotPrimitives {
             }
             throw ControlPrimitives.notA(op.publicName(), "string", value);
         }
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // The foreign-* procedures: each a node of the runtime's (ForeignNodes), with an inline cache of
+    // the interop libraries of the values it has seen, so that compiled code reads a member or an
+    // element with the other language's (or Java's) own message (design.md D20, "Foreign access in
+    // compiled code"). The interop is the runtime's (AGENTS.md rule 1).
+
+    /** {@code (foreign? obj)}: no interop, only whether it is a Scheme value. */
+    static final class IsForeign extends PrimitiveNode {
+        @Override
+        public Object invoke(Object[] args) {
+            return Foreign.isForeign(args[1]);
+        }
+    }
+
+    static final class IsNull extends PrimitiveNode {
+        @Child private ForeignNodes.IsNullNode node = ForeignNodes.IsNullNode.create();
+
+        @Override
+        public Object invoke(Object[] args) {
+            return node.execute(args[1]);
+        }
+    }
+
+    static final class Ref extends PrimitiveNode {
+        @Child private ForeignNodes.ReadNode node = ForeignNodes.ReadNode.create();
+
+        @Override
+        public Object invoke(Object[] args) {
+            return node.execute(args[1], args[2]);
+        }
+    }
+
+    static final class Set extends PrimitiveNode {
+        @Child private ForeignNodes.WriteNode node = ForeignNodes.WriteNode.create();
+
+        @Override
+        public Object invoke(Object[] args) {
+            node.execute(args[1], args[2], args[3]);
+            return SConstant.UNSPECIFIED;
+        }
+    }
+
+    static final class Length extends PrimitiveNode {
+        @Child private ForeignNodes.LengthNode node = ForeignNodes.LengthNode.create();
+
+        @Override
+        public Object invoke(Object[] args) {
+            return node.execute(args[1]);
+        }
+    }
+
+    /** {@code foreign-keys} (a list), {@code foreign->list} and {@code foreign->vector}. */
+    static final class Elements extends PrimitiveNode {
+        private final Primitive op;
+        private final String who;
+        @Child private ForeignNodes.ElementsNode node = ForeignNodes.ElementsNode.create();
+
+        Elements(Primitive op) {
+            this.op = op;
+            this.who = op.publicName();
+        }
+
+        @Override
+        public Object invoke(Object[] args) {
+            Object[] items = node.execute(who, op == Primitive.KEYS, args[1]);
+            return op == Primitive.TO_VECTOR ? new SVector(items, false) : list(items);
+        }
 
         private static Object list(Object[] items) {
             Object list = SConstant.EMPTY_LIST;
@@ -153,6 +228,33 @@ final class PolyglotPrimitives {
                 list = new SPair(items[i], list);
             }
             return list;
+        }
+    }
+
+    static final class Invoke extends PrimitiveNode {
+        @Child private ForeignNodes.InvokeNode node = ForeignNodes.InvokeNode.create();
+
+        @Override
+        public Object invoke(Object[] args) {
+            return node.execute(args[1], args[2], args, 3);
+        }
+    }
+
+    static final class New extends PrimitiveNode {
+        @Child private ForeignNodes.InstantiateNode node = ForeignNodes.InstantiateNode.create();
+
+        @Override
+        public Object invoke(Object[] args) {
+            return node.execute(args[1], args, 2);
+        }
+    }
+
+    static final class IsInstance extends PrimitiveNode {
+        @Child private ForeignNodes.IsInstanceNode node = ForeignNodes.IsInstanceNode.create();
+
+        @Override
+        public Object invoke(Object[] args) {
+            return node.execute(args[1], args[2]);
         }
     }
 }

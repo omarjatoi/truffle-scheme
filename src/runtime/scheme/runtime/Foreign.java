@@ -2,7 +2,6 @@ package scheme.runtime;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
@@ -112,33 +111,9 @@ public final class Foreign {
     }
 
     // ------------------------------------------------------------------------------------------
-    // The operations of (graalvm polyglot) (design.md D20). Builtins only call these: the interop
-    // that may run foreign code, and through it Scheme callbacks under prompts of their own, is here
-    // in the runtime (AGENTS.md rule 1).
-
-    /** An operation across the boundary, given the uncached library. */
-    @FunctionalInterface
-    private interface Operation {
-        Object run(InteropLibrary interop) throws InteropException;
-    }
-
-    /**
-     * Runs {@code operation} as a foreign operation ({@link #enter}): its interop errors are Scheme
-     * errors of {@code who} on {@code receiver}, and what it throws is raised ({@link #raised}).
-     */
-    private static Object across(String who, Object receiver, Operation operation) {
-        SchemeContext context = SchemeContext.get(null);
-        int use = enter(context);
-        try {
-            return operation.run(InteropLibrary.getUncached());
-        } catch (InteropException e) {
-            throw interopError(who, receiver, e);
-        } catch (AbstractTruffleException e) {
-            throw raised(e);
-        } finally {
-            exit(context, use);
-        }
-    }
+    // The operations of (graalvm polyglot) (design.md D20). Builtins only call these, and the
+    // foreign-* procedures' nodes (ForeignNodes): the interop that may run foreign code, and through
+    // it Scheme callbacks under prompts of their own, is here in the runtime (AGENTS.md rule 1).
 
     /** {@code (polyglot-eval language source)}: through {@code Env.parsePublic}. */
     @TruffleBoundary
@@ -272,138 +247,20 @@ public final class Foreign {
         }
     }
 
-    /** {@code (foreign-null? x)}. */
+    /**
+     * The error for a member name that is neither a string nor a symbol (the {@code foreign-*}
+     * procedures, {@link ForeignNodes}).
+     */
     @TruffleBoundary
-    public static boolean isNull(Object value) {
-        return isForeign(value) && InteropLibrary.getUncached().isNull(value);
-    }
-
-    /** {@code (foreign-ref obj key)}: an array element, a hash value or a member. */
-    @TruffleBoundary
-    public static Object ref(Object receiver, Object key) {
-        return across("foreign-ref", receiver, interop -> {
-            if (key instanceof Long index && interop.hasArrayElements(receiver)) {
-                return incoming(interop.readArrayElement(receiver, index));
-            }
-            if (interop.hasHashEntries(receiver)) {
-                return incoming(interop.readHashValue(receiver, hashKey(key)));
-            }
-            return incoming(interop.readMember(receiver, memberName("foreign-ref", receiver, key)));
-        });
-    }
-
-    /** {@code (foreign-set! obj key value)}. */
-    @TruffleBoundary
-    public static void set(Object receiver, Object key, Object value) {
-        across("foreign-set!", receiver, interop -> {
-            if (key instanceof Long index && interop.hasArrayElements(receiver)) {
-                interop.writeArrayElement(receiver, index, value);
-            } else if (interop.hasHashEntries(receiver)) {
-                interop.writeHashEntry(receiver, hashKey(key), value);
-            } else {
-                interop.writeMember(receiver, memberName("foreign-set!", receiver, key), value);
-            }
-            return null;
-        });
-    }
-
-    /** {@code (foreign-length obj)}: an array's size or a hash's. */
-    @TruffleBoundary
-    public static long length(Object receiver) {
-        return (long) across("foreign-length", receiver, interop -> {
-            if (interop.hasArrayElements(receiver)) {
-                return interop.getArraySize(receiver);
-            }
-            return interop.getHashSize(receiver);
-        });
-    }
-
-    /** {@code (foreign-keys obj)}: a hash's keys, or an object's member names, as a list. */
-    @TruffleBoundary
-    public static Object keys(Object receiver) {
-        return across("foreign-keys", receiver, interop -> {
-            List<Object> keys = new ArrayList<>();
-            if (interop.hasHashEntries(receiver)) {
-                Object iterator = interop.getHashKeysIterator(receiver);
-                while (interop.hasIteratorNextElement(iterator)) {
-                    keys.add(incoming(interop.getIteratorNextElement(iterator)));
-                }
-            } else {
-                Object members = interop.getMembers(receiver);
-                long size = interop.getArraySize(members);
-                for (long i = 0; i < size; i++) {
-                    keys.add(incoming(interop.readArrayElement(members, i)));
-                }
-            }
-            return list(keys);
-        });
-    }
-
-    /** {@code (foreign->list obj)} and {@code (foreign->vector obj)}: an array's or an iterable's elements. */
-    @TruffleBoundary
-    public static Object[] elements(String who, Object receiver) {
-        return (Object[]) across(who, receiver, interop -> {
-            List<Object> items = new ArrayList<>();
-            if (interop.hasArrayElements(receiver)) {
-                long size = interop.getArraySize(receiver);
-                for (long i = 0; i < size; i++) {
-                    items.add(incoming(interop.readArrayElement(receiver, i)));
-                }
-            } else {
-                Object iterator = interop.getIterator(receiver);
-                while (interop.hasIteratorNextElement(iterator)) {
-                    items.add(incoming(interop.getIteratorNextElement(iterator)));
-                }
-            }
-            return items.toArray();
-        });
-    }
-
-    /** {@code (foreign-invoke obj member arg ...)}: the arguments are {@code arguments} from {@code from}. */
-    @TruffleBoundary
-    public static Object invoke(Object receiver, Object member, Object[] arguments, int from) {
-        String name = memberName("foreign-invoke", receiver, member);
-        Object[] foreignArguments = Arrays.copyOfRange(arguments, from, arguments.length);
-        return across("foreign-invoke", receiver, interop -> incoming(interop.invokeMember(receiver, name, foreignArguments)));
-    }
-
-    /** {@code (foreign-new constructor arg ...)}: the arguments are {@code arguments} from {@code from}. */
-    @TruffleBoundary
-    public static Object instantiate(Object constructor, Object[] arguments, int from) {
-        Object[] foreignArguments = Arrays.copyOfRange(arguments, from, arguments.length);
-        return across("foreign-new", constructor, interop -> incoming(interop.instantiate(constructor, foreignArguments)));
-    }
-
-    /** {@code (foreign-instance? obj type)}: {@code isMetaInstance}. */
-    @TruffleBoundary
-    public static boolean isInstance(Object value, Object type) {
-        return (boolean) across("foreign-instance?", type, interop -> interop.isMetaObject(type) ? interop.isMetaInstance(type, value) : unsupported());
-    }
-
-    private static Object unsupported() throws UnsupportedMessageException {
-        throw UnsupportedMessageException.create();
-    }
-
-    /** A member name: a string's or a symbol's. */
-    private static String memberName(String who, Object receiver, Object key) {
-        if (key instanceof SString || key instanceof SSymbol) {
-            return key.toString();
-        }
-        throw new SchemeError(new SErrorObject(SString.of(who + ": a member name is a string or a symbol"), new SPair(receiver, new SPair(key, SConstant.EMPTY_LIST)),
+    public static SchemeError badMemberName(String who, Object receiver, Object key) {
+        return new SchemeError(new SErrorObject(SString.of(who + ": a member name is a string or a symbol"), new SPair(receiver, new SPair(key, SConstant.EMPTY_LIST)),
                         SErrorObject.Kind.OTHER));
     }
 
     /** A hash key as it goes out: a symbol as its name, since symbols aren't interop strings. */
-    private static Object hashKey(Object key) {
+    @TruffleBoundary
+    public static Object hashKey(Object key) {
         return key instanceof SSymbol ? SString.of(key.toString()) : key;
-    }
-
-    private static Object list(List<Object> items) {
-        Object list = SConstant.EMPTY_LIST;
-        for (int i = items.size() - 1; i >= 0; i--) {
-            list = new SPair(items.get(i), list);
-        }
-        return list;
     }
 
     /** A value that came in from foreign code, as Scheme sees it (design.md D10, D20). */
