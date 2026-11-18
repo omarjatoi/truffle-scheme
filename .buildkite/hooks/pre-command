@@ -1,16 +1,21 @@
 #!/bin/bash
-# Before every step: Determinate Nix (the agents are fresh containers, as root, without systemd),
-# the CI dev shell's environment (flake.nix .#ci: just Bazel), and Bazel's CI settings in this
-# agent's ~/.bazelrc, with the BuildBuddy key from the cluster secret. Steps then run plain `bazel`.
+# Before every step: the CI dev shell's environment (flake.nix .#ci: just Bazel), and Bazel's CI
+# settings in this agent's ~/.bazelrc, with the BuildBuddy key from the cluster secret. Steps then
+# run plain `bazel`.
+#
+# The jobs run in CI's agent image (nix/image.nix, the queue's image), which has Determinate
+# Nix and every store path the shell needs, so here Nix only evaluates the flake: nothing is
+# installed or downloaded. Any other image is a misconfigured queue: it has no `nix`, so the hook
+# stops at its first use. When flake.lock or the shell changed since the image was built, Nix
+# downloads what changed, until the pipeline's `image` step on main pushes a new one.
 set -eo pipefail
-if [ ! -e /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh ]; then
-  curl -sSfL https://install.determinate.systems/nix | sh -s -- install linux --init none --no-confirm
-fi
-. /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
 
 # The shell's PATH and the like; the agent's own SHELL and temporary directory stay.
 shell="$SHELL" tmpdir="${TMPDIR:-/tmp}"
-eval "$(nix print-dev-env .#ci)"
+# Assigned first, so that the hook fails if Nix does (`eval "$(...)"` would carry on without it).
+env_script="$(nix print-dev-env .#ci)"
+eval "$env_script"
+unset env_script
 export SHELL="$shell" TMPDIR="$tmpdir"
 unset TMP TEMP TEMPDIR NIX_BUILD_TOP SOURCE_DATE_EPOCH
 

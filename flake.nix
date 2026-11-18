@@ -6,9 +6,12 @@
     # with GraalVM 25.5. The stable channel (`/0`) still ships 25.0.
     nixpkgs.url = "https://flakehub.com/f/NixOS/nixpkgs/0.1";
     flake-utils.url = "github:numtide/flake-utils";
+    # Determinate Nix for CI's agent image (nix/image.nix). Only `nix build .#ciImage`
+    # fetches it, so the CI shell doesn't.
+    determinate.url = "https://flakehub.com/f/DeterminateSystems/determinate/3.24.2";
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
+  outputs = { self, nixpkgs, flake-utils, determinate }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
@@ -57,5 +60,15 @@
           # Where Chez finds chez-srfi's libraries.
           CHEZSCHEMELIBDIRS = "${pkgs.chez-srfi}/lib/csv${pkgs.lib.versions.majorMinor pkgs.chez.version}-site";
         };
-      });
+      }) // {
+        # CI's agent image: Determinate Nix with the `.#ci` shell already in its store
+        # (nix/image.nix; `.buildkite/push-image.sh` builds and pushes it).
+        packages.x86_64-linux.ciImage = import ./nix/image.nix {
+          pkgs = nixpkgs.legacyPackages.x86_64-linux;
+          nix = determinate.inputs.nix;
+          ciShell = self.devShells.x86_64-linux.ci;
+          flakeInputs = [ nixpkgs flake-utils flake-utils.inputs.systems ];
+          flakeLock = ./flake.lock;
+        };
+      };
 }

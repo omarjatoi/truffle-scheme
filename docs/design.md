@@ -2751,6 +2751,53 @@ Each entry: the decision, why, and what was rejected.
   Benchmarks, the threshold check (`bench/thresholds.json`, measured on the
   maintainer's Mac) and the native image are local commands, by the
   maintainer's choice.
+  - *CI's agent image.* Every step runs inside the `.#ci` shell, so each job
+    needs Nix and the shell. The hosted agents are fresh containers, and on
+    Buildkite's default image the hook installed Determinate Nix (4 s), then
+    `nix print-dev-env .#ci` downloaded the shell from cache.nixos.org: the
+    nixpkgs input's source (37 MiB, 208 MiB unpacked) and the shell's closure
+    (63 MiB in all). On a good agent that took 7–30 s, but in about half of
+    the jobs of builds 349–390 it ran at about 100 KB/s and took 593–823 s.
+    So the jobs
+    run in an image of ours instead (`nix/image.nix`, flake.nix's
+    `packages.x86_64-linux.ciImage`), the `linux-small` queue's agent image:
+    Determinate Nix (flake input `determinate`) and every store path
+    `nix print-dev-env .#ci` reads, registered in the image's Nix database:
+    the flake's inputs and the shell's environment, which the image builds as
+    the CLI does (the same `nix-shell-env` derivation, so the CLI finds it
+    valid). The hook then installs and downloads nothing; it evaluates the
+    flake, in 1.1–1.5 s in the image on a laptop (x86_64 emulated), with the
+    network off too. The image is 182 MB compressed. Built by Nix with
+    `dockerTools`, not from a Dockerfile, so the image is a function of
+    `flake.nix`, `flake.lock` and `image.nix`. It also has what Buildkite
+    requires of a custom image (bash, git, CA certificates; the agent brings
+    `buildkite-agent`), and nix-ld, through which the Bazel that bazelisk
+    downloads finds its loader and libraries.
+    The hook doesn't install Nix: without it, the queue isn't running the
+    image, and the hook fails at its first `nix` command. It loads the shell with
+    `nix print-dev-env`, since Buildkite sources hooks into the step's shell
+    and `nix develop` would start a shell of its own. On a stale image
+    (`flake.lock` or the shell changed since it was built), Nix downloads
+    what changed, until main's `image` step pushes a new image.
+    **The pipeline's `image` step keeps it fresh**: on `main` only (never
+    for pull requests), when the commit changed `flake.nix`, `flake.lock` or
+    `image.nix` (`if_changed`, which the agent applies at upload; on `main`
+    it compares the commit with its first parent), after `checks` and `tests` so it
+    never holds them up, and one build at a time. It runs
+    `.buildkite/push-image.sh`: Nix builds the image in the current one, and
+    skopeo from the locked nixpkgs copies its archive to the registry with no
+    Docker daemon, tagged with 12 characters of its store hash and `latest`,
+    which is the tag the queue runs. It logs in with an OIDC token
+    (`buildkite-agent oidc request-token`, audience the registry's URL, five
+    minutes), which the registry's OIDC policy accepts from `main` builds of
+    this pipeline, so no registry token is stored in Buildkite. The same
+    script, run by hand with an API access token, made the first push, and
+    pushes again if the step was wrongly skipped: when `main` has moved past
+    the commit by the time its build uploads the pipeline, the agent
+    compares the commit with itself and sees no change. The registry,
+    `packages.buildkite.com/omarjatoi/ci/truffle-scheme`, is public, because
+    a hosted queue's image must be public or in the cluster's internal
+    registry, and the image holds only public software.
 - **Measured** when Bazel replaced mx (same commit; Apple M3 Max, 16 cores,
   shared with other builds at load 15–25; GitHub's `ubuntu-26.04` runners,
   CI's until Buildkite replaced GitHub Actions in #113):
