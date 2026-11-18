@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.graalvm.polyglot.Context;
+import org.graalvm.polyglot.Engine;
 import org.graalvm.polyglot.PolyglotException;
 import org.graalvm.polyglot.Source;
 import org.graalvm.polyglot.Value;
@@ -96,6 +97,31 @@ public class EmbeddingGuideTest {
             assertEquals(3, e.getExitStatus());
         }
         assertEquals("Hello from a library, Ada!\n", out.toString(StandardCharsets.UTF_8));
+        // readme-snippet-end
+    }
+
+    @Test
+    public void engine() throws IOException {
+        Path libraries = folder.newFolder("lib").toPath();
+        Files.createDirectories(libraries.resolve("examples"));
+        Files.writeString(libraries.resolve("examples/greet.sld"), """
+                        (define-library (examples greet)
+                          (export greet)
+                          (import (scheme base))
+                          (begin
+                            (define (greet name)
+                              (string-append "Hello from a library, " name "!"))))
+                        """);
+        // readme-snippet: engine
+        Source program = Source.create("scheme", "(import (scheme base) (examples greet)) (greet \"Ada\")");
+        // Every context of this engine takes its options, unless the context's builder gives others.
+        try (Engine engine = Engine.newBuilder("scheme").option("scheme.LibraryPath", libraries.toString()).build()) {
+            for (int i = 0; i < 2; i++) {
+                try (Context context = Context.newBuilder("scheme").engine(engine).allowIO(IOAccess.ALL).build()) {
+                    assertEquals("Hello from a library, Ada!", context.eval(program).asString());
+                }
+            }
+        }
         // readme-snippet-end
     }
 
