@@ -1090,6 +1090,67 @@ Each entry: the decision, why, and what was rejected.
     rectangular `a+bi`, and polar `r@θ`.
   - **Transcendental functions** on complex numbers follow the branch cuts in
     R7RS §6.2.6.
+  - **Transcendental functions are fdlibm's (`StrictMath`)**: `exp`, `log`
+    (with one argument and two, the quotient of two logs), `sin`, `cos`,
+    `tan`, `asin`, `acos`, `atan` (one and two arguments), `expt` of flonums,
+    and the complex paths (`hypot`, `sinh`, `cosh`, `make-polar`). So a
+    program writes the same digits on every platform, in both launchers and
+    at every tier. `sqrt` of a flonum stays `Math.sqrt`, which IEEE 754
+    defines (correctly rounded everywhere), and `inexact` of an exact number
+    is our own integer arithmetic, also correctly rounded (`Arithmetic.flo`).
+    R7RS doesn't fix the accuracy of transcendental functions (§6.2.6), so
+    this is about quality,
+    found by the fuzzer (D19, #230's follow-up: `(exp 1)` was
+    `2.7182818284590455` here, one ulp above the nearest flonum).
+    Reproducibility first, then accuracy, then speed. Measured on GraalVM
+    25.5 (November 2026), a sweep of 260,000 arguments (20,000 per function,
+    seeded), its results compared bit for bit, and against correctly rounded
+    references (Python's `decimal` at 80 to 260 digits) for all of them:
+    - **`Math` is not reproducible.** `java.lang.Math` is free to differ
+      from fdlibm by an ulp, and HotSpot and Graal replace it with
+      platform-specific code. On x86-64 (a BuildBuddy executor's Xeon,
+      HotSpot's Intel LIBM stubs) `exp`, `log`, `pow`, `sin`, `cos` and `tan`
+      differed from AArch64's (an Apple M3 Max) in 9.1%, 4.4%, 9.5%, 7.7%,
+      7.7% and 2.8% of the sweep's arguments; `(exp 1)` was
+      `2.718281828459045` on x86-64 and `2.7182818284590455` on AArch64.
+      On AArch64, `sin` and `cos` are a HotSpot stub and the rest fdlibm,
+      and the native launcher (D17) doesn't use that stub: its `sin` and
+      `cos` differed from the JVM launcher's in 6% of the arguments. Within
+      one VM, `Math` was the same in HotSpot's interpreter, C1, C2 and Graal
+      as the host compiler, and in our interpreter and compiled code.
+    - **`StrictMath` is**: Java specifies its results bit for bit (fdlibm's
+      algorithms), and the sweep's were identical on both platforms, at every
+      tier, and in both launchers.
+    - **Accuracy** (share of the sweep not correctly rounded; never more than
+      1 ulp off, 2 for `(log z1 z2)`): fdlibm `exp` 9.2%, `log` 4.4%, `sin`
+      2.8%, `cos` 2.9%, `tan` 2.8%, `asin` 5.8%, `acos` 7.5%, `atan` 0.9%,
+      `atan` of two arguments 18%, `expt` 9.5%. x86-64's `Math`: `exp` 0.3%,
+      `log` 0%, `sin` 0.1%, `cos` 0.2%, `tan` 0.3%, `expt` 0.1% (the rest are
+      fdlibm's there too). AArch64's `Math` `sin` and `cos`: 7.7% each. So
+      `StrictMath` is a little less accurate than x86-64's intrinsics, and
+      more than AArch64's. `(exp 1)` and `(log 3)` are an ulp off with it
+      (`NumbersTest`). chibi-scheme's C library is no better on every
+      argument: on macOS its `(asin 0.5)`, `(acos 0.5)` and `(tan 1)` are an
+      ulp off, and fdlibm's are the nearest.
+    - **Speed** (Apple M3 Max, our JVM launcher, 5 interleaved rounds,
+      nanoseconds per call in a loop of a million, `Math` → `StrictMath`):
+      with the JIT, `sin` 15.5 → 21.5, `cos` 16 → 20.5, `atan` 17 → 19.5,
+      `asin` 17 → 19, `exp` 23 → 20.5, `tan` 30 → 27, `atan` of two 20.5 →
+      21, against 7 for the loop alone; in the interpreter within 11% (115
+      for the loop alone). ecraven's `fft`, `mbrot`, `nucleic`, `fibfp`,
+      `pnpoly`, `sum1` and `sumfp` (3 interleaved rounds, 6 iterations, 2
+      of them warmup) were within 1% of `Math` once compiled, and within
+      noise interpreted (at a count of 1, where programs that call no
+      transcendental function moved as much). `nucleic`'s check passes
+      with both.
+    - Tests: `NumbersTest` (known values, a sweep against `StrictMath`, and
+      the sweep interpreted and compiled), `tests/diff/numbers-transcendental.scm`
+      (values that both fdlibm and chibi-scheme round to the nearest).
+    - *Rejected:* `Math` (above); `StrictMath` for `exp` and `log` only,
+      which wouldn't have fixed the case found, since fdlibm's `(exp 1)` is
+      the one an ulp off, and leaves the rest platform-dependent; a correctly
+      rounded library (CORE-MATH, CRlibm), which would be a new dependency
+      (AGENTS.md), or a port of one to Java, which is a project of its own.
   - **Dispatch.** Arithmetic operations specialize on `long` and `double` as
     fast paths, with overflow checks on the `long` path. `SBigInteger`,
     `SRational` and `SComplex` go through one generic path marked
