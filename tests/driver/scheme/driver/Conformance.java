@@ -62,7 +62,7 @@ public final class Conformance {
         runner.add(section.file().toString());
         boolean jit = suite.equals("larceny") && LARCENY_JIT.contains(section.id());
         Launch.Result r = launch.run(Launch.vmArgs(mode.equals("compile") || jit, mode.startsWith("torture") ? mode : null),
-                        "scheme.launcher/scheme.launcher.ConformanceRunner", runner, null, Map.of(), 900);
+                        "scheme.launcher/scheme.launcher.ConformanceRunner", runner, null, null, 900);
         String output = r.out() + r.err();
 
         // The section's output ends at its @@section line, which carries the runner's message.

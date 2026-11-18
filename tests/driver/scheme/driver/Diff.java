@@ -1,15 +1,16 @@
 package scheme.driver;
 
 import java.util.List;
-import java.util.Map;
 
 /**
  * Test: a program under ours, interpreted (or under torture), has the same stdout and exit status
  * as under chibi-scheme, whose output is a build action's (tests/harness/defs.bzl chibi_output).
+ * Both run in the environment of the {@code --env} options and no other variable (defs.bzl
+ * PROGRAM_ENV), whatever environment the test and the action get on a platform.
  *
  * <p>
  * {@code --module-path=JARS --file=PROGRAM --chibi-out=F --chibi-err=F --chibi-status=F
- * [--torture=torture|torture_owned]} ({@link Launch#vmArgs})
+ * [--env=NAME=VALUE]... [--torture=torture|torture_owned]} ({@link Launch#vmArgs})
  */
 public final class Diff {
 
@@ -23,7 +24,7 @@ public final class Diff {
         String chibiErr = Launch.read(Launch.runfile(launch.option("chibi-err")));
         int chibiStatus = Integer.parseInt(Launch.read(Launch.runfile(launch.option("chibi-status"))).strip());
         Launch.Result ours = launch.run(Launch.vmArgs(false, launch.options.get("torture")), Launch.LAUNCHER_MAIN,
-                        List.of(Launch.runfile(file).toString()), null, Map.of(), 600);
+                        List.of(Launch.runfile(file).toString()), null, launch.programEnv, 600);
         if (ours.status() == chibiStatus && ours.out().equals(chibiOut)) {
             Launch.log("same (exit " + ours.status() + ", " + ours.out().length() + " chars of stdout): " + file);
             return;

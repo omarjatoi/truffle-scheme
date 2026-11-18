@@ -40,12 +40,21 @@ final class Launch {
     final String modulePath;
     final List<String> rest = new ArrayList<>();
     final Map<String, String> options = new java.util.HashMap<>();
+    /** The `--env=NAME=VALUE` options, repeated: a child's whole environment, where a driver uses it. */
+    final Map<String, String> programEnv = new java.util.TreeMap<>();
 
-    /** Reads `--name=value` options (paths are runfiles paths) and the other arguments. */
+    /** Reads `--name=value` options (paths are runfiles paths), `--env=NAME=VALUE` and the other arguments. */
     Launch(String[] args) {
         for (String arg : args) {
             int eq = arg.indexOf('=');
-            if (arg.startsWith("--") && eq > 0) {
+            if (arg.startsWith("--env=")) {
+                String binding = arg.substring("--env=".length());
+                int bindingEq = binding.indexOf('=');
+                if (bindingEq <= 0) {
+                    throw fail("expected --env=NAME=VALUE: " + arg);
+                }
+                programEnv.put(binding.substring(0, bindingEq), binding.substring(bindingEq + 1));
+            } else if (arg.startsWith("--") && eq > 0) {
                 options.put(arg.substring(2, eq), arg.substring(eq + 1));
             } else {
                 rest.add(arg);
@@ -116,7 +125,10 @@ final class Launch {
         return new ProcessBuilder(command).inheritIO().start().waitFor();
     }
 
-    /** Runs `main` (module/class) in a child JVM of this JDK with the module path. */
+    /**
+     * Runs `main` (module/class) in a child JVM of this JDK with the module path: in `env` and no
+     * other variable, or in this test's environment when `env` is null.
+     */
     Result run(List<String> jvmArgs, String main, List<String> args, Path dir, Map<String, String> env, long timeoutSeconds)
                     throws IOException, InterruptedException {
         List<String> command = new ArrayList<>();
@@ -131,7 +143,10 @@ final class Launch {
         if (dir != null) {
             builder.directory(dir.toFile());
         }
-        builder.environment().putAll(env);
+        if (env != null) {
+            builder.environment().clear();
+            builder.environment().putAll(env);
+        }
         Process process = builder.start();
         CompletableFuture<String> out = drain(process.getInputStream());
         CompletableFuture<String> err = drain(process.getErrorStream());

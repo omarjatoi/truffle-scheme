@@ -5,7 +5,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -65,7 +64,7 @@ public final class Program {
                 default -> jvmArgs.addAll(Launch.vmArgs(false, label));
             }
             long start = System.nanoTime();
-            Launch.Result r = launch.run(jvmArgs, Launch.LAUNCHER_MAIN, List.of(file.toString()), null, Map.of(), 900);
+            Launch.Result r = launch.run(jvmArgs, Launch.LAUNCHER_MAIN, List.of(file.toString()), null, null, 900);
             double seconds = (System.nanoTime() - start) / 1e9;
             if (r.status() != status || !r.out().equals(expected)) {
                 String detail = r.status() != status ? "exit " + r.status() + " (expected " + status + ")" : "stdout differs";
