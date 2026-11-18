@@ -5003,6 +5003,103 @@ Each entry: the decision, why, and what was rejected.
       (`-Djdk.graal.PrintCompilation=true`, interpreted `parsing`) are the
       same sizes as `main`'s within their run-to-run spread (40.4-40.7 KB
       of bytecode against 40.4-40.7, 14-16 KB of code against 14-16).
+    - *Not fixed: `graphs`' indirect calls.* `graphs` folds with many
+      different closures (`fold`, `vector-fold`, `gnatural-fold`), so its
+      call sites go megamorphic and call through an `IndirectCallNode`.
+      With argument type speculation on (the engine's default), each such
+      call runs `OptimizedCallTarget.profileIndirectArguments` and
+      `profileArguments` behind a boundary, and SubstrateVM's
+      `compiledIndirectEntryReturnObject`, which checks the arguments
+      against the callee's profile: all compiled ahead of time, about 30%
+      of `graphs`' native steady state (`profileArguments` alone 18%).
+      `--experimental-options --engine.ArgumentTypeSpeculation=false`
+      takes `graphs` from 3.30 to 2.10 s natively and from 2.18 to 1.6 on
+      the JVM, but it takes the typed arguments from every compiled call:
+      natively `fib` 0.36 to 0.67 s, `tak` 0.94 to 2.13, `mbrotZ` 0.99 to
+      1.20 (interleaved, 2 processes each). So the default stays; the
+      option is internal and experimental anyway, and an embedder's
+      engine wouldn't take a default of the launcher's. What would help
+      `graphs` is fewer megamorphic sites (its folds split per caller, as
+      Truffle does when a site reports polymorphism) rather than cheaper
+      indirect calls.
+    - *Not fixed: `parsing`'s recompilations.* The native launcher
+      invalidates `parsing`'s large compilations (`parse-data`,
+      `parse-datum`, `parse-list2`: 10,000 to 23,000 nodes, 1.0 to 1.6 s
+      each to compile) about 8 times where the JVM does twice, so its
+      later iterations wait for recompilations. An image built with
+      `-H:+IncludeNodeSourcePositions`, run with `--engine.NodeSourcePositions
+      --engine.TraceTransferToInterpreter`, shows each as a
+      `NullCheckException` deoptimization (action `InvalidateReprofile`)
+      at `BoxRef`'s `box.value`, in code inlined from a callee: a `Box`
+      read where the frame or closure slot was still null. The program
+      never reads a variable before its box exists (`BoxRef` has no
+      specialization for null, so the interpreter would fail), so the
+      check most likely ran ahead of the condition that guards the read,
+      as the null check M10-06 found hoisted out of `string<?`'s loop (D1,
+      "Representations chosen outside loops"); each root that inlines the
+      code fails it once. Not confirmed further: plan.md has the
+      follow-up (M12-12).
+    - *Not changed: the collector, for programs that keep a large heap.*
+      `earley`, `paraffins`, `mperm`, `nboyer`, `sboyer` and `gcbench`
+      spend most of their native time collecting: at `--vm.Xmx2g` per
+      process (5 iterations), `earley` 41 s of about 50, `nboyer` 16,
+      `mperm` 7, `sboyer` 7, `paraffins` 5, against the JVM's few
+      tenths. `earley`'s profile is 57% `GreyToBlackObjRefVisitor`, its
+      log 108 young collections of 300 to 440 ms (36 s) against 7 full
+      ones (7 s). The default policy (`Adaptive2`, "The native image's
+      collector", above) starts eden at 48 MB, grows it at most 10% a
+      collection, and never tenures in fewer than 7 young collections,
+      so a structure that lives long is copied up to 7 times; HotSpot's
+      serial collector at `-Xmx2g` has a fixed young generation of about
+      680 MB and promotes what overflows its survivor space. Measured
+      (the executable at `f4fc307`, interleaved, 2 processes each, 5
+      iterations at the report's counts, load 1.8 to 9.3; the steady
+      state, and peak RSS):
+
+      | | `Adaptive2` (default) | `BySpaceAndTime` | `BySpaceAndTime`, `-Xmn128m` | `BySpaceAndTime`, `-Xmn64m` |
+      |---|---:|---:|---:|---:|
+      | *No `-Xmx`, as a user runs it (the default's A/A pair: `earley` 4.25 and 3.31 s, `gcbench` 1.23 and 1.05, the rest within 4%)* | | | | |
+      | `earley` | 4.25 s; 4.0 GB | 4.11 s; 1.6 GB | 4.22 s; 1.7 GB | 4.39 s; 1.7 GB |
+      | `paraffins` | 0.82 s; 1.4 GB | 0.37 s; 1.6 GB | 0.48 s; 1.2 GB | 0.52 s; 1.3 GB |
+      | `mperm` | 0.82 s; 1.4 GB | 0.60 s; 1.2 GB | 0.74 s; 1.1 GB | 1.15 s; 1.0 GB |
+      | `nboyer` | 3.33 s; 2.4 GB | 4.51 s; 0.8 GB | 4.99 s; 0.7 GB | 5.01 s; 0.6 GB |
+      | `sboyer` | 3.30 s; 391 MB | 2.07 s; 737 MB | 2.20 s; 479 MB | 2.18 s; 416 MB |
+      | `gcbench` | 1.23 s; 623 MB | 0.87 s; 798 MB | 1.00 s; 504 MB | 1.35 s; 491 MB |
+      | `graphs` | 3.18 s; 325 MB | 2.80 s; 578 MB | 2.96 s; 443 MB | 2.99 s; 355 MB |
+      | `divrec`, `primes` | 165, 168 MB | 371, 351 MB | 243, 224 MB | 180, 161 MB |
+      | `browse`, `dynamic`, `parsing` | 303, 548, 612 MB | 505, 853, 865 MB | 378, 791, 775 MB | 308, 650, 631 MB |
+      | *`--vm.Xmx2g`, as the report runs it* | | | | |
+      | `earley` | 8.18 s | 3.18 s | | |
+      | `paraffins` | 0.76 s | 0.30 s | | |
+      | `sboyer` | 3.24 s | 2.04 s | | |
+      | `nboyer` | 4.27 s | 4.82 s | | |
+      | `divrec`, `primes`, `browse` | 167, 170, 318 MB | 319, 299, 464 MB | | |
+
+      The other programs' times (`fib`, `deriv`, `peval`, `browse`,
+      `dynamic`, `parsing`, `divrec`, `primes`) were the same under every
+      policy, and so were `--version` and a hello-world program (21
+      interleaved runs: 8.4 and 9.0 ms, 15.7 and 20.7 MB, with either
+      policy). `--vm.Xmx64m` and `--vm.Xmx300m` run with
+      `BySpaceAndTime` as without it. So `BySpaceAndTime` is up to 2.6
+      times as fast on these programs, and keeps `earley`'s and
+      `nboyer`'s heaps far smaller without a maximum, but its fixed
+      young generation (a tenth of the maximum heap, at most 256 MB, and
+      twice that before a full collection) costs a program that
+      allocates moderately 130 to 300 MB of RSS (`divrec` 371 MB instead
+      of 165), and `nboyer` is 35% slower: the cost #189's minimum heap
+      had, which rules it out as the default. A smaller young generation
+      takes the memory back and the speed with it (`-Xmn64m`: `mperm`
+      and `gcbench` slower than the default). Native-image's build-time
+      alternatives didn't win either: `-H:MaxSurvivorSpaces=1`
+      (`earley` 4.6 s and `sboyer` 2.1 at `-Xmx2g`, but `paraffins` 0.74
+      against 0.45, one process each) and CE's `-O3`
+      (no gain beyond noise; GraalVM's documentation says it is `-O2` in
+      CE, though the build reports level 3 and the library grows from 56
+      to 88 MB). `BySpaceAndTime` is the flag docs/usage.md recommends
+      for programs that allocate and keep a lot, next to G1 (Oracle
+      GraalVM's native-image only, "The native image's collector").
+      Oracle GraalVM's profile-guided optimization (`--pgo`) and
+      ML-inferred profiles are also Oracle-only, and weren't tried.
   - **Rejected: a 1 GB minimum heap for the native launcher (#189).** The
     image was built for a while with `-R:MinHeapSize=1g`, a default for the
     executable's minimum heap that its own `-Xms` or `-XX:MinHeapSize=`
