@@ -71,7 +71,8 @@ public final class NumberParser {
             }
             double r = Numbers.toDouble(magnitude);
             double theta = Numbers.toDouble(angle);
-            return SComplex.make(r * Math.cos(theta), r * Math.sin(theta));
+            // fdlibm's, as make-polar's: the same bits on every platform (design.md D1).
+            return SComplex.make(r * StrictMath.cos(theta), r * StrictMath.sin(theta));
         }
         char last = Character.toLowerCase(s.charAt(s.length() - 1));
         if (last != 'i') {

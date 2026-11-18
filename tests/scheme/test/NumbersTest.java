@@ -183,6 +183,8 @@ public class NumbersTest {
                 add("sqrt", StrictMath.sqrt(positive), positive);
                 add("expt", StrictMath.pow(positive, y / 100), positive, y / 100);
                 add("expt", StrictMath.pow(-small + 10.5, y), -small + 10.5, y);
+                long k = random.nextInt(81) - 40;
+                addCall(StrictMath.pow(small, k), "(expt " + Double.toString(small).replace('E', 'e') + " " + k + ")");
             }
             cases.append(')');
         }
@@ -193,8 +195,13 @@ public class NumbersTest {
                 call.append(' ').append(Double.toString(a).replace('E', 'e'));
             }
             call.append(')');
+            addCall(result, call.toString());
+        }
+
+        /** A call written out, for one with an exact argument. */
+        private void addCall(double result, String call) {
             cases.append(call);
-            calls.add(call.toString());
+            calls.add(call);
             expected.add(result);
         }
 
@@ -266,6 +273,99 @@ public class NumbersTest {
         }
         assertEquals(outs[0], outs[1]);
         assertEquals(List.of(), sweep.mismatches(outs[1]));
+    }
+
+    /**
+     * What the procedures that branch on a real number's sign (magnitude, log, expt, rationalize,
+     * angle, abs, sqrt, make-polar) return for the special flonums and a few exact numbers. The sign
+     * of -0.0 and of a NaN is 0, of an infinity its own; NaN's 0 is why {@code (expt +nan.0 0.5)} is
+     * 0.0. Recorded before flonums got their own sign path, which keeps every one bit for bit.
+     */
+    @Test
+    public void signDependentResultsOfSpecialValues() {
+        String[][] cases = {
+                        {"0.", "(0.0 0.0 #f -inf.0 0.0 0.0 0.0 1.0 1.0 0.0 0.0 0.3333333333333333 0.0 0.0 0.0 2.0+0.0i)"},
+                        {"-0.", "(-0.0 -0.0 #t -inf.0+3.141592653589793i 0.0 0.0 0.0 1.0 1.0 -0.0 0.0 0.3333333333333333 3.141592653589793 0.0 -0.0 2.0-0.0i)"},
+                        {"+nan.0", "(+nan.0 +nan.0 #f +nan.0 0.0 0.0 0.0 1.0 +nan.0 +nan.0 +nan.0 +nan.0 +nan.0 +nan.0 +nan.0 +nan.0+nan.0i)"},
+                        {"-nan.0", "(+nan.0 +nan.0 #f +nan.0 0.0 0.0 0.0 1.0 +nan.0 +nan.0 +nan.0 +nan.0 +nan.0 +nan.0 +nan.0 +nan.0+nan.0i)"},
+                        {"+inf.0", "(+inf.0 +inf.0 #f +inf.0 +inf.0 +inf.0 0.0 1.0 +inf.0 +inf.0 +inf.0 0.0 0.0 +inf.0 +inf.0 +nan.0+nan.0i)"},
+                        {"-inf.0", "(-inf.0 +inf.0 #f +inf.0+3.141592653589793i +nan.0+nan.0i +nan.0+nan.0i +nan.0+nan.0i +nan.0+nan.0i 0.0 -inf.0 -inf.0 0.0 " +
+                                        "3.141592653589793 +inf.0 0.0+inf.0i +nan.0+nan.0i)"},
+                        {"1.", "(1.0 1.0 #f 0.0 1.0 1.0 1.0 1.0 2.0 1.0 1.0 0.0 0.0 1.0 1.0 1.0806046117362795+1.682941969615793i)"},
+                        {"-1.", "(-1.0 1.0 #f 0.0+3.141592653589793i 6.123233995736766e-17+1.0i 3.061616997868383e-16+1.0i 6.123233995736766e-17-1.0i 1.0+0.0i 0.5 -1.0 " +
+                                        "-1.0 0.0 3.141592653589793 1.0 0.0+1.0i 1.0806046117362795-1.682941969615793i)"},
+                        {"5e-324", "(5.0e-324 5.0e-324 #f -744.4400719213812 2.2227587494850775e-162 0.0 4.4989137945431964e+161 1.0 1.0 0.0 0.0 0.3333333333333333 0.0 " +
+                                        "5.0e-324 2.2227587494850775e-162 2.0+1.0e-323i)"},
+                        {"-5e-324", "(-5.0e-324 5.0e-324 #f -744.4400719213812+3.141592653589793i 1.361047193916867e-178+2.222758749485127e-162i 0.0+0.0i " +
+                                        "2.754790189063538e+145-4.498913794543097e+161i 1.0+0.0i 1.0 -0.0 0.0 0.3333333333333333 3.141592653589793 5.0e-324 " +
+                                        "0.0+2.2227587494850775e-162i 2.0-1.0e-323i)"},
+                        {"1e308", "(1.0e+308 1.0e+308 #f 709.1962086421661 1.0e+154 +inf.0 1.0e-154 1.0 +inf.0 +inf.0 1.0e+308 0.0 0.0 1.0e+308 1.0e+154 " + "-1.782617875374067+0.9067929810032982i)"},
+                        {"-1e308", "(-1.0e+308 1.0e+308 #f 709.1962086421661+3.141592653589793i 6.123233995736807e+137+1.0000000000000067e+154i +inf.0+inf.0i " +
+                                        "6.123233995736725e-171-9.999999999999932e-155i 1.0+0.0i 0.0 -inf.0 -1.0e+308 0.0 3.141592653589793 1.0e+308 0.0+1.0e+154i " +
+                                        "-1.782617875374067-0.9067929810032982i)"},
+                        {"0", "(0 0 #f -inf.0 0.0 0.0 0.0 1.0 1.0 0 0 1/3 0 0 0 2)"},
+                        {"-1", "(-1 1 #f 0.0+3.141592653589793i 6.123233995736766e-17+1.0i 3.061616997868383e-16+1.0i 6.123233995736766e-17-1.0i 1.0+0.0i 0.5 -1 -1 0 " +
+                                        "3.141592653589793 1 0+i 1.0806046117362795-1.682941969615793i)"},
+                        {"(- (expt 10 30))", "(-1000000000000000000000000000000 1000000000000000000000000000000 #f 69.07755278982137+3.141592653589793i " +
+                                        "0.061232339957367585+999999999999998.8i 3.061616997868365e+59+9.999999999999941e+74i 6.123233995736774e-32-1.0000000000000013e-15i " +
+                                        "1.0+0.0i 0.0 -1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 " +
+                                        "-1000000000000000000000000000000 0 3.141592653589793 1000000000000000000000000000000 0+1000000000000000i " + "-1.999912921791933-0.01866293786235165i)"},
+                        {"1/2", "(1/2 1/2 #f -0.6931471805599453 0.7071067811865476 0.17677669529663687 1.414213562373095 1.0 1.4142135623730951 1/8 1/2 0 0 1/2 " +
+                                        "0.7071067811865476 1.7551651237807455+0.958851077208406i)"},
+                        {"-1/2", "(-1/2 1/2 #f -0.6931471805599453+3.141592653589793i 4.329780281177466e-17+0.7071067811865475i 5.412225351471833e-17+0.17677669529663687i " +
+                                        "8.659560562354932e-17-1.414213562373095i 1.0+0.0i 0.7071067811865475 -1/8 -1/2 0 3.141592653589793 1/2 0.0+0.7071067811865476i " +
+                                        "1.7551651237807455-0.958851077208406i)"},
+        };
+        for (String[] c : cases) {
+            assertEquals(c[0], c[1], write("(let ((x " + c[0] + ")) (list x (magnitude x) (eqv? (magnitude x) -0.) (log x) (expt x 0.5) (expt x 2.5) (expt x -0.5) " +
+                            "(expt x 0.) (expt 2. x) (expt x 3) (rationalize x 1/10) (rationalize 1/3 x) (angle x) (abs x) (sqrt x) (make-polar 2 x)))"));
+        }
+        assertEquals("(\"log: not a number: a\" \"expt: not a number: a\" \"magnitude: not a number: a\")", write("(map (lambda (f) (guard (e (#t (error-object-message e))) (f 'a))) " +
+                        "(list log (lambda (x) (expt x 0.5)) magnitude))"));
+    }
+
+    /**
+     * A polar literal {@code r@θ} reads as the number {@code (make-polar r θ)} returns, bit for bit:
+     * both are {@code r cos θ} and {@code r sin θ} with fdlibm's cos and sin (design.md D1), so a
+     * literal is the same on every platform and in both launchers.
+     */
+    @Test
+    public void polarLiteralsAreMakePolars() {
+        java.util.Random random = new java.util.Random(20261117);
+        StringBuilder literals = new StringBuilder();
+        StringBuilder calls = new StringBuilder();
+        List<Double> expected = new ArrayList<>();
+        String[][] exact = {{"1", "1"}, {"2", "1/3"}, {"-3/4", "7"}, {"1", "-2"}, {"10", "100"}, {"3/2", "5/2"}, {"#e1.5", "2.5"}};
+        for (String[] e : exact) {
+            literals.append(' ').append(e[0]).append('@').append(e[1]);
+            calls.append(" (make-polar ").append(e[0]).append(' ').append(e[1]).append(')');
+        }
+        for (int i = 0; i < 200; i++) {
+            double r = Math.copySign(Math.exp(random.nextDouble() * 20 - 10), random.nextDouble() - 0.5);
+            double theta = i % 2 == 0 ? random.nextDouble() * 20 - 10 : Math.copySign(Math.exp(random.nextDouble() * 50 - 20), random.nextDouble() - 0.5);
+            String rs = Double.toString(r).replace('E', 'e');
+            String ts = Double.toString(theta).replace('E', 'e');
+            literals.append(' ').append(rs).append('@').append(ts);
+            calls.append(" (make-polar ").append(rs).append(' ').append(ts).append(')');
+            expected.add(r * StrictMath.cos(theta));
+            expected.add(r * StrictMath.sin(theta));
+        }
+        String out = write("(let ((read '(" + literals + ")) (made (list" + calls + "))) " +
+                        "(list (map eqv? read made) (map (lambda (z) (list (real-part z) (imag-part z))) (list-tail read " + exact.length + "))))");
+        String[] parts = out.replaceAll("[()]", " ").trim().split("\\s+");
+        List<String> wrong = new ArrayList<>();
+        for (int i = 0; i < exact.length + expected.size() / 2; i++) {
+            if (!parts[i].equals("#t")) {
+                wrong.add("literal " + i + " isn't eqv? to its make-polar");
+            }
+        }
+        for (int i = 0; i < expected.size(); i++) {
+            String got = parts[exact.length + expected.size() / 2 + i];
+            if (Double.doubleToRawLongBits(Double.parseDouble(got)) != Double.doubleToRawLongBits(expected.get(i))) {
+                wrong.add("part " + i + " is " + got + ", not " + expected.get(i));
+            }
+        }
+        assertTrue(wrong.size() + ": " + wrong, wrong.isEmpty());
     }
 
     /**

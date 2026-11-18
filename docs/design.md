@@ -1179,10 +1179,11 @@ Each entry: the decision, why, and what was rejected.
   - **Transcendental functions are fdlibm's (`StrictMath`)**: `exp`, `log`
     (with one argument and two, the quotient of two logs), `sin`, `cos`,
     `tan`, `asin`, `acos`, `atan` (one and two arguments), `expt` of flonums,
-    and the complex paths (`hypot`, `sinh`, `cosh`, `make-polar`). So a
-    program writes the same digits on every platform, in both launchers and
-    at every tier. `sqrt` of a flonum stays `Math.sqrt`, which IEEE 754
-    defines (correctly rounded everywhere), and `inexact` of an exact number
+    and the complex paths (`hypot`, `sinh`, `cosh`, `make-polar`), and the
+    reader's polar literals, so `1@1` reads as the bits `(make-polar 1 1)`
+    returns. So a program writes the same digits on every platform, in both
+    launchers and at every tier. `sqrt` of a flonum stays `Math.sqrt`, which
+    IEEE 754 defines (correctly rounded everywhere), and `inexact` of an exact number
     is our own integer arithmetic, also correctly rounded (`Arithmetic.flo`).
     R7RS doesn't fix the accuracy of transcendental functions (§6.2.6), so
     this is about quality,
@@ -1228,9 +1229,16 @@ Each entry: the decision, why, and what was rejected.
       of them warmup) were within 1% of `Math` once compiled, and within
       noise interpreted (at a count of 1, where programs that call no
       transcendental function moved as much). `nucleic`'s check passes
-      with both.
-    - Tests: `NumbersTest` (known values, a sweep against `StrictMath`, and
-      the sweep interpreted and compiled), `tests/diff/numbers-transcendental.scm`
+      with both. `log` and `expt` of flonums were slower, 500 and 1,050 ns,
+      not for fdlibm (3 and 26 ns a call in a Java loop) but because
+      `Arithmetic.sign` compared a flonum with exact 0 as an exact rational
+      (through `BigDecimal`).
+      Flonums and fixnums now take their sign directly (-0.0 and NaN are 0,
+      as before), and `log` is 16 ns, `expt` 51 ns (#238's follow-up; 3
+      interleaved rounds, `sqrt` 9.4 and the loop 7.4 in the same runs).
+    - Tests: `NumbersTest` (known values, a sweep against `StrictMath`, the
+      sweep interpreted and compiled, what the sign of each special value
+      gives, and polar literals against `make-polar`), `tests/diff/numbers-transcendental.scm`
       (values that both fdlibm and chibi-scheme round to the nearest).
     - *Rejected:* `Math` (above); `StrictMath` for `exp` and `log` only,
       which wouldn't have fixed the case found, since fdlibm's `(exp 1)` is
