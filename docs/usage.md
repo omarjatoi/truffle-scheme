@@ -332,6 +332,53 @@ java -p bazel-bin/scheme_jars --enable-native-access=org.graalvm.truffle,org.gra
 Hello, world! Arguments: ()
 ```
 
+## Other languages and Java
+
+A program that imports `(graalvm polyglot)` can evaluate other GraalVM
+languages, share the polyglot bindings with them, call their functions and
+Java's methods, and read foreign arrays, objects and maps (design.md D20;
+[embedding.md](embedding.md#scheme-calling-other-languages-and-java) lists
+the procedures). A program that doesn't import it sees none of it. The
+launcher allows all of it, as GraalVM's own launchers do, but only Scheme is
+on its module path, so the other languages are the ones an embedder adds:
+
+<!-- readme: run -->
+```sh
+bazel-bin/scheme docs/examples/polyglot.scm
+```
+
+<!-- readme: output -->
+```text
+#t #f
+#t 2 (1 "two")
+7
+```
+
+<!-- readme: file docs/examples/polyglot.scm -->
+```scheme
+(import (scheme base) (scheme write) (graalvm polyglot))
+
+(define (show . items)
+  (for-each (lambda (x) (write x) (display " ")) items)
+  (newline))
+
+;; Only Scheme is on the launcher's module path.
+(show (polyglot-language-available? "scheme") (polyglot-language-available? "js"))
+
+;; A Java class: its constructor, its methods, and what comes back.
+(guard (e ((error-object? e) (show 'no-java (error-object-message e))))
+  (let ((list (foreign-new (java-type "java.util.ArrayList"))))
+    (foreign-invoke list 'add 1)
+    (foreign-invoke list 'add "two")
+    (show (foreign? list) (foreign-length list) (foreign->list list))
+    (show (foreign-invoke (java-type "java.lang.Math") 'max 3 7))))
+```
+
+A foreign function is a procedure; a foreign array or list is not a vector
+or a list (`foreign->list` copies it); a foreign exception is raised as
+itself, which `guard` catches. A continuation can't cross another language's
+frames: that is a Scheme error (design.md D20).
+
 ## Debugging and profiling
 
 GraalVM's tools work on Scheme programs: breakpoints, stepping, the stack
@@ -508,6 +555,21 @@ bazel-bin/scheme-native docs/examples/hello.scm
 <!-- readme: output -->
 ```text
 Hello, world! Arguments: ()
+```
+
+The image has Scheme alone, and no reflection metadata for Java classes, so
+`(graalvm polyglot)` ([Other languages and Java](#other-languages-and-java))
+finds no other language there, and `java-type` is an error that says why:
+
+<!-- readme: run native -->
+```sh
+bazel-bin/scheme-native docs/examples/polyglot.scm
+```
+
+<!-- readme: output -->
+```text
+#t #f
+no-java "java-type: Java classes are not available in a native image, which is built without their reflection metadata: java.util.ArrayList"
 ```
 
 On an Apple M3 Max (from design.md D17: native startup is the median of 41 runs,

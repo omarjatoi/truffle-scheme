@@ -6,6 +6,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
+import org.graalvm.nativeimage.ImageInfo;
 import org.graalvm.polyglot.SandboxPolicy;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
@@ -272,6 +273,12 @@ public final class Foreign {
         SandboxPolicy policy = env.getSandboxPolicy();
         if (policy != SandboxPolicy.TRUSTED) {
             throw new SchemeError("java-type: host class lookup is refused under the " + policy + " sandbox policy");
+        }
+        if (ImageInfo.inImageRuntimeCode()) {
+            // A native image has a Java class's constructors, methods and fields only if it was built
+            // with reflection metadata for them, and ours has none (design.md D17): a class it found
+            // would be one nothing can be done with.
+            throw new SchemeError("java-type: Java classes are not available in a native image, which is built without their reflection metadata: " + name);
         }
         if (!env.isHostLookupAllowed()) {
             throw new SchemeError("java-type: the context doesn't allow host class lookup (Context.Builder.allowHostClassLookup): " + name);
