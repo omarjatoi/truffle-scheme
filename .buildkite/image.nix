@@ -1,11 +1,12 @@
-# CI's agent image (flake.nix `packages.x86_64-linux.ciImage`, pushed by .buildkite/push-image.sh):
+# CI's agent image (flake.nix `packages.x86_64-linux.ciImage`, pushed by .buildkite/push-image.sh,
+# which the pipeline's `image` step runs on main when this file, flake.nix or flake.lock changes):
 # what the hosted agents' jobs run in instead of Buildkite's default Ubuntu image. It has
-# Determinate Nix, the release the hook's installer installs, and every store path that
+# Determinate Nix (flake input `determinate`) and every store path that
 # `nix print-dev-env .#ci` reads or builds (the flake's locked inputs, nixpkgs's 37 MiB source
 # among them, and the shell's environment), registered in the image's Nix database. So the hook
 # (.buildkite/hooks/pre-command) installs nothing and downloads nothing: it evaluates the flake
 # and finds everything valid. When flake.lock or the shell changes, Nix fetches what the store
-# lacks, as on the default image, and the hook says the image is stale.
+# lacks, and the hook says the image is stale until main's `image` step pushes a new one.
 #
 # Buildkite's requirements for a custom image (docs/design.md D11): bash, git and CA certificates;
 # the agent brings `buildkite-agent` and `docker`, and jobs run as root.
@@ -29,6 +30,8 @@ let
 
   # The image's /etc and its record of what it holds. Jobs run as root; no build users, and
   # no sandbox, as Determinate's container installs (`--init none`, `sandbox = false`).
+  # Determinate's binary cache (the installer's), so that the `image` step substitutes a new
+  # Determinate Nix instead of building it; its narinfos are signed with FlakeHub's keys.
   etc = pkgs.runCommand "ci-image-etc" { } ''
     mkdir -p $out/etc/nix $out/etc/ci-image/inputs
     cat > $out/etc/nix/nix.conf <<'EOF'
@@ -36,6 +39,8 @@ let
     sandbox = false
     max-jobs = auto
     trusted-users = root
+    extra-substituters = https://install.determinate.systems
+    extra-trusted-public-keys = cache.flakehub.com-3:hJuILl5sVK4iKm86JzgdXW12Y2Hwd5G07qKtHTOcDCM= cache.flakehub.com-4:Asi8qIv291s0aYLyH6IOnr5Kf6+OF14WVjkE6t3xMio=
     EOF
     echo 'root:x:0:0:root:/root:/bin/bash' > $out/etc/passwd
     echo 'nobody:x:65534:65534:nobody:/var/empty:/bin/false' >> $out/etc/passwd
@@ -85,6 +90,10 @@ dockerTools.buildLayeredImage {
     ${pkgs.sqlite}/bin/sqlite3 nix/var/nix/db/db.sqlite \
       "UPDATE ValidPaths SET registrationTime = $SOURCE_DATE_EPOCH"
     ln -s /etc/ci-image nix/var/nix/gcroots/ci-image
+    # Nix's default profile, where Determinate's installer puts it. Hooks from before the image
+    # (branches older than it) source its etc/profile.d/nix-daemon.sh instead of installing Nix.
+    mkdir -p nix/var/nix/profiles
+    ln -s ${nixPackage} nix/var/nix/profiles/default
   '';
   fakeRootCommands = ''
     chmod 1777 tmp
