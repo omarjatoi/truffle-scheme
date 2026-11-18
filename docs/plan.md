@@ -1106,9 +1106,10 @@ against GraalVM's Truffle guidance (#205, docs/truffle-guidance.md) left: a
 native launcher that takes a program's `-X`/`-XX:`/`-D` arguments for itself
 (#206), launcher options that are silently ignored (#205), the interpreter's
 first runs, which are mostly the host compiler's work (M9-03, carried),
-`apply`'s cost since #195, an uncommon trap in splits (#205), and I/O
-follow-ups (#197, #200). #208 (`SPort`'s virtual calls in compiled code,
-#205's first follow-up) is already merged. Benchmarks are local
+`apply`'s cost since #195, an uncommon trap in splits (#205), I/O
+follow-ups (#197, #200), and literal pairs, still mutable (#169 and branch
+`literal-pair-subclass`, measured and not merged). #208 (`SPort`'s virtual
+calls in compiled code, #205's first follow-up) is already merged. Benchmarks are local
 (bench/README.md: the load rule, `-Xmx2g`, the serial collector); each task
 measures with interleaved A/B runs.
 
@@ -1259,6 +1260,29 @@ measures with interleaved A/B runs.
     it is a host-inlining change that could reverse.
   - **Done when** each cause is found, and fixed with a test or recorded in
     design.md with its evidence.
+- [ ] **M10-07 · Literal pairs immutable without a cost** *(needs M10-02)*
+  - `(set-car! '(1 2) 9)` succeeds today (R7RS §3.4, §4.1.2: "it is an
+    error", not signalled; design.md D1, "Literal pairs aren't marked
+    immutable (yet)"). Of the two representations measured, (C), a `final
+    class LiteralPair extends SPair`, costs no memory and is neutral or
+    faster in the JIT, but makes the interpreter (`paraffins` 1.056×,
+    `browse` 1.089×) and the native launcher's first runs (`destruc`
+    1.044×, `nboyer` 1.046×) slower, through the host compilation of the
+    Bytecode DSL interpreter loop rather than the checks.
+  - Rebase branch `literal-pair-subclass` (9c24853) onto main after M10-02
+    and re-measure: M10-02 changes how the host compiles the interpreter
+    loop, which is where (C)'s cost is.
+  - If the interpreter's and the native first runs' costs are gone, merge
+    it. If not, try making the pair handlers' host inlining robust, e.g.
+    `@InliningCutoff` or `@HostCompilerDirectives` per
+    docs/truffle-guidance.md, or the Bytecode DSL's guidance on type checks
+    with class hierarchies.
+  - **Done when** `(set-car! '(1 2) 9)` signals, with no memory increase and
+    speed within noise in the JIT, the interpreter and the native launcher's
+    first runs (the same A/B set as the branch's: `paraffins`, `browse`,
+    `destruc`, `nboyer`, `mazefun`, the `length` and `set-car!`
+    micro-benchmarks, and 10 million conses natively), or the remaining
+    cost is recorded in design.md D1 and the maintainer decides.
 
 **Exit:** every task above is done, or its note records what was measured and
 why it isn't; `docs/benchmarks.md` and `bench/thresholds.json` are regenerated

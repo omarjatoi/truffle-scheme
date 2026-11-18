@@ -1029,7 +1029,7 @@ Each entry: the decision, why, and what was rejected.
 | char | `SChar` (`int` code point), with a cache for 0–255 |
 | string | `SString`: Latin-1 `byte[]` until a character above 255 is stored, then UTF-32 `int[]`. Indexing and `string-set!` are O(1). Literals carry an immutable flag. `substring`, `string-append` and `string-copy!` copy between strings of one storage with an array copy (M8-04). A string from Java text (a `String`, or a reader's `char[]`) is built in one pass: Latin-1 bytes until the first unit above 255, then code points (M10-05's follow-up; `codePoints().toArray()` and two more passes until then). |
 | symbol | `SSymbol`, interned per context (held weakly, so a symbol nothing refers to is collected; M8-02), name is a `TruffleString` |
-| pair | `SPair`, mutable `car`/`cdr` fields |
+| pair | `SPair`, mutable `car`/`cdr` fields; literal pairs aren't marked immutable yet (below) |
 | vector / bytevector | `SVector` (`long[]` while every element is a fixnum, `double[]` while every element is a flonum, otherwise `Object[]`, generalizing for good on the first store that doesn't fit; M5-06) / `SBytevector` (`byte[]`), each with an immutable flag for literals |
 | empty list, unspecified, eof, default object | singletons |
 | procedure | `SClosure { RootCallTarget, Object[] captured }` |
@@ -1060,6 +1060,59 @@ Each entry: the decision, why, and what was rejected.
     fast paths, with overflow checks on the `long` path. `SBigInteger`,
     `SRational` and `SComplex` go through one generic path marked
     `@TruffleBoundary`, so compiled code stays small for the common cases.
+- **Literal pairs aren't marked immutable (yet).** R7RS §3.4 (*"literal
+  constants ... are immutable ... it is an error to attempt to store a new
+  value into a location that is denoted by an immutable object"*) and
+  §4.1.2 (*"it is an error to attempt to alter a constant (i.e. the value
+  of a literal expression) using a mutation procedure like `set-car!` or
+  `string-set!`"*) allow not detecting it, and for now nothing does:
+  literal strings, vectors and bytevectors carry an immutable flag and
+  their mutators signal, but `(set-car! '(1 2) 9)` succeeds, so
+  `(define (g) '(constant-list))` returns a list a `set-car!` changed for
+  every later call. The maintainer's decision (November 2026): keep that
+  until marking them costs nothing, since catching the bug matters. Two
+  representations were built and measured, each with interleaved A/B runs
+  against (A), today's final `SPair` with no marking:
+  - **(B) A `final boolean immutable` field on `SPair`** (#169, closed).
+    - Free on HotSpot: a pair is 24 bytes either way (a 12-byte header and
+      two compressed references, padded; the boolean fits in the padding).
+    - In the native launcher (D17, 8-byte header) every pair goes from 16
+      to 24 bytes: consing 10 million pairs allocated 229.61 MB instead of
+      152.92 MB.
+    - `destruc`, mostly `set-car!` and `set-cdr!`, was 3–4% slower in the
+      JIT, from the check itself (without it the field cost nothing). A
+      slow-path hint (`injectBranchProbability`) and a deoptimizing
+      seen-a-literal profile didn't help.
+  - **(C) A `final class LiteralPair extends SPair`** with no field of its
+    own (branch `literal-pair-subclass` at 9c24853, not a PR; 7 variants
+    measured, 5 interleaved rounds each). A literal's pairs are
+    `LiteralPair`s; `set-car!`, `set-cdr!` and `list-set!` take the fast
+    path only for exactly `SPair` (one compare of the class, which is also
+    the type check), and `car`, `cdr`, `pair?` and the list primitives'
+    loops compare the exact class with each of the two rather than use
+    `instanceof`.
+    - Memory: none. Natively, 10 million conses are 152.92 MB on both; on
+      HotSpot the class histogram is identical.
+    - JIT: neutral or faster (`destruc` 0.95×, `mazefun` 0.98×, a `length`
+      loop 0.84×).
+    - Interpreter: slower on programs that mix literal and run-time pairs:
+      `paraffins` 1.056× (every round 1.02–1.06), `browse` 1.089×
+      (0.94–1.12), a micro-benchmark mixing literal and run-time pairs
+      +24%.
+    - The native launcher's first runs: `destruc` 1.044×, `nboyer` 1.046×.
+    - The cause is the host compilation of the Bytecode DSL interpreter
+      loop (`continueAt`; "The host compiler"), not the checks: JFR spreads
+      the extra time across the loop, and one variant stopped HotSpot
+      inlining `Call.doPrimitive` and `SetPair.invoke` into it.
+    - Variants v2–v7 (generalising `car`/`cdr` with `replaces`,
+      `@ForceQuickening`, `getClass() ==` casts) each traded the
+      interpreter's cost for the JIT's: +4–10% on the JIT's `set-car!`
+      micro-benchmark.
+  - (C) is the preferred direction: its cost is in how the host compiles
+    the interpreter loop, which M10-02 changes, so it is re-measured after
+    M10-02 (plan.md M10-07). (B)'s native memory cost is in the
+    representation and won't go away. Also rejected: a weak identity set of
+    literal pairs (a hash lookup in every `set-car!`).
 - **Records (M7-04)** are static objects (Truffle's Static Object Model):
   their fields are fields of the object itself, so a record is one
   allocation and a field access is a field load. A language has one
@@ -1333,7 +1386,8 @@ Each entry: the decision, why, and what was rejected.
   - So do a bad index, length or range (start after end), a byte outside
     0–255, a radix other than 2, 8, 10 or 16, a non-scalar value for
     `integer->char`, an argument of the wrong type, and mutating a literal
-    or `symbol->string`'s result (§6.5); `exact` of an infinity or a NaN,
+    string, vector or bytevector (not yet a literal pair: D1) or
+    `symbol->string`'s result (§6.5); `exact` of an infinity or a NaN,
     `exact-integer-sqrt` of anything but a non-negative exact integer, and
     integer division (`floor/`, `truncate/`, `quotient`, `modulo`, ...) by
     any zero; `utf8->string` of invalid UTF-8 (§6.9: *"It is an error for
@@ -3011,6 +3065,7 @@ errata (r7rs.org):
 | R7RS | "It is an error ..." | Here |
 |---|---|---|
 | §2.4 | circular references in code, except in literals | syntax error (D9) |
+| §3.4, §4.1.2 | altering a constant (the value of a literal expression) with a mutation procedure like `set-car!` or `string-set!` | error when the mutation runs on a literal string, vector or bytevector (each flagged immutable; D9); not signalled yet on a literal pair, which `set-car!`, `set-cdr!` and `list-set!` change (D1, plan.md M10-07) |
 | §4.1.4, §5.3 | a variable more than once in `lambda`'s or `define-values`' formals | syntax error, at the top level too (`define-values` receives its values with a `lambda` of its formals) |
 | §5.3.2 | defining the same identifier more than once in a body | syntax error |
 | §5.5 | the same identifier as two field names, or as two accessor/modifier names | syntax error, at the top level too (the type's definition holds a never-called `lambda` of each) |
