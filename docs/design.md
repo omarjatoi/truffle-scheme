@@ -3200,6 +3200,26 @@ Each entry: the decision, why, and what was rejected.
       did nothing (`earley` 23.0 s, `nboyer` 15.7 s, one process each), and
       the old `Adaptive` policy was slower (`earley` 26.4 s, `nboyer` 19.2
       s) in less memory.
+  - **The native interpreter (M10-02).** The Bytecode DSL generates the
+    interpreter with tail call handlers (`enableTailCallHandlers`,
+    Truffle's "One Compilation per Bytecode Handler"): in a native image
+    (`TruffleOptions.AOT`) each instruction's handler is compiled on its
+    own, with the interpreter's state in registers, and jumps to the next
+    instruction's handler instead of returning to one large dispatch
+    loop. The DSL generates it as a second cached interpreter
+    (`CachedBytecodeNodeTailCall`), which only a native image runs: on the
+    JVM, HotSpot compiles the usual `continueAt` as before ("Calls and
+    tail calls", "The host compiler"), so the JVM's interpreter and JIT
+    are unchanged. Measured with the native launcher built both ways
+    (Apple M3 Max shared with other agents, load 4-10, interleaved, the
+    medians): its interpreter (`--engine.Compilation=false`, 45 of
+    ecraven's programs at the report's interpreter scale, 3 rounds) 0.62
+    times as long (0.31-0.80, `string`, `pi` and `read1`, which hardly
+    interpret, 0.97-1.01); with the JIT, at the report's counts (22
+    programs, 3 iterations, 3 rounds), the first iteration 0.97 times
+    and the steady state 0.99; `--version` 12.5 ms against 12.8 and a
+    hello-world program 13.9 against 13.8 (31 runs each); the shared
+    library 384 bytes larger.
   - **Rejected: a 1 GB minimum heap for the native launcher (#189).** The
     image was built for a while with `-R:MinHeapSize=1g`, a default for the
     executable's minimum heap that its own `-Xms` or `-XX:MinHeapSize=`

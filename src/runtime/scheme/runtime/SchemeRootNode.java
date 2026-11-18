@@ -54,8 +54,14 @@ import scheme.runtime.value.SPair;
  * <p>A call of one of the hottest primitives is an operation of its own instead ({@link Intrinsics},
  * plan.md M7-03), and boxing elimination keeps fixnums, flonums and booleans unboxed between
  * operations and in locals.
+ *
+ * <p>In a native image, each instruction's handler is a compilation of its own, and handlers
+ * tail-call the next one ({@code enableTailCallHandlers}, design.md D17 "The native interpreter"):
+ * the native launcher's interpreter takes 0.62 times as long. The JVM's host compiler doesn't
+ * support it, and runs the usual interpreter.
  */
 @GenerateBytecode(languageClass = SchemeLanguage.class, storeBytecodeIndexInFrame = true, enableTagInstrumentation = true, enableSerialization = true, //
+                enableTailCallHandlers = true, //
                 boxingEliminationTypes = {long.class, double.class, boolean.class}, tagTreeNodeLibrary = SchemeTagTreeNodeExports.class)
 @OperationProxy(value = Intrinsics.Car.class, name = "Car")
 @OperationProxy(value = Intrinsics.Cdr.class, name = "Cdr")

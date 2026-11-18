@@ -173,7 +173,7 @@ Sources: 25.5:bytecode_dsl/UserGuide.md, 25.5:bytecode_dsl/Optimization.md,
 | Continuations | *"single-method continuations, whereby a root node is suspended and can be resumed"* | A custom `@Yield` at each call site (D12); frames copied for multi-shot. | Follow (extended: D12) |
 | Builtins without call semantics | The Builtins tutorial's inlined builtins | Primitives run in place (M5-09), the hottest are operations (M7-03). | Follow |
 | Threaded switch, quickening, instruction rewriting | Defaults on (`enableThreadedSwitch`, `enableQuickening`, `enableInstructionRewriting`) | Defaults. | Follow |
-| Tail call handlers | 25.5:OneCompilationPerBytecodeHandler.md: register pressure in large dispatch methods; *"Tail call threading"* | Off (default). | Not measured: a follow-up for the native launcher (below) |
+| Tail call handlers | 25.5:OneCompilationPerBytecodeHandler.md: register pressure in large dispatch methods; *"Tail call threading"* | On since M10-02 (`enableTailCallHandlers`). The DSL generates a second cached interpreter that a native image runs (`TruffleOptions.AOT`); the JVM runs the usual one. The native launcher's interpreter 0.62 times as long (design.md D17, "The native interpreter"). | Follow |
 
 ### `boolean` boxing elimination, measured
 
@@ -421,4 +421,4 @@ DSL specializations on their Java classes. Follow.
 - **`storeBytecodeIndexInFrame`**: measure the interpreter with it off where
   nothing needs it, against D13's locations of suspended frames.
 - **Tail call handlers** (`enableTailCallHandlers`) for the native launcher's
-  interpreter: measure natively.
+  interpreter: measure natively. Done in M10-02: on (above).
