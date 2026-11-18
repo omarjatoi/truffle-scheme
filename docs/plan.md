@@ -1701,7 +1701,7 @@ measures with interleaved A/B runs.
     collector's default policy, recorded with `BySpaceAndTime` (up to 2.6
     times as fast, 130-300 MB more RSS on moderate programs) as the
     recommended flag next to G1.
-- [ ] **M12-05 · The JIT's slowest programs**
+- [x] **M12-05 · The JIT's slowest programs**
   - M11's report, steady state ×fastest: `pi` 7.5, `cpstak` 6.7, `ray` 6.0,
     `compiler` 5.6, `graphs` 5.2, `sboyer` 4.8, `simplex` 4.3; first run:
     `chudnovsky` 23.1 and `pi` 20.1 (bignums, mostly warm-up: `chudnovsky`'s
@@ -1712,6 +1712,21 @@ measures with interleaved A/B runs.
     test and interleaved A/B runs of the JIT's and the native launcher's
     first runs and steady state on the report's subset, and `bench-check`
     re-measured if a threshold is left far too loose.
+  - Done (bench/README.md, "Where the slowest programs spend their time";
+    design.md "Calls and tail calls"): `ray` and `simplex` were M12-04's
+    (#289); `cpstak`'s OSR-compiled trampoline loop allocated a `TailCall`
+    per tail call, and now carries the argument array (#295: 9.65 to 8.20
+    s steady on the JVM, 9.92 to 8.31 natively); `graphs`' two
+    continuation-passing loops called 9 to 12 procedures indirectly past
+    the later tail calls' cache of 8, now 12 (#297: 2.12 to 1.67 s, 3.16
+    to 1.72 natively); `sboyer` is allocation (argument arrays and
+    `TailCall`s across calls that aren't inlined) and the collector, with
+    one mutable `TailCall` per context tried and rejected; `pi` and
+    `chudnovsky` are the JDK's `BigInteger` division; the first iterations
+    of `compiler`, `dynamic`, `matrix`, `pi` and `chudnovsky` are the
+    interpreter's until compilation, which more compiler threads don't
+    hasten. `bench-check`'s `cpstak` re-measured (0.81 times its old
+    baseline).
 - [ ] **M12-06 · Stepping through a continuation's escape** *(needs two
   decisions: design.md D13, "Ending an escaped frame for tools")*
   - #261's and #271's follow-up: a call site that receives an abandoning
