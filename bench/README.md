@@ -332,8 +332,9 @@ A benchmark whose runs disagree gets wider thresholds: before M7-03, two of the 
 `cpstak` about 1.3 times slower (adjusted threshold 1.57), since how far background compilation has
 got when the measured iterations start varies between JVMs, as for `peval` and `parsing` on GitHub's
 4-CPU runners before (plan.md M7-01; with `--engine.BackgroundCompilation=false` the same JVMs agree
-within a few percent). In the committed runs, `cpstak` measured 0.83-0.85 times its median in two of
-the twelve (adjusted threshold 1.29); the rest agreed within 10%. Small slowdowns are for `benchmark` and the
+within a few percent). In M11's twelve runs, `cpstak` measured 0.83-0.85 times its median in two
+(adjusted threshold 1.29), and the rest agreed within 10%; M12-05 re-measured `cpstak` alone (3 runs,
+97.7-98.3 ms) once its loop got faster. Small slowdowns are for `benchmark` and the
 comparative report, A/B on one machine. `thresholds.json` records each
 benchmark's runs, baseline, standard deviation, thresholds
 and the workload it was measured on (a changed workload fails the check until it is measured
@@ -352,6 +353,109 @@ bazel run //:r7rs -- bench-check --update --from /tmp/runs/*.json --note "how lo
 
 `bench-check --update` without `--from` measures and updates in one go (`--runs`, default 3).
 Separate `--measure` runs let you note the load around each.
+
+## Where the slowest programs spend their time
+
+What M11's report had as our JIT's slowest programs against the fastest
+implementation (plan.md M12-05): in the steady state `pi` 7.5 times,
+`cpstak` 6.7, `ray` 6.0, `compiler` 5.6, `graphs` 5.2, `sboyer` 4.8 and
+`simplex` 4.3; in the first iteration `chudnovsky` 23.1, `pi` 20.1,
+`compiler` 12.5, `matrix` 10.7 and `dynamic` 9.6. Each was profiled on the
+JVM, at the report's counts: Truffle's CPU sampler (`--cpusampler`, with
+`--cpusampler.Delay` past the first iterations; it attributes compiled code
+at safepoints, so a small procedure between two of them can look hot),
+`--engine.TraceCompilation` (compilations, deoptimizations,
+invalidations), JFR's allocation and execution samples
+(`-XX:StartFlightRecording`; the execution samples see the Java code behind
+boundaries, such as `java.math`, but not runtime-compiled Scheme code), the
+collector's log, and the hottest compilation's final schedule as text
+(`-Djdk.graal.Dump=Truffle:1 -Djdk.graal.PrintGraph=Disable
+-Djdk.graal.PrintBackendCFG=true`, design.md D1 "Representations chosen
+outside loops", what IGV would show). design.md "Calls and tail calls"
+has the two changes and their measurements.
+
+Measured interleaved on the maintainer's Apple M3 Max shared with other
+agents, the report's counts, 5 iterations in a process, 2 processes each,
+`main` at `27b7dd9` (before M12-05) against `1b67af3` (after it; M12-12's
+#294 is in it too), the medians; 1-minute load 2.7 to 7.9. The fastest
+is M11's report's, to its two decimals. In seconds, first iteration / steady state:
+
+| Program | Fastest | JIT, before | JIT, after | Native, before | Native, after |
+|---|--:|--:|--:|--:|--:|
+| `pi` | 0.01 | 0.116 / 0.037 | 0.123 / 0.036 | 0.041 / 0.033 | 0.038 / 0.033 |
+| `cpstak` | 1.52 | 11.25 / 9.65 | 10.69 / 8.20 | 11.22 / 9.92 | 10.41 / 8.31 |
+| `ray` | 0.14 | 0.457 / 0.047 | 0.478 / 0.048 | 0.228 / 0.052 | 0.234 / 0.054 |
+| `compiler` | 0.11 | 1.56 / 0.317 | 1.47 / 0.320 | 1.59 / 0.527 | 1.54 / 0.512 |
+| `graphs` | 0.42 | 2.51 / 2.12 | 2.05 / 1.67 | 3.21 / 3.16 | 1.92 / 1.72 |
+| `sboyer` | 0.53 | 2.97 / 2.52 | 2.92 / 2.38 | 3.29 / 3.26 | 3.32 / 3.22 |
+| `simplex` | 0.12 | 0.543 / 0.091 | 0.429 / 0.084 | 0.349 / 0.121 | 0.300 / 0.101 |
+| `chudnovsky` | 0.01 | 0.174 / 0.024 | 0.172 / 0.024 | 0.044 / 0.023 | 0.044 / 0.023 |
+| `matrix` | 0.06 | 0.619 / 0.252 | 0.654 / 0.238 | 0.581 / 0.297 | 0.572 / 0.312 |
+| `dynamic` | 0.11 | 1.09 / 0.261 | 1.12 / 0.267 | 0.991 / 0.401 | 1.04 / 0.414 |
+
+- `ray` and `simplex`: M12-04's flonum comparisons and `exact` (#289);
+  both are now faster than the report's Chez Scheme.
+- `cpstak`: one trampoline loop, compiled by OSR, performs its 815 million
+  tail calls an iteration among five procedures, all inlined. Each
+  allocated a closure, an argument array and, until M12-05, the `TailCall`
+  (#295): about 10 GB a second, whose young collections are short (0.1 ms
+  each, 0.1 s an iteration), so the time is the allocation itself. What is
+  left is the closure and the argument array, which cross the loop's back
+  edge; Chez allocates the closure only.
+- `graphs`: continuation-passing (`fold-over-perm-tree`'s `deeper` and
+  `accross`). Two loops' trampolines saw 9 to 12 procedures after their
+  first tail call, past the cache of 8, and called every one indirectly
+  with Truffle's argument profiling (design.md D17, "The native launcher's
+  steady state"); nothing was split, since that cache doesn't report
+  polymorphism. A cache of 12 (#297) calls them directly. What is left is
+  allocation: argument arrays (53% of JFR's allocation samples, before),
+  `TailCall`s returned from calls that aren't inlined (24%) and closures
+  (16%).
+- `sboyer`: allocation and the collector. About 9 GB an iteration, in
+  JFR's samples argument arrays of calls that aren't inlined (59%),
+  `TailCall`s returned across them (25%: `rewrite`'s tail call of
+  `rewrite-with-lemmas` and `rewrite-args`' of `scons`, in recursive
+  procedures that can't all be inlined), `Long`s (12%: `rewrite-count`, a
+  global incremented past the box cache) and pairs (4%); its 16 young
+  collections an iteration take 0.45 s of 2.45. *Tried:* one mutable
+  `TailCall` per context, filled in place of a new one per tail call: no
+  allocation where the callee isn't inlined, but stores to a real object
+  where it is, which partial escape analysis can't remove: `deriv` 1.3
+  times as long, `graphs` 1.08, `sboyer` and `compiler` unchanged (2
+  interleaved rounds). Rejected.
+- `pi`: `BigInteger` division. 87% of JFR's execution samples are in
+  `java.math`, 67% in `MutableBigInteger.mulsub` and `divideMagnitude`,
+  the JDK's schoolbook (Knuth) division, which it uses unless the divisor
+  has 80 words and the quotient 40 (Burnikel-Ziegler); our code is 9%.
+  Guile, the fastest, divides with GMP. Its first iteration (0.11 s against
+  0.036) is the interpreter's until the JIT has compiled the loops; the
+  native launcher's is 0.038.
+- `chudnovsky`: likewise `java.math` (55% of the samples, half of it
+  division), and 36% our arithmetic behind its boundaries
+  (`Arithmetic.real` and `apply`, `SBigInteger.normalize`) and the
+  interpreter. Its first iteration is 0.17 s against 0.025 in the steady
+  state, and the native launcher's 0.044: the JVM's first iteration
+  interprets until the arithmetic is compiled, where the native image's
+  interpreter is compiled ahead of time.
+- `compiler`, `dynamic` and `matrix`, first iterations: the interpreter's,
+  until the many procedures they run are compiled. `compiler` makes 748
+  compilations over three iterations (665 first-tier), 17 s of the compiler
+  threads' time, the largest `gen-call` (98 KB of code, 1.0 s); `dynamic`
+  306 (9 s), with 14 invalidations and 15 deoptimizations, mostly
+  argument-type profiles and uncommon traps that recompile once; `matrix`
+  137 (4.9 s). More compiler threads don't shorten them
+  (`--engine.CompilerThreads=8`: `compiler` 1.49 s against 1.45, `dynamic`
+  1.07 against 1.06, `matrix` 0.75 against 0.63, one process each): it is
+  how soon each procedure is compiled, not the queue, and the thresholds
+  that decide that were measured in M8-03 (design.md D17, "The JIT
+  warm-up": small gains, from experimental options).
+- `compiler`, `dynamic` and `matrix`, steady states: flat profiles.
+  `compiler`'s largest procedure in the CPU sampler is
+  `declaration-value`, 8% (a walk of an association list); its allocation
+  is mostly argument arrays (2.3 of 3.7 GB). `dynamic`'s are `equiv!`
+  (18%) and `gen-id` (24%, the sampler's attribution: `gen-id` increments
+  a global, and 10 million calls of it take 20-70 ms); `matrix`'s its row
+  operations (`_-split-`, `_-*-`, `loop`, 17-21% each).
 
 ## Polyglot
 
