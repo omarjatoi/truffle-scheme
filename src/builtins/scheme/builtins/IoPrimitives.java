@@ -591,13 +591,12 @@ final class IoPrimitives {
         }
     }
 
-    /** {@code (%read-string k port)}. */
+    /** {@code (%read-string k port)}: a string, read in bulk ({@code SPort.readString}), or eof. */
     static final class ReadString extends PrimitiveNode {
         @Override
         public Object invoke(Object[] args) {
             int k = index("read-string", args[1], 0, Integer.MAX_VALUE);
-            String s = textualInput("read-string", args[2]).readString(k);
-            return s == null ? SConstant.EOF : SString.of(s);
+            return textualInput("read-string", args[2]).readString(k);
         }
     }
 

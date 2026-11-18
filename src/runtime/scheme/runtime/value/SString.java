@@ -96,7 +96,8 @@ public final class SString implements TruffleObject {
      * first {@code start} units are Latin-1 and in {@code latin1} already: pairs a high surrogate
      * with the low one after it, as {@code String.codePoints()} does, and leaves a lone one as it
      * is. The text has at most {@code units} code points, so the array is trimmed only if a pair
-     * made it shorter.
+     * made it shorter. Each run of units between surrogates is copied by a loop of its own, a
+     * fixed distance from where it is read, which the compiler widens many units at a time.
      */
     private static SString wide(byte[] latin1, int start, char[] chars, int offset, int units, boolean immutable) {
         int[] cps = new int[units];
@@ -104,12 +105,27 @@ public final class SString implements TruffleObject {
             cps[i] = latin1[i] & 0xff;
         }
         int n = start;
-        for (int i = start; i < units; i++) {
-            char c = chars[offset + i];
-            if (Character.isHighSurrogate(c) && i + 1 < units && Character.isLowSurrogate(chars[offset + i + 1])) {
-                cps[n++] = Character.toCodePoint(c, chars[offset + ++i]);
-            } else {
-                cps[n++] = c;
+        int i = start;
+        while (i < units) {
+            int end = i;
+            while (end < units && !Character.isSurrogate(chars[offset + end])) {
+                end++;
+            }
+            int shift = n - offset - i;
+            for (int j = offset + i; j < offset + end; j++) {
+                cps[shift + j] = chars[j];
+            }
+            n += end - i;
+            i = end;
+            if (i < units) {
+                char c = chars[offset + i];
+                if (Character.isHighSurrogate(c) && i + 1 < units && Character.isLowSurrogate(chars[offset + i + 1])) {
+                    cps[n++] = Character.toCodePoint(c, chars[offset + i + 1]);
+                    i += 2;
+                } else {
+                    cps[n++] = c;
+                    i++;
+                }
             }
         }
         return new SString(null, n == units ? cps : java.util.Arrays.copyOf(cps, n), n, immutable);

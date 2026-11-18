@@ -1061,7 +1061,7 @@ Each entry: the decision, why, and what was rejected.
 | complex | `SComplex { real, imag }`. Both parts are real numbers of the **same exactness**: exact (`long`, `SBigInteger` or `SRational`) or inexact (`double`). Mixing exactness makes both parts inexact. |
 | boolean | `boolean` |
 | char | `SChar` (`int` code point), with a cache for 0–255 |
-| string | `SString`: Latin-1 `byte[]` until a character above 255 is stored, then UTF-32 `int[]`. Indexing and `string-set!` are O(1). Literals carry an immutable flag. `substring`, `string-append` and `string-copy!` copy between strings of one storage with an array copy (M8-04). A string from Java text (a `String`, or a reader's `char[]`) is built in one pass: Latin-1 bytes until the first unit above 255, then code points (#216, after M10-05; `codePoints().toArray()` and two more passes until then). |
+| string | `SString`: Latin-1 `byte[]` until a character above 255 is stored, then UTF-32 `int[]`. Indexing and `string-set!` are O(1). Literals carry an immutable flag. `substring`, `string-append` and `string-copy!` copy between strings of one storage with an array copy (M8-04). A string from Java text (a `String`, or a reader's `char[]`) is built in one pass: Latin-1 bytes until the first unit above 255, then code points, each run of units between surrogates copied by a widening loop of its own (#216 and #220, after M10-05; `codePoints().toArray()` and two more passes until then). |
 | symbol | `SSymbol`, interned per context (held weakly, so a symbol nothing refers to is collected; M8-02), name is a `TruffleString` |
 | pair | `SPair`, mutable `car`/`cdr` fields; literal pairs aren't marked immutable yet (below) |
 | vector / bytevector | `SVector` (`long[]` while every element is a fixnum, `double[]` while every element is a flonum, otherwise `Object[]`, generalizing for good on the first store that doesn't fit; M5-06) / `SBytevector` (`byte[]`), each with an immutable flag for literals |
@@ -1597,12 +1597,18 @@ Each entry: the decision, why, and what was rejected.
   console ends a line without waiting for the next character; a string
   port's reader in chunks of 128 to 8192 units, marked so that it goes back
   to the line's end. Each line goes straight into an `SString` (D1: one
-  pass). A 10 MB file of 200,000 lines takes 0.037 s once compiled, against
-  0.079 s, and `read-string` of a whole 10 MB file 0.011 s, against 0.020 s,
-  when it is ASCII (0.039 s against 0.045 s when 10% of its lines are wide,
-  so the string is too). `u8-ready?` on a file is still always `#t`:
-  a read of a file never blocks, and at its end, where the stream's
-  `available()` is 0, R7RS §6.13.2 says *"If port is at end of file, then
+  pass), and so does what `read-string` reads: the reader's units go into
+  one `char[]`, counted as characters only when that could make `k` (so a
+  whole file's are never counted), and that array becomes the string, with
+  no `StringBuilder` or `String` between. A 10 MB file of 200,000 lines
+  takes 0.037 s once compiled, against 0.079 s. `read-string` of a whole
+  10 MB file takes 0.007 s when it is ASCII and 0.019 s when 10% of its
+  lines are wide, so the string is too, against 0.0085 s and 0.031 s with a
+  `StringBuilder` and a `String` between (#216, which took them from 0.020 s
+  and 0.045 s); most of what is left of the wide one is the JDK's UTF-8
+  decoder, which leaves its ASCII fast path at a buffer's first other byte.
+  `u8-ready?` on a file is still always `#t`: a read of a file never
+  blocks, and at its end, where the stream's `available()` is 0, R7RS §6.13.2 says *"If port is at end of file, then
   u8-ready? returns #t"* (chibi-scheme answers `#f` there). The context
   tracks the file ports it opened, input and output (`OpenFiles`), and
   `flushOutput` writes out what the output ones hold wherever it writes out
