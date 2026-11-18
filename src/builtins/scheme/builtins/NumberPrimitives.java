@@ -210,7 +210,7 @@ final class NumberPrimitives {
                 case MIN:
                     return new Extremum("min", -1);
                 case ABS:
-                    return new Unary(x -> x instanceof Double d ? Math.abs(d) : Arithmetic.sign("abs", Arithmetic.checkReal("abs", x)) < 0 ? Arithmetic.sub(0L, x) : x);
+                    return new Unary(x -> x instanceof Double d ? Math.abs(d) : Arithmetic.sign(Arithmetic.checkReal("abs", x)) < 0 ? Arithmetic.sub(0L, x) : x);
                 case SQUARE:
                     return new Unary(x -> Arithmetic.mul(x, x));
                 case QUOTIENT:
@@ -507,7 +507,7 @@ final class NumberPrimitives {
         }
     }
 
-    /** max and min: inexact if any argument is (R7RS §6.2.6), NaN if any is NaN. */
+    /** max and min: inexact if any argument is (R7RS §6.2.6), NaN if any is NaN (§6.2.4). */
     static final class Extremum extends PrimitiveNode {
         private final String name;
         private final int direction;
@@ -531,7 +531,13 @@ final class NumberPrimitives {
                 Object x = Arithmetic.checkReal(name, args[i]);
                 inexact |= x instanceof Double;
                 nan |= x instanceof Double d && Double.isNaN(d);
-                if (!nan && Arithmetic.compare(name, x, best) == direction) {
+                if (nan) {
+                    continue;
+                }
+                int c = Arithmetic.compare(name, x, best);
+                // Of equal zeros, max takes 0.0 (or 0) over -0.0 and min -0.0, as IEEE 754-2019's
+                // maximum and minimum do, whatever the order of the arguments.
+                if (c == direction || c == 0 && Arithmetic.isNegativeZero(direction > 0 ? best : x)) {
                     best = x;
                 }
             }

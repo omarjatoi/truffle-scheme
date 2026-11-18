@@ -1233,13 +1233,23 @@ Each entry: the decision, why, and what was rejected.
       not for fdlibm (3 and 26 ns a call in a Java loop) but because
       `Arithmetic.sign` compared a flonum with exact 0 as an exact rational
       (through `BigDecimal`).
-      Flonums and fixnums now take their sign directly (-0.0 and NaN are 0,
-      as before), and `log` is 16 ns, `expt` 51 ns (#238's follow-up; 3
-      interleaved rounds, `sqrt` 9.4 and the loop 7.4 in the same runs).
+      Flonums and fixnums now take their sign directly, and `log` is 16 ns,
+      `expt` 51 ns (#238's follow-up; 3 interleaved rounds, `sqrt` 9.4 and
+      the loop 7.4 in the same runs). Then (#242's follow-up) `sign` became
+      exact numbers' only: it had taken -0.0 and a NaN for zeros, so
+      `(expt +nan.0 0.5)` was 0.0 and `(magnitude -0.0)` -0.0. Each caller
+      now tests a flonum's cases itself, as R7RS §6.2.4 and IEEE 754 have
+      them: a NaN operand gives NaN (`(expt 0. +nan.0)` too), any number
+      to a zero power is 1 (also a NaN or a negative base: `(expt -1. 0.)`
+      is 1.0, not 1.0+0.0i), magnitude is abs, and max and min take 0.0
+      above -0.0 (IEEE 754-2019's maximum and minimum).
     - Tests: `NumbersTest` (known values, a sweep against `StrictMath`, the
       sweep interpreted and compiled, what the sign of each special value
-      gives, and polar literals against `make-polar`), `tests/diff/numbers-transcendental.scm`
-      (values that both fdlibm and chibi-scheme round to the nearest).
+      gives, NaN and -0.0 against R7RS and IEEE 754, and polar literals
+      against `make-polar`), `tests/diff/numbers-transcendental.scm`
+      (values that both fdlibm and chibi-scheme round to the nearest) and
+      `tests/diff/numbers-special-values.scm` (NaN and -0.0 where chibi-scheme
+      agrees with R7RS).
     - *Rejected:* `Math` (above); `StrictMath` for `exp` and `log` only,
       which wouldn't have fixed the case found, since fdlibm's `(exp 1)` is
       the one an ulp off, and leaves the rest platform-dependent; a correctly

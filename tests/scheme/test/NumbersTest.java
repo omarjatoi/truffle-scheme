@@ -277,43 +277,44 @@ public class NumbersTest {
 
     /**
      * What the procedures that branch on a real number's sign (magnitude, log, expt, rationalize,
-     * angle, abs, sqrt, make-polar) return for the special flonums and a few exact numbers. The sign
-     * of -0.0 and of a NaN is 0, of an infinity its own; NaN's 0 is why {@code (expt +nan.0 0.5)} is
-     * 0.0. Recorded before flonums got their own sign path, which keeps every one bit for bit.
+     * angle, abs, sqrt, make-polar) return for the special flonums and a few exact numbers.
+     * Recorded before flonums got their own sign path (#242), which kept every one bit for bit,
+     * then corrected where a NaN or -0.0 was taken for a zero, and where a zero power gave a complex
+     * or NaN result (#242's follow-up; {@link #nanAndNegativeZeroFollowIeee754AndR7rs} says why).
      */
     @Test
     public void signDependentResultsOfSpecialValues() {
         String[][] cases = {
                         {"0.", "(0.0 0.0 #f -inf.0 0.0 0.0 0.0 1.0 1.0 0.0 0.0 0.3333333333333333 0.0 0.0 0.0 2.0+0.0i)"},
-                        {"-0.", "(-0.0 -0.0 #t -inf.0+3.141592653589793i 0.0 0.0 0.0 1.0 1.0 -0.0 0.0 0.3333333333333333 3.141592653589793 0.0 -0.0 2.0-0.0i)"},
-                        {"+nan.0", "(+nan.0 +nan.0 #f +nan.0 0.0 0.0 0.0 1.0 +nan.0 +nan.0 +nan.0 +nan.0 +nan.0 +nan.0 +nan.0 +nan.0+nan.0i)"},
-                        {"-nan.0", "(+nan.0 +nan.0 #f +nan.0 0.0 0.0 0.0 1.0 +nan.0 +nan.0 +nan.0 +nan.0 +nan.0 +nan.0 +nan.0 +nan.0+nan.0i)"},
+                        {"-0.", "(-0.0 0.0 #f -inf.0+3.141592653589793i 0.0 0.0 0.0 1.0 1.0 -0.0 0.0 0.3333333333333333 3.141592653589793 0.0 -0.0 2.0-0.0i)"},
+                        {"+nan.0", "(+nan.0 +nan.0 #f +nan.0 +nan.0 +nan.0 +nan.0 1.0 +nan.0 +nan.0 +nan.0 +nan.0 +nan.0 +nan.0 +nan.0 +nan.0+nan.0i)"},
+                        {"-nan.0", "(+nan.0 +nan.0 #f +nan.0 +nan.0 +nan.0 +nan.0 1.0 +nan.0 +nan.0 +nan.0 +nan.0 +nan.0 +nan.0 +nan.0 +nan.0+nan.0i)"},
                         {"+inf.0", "(+inf.0 +inf.0 #f +inf.0 +inf.0 +inf.0 0.0 1.0 +inf.0 +inf.0 +inf.0 0.0 0.0 +inf.0 +inf.0 +nan.0+nan.0i)"},
-                        {"-inf.0", "(-inf.0 +inf.0 #f +inf.0+3.141592653589793i +nan.0+nan.0i +nan.0+nan.0i +nan.0+nan.0i +nan.0+nan.0i 0.0 -inf.0 -inf.0 0.0 " +
+                        {"-inf.0", "(-inf.0 +inf.0 #f +inf.0+3.141592653589793i +nan.0+nan.0i +nan.0+nan.0i +nan.0+nan.0i 1.0 0.0 -inf.0 -inf.0 0.0 " +
                                         "3.141592653589793 +inf.0 0.0+inf.0i +nan.0+nan.0i)"},
                         {"1.", "(1.0 1.0 #f 0.0 1.0 1.0 1.0 1.0 2.0 1.0 1.0 0.0 0.0 1.0 1.0 1.0806046117362795+1.682941969615793i)"},
-                        {"-1.", "(-1.0 1.0 #f 0.0+3.141592653589793i 6.123233995736766e-17+1.0i 3.061616997868383e-16+1.0i 6.123233995736766e-17-1.0i 1.0+0.0i 0.5 -1.0 " +
+                        {"-1.", "(-1.0 1.0 #f 0.0+3.141592653589793i 6.123233995736766e-17+1.0i 3.061616997868383e-16+1.0i 6.123233995736766e-17-1.0i 1.0 0.5 -1.0 " +
                                         "-1.0 0.0 3.141592653589793 1.0 0.0+1.0i 1.0806046117362795-1.682941969615793i)"},
                         {"5e-324", "(5.0e-324 5.0e-324 #f -744.4400719213812 2.2227587494850775e-162 0.0 4.4989137945431964e+161 1.0 1.0 0.0 0.0 0.3333333333333333 0.0 " +
                                         "5.0e-324 2.2227587494850775e-162 2.0+1.0e-323i)"},
                         {"-5e-324", "(-5.0e-324 5.0e-324 #f -744.4400719213812+3.141592653589793i 1.361047193916867e-178+2.222758749485127e-162i 0.0+0.0i " +
-                                        "2.754790189063538e+145-4.498913794543097e+161i 1.0+0.0i 1.0 -0.0 0.0 0.3333333333333333 3.141592653589793 5.0e-324 " +
+                                        "2.754790189063538e+145-4.498913794543097e+161i 1.0 1.0 -0.0 0.0 0.3333333333333333 3.141592653589793 5.0e-324 " +
                                         "0.0+2.2227587494850775e-162i 2.0-1.0e-323i)"},
                         {"1e308", "(1.0e+308 1.0e+308 #f 709.1962086421661 1.0e+154 +inf.0 1.0e-154 1.0 +inf.0 +inf.0 1.0e+308 0.0 0.0 1.0e+308 1.0e+154 " + "-1.782617875374067+0.9067929810032982i)"},
                         {"-1e308", "(-1.0e+308 1.0e+308 #f 709.1962086421661+3.141592653589793i 6.123233995736807e+137+1.0000000000000067e+154i +inf.0+inf.0i " +
-                                        "6.123233995736725e-171-9.999999999999932e-155i 1.0+0.0i 0.0 -inf.0 -1.0e+308 0.0 3.141592653589793 1.0e+308 0.0+1.0e+154i " +
+                                        "6.123233995736725e-171-9.999999999999932e-155i 1.0 0.0 -inf.0 -1.0e+308 0.0 3.141592653589793 1.0e+308 0.0+1.0e+154i " +
                                         "-1.782617875374067-0.9067929810032982i)"},
                         {"0", "(0 0 #f -inf.0 0.0 0.0 0.0 1.0 1.0 0 0 1/3 0 0 0 2)"},
-                        {"-1", "(-1 1 #f 0.0+3.141592653589793i 6.123233995736766e-17+1.0i 3.061616997868383e-16+1.0i 6.123233995736766e-17-1.0i 1.0+0.0i 0.5 -1 -1 0 " +
+                        {"-1", "(-1 1 #f 0.0+3.141592653589793i 6.123233995736766e-17+1.0i 3.061616997868383e-16+1.0i 6.123233995736766e-17-1.0i 1.0 0.5 -1 -1 0 " +
                                         "3.141592653589793 1 0+i 1.0806046117362795-1.682941969615793i)"},
                         {"(- (expt 10 30))", "(-1000000000000000000000000000000 1000000000000000000000000000000 #f 69.07755278982137+3.141592653589793i " +
                                         "0.061232339957367585+999999999999998.8i 3.061616997868365e+59+9.999999999999941e+74i 6.123233995736774e-32-1.0000000000000013e-15i " +
-                                        "1.0+0.0i 0.0 -1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 " +
+                                        "1.0 0.0 -1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 " +
                                         "-1000000000000000000000000000000 0 3.141592653589793 1000000000000000000000000000000 0+1000000000000000i " + "-1.999912921791933-0.01866293786235165i)"},
                         {"1/2", "(1/2 1/2 #f -0.6931471805599453 0.7071067811865476 0.17677669529663687 1.414213562373095 1.0 1.4142135623730951 1/8 1/2 0 0 1/2 " +
                                         "0.7071067811865476 1.7551651237807455+0.958851077208406i)"},
                         {"-1/2", "(-1/2 1/2 #f -0.6931471805599453+3.141592653589793i 4.329780281177466e-17+0.7071067811865475i 5.412225351471833e-17+0.17677669529663687i " +
-                                        "8.659560562354932e-17-1.414213562373095i 1.0+0.0i 0.7071067811865475 -1/8 -1/2 0 3.141592653589793 1/2 0.0+0.7071067811865476i " +
+                                        "8.659560562354932e-17-1.414213562373095i 1.0 0.7071067811865475 -1/8 -1/2 0 3.141592653589793 1/2 0.0+0.7071067811865476i " +
                                         "1.7551651237807455-0.958851077208406i)"},
         };
         for (String[] c : cases) {
@@ -322,6 +323,87 @@ public class NumbersTest {
         }
         assertEquals("(\"log: not a number: a\" \"expt: not a number: a\" \"magnitude: not a number: a\")", write("(map (lambda (f) (guard (e (#t (error-object-message e))) (f 'a))) " +
                         "(list log (lambda (x) (expt x 0.5)) magnitude))"));
+    }
+
+    /**
+     * NaN and -0.0 (#242's follow-up), by R7RS §6.2.4: "An arithmetic operation where one operand is
+     * NaN returns NaN, unless the implementation can prove that the result would be the same if the
+     * NaN were replaced by any rational number"; "A NaN always compares false to any number";
+     * "numerical comparisons treat negative zero as equal to zero"; and the transcendental functions
+     * follow IEEE 754 (StrictMath's pow: pow(x, ±0) is 1 for every x, a NaN included). A NaN is
+     * not a zero: {@code (expt +nan.0 0.5)} was 0.0, since NaN's sign was taken as 0. §6.2.6 (expt):
+     * "The value of 0^z is 1 if (zero? z), 0 if (real-part z) is positive, and an error otherwise.
+     * Similarly for 0.0^z, with inexact results", where the "otherwise" keeps its unspecified 0
+     * (design.md D9) and a NaN power is NaN. The rationale of magnitude: "the same as abs for a real
+     * argument", so {@code (magnitude -0.0)} is 0.0. max and min are inexact if any argument is
+     * (§6.2.6's note), NaN if any is NaN (§6.2.4), and take +0.0 above -0.0 as IEEE 754-2019's
+     * maximum and minimum do. {@code (angle -0.0)} is π, the imaginary part of {@code (log -0.0)}
+     * (§6.2.6: "-inf.0+πi"), and atan's table's {@code y = +0.0, x = -0.0}.
+     */
+    @Test
+    public void nanAndNegativeZeroFollowIeee754AndR7rs() {
+        String[][] cases = {
+                        // expt: a NaN base or power propagates; a zero power is 1
+                        {"(expt +nan.0 0.5)", "+nan.0"}, {"(expt +nan.0 2.5)", "+nan.0"}, {"(expt +nan.0 -0.5)", "+nan.0"}, {"(expt -nan.0 1/2)", "+nan.0"},
+                        {"(expt +nan.0 3)", "+nan.0"}, {"(expt +nan.0 0)", "1.0"}, {"(expt +nan.0 0.)", "1.0"}, {"(expt +nan.0 -0.)", "1.0"},
+                        {"(expt 0. +nan.0)", "+nan.0"}, {"(expt -0. +nan.0)", "+nan.0"}, {"(expt 0 +nan.0)", "+nan.0"}, {"(expt -2. +nan.0)", "+nan.0"},
+                        {"(expt -2 +nan.0)", "+nan.0"}, {"(expt 2 +nan.0)", "+nan.0"}, {"(expt 0. (make-rectangular +nan.0 1.))", "+nan.0"},
+                        {"(nan? (expt (make-rectangular +nan.0 0.) 2.5))", "#t"}, {"(nan? (expt (make-rectangular 0. +nan.0) 2))", "#t"},
+                        {"(nan? (expt (make-rectangular +nan.0 +nan.0) 1/2))", "#t"},
+                        {"(expt -inf.0 0.)", "1.0"}, {"(expt -1. 0.)", "1.0"}, {"(expt -1 -0.)", "1.0"}, {"(expt -1/2 0.)", "1.0"}, {"(expt +inf.0 0.)", "1.0"},
+                        // expt of a zero base: as before, but 0.0^z is 1.0 for a zero complex z too
+                        {"(expt 0. 0.5)", "0.0"}, {"(expt -0. 0.5)", "0.0"}, {"(expt 0. -0.5)", "0.0"}, {"(expt 0 -0.5)", "0.0"}, {"(expt 0. 0)", "1.0"},
+                        {"(expt 0 0.)", "1.0"}, {"(expt -0. -0.)", "1.0"}, {"(expt 0 0)", "1"}, {"(expt 0 1/2)", "0"}, {"(expt -0. 3)", "-0.0"}, {"(expt 0. 1+i)", "0.0"},
+                        {"(expt 0 1+i)", "0"}, {"(expt (make-rectangular 0. 0.) 0)", "1.0"}, {"(expt (make-rectangular 0. -0.) 2)", "0.0"},
+                        // predicates and comparisons
+                        {"(positive? +nan.0)", "#f"}, {"(negative? +nan.0)", "#f"}, {"(zero? +nan.0)", "#f"}, {"(zero? -0.0)", "#t"}, {"(positive? -0.0)", "#f"},
+                        {"(negative? -0.0)", "#f"}, {"(zero? (make-rectangular -0. -0.))", "#t"}, {"(= -0.0 0 0.0)", "#t"}, {"(< -0.0 0.0)", "#f"}, {"(< 1 +nan.0)", "#f"},
+                        {"(= +nan.0 +nan.0)", "#f"}, {"(>= +nan.0 +nan.0)", "#f"},
+                        // max and min
+                        {"(max 1 +nan.0)", "+nan.0"}, {"(max +nan.0 1)", "+nan.0"}, {"(min 1/2 +nan.0)", "+nan.0"}, {"(max 3 4.)", "4.0"},
+                        {"(max -0.0 0.0)", "0.0"}, {"(max 0.0 -0.0)", "0.0"}, {"(min 0.0 -0.0)", "-0.0"}, {"(min -0.0 0.0)", "-0.0"}, {"(max -0.0 0)", "0.0"},
+                        {"(min 0 -0.0)", "-0.0"}, {"(max -0. -0.)", "-0.0"}, {"(min 0. 0)", "0.0"}, {"(max -1 -0.)", "-0.0"}, {"(min 1 0 -0. 2.)", "-0.0"},
+                        // exact
+                        {"(exact +nan.0)", "\"exact: not a finite number: +nan.0\""}, {"(inexact->exact -nan.0)", "\"exact: not a finite number: +nan.0\""},
+                        {"(exact -0.0)", "0"},
+                        // magnitude, abs, angle
+                        {"(magnitude -0.0)", "0.0"}, {"(magnitude +nan.0)", "+nan.0"}, {"(abs -0.0)", "0.0"}, {"(abs +nan.0)", "+nan.0"},
+                        {"(angle -0.0)", "3.141592653589793"}, {"(angle +nan.0)", "+nan.0"}, {"(angle 0.0)", "0.0"}, {"(angle 0)", "0"},
+                        // log, sqrt, exact-integer-sqrt
+                        {"(log -0.0)", "-inf.0+3.141592653589793i"}, {"(log 0.0)", "-inf.0"}, {"(log +nan.0)", "+nan.0"}, {"(log -nan.0)", "+nan.0"},
+                        {"(log +nan.0 2)", "+nan.0"}, {"(sqrt -0.0)", "-0.0"}, {"(sqrt +nan.0)", "+nan.0"},
+                        {"(exact-integer-sqrt +nan.0)", "\"exact-integer-sqrt: not a non-negative exact integer: +nan.0\""},
+                        // rounding, rationalize, make-polar
+                        {"(round -0.4)", "-0.0"}, {"(truncate -0.5)", "-0.0"}, {"(ceiling -0.5)", "-0.0"}, {"(round -0.0)", "-0.0"}, {"(floor +nan.0)", "+nan.0"},
+                        {"(rationalize +nan.0 1)", "+nan.0"}, {"(rationalize 1 +nan.0)", "+nan.0"}, {"(make-polar +nan.0 0)", "+nan.0"},
+                        {"(make-polar 2 +nan.0)", "+nan.0+nan.0i"},
+                        // printing
+                        {"(number->string -0.0)", "\"-0.0\""}, {"(number->string -nan.0)", "\"+nan.0\""}, {"(number->string -0.0 2)", "\"#i-0\""},
+                        {"(number->string +nan.0 16)", "\"+nan.0\""},
+        };
+        StringBuilder program = new StringBuilder("(for-each (lambda (thunk) (write (guard (e ((error-object? e) (error-object-message e))) (thunk))) (newline)) (list");
+        for (String[] c : cases) {
+            program.append(" (lambda () ").append(c[0]).append(')');
+        }
+        program.append("))");
+        String[] got = output(program.toString()).split("\n");
+        List<String> wrong = new ArrayList<>();
+        for (int i = 0; i < cases.length; i++) {
+            String g = i < got.length ? got[i] : "(missing)";
+            if (!g.equals(cases[i][1])) {
+                wrong.add(cases[i][0] + " is " + g + ", not " + cases[i][1]);
+            }
+        }
+        assertTrue(wrong.size() + ": " + wrong, wrong.isEmpty());
+    }
+
+    /** The program's output: unlike {@link #write}, the program writes it. */
+    private static String output(String program) {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try (Context context = Context.newBuilder("scheme").out(out).build()) {
+            context.eval("scheme", program);
+        }
+        return out.toString(StandardCharsets.UTF_8);
     }
 
     /**

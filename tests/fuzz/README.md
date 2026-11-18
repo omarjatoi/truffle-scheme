@@ -63,6 +63,8 @@ the generator stays clear of the others (`gen.py` says where).
 | `rationalize` when the interval holds 0 | `(rationalize 5 10)` is `-5` | §6.2.6: the simplest rational in the interval, 0 |
 | `gcd` and `lcm` of one negative argument; `lcm` of 0 | `(gcd -20)` is `-20`; `(lcm 0 5)` divides by zero | §6.2.6: "always non-negative"; 0 |
 | `abs` of `-0.0` | `-0.0` | §6.2.6: the absolute value, `0.0` |
+| `log` of `-0.0` | `-inf.0` | §6.2.6: "`(log -0.0)` returns `-inf.0+πi`" |
+| `max` and `min` with a NaN after the first argument | `(max 1 +nan.0)` is `1.0` | §6.2.4: "An arithmetic operation where one operand is NaN returns NaN", unless every rational in its place gives the same result |
 | `integer?` of an infinity | `(integer? -inf.0)` is `#t` | §6.2.6: integers are rationals, and `(rational? -inf.0)` is `#f` |
 | Reading flonums with an exponent or leading zeros | `1.5e-05` reads as `1.5000000000000002e-05`, `126.5991` as `126.59909999999999` | §6.2.6: `(string->number (number->string z))` must give z back |
 | `inexact` of a bignum | `(inexact 291803963674569850706)` is `2.9180396367456987e+20` | §6.2.6: the closest inexact number, `2.9180396367456983e+20` |
@@ -74,7 +76,9 @@ the generator stays clear of the others (`gen.py` says where).
 | `write` of `(string->symbol ".5")` or `".3."` | `.5`, `.3.`, which don't read back as those symbols | §6.13.3, §2.1: `\|.5\|`, `\|.3.\|` |
 
 Not bugs, but avoided: what `(+ -0.0 0)` is (R7RS doesn't say whether an
-exact 0 is an identity there), and loops of 10^5 calls through `call/cc`,
+exact 0 is an identity there), which of `-0.0` and `0.0` `max` and `min` of
+flonums return (chibi-scheme the first; ours `0.0` and `-0.0`, as IEEE
+754-2019's maximum and minimum), and loops of 10^5 calls through `call/cc`,
 which take chibi-scheme minutes (it copies its stack on each capture).
 
 Also avoided: the transcendental functions of flonums (`exp`, `log`, `sin`,
