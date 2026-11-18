@@ -174,11 +174,12 @@ commands among them). The required check is the build,
 `buildkite/truffle-scheme`; which steps can fail it is set in
 `.buildkite/pipeline.yml`. Its jobs run in CI's agent image
 (`.buildkite/image.nix`: Determinate Nix with the `.#ci` shell already in its
-store), and its hook loads `nix develop .#ci` (just `bazel`), installing Nix
-first on any other image, and writes the agent's `~/.bazelrc`
-(`--config=ci`, the BuildBuddy key). A change to `flake.lock` or the `.#ci`
-shell makes the image stale (jobs then download the shell, and the build says
-so): rebuild and push it with `.buildkite/push-image.sh` (design.md D11).
+store; the hook fails on any other image), and its hook loads the `.#ci`
+shell (just `bazel`) and writes the agent's `~/.bazelrc` (`--config=ci`, the
+BuildBuddy key). On `main`, a commit that changes `flake.nix`, `flake.lock` or
+`.buildkite/image.nix` also runs the `image` step, which builds the image and
+pushes it (`.buildkite/push-image.sh`, design.md D11); until then, jobs
+download what changed and the build says the image is stale.
 Actions and tests run on BuildBuddy's executors, like everyone's; the
 `buildbuddy` annotation links the commit's invocations, where each test's
 result is.
