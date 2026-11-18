@@ -1628,7 +1628,7 @@ stays a human's call. Benchmarks are local (bench/README.md: the load rule,
 `-Xmx2g`, the serial collector); each task that may change performance
 measures with interleaved A/B runs.
 
-- [ ] **M12-01 · Complex division and branch cuts' signs of zero** *(early)*
+- [x] **M12-01 · Complex division and branch cuts' signs of zero** *(early)*
   - #249's follow-ups, against R7RS §6.2 (with its errata), C99 Annex G
     and IEEE 754. Numbers area only (AGENTS.md "Areas").
   - A division by a complex number squares the divisor's parts, a real
@@ -1648,6 +1648,12 @@ measures with interleaved A/B runs.
     function's cut follows the sign of a zero imaginary part as C99's
     conjugate symmetry says; design.md D1 records the algorithm and the
     sign-of-zero rule with the text they rest on; `bench-check` passes.
+  - Done (2026-11-18): division is `_Cdivd`; log and atan take a zero's
+    side of their cuts, as C99 does. sqrt doesn't: R7RS §6.2.6 gives its
+    result "a zero real part and a non-negative imaginary part", and the
+    chibi suite tests `(sqrt -1.0-0.0i)` ⇒ 0.0+1.0i, so on its cut either
+    zero gives +i, and asin and acos, which R7RS defines through sqrt, the
+    real number's value; off the cuts each has C99's symmetry (design.md D1).
 - [x] **M12-02 · chibi-scheme's departures from #249** *(early)*
   - #249 found that chibi-scheme crashes (SIGSEGV) on `(- 1/2 1+2i)`, and
     that its `-` of a real and a complex number negates the complex

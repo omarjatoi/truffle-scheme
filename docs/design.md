@@ -1247,7 +1247,8 @@ Each entry: the decision, why, and what was rejected.
     prefixes, `n/d`, decimals with exponents, `+inf.0` and `+nan.0`,
     rectangular `a+bi`, and polar `r@θ`.
   - **Transcendental functions** on complex numbers follow the branch cuts in
-    R7RS §6.2.6.
+    R7RS §6.2.6; on log's and atan's, the sign of a zero part says which
+    side a number is on (below, "Branch cuts' signs of zero").
   - **Transcendental functions are fdlibm's (`StrictMath`)**: `exp`, `log`
     (with one argument and two, the quotient of two logs), `sin`, `cos`,
     `tan`, `asin`, `acos`, `atan` (one and two arguments), `expt` of flonums,
@@ -1374,11 +1375,109 @@ Each entry: the decision, why, and what was rejected.
       754 do. Unchanged: an exact real with exact parts stays exact (and
       `(* 0 +inf.0+1.i)`'s real part NaN, #243's rule for an exact 0);
       mixed exactness makes both parts inexact; two complex numbers take
-      the textbook formulas; and a division by a complex number, of a real
-      or a complex one, still squares the divisor's parts, so `(/ 1.
-      (make-rectangular +inf.0 1.))` is +nan.0-0.0i, not 0.0-0.0i, and
-      `(/ 1. (make-rectangular 1e200 1e200))` 0.0-0.0i (Annex G's
-      `_Cdivd` scales the divisor and recovers infinities: a follow-up).
+      the textbook formulas, but for a division by a complex number, of a
+      real or a complex one (below).
+    - **A division by a complex number** (M12-01, #249's follow-up) is C99
+      Annex G.5.1's `_Cdivd` (its EXAMPLE 2) when either number is
+      inexact (`Arithmetic.quotient`); an exact one stays the exact
+      textbook formula. It used to square the divisor's parts, so `(/ 1.
+      (make-rectangular +inf.0 1.))` was +nan.0-0.0i, `(/ 1.
+      (make-rectangular 1e200 1e200))` 0.0-0.0i, and `(/ (make-rectangular
+      1e300 1e300) (make-rectangular 1e300 1e300))` +nan.0+nan.0i
+      (chibi-scheme's still are). `_Cdivd` scales the divisor's parts by
+      2^-k, k = logb(max(|c|, |d|)), before it squares them, and the
+      quotient's parts by 2^-k after, so the squares neither overflow nor
+      underflow: those three are now 0.0-0.0i, 5.0e-201-5.0e-201i and
+      1.0+0.0i. A power of 2 scales exactly, so an ordinary quotient has the
+      textbook formula's bits, as before (`tests/diff`'s quotients match
+      chibi-scheme's). Then a NaN+NaN i quotient is recomputed by G.5.1
+      paragraph 4's infinity properties, where an infinity is a value with
+      an infinite part, even if the other is a NaN (G.3): "if the first
+      operand is a nonzero finite number or an infinity and the second
+      operand is a zero, then the result of the / operator is an infinity;
+      if the first operand is an infinity and the second operand is a
+      finite number, then the result ... is an infinity; if the first
+      operand is a finite number and the second operand is an infinity,
+      then the result ... is a zero". A real dividend keeps M11-01's form,
+      the real times the conjugate (1/z is conj(z)/|z|², so `(/ 1.
+      (make-rectangular 1. 0.))` is still 1.0-0.0i) in `_Cdivd`'s steps
+      without the terms that would multiply its 0 imaginary part, and since
+      no such term spreads a NaN from one part to the other, a NaN in
+      either part is recomputed (in `_Cdivd`, both). R7RS §6.2.6 fixes
+      neither this accuracy nor these values; Annex G does.
+      - *Limits.* `_Cdivd` scales the divisor only: products of the
+        dividend with it that overflow, or are subnormal, still lose range
+        or bits (`(/ (make-rectangular 1e308 1e308) 1.+1.i)` is
+        +inf.0+0.0i, and `(/ (make-rectangular 1e-310 1e-310)
+        (make-rectangular 3e-310 4e-310))` 0.28000000000000114-0.04000000000000625i
+        where 0.28-0.04i is the nearest), and the textbook formula's
+        roundings and cancellation stay: `(/ (make-rectangular 1e-300
+        1e-300) (make-rectangular 3e-300 4e-300))` is
+        0.28-0.03999999999999997i, the nearest being
+        0.27999999999999997-0.039999999999999994i.
+      - *Rejected:* Smith's algorithm (1962) and Baudin and Smith's (2012),
+        which divide by the larger part first and so round differently: they
+        change the bits of ordinary quotients (Smith's, of 83% of 100,000
+        random ones with parts in [-10, 10]), and with them every value
+        that goes through one (`tan`'s), for the extreme cases only.
+    - **Branch cuts' signs of zero** (M12-01, #249's follow-up). With a
+      signed zero, C99 §7.3.3 lets the sign say which side of a cut a
+      number is on: "the sign of zero distinguishes one side of a cut from
+      another so the function is continuous ... as the cut is approached
+      from either side. For example, for the square root function, which
+      has a branch cut along the negative real axis, the top of the cut,
+      with imaginary part +0, maps to the positive imaginary axis, and the
+      bottom of the cut, with imaginary part −0, maps to the negative
+      imaginary axis", and Annex G.6 gives each function conjugate
+      symmetry, f(conj z) = conj f(z) (csqrt, clog, cacos, casinh, catanh;
+      casin(z) = −i casinh(iz) and catan(z) = −i catanh(iz), both odd).
+      R7RS §6.2.6 speaks for log and sqrt, and defines asin, acos and atan
+      by formulas through them: log's imaginary part lies "from −π
+      (inclusive if -0.0 is distinguished, exclusive otherwise) to π
+      (inclusive)" (R5RS had "−π (exclusive)"), but sqrt's result has
+      "either a positive real part, or a zero real part and a non-negative
+      imaginary part", a sentence unchanged from R5RS, and the chibi suite
+      tests `(sqrt -1.0-0.0i)` ⇒ 0.0+1.0i. R7RS is the target, so C99's
+      rule applies where R7RS is silent:
+      - `log` takes the zero's side: fdlibm's atan2 gives −π below the cut
+        and π above (unchanged).
+      - `atan` is R7RS's formula through log alone, so it takes the side of
+        its argument's zero real part: `(atan (make-rectangular -0. 2.))`
+        is −π/2+0.549i (C99's and chibi-scheme's), not π/2+0.549i. Its i·z
+        and −i·z, and asin's, are Annex G.5.1's products by an imaginary
+        number, part by part, i(x+iy) = −y + ix, not (0+i)(x+iy), whose 0·y
+        lost the zero's sign (and made a NaN of an infinite part).
+      - `sqrt` gives either side of its cut the positive imaginary axis, as
+        R7RS's sentence says: `(sqrt (make-rectangular -4. -0.))` stays
+        0.0+2.0i, where C99's csqrt gives 0.0−2.0i. Off the cut, where the
+        sentence leaves the sign open, the imaginary part takes z's
+        (`StrictMath.copySign`), so `(sqrt (make-rectangular 4. -0.))` is
+        2.0−0.0i, as csqrt has it (was 2.0+0.0i).
+      - `asin` and `acos` are R7RS's formulas through that sqrt, so on
+        their cut, the real axis beyond ±1, either zero gives the real
+        number's value: `(asin (make-rectangular 2. 0.))` and
+        `(asin (make-rectangular 2. -0.))` are both π/2−1.317i, `(asin 2.)`'s,
+        as Common Lisp's cut, "continuous with quadrant IV", has it (R7RS
+        follows CLtL there), where C99 gives π/2+1.317i above.
+      - Off those cuts, `asin` and `atan` are computed where the real part's
+        sign is + and the imaginary part's − (a real argument counts as
+        there), and elsewhere by the symmetries (`Arithmetic.bySymmetry`),
+        so conjugate symmetry and oddness hold bit for bit, the signs of
+        zeros included (`(atan (make-rectangular 1. -0.))` is π/4−0.0i, was
+        π/4+0.0i); `acos` is π/2 − asin z, so its symmetry follows. In that
+        quadrant asin's sums iz + sqrt(1 − z²) add parts of one sign;
+        elsewhere they cancelled, an ulp off: `(asin -2.)`'s imaginary part
+        was 1.3169578969248164, now 1.3169578969248166 (the nearest to
+        acosh 2), and `(asin 2.+1.i)`'s 1.4693517443681854, now
+        1.4693517443681852 (Python's `cmath`, which follows Annex G, has
+        the same).
+      - *Not here:* the infinities of G.6's tables (`(sqrt
+        (make-rectangular -inf.0 1.))` is +nan.0+inf.0i, where csqrt gives
+        +0+∞i), and the formulas' accuracy near the cuts (`sqrt`'s
+        (r − x)/2, `atan`'s difference of logs, and acos's π/2 − asin z
+        round or cancel: `(acos 2.-1.i)`'s real part is
+        0.5073563032171444, the nearest ...445), which Kahan's algorithms
+        (1987) would fix at the cost of every value's bits.
     - **`sqrt` of an exact non-square** is the flonum nearest to its root,
       one rounding of the exact value, as `inexact` of an exact number is
       (above) and as IEEE 754-2019's squareRoot is of its operand (§5.4.1).
@@ -1411,12 +1510,15 @@ Each entry: the decision, why, and what was rejected.
       sweep interpreted and compiled, what the sign of each special value
       gives, NaN and -0.0 against R7RS and IEEE 754, `expt` of negative
       bases and `magnitude` at infinities, a real and a complex number,
-      `sqrt` of exact numbers, and polar literals against `make-polar`),
+      `sqrt` of exact numbers, a division by a complex number, the branch
+      cuts' signs of zero with their symmetries on a grid, and polar
+      literals against `make-polar`),
       `tests/diff/numbers-transcendental.scm` (values that
       both fdlibm and chibi-scheme round to the nearest),
       `tests/diff/numbers-special-values.scm` (NaN and -0.0 where chibi-scheme
-      agrees with R7RS), `tests/diff/numbers-expt-magnitude.scm` and
-      `tests/diff/numbers-complex-edges.scm`.
+      agrees with R7RS), `tests/diff/numbers-expt-magnitude.scm`,
+      `tests/diff/numbers-complex-edges.scm` and
+      `tests/diff/numbers-division-branch-cuts.scm`.
     - *Rejected:* `Math` (above); `StrictMath` for `exp` and `log` only,
       which wouldn't have fixed the case found, since fdlibm's `(exp 1)` is
       the one an ulp off, and leaves the rest platform-dependent; a correctly
