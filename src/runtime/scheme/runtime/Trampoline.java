@@ -4,10 +4,10 @@ import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
+import com.oracle.truffle.api.HostCompilerDirectives.InliningCutoff;
 import com.oracle.truffle.api.Truffle;
 import com.oracle.truffle.api.dsl.Bind;
 import com.oracle.truffle.api.dsl.Cached;
-import com.oracle.truffle.api.dsl.Fallback;
 import com.oracle.truffle.api.dsl.GenerateInline;
 import com.oracle.truffle.api.dsl.Introspectable;
 import com.oracle.truffle.api.dsl.NeverDefault;
@@ -337,10 +337,20 @@ public final class Trampoline extends Node {
             return callNode.call(procedure.callTarget, arguments);
         }
 
-        /** A foreign executable is a procedure (design.md D20); anything else is not. */
-        @Fallback
-        static Object doOther(Object procedure, Object[] arguments) {
-            return Foreign.call(procedure, arguments);
+        /**
+         * A foreign executable is a procedure (design.md D20); anything else is not. This cache's
+         * own node calls it, with an inline cache of interop libraries
+         * ({@link ForeignNodes.CallNode}); cut from the host's inlining, as at a call site.
+         */
+        @Specialization(guards = "!isClosure(procedure)")
+        @InliningCutoff
+        static Object doForeign(Object procedure, Object[] arguments,
+                        @Cached ForeignNodes.CallNode foreign) {
+            return foreign.execute(procedure, arguments);
+        }
+
+        static boolean isClosure(Object procedure) {
+            return procedure instanceof SClosure;
         }
 
         static PrimitiveSpec inPlace(RootCallTarget target) {

@@ -443,10 +443,21 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
             }
         }
 
-        /** A foreign executable is a procedure (design.md D20); anything else is not. */
-        @Fallback
-        static Object doOther(Object procedure, @Variadic(startOffset = 1) Object[] arguments) {
-            return Foreign.call(procedure, arguments);
+        /**
+         * A foreign executable is a procedure (design.md D20); anything else is not. The site's own
+         * node calls it, with an inline cache of interop libraries ({@link ForeignNodes.CallNode}).
+         * Cut from the host's inlining, as a closure's call is: most programs never take it, and
+         * every {@code continueAt} compilation that inlined it would carry it.
+         */
+        @Specialization(guards = "!isClosure(procedure)")
+        @InliningCutoff
+        static Object doForeign(Object procedure, @Variadic(startOffset = 1) Object[] arguments,
+                        @Cached ForeignNodes.CallNode foreign) {
+            return foreign.execute(procedure, arguments);
+        }
+
+        static boolean isClosure(Object procedure) {
+            return procedure instanceof SClosure;
         }
 
         /**

@@ -32,6 +32,9 @@ public class HostInliningCutoffTest {
         Class<?> call = Class.forName("scheme.runtime.SchemeRootNode$Call");
         assertCut(call, "doDirect");
         assertCut(call, "doIndirect");
+        // A foreign executable's call (design.md D20), at a call site and in a trampoline.
+        assertCut(call, "doForeign");
+        assertCut(Class.forName("scheme.runtime.Trampoline$TailCalls"), "doForeign");
     }
 
     @Test

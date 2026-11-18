@@ -23,14 +23,26 @@ import org.graalvm.polyglot.HostAccess;
 import org.graalvm.polyglot.PolyglotAccess;
 import org.graalvm.polyglot.PolyglotException;
 import org.graalvm.polyglot.SandboxPolicy;
+import org.graalvm.polyglot.Source;
 import org.graalvm.polyglot.Value;
 import org.graalvm.polyglot.io.IOAccess;
 import org.graalvm.polyglot.proxy.ProxyArray;
 import org.graalvm.polyglot.proxy.ProxyExecutable;
 import org.graalvm.polyglot.proxy.ProxyObject;
+import org.junit.Assume;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
+
+import com.oracle.truffle.api.bytecode.BytecodeRootNode;
+import com.oracle.truffle.api.bytecode.Instruction;
+import com.oracle.truffle.api.dsl.Introspection;
+import com.oracle.truffle.api.dsl.Introspection.SpecializationInfo;
+import com.oracle.truffle.api.interop.InteropLibrary;
+import com.oracle.truffle.api.nodes.NodeUtil;
+
+import scheme.runtime.ForeignNodes;
+import scheme.runtime.value.SClosure;
 
 /**
  * The library {@code (graalvm polyglot)} (design.md D20): Scheme evaluates another language (GraalVM's
@@ -410,6 +422,101 @@ public class PolyglotTest {
             }
             assertEquals("ok", context.eval(SCHEME, "(import (scheme base) (prefix (graalvm polyglot) pg:)) (if (pg:foreign? 1) 'no 'ok)").toString());
         }
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Foreign access in compiled code (design.md D20)
+
+    /** SL's add and callBack, and Scheme procedures that call them in loops, as bench/polyglot/foreign.scm. */
+    private static final String FOREIGN_LOOPS = IMPORT + """
+                    (define sl
+                      (polyglot-eval "sl" "
+                    function add(a, b) { return a + b; }
+                    function callBack(f, n) { i = 0; s = 0; while (i < n) { s = s + f(i); i = i + 1; } return s; }
+                    function main() { o = new(); o.add = add; o.callBack = callBack; return o; }"))
+                    (define add (foreign-ref sl 'add))
+                    (define call-back (foreign-ref sl 'callBack))
+                    (define (calls n)
+                      (let loop ((i 0) (s 0))
+                        (if (= i n) s (loop (+ i 1) (add s 1)))))
+                    (define (add-one x) (add x 1))
+                    (define (tail-calls n)
+                      (let loop ((i 0) (s 0))
+                        (if (= i n) s (loop (+ i 1) (add-one s)))))
+                    (define (callbacks n)
+                      (call-back (lambda (i) (+ i 1)) n))
+                    """;
+
+    @Test
+    public void foreignCallsUseTheSitesInteropCaches() {
+        try (Context context = context()) {
+            ResultProbe probe = context.getEngine().getInstruments().get(ResultProbe.ID).lookup(ResultProbe.class);
+            // The call site in calls' loop, and the trampoline of the one in tail-calls' loop
+            // (add-one's tail call of add comes back to it), each hold a foreign call node with a
+            // cached library for SL's function: no uncached interop.
+            for (String name : List.of("calls", "tail-calls")) {
+                String program = FOREIGN_LOOPS + "(unless (= (%s 10) 10) (error \"wrong\")) %s".formatted(name, name);
+                context.eval(Source.newBuilder(SCHEME, program, ResultProbe.SOURCE).buildLiteral());
+                List<Object> libraries = foreignCallLibraries((SClosure) probe.last);
+                assertEquals(name, 1, libraries.size());
+                InteropLibrary library = (InteropLibrary) libraries.get(0);
+                assertTrue(name, library.isAdoptable());
+            }
+        }
+    }
+
+    /** The interop libraries cached by the foreign call nodes under the call sites of {@code procedure}'s root. */
+    private static List<Object> foreignCallLibraries(SClosure procedure) {
+        BytecodeRootNode root = (BytecodeRootNode) procedure.callTarget.getRootNode();
+        List<Object> libraries = new ArrayList<>();
+        for (Instruction instruction : root.getBytecodeNode().getInstructions()) {
+            for (Instruction.Argument argument : instruction.getArguments()) {
+                if (argument.getKind() != Instruction.Argument.Kind.NODE_PROFILE || argument.asCachedNode() == null) {
+                    continue;
+                }
+                for (ForeignNodes.CallNode node : NodeUtil.findAllNodeInstances(argument.asCachedNode(), ForeignNodes.CallNode.class)) {
+                    for (SpecializationInfo s : Introspection.getSpecializations(node)) {
+                        for (int i = 0; i < s.getInstances(); i++) {
+                            for (Object cached : s.getCachedData(i)) {
+                                if (cached instanceof InteropLibrary) {
+                                    libraries.add(cached);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return libraries;
+    }
+
+    @Test
+    public void foreignCallsCompileWithoutPerformanceWarnings() throws IOException {
+        Path log = folder.newFile("engine.log").toPath();
+        Context.Builder builder = Context.newBuilder(SCHEME, SL).out(new ByteArrayOutputStream()).allowPolyglotAccess(PolyglotAccess.ALL).allowExperimentalOptions(true).option("log.file",
+                        log.toString());
+        builder.option("engine.Compilation", "true").option("engine.CompileImmediately", "false").option("engine.BackgroundCompilation", "false");
+        builder.option("engine.SingleTierCompilationThreshold", "100").option("engine.FirstTierCompilationThreshold", "100");
+        builder.option("engine.LastTierCompilationThreshold", "500");
+        builder.option("compiler.TracePerformanceWarnings", "all").option("engine.TraceCompilation", "true");
+        Context context;
+        try {
+            context = builder.build();
+        } catch (IllegalArgumentException e) {
+            Assume.assumeNoException("no optimizing Truffle runtime", e);
+            throw e;
+        }
+        try (Context c = context) {
+            assertEquals(2000 * (100 + 100 + 5050), c.eval(SCHEME, FOREIGN_LOOPS + """
+                            (let loop ((i 0) (s 0))
+                              (if (= i 2000)
+                                  s
+                                  (loop (+ i 1) (+ s (calls 100) (tail-calls 100) (callbacks 100)))))
+                            """).asInt());
+        }
+        String engineLog = Files.readString(log);
+        assertTrue(engineLog, engineLog.contains("opt done") && engineLog.contains("calls") && engineLog.contains("tail-calls"));
+        assertFalse(engineLog, engineLog.contains("perf warn"));
     }
 
     /**
