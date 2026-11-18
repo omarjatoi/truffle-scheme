@@ -4965,6 +4965,23 @@ Each entry: the decision, why, and what was rejected.
       The first iteration: `ray` 1.50 to 0.24 s natively and 1.24 to 0.47
       on the JVM, `simplex` 0.88 to 0.34 and 0.92 to 0.51. `ray` at
       0.05 s is faster than the report's Chez Scheme (0.14 s).
+    - *`memv`'s loop.* 54% of `parsing`'s native steady state was in
+      `ListVectorPrimitives.Member.find` and `Eqv.eqv`: its scanner's
+      `case` clauses of letters have more than `ConstantMember.LIMIT`
+      (16) datums, so they call the primitive, whose loop called `eqv?`'s
+      generic comparison (its type tests, then the character's) on every
+      element, compiled ahead of time without the inlining HotSpot gives
+      it. The loop now chooses the comparison from the key once, before
+      it starts: a character's code point, the identity of a key that is
+      no number, character or boolean (which `eq?` and `eqv?` compare by
+      identity), or the generic one. `MemberKeyTest` checks the
+      primitives' results. Measured as the arithmetic was (`main`
+      `2be9e46`, an A/A pair, 3 processes, load 5.4 to 9.9), the steady
+      state: `parsing` natively 0.719 s and 0.705 (A/A) against 0.531, on
+      the JVM 0.433 and 0.430 against 0.409; `conform` natively 0.364 and
+      0.360 against 0.316 (the JVM's 0.268 and 0.248 against 0.252);
+      `compiler`, `scheme`, `dynamic`, `peval`, `slatex` and `browse`
+      within the A/A pairs' differences on both.
   - **Rejected: a 1 GB minimum heap for the native launcher (#189).** The
     image was built for a while with `-R:MinHeapSize=1g`, a default for the
     executable's minimum heap that its own `-Xms` or `-XX:MinHeapSize=`
