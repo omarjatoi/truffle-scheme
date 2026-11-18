@@ -89,6 +89,7 @@ unit_tests(
         "PrinterTest": "core",
         "ReaderTest": "core",
         "SuiteReadSyntaxTest": "core",
+        "UpstreamAstDepthTest": "upstream",
         "UpstreamAsyncStacksTest": "upstream",
         "UpstreamInterruptTest": "upstream",
         "UpstreamNestedRootSourceTest": "upstream",
