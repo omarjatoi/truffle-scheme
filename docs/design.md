@@ -1671,6 +1671,10 @@ Each entry: the decision, why, and what was rejected.
   faster in 5 of the 6).
   `SplitRecompilationTest` checks that neither code that inlines a
   comparison nor a split that runs one in place is invalidated.
+  M12-12 found the same phase moving a guard that can only fail, the null
+  check on a cast's branch for null, out of a trampoline's loop: operations
+  test their operand's type rather than cast it (D17, "The native
+  launcher's steady state").
   - *How it was found.* `-XX:+UnlockDiagnosticVMOptions -XX:+LogCompilation`
     logs each `<uncommon_trap>` with its reason, its speculation and its
     frame state (here the state after the last call before the guard,
@@ -5022,23 +5026,74 @@ Each entry: the decision, why, and what was rejected.
       `graphs` is fewer megamorphic sites (its folds split per caller, as
       Truffle does when a site reports polymorphism) rather than cheaper
       indirect calls.
-    - *Not fixed: `parsing`'s recompilations.* The native launcher
-      invalidates `parsing`'s large compilations (`parse-data`,
+    - *Fixed (M12-12): `parsing`'s recompilations.* The native launcher
+      invalidated `parsing`'s large compilations (`parse-data`,
       `parse-datum`, `parse-list2`: 10,000 to 23,000 nodes, 1.0 to 1.6 s
-      each to compile) about 8 times where the JVM does twice, so its
-      later iterations wait for recompilations. An image built with
-      `-H:+IncludeNodeSourcePositions`, run with `--engine.NodeSourcePositions
-      --engine.TraceTransferToInterpreter`, shows each as a
-      `NullCheckException` deoptimization (action `InvalidateReprofile`)
-      at `BoxRef`'s `box.value`, in code inlined from a callee: a `Box`
-      read where the frame or closure slot was still null. The program
-      never reads a variable before its box exists (`BoxRef` has no
-      specialization for null, so the interpreter would fail), so the
-      check most likely ran ahead of the condition that guards the read,
-      as the null check M10-06 found hoisted out of `string<?`'s loop (D1,
-      "Representations chosen outside loops"); each root that inlines the
-      code fails it once. Not confirmed further: plan.md has the
-      follow-up (M12-12).
+      each to compile) 8 or 9 times a run, where HotSpot reported 7 or 8
+      null-check traps in the JVM's, so its iterations waited for
+      recompilations.
+      An image built with `-H:+IncludeNodeSourcePositions`, run with
+      `--compiler.NodeSourcePositions --engine.TraceTransferToInterpreter`,
+      showed each as a `NullCheckException` deoptimization
+      (`InvalidateReprofile`, with a speculation) at `BoxRef`'s `box.value`
+      or `LoadCaptured`'s `closure.captured`, in a procedure called from a
+      trampoline's loop of tail calls, that resumed the interpreter before
+      the loop's first call. The null didn't exist: the guard could only
+      fail. `BoxRef`, `BoxSet`, `LoadCaptured` and `PatchCaptured` each had
+      one specialization of a typed operand, so the DSL cast the operand
+      (`(Box) operand`), and Graal compiles a cast that no profile says is
+      never null into a branch for null; the field read then has, on that
+      branch, a null check whose condition is the constant `true`. The
+      branch never runs, but `SpeculativeGuardMovementPhase` took the
+      constant for loop-invariant and moved the guard out of the
+      trampoline's loop, to before it, where it failed at once. The failed
+      speculation keeps the recompilation from moving it, but the log is a
+      call target's, so each root that inlined such a loop paid once (the
+      M10-06 pattern of D1, "Representations chosen outside loops", with a
+      guard that fails everywhere instead of on Latin-1 strings). Graal's
+      side is in docs/upstream.md, "A guard that can only fail is moved out
+      of its loop". The four operations now have a fallback, so the DSL
+      tests the operand's type (`instanceof`, false for null) instead of
+      casting it, and the compiled code has no branch for null; the
+      fallback throws `shouldNotReachHere`, and only the interpreter pays
+      for the test (a state read and the `instanceof`).
+      `TrampolineLoopRecompilationTest` checks that a box read in a
+      trampoline's loop doesn't invalidate the root that inlines it.
+      Measured (`parsing` at its count, 2,500, 5 iterations a process, the
+      native launcher with `--vm.Xmx2g` and the JVM launcher's options with
+      `-Xmx2g`, before and after on one Apple M3 Max, 6 rounds interleaved
+      ABBA so each round has an A/A pair, at a 1-minute load of 4.3 to 9.8
+      while another agent's benchmarks ran; 7 runs whose load passed 10 left
+      out; medians, the steady state being the best of iterations 2 to 5):
+      natively, invalidations 8 or 9 a run → 3 or 4 (none a null check: a
+      branch profile's first `TransferToInterpreter` in `scanchar` and the
+      benchmark loop's OSR exit), deoptimized frames 38 to 61 → 8 to 12,
+      compilations 98 to 101 → 85 to 88, the first iteration 4.32 → 3.76 s
+      (0.87×) and the steady state 3.09 → 3.05 s (0.99×, inside the A/A
+      pairs' spread of 2.4%); on the JVM, HotSpot's null-check traps in
+      Truffle code 7 or 8 → 1 or 2, compilations 113 to 115 → 99 or 100,
+      the first iteration 3.42 → 3.17 s (0.93×) and the steady state 2.68 →
+      2.55 s (0.95×; A/A median 1%, but up to 26% under that load). The
+      recompilations had fallen in the first iteration, which is where the
+      time came back.
+      - *How it was found.* HotSpot's `-Xlog:deoptimization=debug`
+        reported the traps (`null_check`, at `OptimizedDirectCallNode.call`
+        bci 23, the inlined call's frame state), and
+        `-Djdk.graal.SpeculativeGuardMovement=false` made them go away.
+        `--vm.Djdk.graal.Dump=SpeculativeGuardMovementPhase:4` with
+        `--vm.Djdk.graal.MethodFilter=parse-datum,...` dumps each
+        compilation's graph just before and after that phase (a few tens
+        of MB a compilation, rather than gigabytes at `Dump=:2`); comparing
+        the two graphs' `GuardNode`s (a short reader of the BGV format, no
+        IGV) found, in every first compilation of a `parse-*` root, exactly
+        one guard the phase had moved with a constant condition: the
+        `BoxRef` or `LoadCaptured` null check, moved from the `Begin` of the
+        cast's null branch to the merge before the trampoline's loop. The
+        recompilations had none. The other guards it moved (the casts'
+        type checks, `captured`'s bounds checks, `SString.compare`'s null
+        checks inside its wide loops) test real values and pass. Native
+        image runs take `--vm.Djdk.graal.Dump` too, but not the phase's
+        `Log`.
     - *Not changed: the collector, for programs that keep a large heap.*
       `earley`, `paraffins`, `mperm`, `nboyer`, `sboyer` and `gcbench`
       spend most of their native time collecting: at `--vm.Xmx2g` per

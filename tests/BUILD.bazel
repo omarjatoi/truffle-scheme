@@ -98,6 +98,7 @@ unit_tests(
         "UpstreamAstDepthTest": "upstream",
         "UpstreamAsyncStacksTest": "upstream",
         "UpstreamContinuationRootTest": "upstream",
+        "UpstreamHoistedNullGuardTest": "upstream",
         "UpstreamInterruptTest": "upstream",
         "UpstreamNestedRootSourceTest": "upstream",
         "UpstreamPreinitializationDeadlockTest": "upstream",

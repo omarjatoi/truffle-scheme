@@ -9,8 +9,9 @@ status** line: what oracle/graal's issues, pull requests and `master` say
 about it, on the date given. The newest release is still 25.5.5.0.3;
 `master` is 25.6.0-dev.
 
-All thirteen are in Truffle 25.5.5.0.3 (Maven Central), on GraalVM CE 25.5.5.0.3
-(JDK 25.0.5.0.3, `nix develop`).
+All fourteen are in Truffle 25.5.5.0.3 (Maven Central), on GraalVM CE 25.5.5.0.3
+(JDK 25.0.5.0.3, `nix develop`); one is Graal's compiler's (the guard moved
+out of its loop).
 
 ## The reproducers are inverted tests
 
@@ -20,7 +21,7 @@ the bug is there**. It runs with every other unit test in `bazel test //...`, an
 alone with:
 
 ```
-bazel test //tests:unit_jit_UpstreamAsyncStacksTest //tests:unit_jit_UpstreamAstDepthTest //tests:unit_jit_UpstreamNestedRootSourceTest //tests:unit_jit_UpstreamReportPolymorphismTest //tests:unit_jit_UpstreamInterruptTest //tests:unit_jit_UpstreamPreinitializationDeadlockTest //tests:unit_jit_UpstreamContinuationRootTest //tests:unit_jit_UpstreamResumedEntriesTest //tests:unit_jit_UpstreamResumedBreakpointTest
+bazel test //tests:unit_jit_UpstreamAsyncStacksTest //tests:unit_jit_UpstreamAstDepthTest //tests:unit_jit_UpstreamNestedRootSourceTest //tests:unit_jit_UpstreamReportPolymorphismTest //tests:unit_jit_UpstreamInterruptTest //tests:unit_jit_UpstreamPreinitializationDeadlockTest //tests:unit_jit_UpstreamContinuationRootTest //tests:unit_jit_UpstreamResumedEntriesTest //tests:unit_jit_UpstreamResumedBreakpointTest //tests:unit_jit_UpstreamHoistedNullGuardTest
 ```
 
 When a Truffle upgrade fixes a bug, its test fails. Then remove the
@@ -50,6 +51,7 @@ drives through their options.
 | [An engine that closes as the JVM exits](#an-engine-that-closes-as-the-jvm-exits) | none (a race; the reproducer is below) | `SchemeMain`'s warm-up closes under a lock the program's thread takes before the JVM exits (`src/launcher/scheme/launcher/`) |
 | [Tools take a resumption for an entry](#tools-take-a-resumption-for-an-entry) | `UpstreamResumedEntriesTest` | none: docs/usage.md's tools table says the CPU tracer's and coverage's counts include resumed frames |
 | [A breakpoint is hit again when its frame resumes](#a-breakpoint-is-hit-again-when-its-frame-resumes) | `UpstreamResumedBreakpointTest` | none: docs/usage.md's tools table says so |
+| [A guard that can only fail is moved out of its loop](#a-guard-that-can-only-fail-is-moved-out-of-its-loop) | `UpstreamHoistedNullGuardTest` | `BoxRef`, `BoxSet`, `LoadCaptured` and `PatchCaptured` test their operand's type instead of casting it (`SchemeRootNode`, `src/runtime/scheme/runtime/`) |
 | [A resumed frame returns to what resumed it](#a-resumed-frame-returns-to-what-resumed-it) (a feature request) | `SteppingTest.aStepOutOfAFrameResumedFromTheHeapStopsInThePrompt` (Scheme) | none: docs/usage.md says to step into from the prompt |
 
 ## Nested root source sections
@@ -1322,4 +1324,111 @@ frame stops in the frame that is resumed next, as it would stop after a call ret
 the debugger could take the driver's first asynchronous frame (`findAsynchronousFrames`) as the
 returning frame's caller, and stop when that frame is resumed (`onResume`, matched with
 `TruffleInstrument.Env.isSameFrame`) at its call node, after the call.
+````
+
+## A guard that can only fail is moved out of its loop
+
+**Found in** M12-12. **Test:** `UpstreamHoistedNullGuardTest`. A bug in
+Graal's compiler (the optimizing compiler of Truffle's runtime), not in
+Truffle's API.
+
+**Upstream status** (checked 2026-11-18): still present on `master`
+(`SpeculativeGuardMovementPhase` at 5111498cce6e, the newest commit to touch
+it, 2026-11-03), and unreported (no issue or pull request found for
+`SpeculativeGuardMovement`; #7142, GR-47563, made the phase less aggressive
+in 2023, but not for this). `earliestBlockForGuard` hoists a guard as far
+out as its condition's earliest block allows, and a `LogicConstantNode`'s
+earliest block is the start, so a guard whose condition is a constant
+contradiction is moved to before the outermost loop. The issue text is
+ready to file.
+
+Graal compiles a cast (`checkcast`) of a value that no profile says is never
+null, in a Truffle compilation, into a branch for null. A field read of the
+cast value then needs a null check, which, on the branch for null, has the
+constant `true` for its condition (a `GuardNode` that is certain to fail,
+anchored in that branch). The branch never runs. But
+`SpeculativeGuardMovementPhase` takes the constant for loop-invariant and
+moves the guard out of the loop the branch is in, to before the loop, where
+it fails the first time the compiled code gets there.
+
+- **Expected:** a guard that can only fail stays where it is, in its branch
+  (or the phase leaves guards with constant conditions alone).
+- **Actual:** the compiled code deoptimizes (`NullCheckException`,
+  `InvalidateReprofile`) and is invalidated as soon as it reaches the loop.
+  The failed speculation keeps the recompilation from moving the guard, but
+  the speculation log belongs to a call target, so every call target whose
+  compilation has such a loop pays once: in ecraven's `parsing`, the
+  trampoline's loop of tail calls inlined into each of the parser's large
+  roots, 8 or 9 invalidations a run in the native launcher (1.0 to 1.6 s of
+  recompilation each) and 7 or 8 null-check traps on the JVM (design.md
+  D17, "The native launcher's steady state").
+- **Our workaround:** the operations whose one specialization took a typed
+  operand, which the DSL then casts (`BoxRef`, `BoxSet`, `LoadCaptured`,
+  `PatchCaptured` in `SchemeRootNode`, `src/runtime/scheme/runtime/`), have
+  a fallback, so the DSL tests the operand's type (`instanceof`, which is
+  false for null) instead of casting it. The compiled code has no branch for
+  null, and the fallback, which compiled code never reaches, throws
+  `shouldNotReachHere`. `TrampolineLoopRecompilationTest` checks it in
+  Scheme.
+
+### Issue text
+
+````markdown
+**Title:** SpeculativeGuardMovementPhase moves a guard whose condition is a constant contradiction out of its loop, so the code always deoptimizes
+
+**Version:** GraalVM CE 25.5.5.0.3 (JDK 25.0.5.0.3), Truffle 25.5.5.0.3; the phase is unchanged in this respect on `master` (5111498cce6e)
+
+In a Truffle compilation, a `checkcast` of a value that no profile says is never null becomes a
+branch for null, and a field read of the cast value then has, on that branch, a null-check
+`GuardNode` whose condition is `LogicConstantNode` true (negated): it can only fail. The branch never
+runs, so neither does the guard. But `SpeculativeGuardMovement.earliestBlockForGuard` computes the
+condition's earliest block as the start block and hoists the guard above every loop around it, to
+before the loop, where it fails the first time the compiled code gets there:
+
+    Guard(LogicConstant true, NullCheckException, InvalidateReprofile, negated)
+        before the phase: anchored at the Begin of the cast's null branch, inside the loop
+        after the phase:  anchored before the loop, speculation GuardMovement@<loop>
+
+The failed speculation then keeps the recompilation from moving it, but the speculation log is the
+call target's, so each call target with such a loop deoptimizes and is recompiled once.
+
+Reproducer (a RootNode of any language, run with `engine.BackgroundCompilation=false`,
+`engine.MultiTier=false`, `engine.SingleTierCompilationThreshold=100`, `engine.TraceCompilation=true`):
+
+```java
+static final class Cell {
+    Object value;
+    Cell(Object value) { this.value = value; }
+}
+
+static final class CellLoopRoot extends RootNode {
+    CellLoopRoot(TruffleLanguage<?> language) { super(language); }
+
+    @Override
+    public Object execute(VirtualFrame frame) {
+        Object[] cells = (Object[]) frame.getArguments()[0];
+        int n = (Integer) frame.getArguments()[1];
+        int found = 0;
+        for (int i = 0; i < n; i++) {
+            Object value = ((Cell) cells[0]).value;   // cells[0] is never null
+            if (value != null) {
+                found++;
+            }
+        }
+        return found;
+    }
+}
+
+CallTarget target = new CellLoopRoot(language).getCallTarget();
+Object[] cells = {new Cell("value")};
+for (int i = 0; i < 1000; i++) {
+    target.call(cells, 10);
+}
+// The log: "opt done" for the root, then "opt deopt ... Invalidated true" at the next call, and
+// a second "opt done". With -Djdk.graal.SpeculativeGuardMovement=false, or with
+// `cells[0] instanceof Cell c ? c.value : null` in the loop, the first compilation stays.
+```
+
+The phase could leave a guard alone when its condition is a constant (it is an unconditional
+deoptimization at its anchor), or a guard whose anchor's block is never reached in the profile.
 ````
