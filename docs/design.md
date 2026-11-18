@@ -3145,10 +3145,65 @@ Each entry: the decision, why, and what was rejected.
     then return to the prompt that resumed them; and a step through an
     escape (invoking `k`, which abandons the frames between: an APPLY or
     ESCAPE capture) never completes, as the abandoned frame never resumes.
-    The CPU sampler walks stacks and isn't affected. The escape's yield
-    serves nothing (`Capture.addSegment` drops an abandoning capture's
-    frames): a call site that returned such a capture instead of suspending
-    would end the debugger's wait (a follow-up of the call sites').
+    The CPU sampler walks stacks and isn't affected.
+  - *Ending an escaped frame for tools (M12-06, not done).* The escape's
+    yield serves nothing (`Capture.addSegment` drops an abandoning
+    capture's frames), so the frame could end some other way. Two ways were
+    tried, each with a `DebuggerTest` stepping over an escape-only `k`'s
+    `(k 5)` (ESCAPE) and over a full continuation's (APPLY), each `k`
+    invoked in its receiver's body, `(let ((r (call/cc (lambda (k) (k 5)
+    0)))) (+ r 1))`; neither is good enough:
+    - *A return from the call site.* `CallSiteEmitter` emitted
+      `CallSite(Call(...), Block(IfThen(Abandons(), Return(Abandon())),
+      Resumed(SuspendFrame())))`, so an abandoning capture made the frame
+      return it. Every tag then reports the frame's end (`tag.leave` before
+      the `return`), and the step completes, but at the frame's Java
+      caller, the prompt that called the receiver: the ESCAPE step stopped
+      in `call/cc`'s frame (`EscapeRootNode`, no location) with the capture
+      as the value, `call/cc:?=#<capture>`, and a second step at the
+      statement after the prompt, `(+ r 1)`; the APPLY step stopped in
+      `<prompt>` (`<prompt>:1=#<capture>`), and the next step over never
+      stopped again: the frames the root prompt then resumes are, to
+      Truffle, calls it makes. Truffle's debugger stops after a return at
+      the caller's call node, and a prompt root reports none
+      (`findInstrumentableCallNode`, so that the debugger lists it with its
+      pending frames, "Spilled frames in tools"), so it stops at the root
+      itself. And the site grew from 6 instructions after the call to 10
+      (`Abandons`, a branch, `Abandon`, `return`), against M7-02's budget
+      (`CallSiteTest`, 6 at most): every procedure's size estimate, which
+      Truffle splits by, grows by them at each call site, for a path that
+      only invoking a continuation takes.
+    - *Unwinding the frame*, with `AbandonedFrame` (the control-flow
+      exception the root intercepts and returns as the capture, as an
+      `Intrinsics` operation's `raise` does) thrown from `IsValue`, only in
+      bytecode with tags (`BytecodeNode.getTagTree()`), so that the call
+      site and uninstrumented code were unchanged. The ESCAPE step stopped
+      at `(+ r 1)` at once, but only because the debugger's depth count was
+      off by one: the Bytecode DSL intercepts a control-flow exception
+      before it looks for an exception handler (the generated `continueAt`,
+      `BytecodeNodeElement`: "the interception order is
+      ControlFlowException -> internal error -> AbstractTruffleException"),
+      so no tag's handler runs and no tool sees the frame end. The APPLY
+      step never stopped again (the resumed caller was a level deeper than
+      the step), and every count of entries and exits would drift the same
+      way, `sandbox.MaxStackFrames`'s too (D10). (Not tried: an
+      `AbstractTruffleException` would reach the handlers, but it leaves
+      the root, so every caller of Scheme code would have to catch it and
+      go on with the capture, and it is a guest exception to the tools.)
+    - *What a fix needs.* A return, and so a decision on the call site's
+      size, measured (M7-02's budget, the JIT's and the native image's
+      splitting); and a debugger that doesn't stop in a prompt's frame
+      when a frame returns to it. Making the prompt roots internal
+      (`RootNode.isInternal`) does that: Truffle's debugger skips internal
+      roots when it looks for the caller, and still lists them with their
+      pending frames. Tried with the return above, the APPLY step stopped
+      at the resumed caller's statement (the one that called `call/cc`)
+      and went on; the ESCAPE step stopped after the call of `call/cc`, in
+      the frame that called it, still with the capture as the value. But `PolyglotException`
+      leaves internal frames out of guest stack traces, so `<prompt>`,
+      `call/cc` and `%call-with-prompt` would leave every trace
+      (`EmbeddingTest` and `SpilledFramesTest` expect `<prompt>`): a
+      decision of its own (AGENTS.md, "Read first").
 - **Logging.** The language logs through Truffle (`TruffleLogger`), so
   `--log.scheme.level=FINE` (the launcher), `-Dpolyglot.log.scheme.level=FINE`
   or `Context.Builder.option("log.scheme.level", "FINE")` turns it on, and
