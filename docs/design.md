@@ -152,7 +152,7 @@ follow it or deviate, with the decision below that says why.
 - **Rare paths stay out of compiled code (M7-01).** The spill at the depth
   limit (below) is behind a branch profile: a site that has never spilled
   compiles without it. It was about two thirds of every non-tail call site's
-  machine code, and on GitHub's 4-CPU runners (two compiler threads) the
+  machine code, and on GitHub's 4-CPU runners (CI's then; two compiler threads) the
   benchmarks' compilations didn't finish within the runs meant to measure
   compiled code.
 - Self tail calls in named `let` and `do` compile to loops (back-edges, OSR).
@@ -717,7 +717,7 @@ follow it or deviate, with the decision below that says why.
       the list's first iteration took 0.63 s instead of 1.70, the 10M
       `count`'s 6.1 s instead of 10.7, and the 300,000-deep `count`'s 86 ms
       instead of 133. It isn't the default (D17, "Rejected: a 1 GB minimum
-      heap for the native launcher"); a user passes `-Xms1g` to the
+      heap for the native launcher"); a user passes `--vm.Xms1g` to the
       executable for it. These tables are without it, and a deeper limit
       wasn't measured with it.
   - *A first descent isn't compiled (M9-01).* Why a deep recursion's first
@@ -1058,7 +1058,7 @@ Each entry: the decision, why, and what was rejected.
 | complex | `SComplex { real, imag }`. Both parts are real numbers of the **same exactness**: exact (`long`, `SBigInteger` or `SRational`) or inexact (`double`). Mixing exactness makes both parts inexact. |
 | boolean | `boolean` |
 | char | `SChar` (`int` code point), with a cache for 0–255 |
-| string | `SString`: Latin-1 `byte[]` until a character above 255 is stored, then UTF-32 `int[]`. Indexing and `string-set!` are O(1). Literals carry an immutable flag. `substring`, `string-append` and `string-copy!` copy between strings of one storage with an array copy (M8-04). A string from Java text (a `String`, or a reader's `char[]`) is built in one pass: Latin-1 bytes until the first unit above 255, then code points (M10-05's follow-up; `codePoints().toArray()` and two more passes until then). |
+| string | `SString`: Latin-1 `byte[]` until a character above 255 is stored, then UTF-32 `int[]`. Indexing and `string-set!` are O(1). Literals carry an immutable flag. `substring`, `string-append` and `string-copy!` copy between strings of one storage with an array copy (M8-04). A string from Java text (a `String`, or a reader's `char[]`) is built in one pass: Latin-1 bytes until the first unit above 255, then code points (#216, after M10-05; `codePoints().toArray()` and two more passes until then). |
 | symbol | `SSymbol`, interned per context (held weakly, so a symbol nothing refers to is collected; M8-02), name is a `TruffleString` |
 | pair | `SPair`, mutable `car`/`cdr` fields; literal pairs aren't marked immutable yet (below) |
 | vector / bytevector | `SVector` (`long[]` while every element is a fixnum, `double[]` while every element is a flonum, otherwise `Object[]`, generalizing for good on the first store that doesn't fit; M5-06) / `SBytevector` (`byte[]`), each with an immutable flag for literals |
@@ -1262,8 +1262,9 @@ Each entry: the decision, why, and what was rejected.
 - Core forms: `quote`, `lambda`, `if`, `set!`, `define`, `begin`, `letrec*`,
   `define-syntax`, `let-syntax`, `letrec-syntax`, `syntax-rules`,
   `include`, `include-ci`, `cond-expand`, `define-library`, `import`,
-  `quasiquote` (with `unquote` and `unquote-splicing`), plus the internal form
-  `%prompt`.
+  `syntax-error`, `quasiquote` (with `unquote` and `unquote-splicing`), the
+  auxiliary syntax `else`, `=>`, `...` and `_` (D7), plus the internal form
+  `%prompt` (`scheme.compiler.CoreForm`).
 - All other derived syntax comes from the `syntax-rules` definitions in R7RS
   §7.3, placed in the prelude. Exceptions: `guard`, which is a prelude macro
   over the prompt-based `%guard` procedure (D4) rather than §7.3's
@@ -1299,12 +1300,14 @@ Each entry: the decision, why, and what was rejected.
 ### D5. Java builtins never call Scheme
 
 - Java builtins are leaf operations. A builtin that must invoke a procedure
-  (`apply`, `call/cc`, `call-with-values`, `eval`, `load`) does it **only
-  by returning a `TailCall` request** to its call site's trampoline.
+  (`apply`, `call/cc`, `eval`, `load`, and the continuation internals such
+  as `%capture-to-prompt`: the primitives whose `PrimitiveSpec.Result` is
+  `TRANSFERS_CONTROL`) does it **only by returning a `TailCall` request** to
+  its call site's trampoline.
 - Anything that needs a non-tail call (`map`, `for-each`, `vector-map`,
-  `string-for-each`, `dynamic-wind`, `raise`, `with-exception-handler`,
-  parameter converters, `call-with-port`) is written in the Scheme prelude on
-  top of `%`-primitives.
+  `string-for-each`, `call-with-values`, `dynamic-wind`, `raise`,
+  `with-exception-handler`, parameter converters, `call-with-port`) is
+  written in the Scheme prelude on top of `%`-primitives.
 - Why: Java frames can't be captured. If no Java frame ever sits between two
   Scheme frames, every continuation is capturable, and R7RS's rule that
   `map` must not change earlier results on re-entry holds automatically.
@@ -1584,7 +1587,7 @@ Each entry: the decision, why, and what was rejected.
   asks the reader for as many UTF-16 units as characters are still wanted,
   so it never reads past them, and pairs a high surrogate that ends a read
   with the low one after it. `read-line` finds the line ending in the
-  buffer too (`SPort.readLine`, M10-05's follow-up), where it read a
+  buffer too (`SPort.readLine`, #216, after M10-05), where it read a
   character at a time: a file's or the console's `BufferedReader` with its
   own `readLine`, which ends a line where we did, at LF, CR LF or a CR
   alone, and skips the LF after a CR on its next read, so a CR typed at the
@@ -1756,9 +1759,9 @@ Each entry: the decision, why, and what was rejected.
 - **Out of scope:** Scheme-side access to other languages and the host,
   threads, and SRFIs. Avoid reflection and dynamic class loading: the native
   launcher (D17) is built without any reflection configuration.
-- **Deferred to M5:** escape-only `call/cc` (done, M5-04), Fixing Letrec,
-  vector storage strategies (done, M5-06), and the Static Object Model for
-  records (done, M7-04, D1).
+- **Deferred from v1, and since done:** escape-only `call/cc` (M5-04),
+  Fixing Letrec (M5-05, D2), vector storage strategies (M5-06, D1), and the
+  Static Object Model for records (M7-04, D1).
 
 ### D11. Build and tooling
 
@@ -1773,7 +1776,12 @@ Each entry: the decision, why, and what was rejected.
   GraalVM); tests target the executors' platform. Everything an action runs
   comes from Bazel (the pinned GraalVM, rules_python's Python, chibi-scheme
   built from source), plus a shell and a C toolchain from the executor image
-  (`toolchains_buildbuddy`); nothing is tagged to run locally.
+  (`toolchains_buildbuddy`). Which machine runs an action is its execution
+  platform's choice ("Platforms and C and C++ toolchains", below): a C or C++
+  action for a macOS target runs on this Mac. The one action that sets its
+  own requirement is the AOT cache's training for a non-Linux target
+  (`no-remote`, D17 "The AOT cache"), since the cache names the paths it
+  was made with.
   `bazel test //...` is the whole pre-PR check; the repository's other
   commands are `bazel run //:r7rs -- <command>` (`tests/harness/main.py`).
 - **Released GraalVM, pinned by Bazel.** The JDK that compiles, runs the
@@ -1783,9 +1791,13 @@ Each entry: the decision, why, and what was rejected.
   in `maven_install.json`) at **exactly** that version (25.5.5.0.3): one
   `TRUFFLE_VERSION` in `MODULE.bazel` picks both, and `//tests:versions`
   checks the JDK's `release` file against the lock file.
-- **Upgrading** is a human-made change: add the release to
-  `bazel/graalvm.bzl`, bump `TRUFFLE_VERSION`, `bazel run @jvm//:pin`, and
-  bump nixpkgs in `flake.lock` (the dev shell's JDK) together.
+- **Upgrading** is made only by a task that says so (AGENTS.md "Never"):
+  add the release to `bazel/graalvm.bzl` (GraalVM CE's archives, Oracle
+  GraalVM's for `--//:native_graalvm=oracle`, and the release's source tag
+  and its `launcher.cc`'s sha256 for the native launcher, D17), bump
+  `TRUFFLE_VERSION`, `bazel run @jvm//:pin`, and bump nixpkgs in
+  `flake.lock` (the dev shell's JDK) together. The repository rule fails,
+  naming what to add, when any of them is missing for the version.
 - **Modules.** `java_module_jar` (`bazel/java_module.bzl`) builds the
   `scheme`, `scheme.launcher` and `scheme.test` modules, and everything runs
   with Truffle on the module path, as embedders run it.
@@ -2235,7 +2247,9 @@ Each entry: the decision, why, and what was rejected.
     library's, reports no input arguments) sets the evaluation thread's
     stack, and `--stack-size=default` evaluates on the launcher's thread
     (the JVM's default stack; the native launcher's is the thread its C part
-    created the isolate on, with the main thread's 8 MB). If the system won't reserve the stack (a limit on
+    created the isolate on: the main thread on Linux, and on macOS a thread
+    of its own with the main thread's stack size, typically 8 MB;
+    `launcher.cc`'s `setstacksize`). If the system won't reserve the stack (a limit on
     address space), the launcher evaluates on its own thread. `SchemeMain.run`
     (in-process, for tests) evaluates on its caller's thread.
   - *The runtime is told the size.* On its own thread the launcher passes
@@ -2994,8 +3008,9 @@ Each entry: the decision, why, and what was rejected.
     only one that is slower.
   - `bazel run //:r7rs -- test --native FILE` runs each conformance section as
     a process of the native launcher, as `ConformanceRunner` runs it, and
-    passes what the JVM does: chibi's suite 1225/1225 and Larceny's
-    2162/2166, interpreted and with `--compile`. The test
+    passes what the JVM does (the status block: chibi's suite 1225/1225 and
+    Larceny's 2160/2166, its 6 listed exceptions failing), interpreted and
+    with `--compile`. The test
     `//tests:conformance_native` fails if it passes anything other than the
     status block.
   - **`--end-status=<n>` (M7-06).** A program that ends exits with 0 by
@@ -3012,16 +3027,19 @@ Each entry: the decision, why, and what was rejected.
     ends does, so the default (0, as chibi-scheme) and the option are ours
     to choose.
   - CI doesn't build it (D11): the build takes a minute and gigabytes. The
-    target and its tests are `manual`; a PR that changes the native-image
-    configuration runs `//tests:readme_native` and
-    `//tests:conformance_native`.
+    target and its tests (`//tests:readme_native`,
+    `//tests:conformance_native`, `//tests:space_native`,
+    `//tests:launcher_vm_native`) are `manual`; a PR that changes the
+    native-image configuration runs them.
   - On x86-64 Linux the image targets the baseline CPU
     (`-march=compatibility`): with the default target (AVX2) the image
     uses the JDK's `libsimdsort`, whose libm dependency nixpkgs'
-    native-image resolves to glibc's static `libm.a`, and linking that into
-    a dynamically linked executable fails. The baseline target is also what
-    nixpkgs' own native-image check builds with, and makes the executable
-    run on any x86-64 machine.
+    native-image resolved to glibc's static `libm.a` when this was decided
+    (M6-06, built in the Nix shell), and linking that into a dynamically
+    linked executable failed. The image is now linked by the executors' GCC
+    (`toolchains_buildbuddy`, D11), where the default target hasn't been
+    tried. The baseline target is also what nixpkgs' own native-image check
+    builds with, and makes the executable run on any x86-64 machine.
   - **The native image's collector.** It is a build-time choice,
     native-image's own `--gc=`, which the flag `--//:native_gc` sets
     (`serial`, the default, `epsilon` or `G1`; `native_setting` in
@@ -3083,7 +3101,8 @@ Each entry: the decision, why, and what was rejected.
       it ends with an `OutOfMemoryError`.
     - *The serial collector's policies.* SubstrateVM 25.5's serial
       collector sizes its generations with a policy, chosen at run time by
-      `-XX:InitialCollectionPolicy=` (`-XX:PrintFlags=`: *"The garbage
+      `-XX:InitialCollectionPolicy=` (the executable's
+      `--vm.XX:InitialCollectionPolicy=`; `-XX:PrintFlags=`: *"The garbage
       collection policy. Default: 'Adaptive2'. Former default: 'Adaptive'
       (deprecated). Serial GC only."*; the documentation names only the
       pre-22 `BySpaceAndTime`). `Adaptive2`, ported from HotSpot's parallel
@@ -3257,8 +3276,10 @@ Each entry: the decision, why, and what was rejected.
       tenth fewer of a deep interpreted descent's, against the third as
       many collections of a 1 GB minimum heap above, so they stay.
   - Limits: the tools (inspector, DAP, profilers) are only on the JVM
-    launcher (`bazel-bin/scheme`); the executable is for the platform that built
-    it; and there is no auxiliary engine cache in the image (only the first
+    launcher (`bazel-bin/scheme`); the executable is for its target platform
+    (this machine's by default, Linux x86-64 on the executors with
+    `--platforms=//bazel/platforms:linux_x86_64`, as the tests build it: D11);
+    and there is no auxiliary engine cache in the image (only the first
     context is pre-initialized: any other restores the prelude image and
     runs the library bodies).
 - Why: Truffle languages get debugging, profiling and engine tuning from
