@@ -2593,7 +2593,8 @@ Each entry: the decision, why, and what was rejected.
     - *Built only when named*, like //:scheme-native: the library is a
       native-image build of the whole language, redone for every change to
       it (2 min 35 s on an executor for Linux, about 1 min 50 s on this Mac;
-      about 49 MB), and AGENTS.md keeps native images out of CI. So the tests that
+      about 49 MB), and native images stay out of CI (D11, "The isolate tests
+      stay local too"). So the tests that
       run contexts in the isolate are a target of their own, tagged
       `manual`: `//tests:unit_isolate_SandboxTest` (`SandboxTest.Isolated`,
       a nested class JUnit runs only when it is named, with
@@ -2872,6 +2873,22 @@ Each entry: the decision, why, and what was rejected.
   Benchmarks, the threshold check (`bench/thresholds.json`, measured on the
   maintainer's Mac) and the native image are local commands, by the
   maintainer's choice.
+  - *The isolate tests stay local too (M12-11).*
+    `//tests:unit_isolate_SandboxTest` and `//tests:unit_isolate_PolyglotTest`
+    run contexts in `//:scheme_isolate`'s polyglot isolate (D10, "ISOLATED
+    and UNTRUSTED"), a native-image build of the whole language that every
+    change to `src/` redoes. Measured at `111e167`: the library took 103 s
+    on an executor (Linux x86-64, not cached; 2 min 35 s at M11-11), and the
+    whole invocation 139 s, against about 1 min 50 s on this Mac; with the
+    library cached, the two tests ran in 1.2 and 1.9 s (3.5 s in all). A
+    CI build of a change to the language would take those 2 minutes on its
+    critical path, as `//:scheme-native` would. So they stay `manual`, local
+    commands like the native launcher's tests (`//tests:readme_native`,
+    `//tests:conformance_native`), run before a PR that touches the sandbox,
+    `(graalvm polyglot)` or the native-image configuration (AGENTS.md
+    "Commands"), and there is no manual or scheduled CI step for them: CI
+    runs only what runs on every commit. Running them in CI is the
+    maintainer's call to change.
 - **Measured** when Bazel replaced mx (same commit; Apple M3 Max, 16 cores,
   shared with other builds at load 15–25; GitHub's `ubuntu-26.04` runners,
   CI's until Buildkite replaced GitHub Actions in #113):
