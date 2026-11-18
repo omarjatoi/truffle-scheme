@@ -286,9 +286,20 @@ public abstract class SPort implements TruffleObject {
         return new TextInput(new StringReader(text), true, false);
     }
 
-    /** A textual input port over a decoded stream; {@code console} for the context's input. */
+    /**
+     * A textual input port over a decoded stream; {@code console} for the context's input. (A file's
+     * port decodes its bytes itself: {@link #utf8Input}.)
+     */
     public static SPort textInput(Reader in, boolean console) {
         return new TextInput(in.markSupported() ? in : new BufferedReader(in), !console, !console);
+    }
+
+    /**
+     * A textual input port over a file's bytes, which it decodes from UTF-8 itself (design.md D10,
+     * "Textual input file ports decode UTF-8 themselves"). Closing the port closes the stream.
+     */
+    public static SPort utf8Input(InputStream in) {
+        return new Utf8Input(in);
     }
 
     public static SPort outputBytevector() {
@@ -533,7 +544,7 @@ public abstract class SPort implements TruffleObject {
         }
 
         /**
-         * A {@link BufferedReader} (files and the console) finds the line in its buffer itself:
+         * A {@link BufferedReader} (the console's) finds the line in its buffer itself:
          * {@link BufferedReader#readLine} ends a line exactly where a character at a time did, at
          * LF, CR LF or a CR alone. After a CR it skips an LF on its next read of any kind, where a
          * character at a time read the LF at once: the same characters, but it never waits for the
@@ -646,6 +657,389 @@ public abstract class SPort implements TruffleObject {
             if (ownsReader) {
                 in.close();
             }
+        }
+    }
+
+    /**
+     * A file's text, decoded from UTF-8 by the port itself (design.md D10, "Textual input file ports
+     * decode UTF-8 themselves"): the file's bytes go into the port's buffer, and from there straight
+     * into a string's Latin-1 bytes or code points (D1), with no reader or {@code char[]} between.
+     * Malformed input is replaced as the JDK's UTF-8 decoder replaces it, which is how the port read
+     * it until it decoded it itself: one U+FFFD for each malformed sequence, of the length the
+     * decoder gives it ({@link #decode}). A sequence that the buffer's end cuts is completed from the
+     * next read of the stream; one that the stream's end cuts is malformed.
+     */
+    private static final class Utf8Input extends SPort {
+        private static final int NONE = -2;
+        /** What {@link #decode} returns for a sequence the buffer's end cuts. */
+        private static final int MORE = -1;
+
+        private final InputStream in;
+        private final byte[] buffer = new byte[CHUNK];
+        /** The bytes not decoded yet: {@code buffer[pos, limit)}. */
+        private int pos;
+        private int limit;
+        /** Whether the stream ended at the last {@link #fill}: nothing comes after {@code limit}. */
+        private boolean end;
+        private int peeked = NONE;
+
+        Utf8Input(InputStream in) {
+            super(true, false);
+            this.in = in;
+        }
+
+        /**
+         * Reads the stream until the buffer holds at least {@code n} bytes (at most 4) not decoded
+         * yet, or the stream ends; first moves those bytes to the buffer's start if they are fewer.
+         * Returns how many it holds.
+         */
+        private int fill(int n) {
+            int left = limit - pos;
+            end = false;
+            if (left >= n) {
+                return left;
+            }
+            if (pos > 0) {
+                System.arraycopy(buffer, pos, buffer, 0, left);
+                pos = 0;
+                limit = left;
+            }
+            try {
+                while (limit < n) {
+                    int r = in.read(buffer, limit, buffer.length - limit);
+                    if (r < 0) {
+                        end = true;
+                        break;
+                    }
+                    limit += r;
+                }
+            } catch (IOException e) {
+                throw ioError(e);
+            }
+            return limit;
+        }
+
+        /**
+         * The character at {@code bytes[p]}, given {@code bytes[p, l)} and, if {@code end}, nothing
+         * after them: {@code (length << 24) | codePoint}, where {@code length} is the number of
+         * bytes it takes, or {@link #MORE} if a sequence the end of {@code l} cuts may still be
+         * completed. A malformed sequence is U+FFFD, as long as the JDK's UTF-8 decoder
+         * ({@code sun.nio.cs.UTF_8.Decoder}, which {@code InputStreamReader} replaces malformed
+         * input with) makes it: a byte that can't start a sequence (80-C1, F5-FF) is one; in a
+         * sequence of 2 to 4 bytes, the bytes before one that can't come where it is (not a
+         * continuation byte, or out of range as the second: E0 80-9F, F0 80-8F, F4 90-BF) are one;
+         * an encoded surrogate (ED A0-BF xx) is one of 3 bytes; and a sequence that the end cuts is
+         * one of the bytes left.
+         */
+        private static int decode(byte[] bytes, int p, int l, boolean end) {
+            int b1 = bytes[p];
+            if (b1 >= 0) {
+                return (1 << 24) | b1;
+            }
+            int left = l - p;
+            if ((b1 & 0xe0) == 0xc0 && (b1 & 0x1e) != 0) {
+                // C2-DF: 2 bytes.
+                if (left < 2) {
+                    return end ? malformed(left) : MORE;
+                }
+                int b2 = bytes[p + 1];
+                if ((b2 & 0xc0) != 0x80) {
+                    return malformed(1);
+                }
+                return (2 << 24) | ((b1 & 0x1f) << 6) | (b2 & 0x3f);
+            } else if ((b1 & 0xf0) == 0xe0) {
+                // E0-EF: 3 bytes.
+                if (left < 2) {
+                    return end ? malformed(left) : MORE;
+                }
+                int b2 = bytes[p + 1];
+                if ((b1 == (byte) 0xe0 && (b2 & 0xe0) == 0x80) || (b2 & 0xc0) != 0x80) {
+                    return malformed(1);
+                }
+                if (left < 3) {
+                    return end ? malformed(left) : MORE;
+                }
+                int b3 = bytes[p + 2];
+                if ((b3 & 0xc0) != 0x80) {
+                    return malformed(2);
+                }
+                int c = ((b1 & 0x0f) << 12) | ((b2 & 0x3f) << 6) | (b3 & 0x3f);
+                return Character.isSurrogate((char) c) ? malformed(3) : (3 << 24) | c;
+            } else if ((b1 & 0xf8) == 0xf0) {
+                // F0-F7: 4 bytes, of which F5-F7 start none.
+                int u1 = b1 & 0xff;
+                if (u1 > 0xf4) {
+                    return malformed(1);
+                }
+                if (left < 2) {
+                    return end ? malformed(left) : MORE;
+                }
+                int b2 = bytes[p + 1] & 0xff;
+                if ((u1 == 0xf0 && (b2 < 0x90 || b2 > 0xbf)) || (u1 == 0xf4 && (b2 & 0xf0) != 0x80) || (b2 & 0xc0) != 0x80) {
+                    return malformed(1);
+                }
+                if (left < 3) {
+                    return end ? malformed(left) : MORE;
+                }
+                int b3 = bytes[p + 2];
+                if ((b3 & 0xc0) != 0x80) {
+                    return malformed(2);
+                }
+                if (left < 4) {
+                    return end ? malformed(left) : MORE;
+                }
+                int b4 = bytes[p + 3];
+                if ((b4 & 0xc0) != 0x80) {
+                    return malformed(3);
+                }
+                return (4 << 24) | ((u1 & 0x07) << 18) | ((b2 & 0x3f) << 12) | ((b3 & 0x3f) << 6) | (b4 & 0x3f);
+            }
+            return malformed(1);
+        }
+
+        private static int malformed(int length) {
+            return (length << 24) | 0xfffd;
+        }
+
+        @Override
+        protected int doReadChar() {
+            int c = doPeekChar();
+            peeked = NONE;
+            return c;
+        }
+
+        @Override
+        protected int doPeekChar() {
+            if (peeked == NONE) {
+                peeked = next();
+            }
+            return peeked;
+        }
+
+        /** Decodes the next character, or returns -1 at the end. */
+        private int next() {
+            if (pos < limit) {
+                int b = buffer[pos];
+                if (b >= 0) {
+                    pos++;
+                    return b;
+                }
+            }
+            if (fill(4) == 0) {
+                return -1;
+            }
+            // Either 4 bytes are there or nothing comes after them: never MORE.
+            int r = decode(buffer, pos, limit, end);
+            pos += r >>> 24;
+            return r & 0x1fffff;
+        }
+
+        @Override
+        protected Object doReadString(int k) {
+            if (k == 0) {
+                return SString.of("");
+            }
+            return decodeString(k, false);
+        }
+
+        @Override
+        protected Object doReadLine() {
+            if (peeked == '\n' || peeked == '\r') {
+                if (peeked == '\r') {
+                    skipLineFeed();
+                }
+                peeked = NONE;
+                return SString.of("");
+            }
+            if (peeked == NONE) {
+                // An ASCII line that ends in the buffer: one scan, and a copy of its bytes.
+                byte[] bytes = buffer;
+                int i = pos;
+                int b = 0;
+                while (i < limit && ((b = bytes[i]) > '\r' || (b >= 0 && b != '\n' && b != '\r'))) {
+                    i++;
+                }
+                if (i < limit && b >= 0) {
+                    byte[] line = Arrays.copyOfRange(bytes, pos, i);
+                    pos = i + 1;
+                    if (b == '\r') {
+                        skipLineFeed();
+                    }
+                    return SString.ofLatin1(line, line.length);
+                }
+            }
+            return decodeString(Integer.MAX_VALUE, true);
+        }
+
+        /** Reads the LF after a CR that ended a line, if there is one. */
+        private void skipLineFeed() {
+            if (fill(1) > 0 && buffer[pos] == '\n') {
+                pos++;
+            }
+        }
+
+        /**
+         * Decodes up to {@code k} characters, a peeked one first, into a new string, or for
+         * {@code read-line} ({@code line}) up to a line ending, LF, CR LF or a CR alone, which it
+         * reads but leaves out; the eof object if the port is at the end. The characters go into
+         * Latin-1 bytes until one above 255 comes, then into code points (D1), each run of ASCII
+         * bytes copied by a loop of its own. The array has room for every character the buffer's
+         * bytes up to a line ending can make (at most one a byte), so it grows only between buffers:
+         * a line in the buffer gets an array of its length, and a {@code read-string} of more than a
+         * buffer starts with room for what the stream has left, so a whole file's string is never
+         * copied to grow. LF and CR are never part of a longer sequence, so a line ends at the first
+         * one.
+         */
+        private Object decodeString(int k, boolean line) {
+            int first = peeked;
+            peeked = NONE;
+            if (first == -1) {
+                return SConstant.EOF;
+            }
+            int n = first >= 0 ? 1 : 0;
+            int room;
+            if (line) {
+                room = n;
+            } else if (k <= CHUNK) {
+                room = k;
+            } else {
+                room = (int) Math.min(k, Math.max(CHUNK, (long) limit - pos + available() + n));
+            }
+            byte[] latin1 = null;
+            int[] wide = null;
+            if (first > 0xff) {
+                wide = new int[room];
+                wide[0] = first;
+            } else {
+                latin1 = new byte[room];
+                if (n > 0) {
+                    latin1[0] = (byte) first;
+                }
+            }
+            boolean ended = false;
+            while (n < k && !ended) {
+                if (limit - pos < 4 && fill(4) == 0) {
+                    break;
+                }
+                byte[] bytes = buffer;
+                int p = pos;
+                int l = limit;
+                int stop = line ? lineEnding(bytes, p, l) : l;
+                int most = Math.min(k - n, stop - p);
+                int capacity = latin1 != null ? latin1.length : wide.length;
+                if (capacity - n < most) {
+                    // A line that ends in the buffer gets exactly its room.
+                    long grown = line && stop < l ? n + most : Math.min(k, Math.max(2L * capacity, (long) n + most));
+                    if (latin1 != null) {
+                        latin1 = Arrays.copyOf(latin1, (int) grown);
+                    } else {
+                        wide = Arrays.copyOf(wide, (int) grown);
+                    }
+                }
+                if (latin1 != null) {
+                    byte[] out = latin1;
+                    while (p < stop && n < k) {
+                        int run = ascii(bytes, p, Math.min(stop - p, k - n));
+                        System.arraycopy(bytes, p, out, n, run);
+                        p += run;
+                        n += run;
+                        if (p == stop || n == k) {
+                            break;
+                        }
+                        // Never MORE before a line ending, which ends any sequence.
+                        int r = decode(bytes, p, l, end);
+                        if (r == MORE) {
+                            break;
+                        }
+                        p += r >>> 24;
+                        int c = r & 0x1fffff;
+                        if (c > 0xff) {
+                            wide = new int[out.length];
+                            for (int i = 0; i < n; i++) {
+                                wide[i] = out[i] & 0xff;
+                            }
+                            wide[n++] = c;
+                            latin1 = null;
+                            break;
+                        }
+                        out[n++] = (byte) c;
+                    }
+                }
+                if (wide != null) {
+                    int[] out = wide;
+                    while (p < stop && n < k) {
+                        int run = ascii(bytes, p, Math.min(stop - p, k - n));
+                        int shift = n - p;
+                        for (int j = p; j < p + run; j++) {
+                            out[shift + j] = bytes[j];
+                        }
+                        p += run;
+                        n += run;
+                        if (p == stop || n == k) {
+                            break;
+                        }
+                        int r = decode(bytes, p, l, end);
+                        if (r == MORE) {
+                            break;
+                        }
+                        p += r >>> 24;
+                        out[n++] = r & 0x1fffff;
+                    }
+                }
+                if (p == stop && stop < l) {
+                    ended = true;
+                    p++;
+                    pos = p;
+                    if (bytes[stop] == '\r') {
+                        skipLineFeed();
+                    }
+                } else {
+                    pos = p;
+                }
+            }
+            if (n == 0 && !ended) {
+                return SConstant.EOF;
+            }
+            return latin1 != null ? SString.ofLatin1(latin1, n) : SString.ofCodePoints(wide, n);
+        }
+
+        /** Where the first LF or CR in {@code bytes[p, l)} is, or {@code l}. */
+        private static int lineEnding(byte[] bytes, int p, int l) {
+            int i = p;
+            int b;
+            while (i < l && (b = bytes[i]) != '\n' && b != '\r') {
+                i++;
+            }
+            return i;
+        }
+
+        /** How many of the {@code most} bytes from {@code bytes[p]} are ASCII. */
+        private static int ascii(byte[] bytes, int p, int most) {
+            int i = 0;
+            while (i < most && bytes[p + i] >= 0) {
+                i++;
+            }
+            return i;
+        }
+
+        /** How many bytes the stream can give without blocking: for a file, what is left of it. */
+        private int available() {
+            try {
+                return in.available();
+            } catch (IOException e) {
+                throw ioError(e);
+            }
+        }
+
+        /** Files never block. */
+        @Override
+        protected boolean doReady() {
+            return true;
+        }
+
+        @Override
+        protected void closeResource() throws IOException {
+            in.close();
         }
     }
 

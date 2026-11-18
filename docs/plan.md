@@ -1473,7 +1473,7 @@ that may change performance measures with interleaved A/B runs.
     `peval`, `conform`, `compiler`, `mazefun` and M10-03's set) and kept
     with a test, or recorded in design.md ("Primitives run in place") with
     its numbers; `PrimitivesInPlaceTest` and `bench-check` pass.
-- [ ] **M11-06 · UTF-8 text input without the JDK's decoder**
+- [x] **M11-06 · UTF-8 text input without the JDK's decoder**
   - #220's follow-up: most of what is left of wide `read-string` and
     `read-line` is the JDK's UTF-8 decoder, which takes its ASCII fast path
     only at the start of each buffer (0.0115 s of a 10 MB wide file's

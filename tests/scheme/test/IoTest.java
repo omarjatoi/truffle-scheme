@@ -1395,6 +1395,316 @@ public class IoTest {
     }
 
     /**
+     * A stream of {@code bytes} whose bulk reads return at most {@code most} bytes (a file's stream
+     * can return fewer than asked for), and that counts its one-byte and bulk reads.
+     */
+    private static final class ShortReadStream extends InputStream {
+        private final byte[] bytes;
+        private final int most;
+        private int pos;
+        int singleReads;
+        int bulkReads;
+
+        ShortReadStream(byte[] bytes, int most) {
+            this.bytes = bytes;
+            this.most = most;
+        }
+
+        @Override
+        public int read() {
+            singleReads++;
+            return pos < bytes.length ? bytes[pos++] & 0xff : -1;
+        }
+
+        @Override
+        public int read(byte[] b, int off, int len) {
+            bulkReads++;
+            if (len == 0) {
+                return 0;
+            }
+            if (pos == bytes.length) {
+                return -1;
+            }
+            int n = Math.min(Math.min(len, most), bytes.length - pos);
+            System.arraycopy(bytes, pos, b, off, n);
+            pos += n;
+            return n;
+        }
+
+        @Override
+        public int available() {
+            return bytes.length - pos;
+        }
+    }
+
+    /**
+     * What a textual input file port read {@code bytes} as until it decoded UTF-8 itself (M11-06):
+     * a port over the JDK's decoder, as {@code TruffleFile.newBufferedReader(UTF_8)} gave it.
+     */
+    private static SPort jdkDecodedPort(byte[] bytes) {
+        return SPort.textInput(new java.io.InputStreamReader(new ByteArrayInputStream(bytes), StandardCharsets.UTF_8), false);
+    }
+
+    /** {@code bytes} decoded as the JDK's decoder decodes a stream of them, malformed input included. */
+    private static String jdkDecoded(byte[] bytes) throws IOException {
+        java.io.StringWriter text = new java.io.StringWriter();
+        try (java.io.Reader in = new java.io.InputStreamReader(new ByteArrayInputStream(bytes), StandardCharsets.UTF_8)) {
+            in.transferTo(text);
+        }
+        return text.toString();
+    }
+
+    /**
+     * Byte strings for the UTF-8 port to decode: valid UTF-8 of every length of sequence, and
+     * malformed input of every kind the JDK's decoder replaces (a continuation byte or a byte that
+     * starts nothing, C0/C1 and F5-FF, an overlong or cut sequence, an encoded surrogate, one above
+     * U+10FFFF), alone, at the end, and at random among valid text.
+     */
+    private static List<byte[]> utf8Samples(Random random) {
+        List<byte[]> samples = new ArrayList<>();
+        int[][] fixed = {{}, {'a'}, {0xC3, 0xA9}, {0xE4, 0xB8, 0xAD}, {0xF0, 0x9F, 0x98, 0x80}, {0x80}, {0xBF}, {0xC0, 0xAF}, {0xC1, 0xBF},
+                        {0xC3}, {0xC3, 'a'}, {0xE4, 0xB8}, {0xE4, 0xB8, 'a'}, {0xE4, 'a'}, {0xE0, 0x80, 0x80}, {0xE0, 0x9F, 0xBF},
+                        {0xED, 0xA0, 0x80}, {0xED, 0xBF, 0xBF}, {0xED, 0x9F, 0xBF}, {0xEF, 0xBF, 0xBF}, {0xEF, 0xBB, 0xBF, 'a'},
+                        {0xF0, 0x9F, 0x98}, {0xF0, 0x9F}, {0xF0}, {0xF0, 0x9F, 'a'}, {0xF0, 0x9F, 0x98, 'a'}, {0xF0, 0x80, 0x80, 0x80},
+                        {0xF0, 0x8F, 0xBF, 0xBF}, {0xF4, 0x8F, 0xBF, 0xBF}, {0xF4, 0x90, 0x80, 0x80}, {0xF5, 0x80, 0x80, 0x80},
+                        {0xF7, 0xBF, 0xBF, 0xBF}, {0xF8, 0x88, 0x80, 0x80, 0x80}, {0xFE}, {0xFF, 'a'}, {'\r'}, {0xC3, '\r', '\n'},
+                        {0xE4, 0xB8, '\n'}, {0xF0, 0x9F, 0x98, '\r'}};
+        for (int[] f : fixed) {
+            byte[] b = new byte[f.length];
+            for (int i = 0; i < f.length; i++) {
+                b[i] = (byte) f[i];
+            }
+            samples.add(b);
+        }
+        samples.add(lines(random, 300, true).getBytes(StandardCharsets.UTF_8));
+        samples.add(lines(random, 100, false).getBytes(StandardCharsets.UTF_8));
+        samples.add(mixed(random, 30_000).getBytes(StandardCharsets.UTF_8));
+        samples.add(("aéÿ".repeat(3000) + "中😀").getBytes(StandardCharsets.UTF_8));
+        // Valid text with malformed bytes at random: a few, and many.
+        for (int density : new int[]{2000, 50, 3}) {
+            byte[] text = lines(random, 200, random.nextBoolean()).getBytes(StandardCharsets.UTF_8);
+            for (int i = 0; i < text.length; i++) {
+                if (random.nextInt(density) == 0) {
+                    text[i] = (byte) (switch (random.nextInt(5)) {
+                        case 0 -> 0x80 + random.nextInt(64);
+                        case 1 -> 0xC0 + random.nextInt(32);
+                        case 2 -> 0xE0 + random.nextInt(16);
+                        case 3 -> 0xF0 + random.nextInt(16);
+                        default -> random.nextInt(256);
+                    });
+                }
+            }
+            samples.add(text);
+        }
+        // Random bytes, mostly leads and continuations.
+        byte[] noise = new byte[20_000];
+        for (int i = 0; i < noise.length; i++) {
+            int kind = random.nextInt(6);
+            noise[i] = (byte) (kind == 0 ? random.nextInt(128) : kind == 1 ? '\n' : kind == 2 ? 0x80 + random.nextInt(64) : 0xC0 + random.nextInt(64));
+        }
+        samples.add(noise);
+        return samples;
+    }
+
+    /**
+     * A textual input file port decodes UTF-8 itself (design.md D10, M11-06) and reads exactly what
+     * it read through the JDK's decoder: the same characters, malformed input replaced the same way,
+     * the same strings (Latin-1 storage included) from {@code read-string} and {@code read-line}, and
+     * the same eof objects, with the same random mix of reads on both ports, from a stream that
+     * returns at most 1, 2, 3, 5, 4095, 8191, 8192, 8193 or any number of bytes a read, so that
+     * every sequence is cut by a read's end somewhere.
+     */
+    @Test
+    public void utf8InputReadsWhatTheJdkDecoderRead() throws IOException {
+        Random random = new Random(31);
+        int[] mosts = {1, 2, 3, 5, 4095, 8191, 8192, 8193, Integer.MAX_VALUE};
+        for (byte[] bytes : utf8Samples(random)) {
+            String text = jdkDecoded(bytes);
+            for (int most : mosts) {
+                String what = bytes.length + " bytes, at most " + most + " a read";
+                // Whole, then the end.
+                SPort port = SPort.utf8Input(new ShortReadStream(bytes, most));
+                assertReadString(what, text.isEmpty() ? null : text, port.readString(Integer.MAX_VALUE));
+                assertReadString(what + ", at the end", null, port.readString(1));
+                assertEquals(what, -1, port.peekChar());
+                assertEquals(what, SConstant.EOF, port.readLine());
+                // Only read-line, then only read-char.
+                port = SPort.utf8Input(new ShortReadStream(bytes, most));
+                SPort jdk = jdkDecodedPort(bytes);
+                for (Object line = jdk.readLine(); line != SConstant.EOF; line = jdk.readLine()) {
+                    assertReadString(what + ", a line", line.toString(), port.readLine());
+                }
+                assertEquals(what, SConstant.EOF, port.readLine());
+                port = SPort.utf8Input(new ShortReadStream(bytes, most));
+                int[] cps = text.codePoints().toArray();
+                for (int c : cps) {
+                    assertEquals(what, c, port.readChar());
+                }
+                assertEquals(what, -1, port.readChar());
+                // Everything mixed, against the JDK's decoder's port.
+                port = SPort.utf8Input(new ShortReadStream(bytes, most));
+                jdk = jdkDecodedPort(bytes);
+                for (int i = 0;; i++) {
+                    int op = random.nextInt(12);
+                    String at = what + ", operation " + i + " (" + op + ")";
+                    if (op == 0) {
+                        assertEquals(at, jdk.peekChar(), port.peekChar());
+                    } else if (op == 1) {
+                        assertEquals(at, jdk.readChar(), port.readChar());
+                    } else if (op == 2) {
+                        assertTrue(at, port.ready());
+                    } else if (op <= 6) {
+                        int k = switch (op) {
+                            case 3 -> random.nextInt(4);
+                            case 4 -> random.nextInt(2000);
+                            case 5 -> 8190 + random.nextInt(5);
+                            default -> random.nextInt(20) == 0 ? Integer.MAX_VALUE : random.nextInt(100);
+                        };
+                        Object expected = jdk.readString(k);
+                        assertReadString(at + ", read-string " + k, expected == SConstant.EOF ? null : expected.toString(), port.readString(k));
+                    } else {
+                        Object expected = jdk.readLine();
+                        assertReadString(at + ", read-line", expected == SConstant.EOF ? null : expected.toString(), port.readLine());
+                        if (expected == SConstant.EOF) {
+                            break;
+                        }
+                    }
+                }
+                assertEquals(what, -1, port.peekChar());
+                assertEquals(what, -1, port.readChar());
+            }
+        }
+    }
+
+    /**
+     * A sequence of 2, 3 or 4 bytes cut by the end of the port's 8 KB buffer, after each of its
+     * bytes but the last, is read whole, by {@code read-char}, {@code peek-char},
+     * {@code read-string} and {@code read-line}; cut and never completed, it is replaced as the
+     * JDK's decoder replaced it. Through a file and through the port's own stream, whose first read
+     * fills the buffer.
+     */
+    @Test
+    public void utf8SequenceSplitAcrossTwoBuffers() throws IOException {
+        String[] characters = {"é", "中", "😀"};
+        int caseNumber = 0;
+        StringBuilder program = new StringBuilder("""
+                        (define (copy-chars in out)
+                          (let loop ()
+                            (peek-char in)
+                            (let ((c (read-char in)))
+                              (unless (eof-object? c) (write-char c out) (loop)))))
+                        (define (copy-strings k in out)
+                          (let loop ()
+                            (let ((s (read-string k in)))
+                              (unless (eof-object? s) (write-string s out) (loop)))))
+                        (define (copy-lines in out)
+                          (let loop ()
+                            (let ((l (read-line in)))
+                              (unless (eof-object? l) (write-string l out) (newline out) (loop)))))
+                        (define (copy name how)
+                          (call-with-port (open-input-file name)
+                            (lambda (in) (call-with-port (open-output-file (string-append name how))
+                                           (lambda (out)
+                                             (cond ((equal? how ".chars") (copy-chars in out))
+                                                   ((equal? how ".whole") (copy-strings 100000 in out))
+                                                   ((equal? how ".8191") (copy-strings 8191 in out))
+                                                   (else (copy-lines in out))))))))
+                        """);
+        List<String[]> expectations = new ArrayList<>();
+        for (String character : characters) {
+            byte[] sequence = character.getBytes(StandardCharsets.UTF_8);
+            for (int cut = 1; cut < sequence.length; cut++) {
+                for (boolean complete : new boolean[]{true, false}) {
+                    // The sequence's first `cut` bytes end the buffer.
+                    ByteArrayOutputStream file = new ByteArrayOutputStream();
+                    file.writeBytes("a\n".repeat((8192 - cut) / 2).getBytes(StandardCharsets.UTF_8));
+                    if ((8192 - cut) % 2 == 1) {
+                        file.write('b');
+                    }
+                    file.write(sequence, 0, complete ? sequence.length : cut);
+                    file.writeBytes("z\r\nend".getBytes(StandardCharsets.UTF_8));
+                    byte[] bytes = file.toByteArray();
+                    assertEquals(8192 - cut, indexOf(bytes, sequence[0]));
+                    String text = jdkDecoded(bytes);
+                    assertEquals(complete, text.contains(character));
+                    assertEquals(complete, !text.contains("�"));
+                    String what = character + " cut after " + cut + (complete ? "" : ", never completed");
+                    // The port's own stream.
+                    SPort port = SPort.utf8Input(new ByteArrayInputStream(bytes));
+                    assertReadString(what, text, port.readString(Integer.MAX_VALUE));
+                    port = SPort.utf8Input(new ByteArrayInputStream(bytes));
+                    for (int c : text.codePoints().toArray()) {
+                        assertEquals(what, c, port.peekChar());
+                        assertEquals(what, c, port.readChar());
+                    }
+                    assertEquals(what, -1, port.readChar());
+                    port = SPort.utf8Input(new ByteArrayInputStream(bytes));
+                    assertReadString(what, text.substring(0, 8000), port.readString(8000));
+                    SPort jdk = jdkDecodedPort(bytes);
+                    jdk.readString(8000);
+                    for (Object line = jdk.readLine(); line != SConstant.EOF; line = jdk.readLine()) {
+                        assertReadString(what + ", a line", line.toString(), port.readLine());
+                    }
+                    assertEquals(what, SConstant.EOF, port.readLine());
+                    // A file.
+                    String name = "cut-" + caseNumber++ + ".txt";
+                    Files.write(dir.resolve(name), bytes);
+                    for (String how : new String[]{".chars", ".whole", ".8191", ".lines"}) {
+                        program.append("(copy ").append(file(name)).append(" \"").append(how).append("\")\n");
+                        String expected = how.equals(".lines") ? text.replace("\r\n", "\n") + "\n" : text;
+                        expectations.add(new String[]{name + how, expected});
+                    }
+                }
+            }
+        }
+        program.append("(write 'done)");
+        assertEquals("done", runWithFiles(program.toString()));
+        for (String[] e : expectations) {
+            assertEquals(e[0], e[1], Files.readString(dir.resolve(e[0])));
+        }
+    }
+
+    private static int indexOf(byte[] bytes, byte b) {
+        for (int i = 0; i < bytes.length; i++) {
+            if (bytes[i] == b) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * A textual input file port reads its stream in bulk, 8 KB at a time, never a byte at a time,
+     * whichever way it is read.
+     */
+    @Test
+    public void utf8InputReadsTheStreamInBulk() {
+        byte[] bytes = lines(new Random(3), 300, true).getBytes(StandardCharsets.UTF_8);
+        String text = new String(bytes, StandardCharsets.UTF_8);
+        ShortReadStream in = new ShortReadStream(bytes, Integer.MAX_VALUE);
+        SPort port = SPort.utf8Input(in);
+        Random random = new Random(4);
+        StringBuilder read = new StringBuilder();
+        while (true) {
+            Object s = switch (random.nextInt(3)) {
+                case 0 -> port.readLine();
+                case 1 -> port.readString(random.nextInt(3000));
+                default -> {
+                    int c = port.readChar();
+                    yield c < 0 ? SConstant.EOF : new String(Character.toChars(c));
+                }
+            };
+            if (s == SConstant.EOF) {
+                break;
+            }
+            read.append(s);
+        }
+        assertEquals(text.replaceAll("\r\n|\r|\n", "").length(), read.toString().replaceAll("\r\n|\r|\n", "").length());
+        assertEquals(0, in.singleReads);
+        assertTrue("bulk reads: " + in.bulkReads + " of " + bytes.length + " bytes", in.bulkReads <= bytes.length / 8000 + 3);
+    }
+
+    /**
      * The port operations compile without performance warnings (design.md D10, "Ports in compiled
      * code"): each kind of port goes through the same procedures, so their compiled code sees a
      * port that isn't a constant, and partial evaluation must reach the port's stream without a

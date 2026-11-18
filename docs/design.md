@@ -1871,8 +1871,9 @@ Each entry: the decision, why, and what was rejected.
   `TruffleFile`'s stream (binary ones wrote each `write-u8` through until
   then: writing 10 MB with `write-u8` took 18 s, against 0.26 s buffered,
   and in 16-byte `write-bytevector`s 1.3 s, against 0.22 s). Input file
-  ports read through an 8 KB buffer too: the textual one through
-  `TruffleFile.newBufferedReader`'s `BufferedReader`, the binary one through
+  ports read through an 8 KB buffer too: the textual one through a buffer
+  of its own that it decodes UTF-8 from (M11-06, below;
+  `TruffleFile.newBufferedReader`'s `BufferedReader` until then), the binary one through
   a `BufferedInputStream` over the file's stream, which until then it read
   once per byte (reading 10 MB took 4.3 s with `read-u8` and 4.1 s in
   4096-byte `read-bytevector`s, which read a byte at a time too, against
@@ -1888,8 +1889,8 @@ Each entry: the decision, why, and what was rejected.
   so it never reads past them, and pairs a high surrogate that ends a read
   with the low one after it. `read-line` finds the line ending in the
   buffer too (`SPort.readLine`, #216, after M10-05), where it read a
-  character at a time: a file's or the console's `BufferedReader` with its
-  own `readLine`, which ends a line where we did, at LF, CR LF or a CR
+  character at a time: a file's port in its own buffer (M11-06, below),
+  the console's `BufferedReader` with its own `readLine`, which ends a line where we did, at LF, CR LF or a CR
   alone, and skips the LF after a CR on its next read, so a CR typed at the
   console ends a line without waiting for the next character; a string
   port's reader in chunks of 128 to 8192 units, marked so that it goes back
@@ -1902,8 +1903,9 @@ Each entry: the decision, why, and what was rejected.
   10 MB file takes 0.007 s when it is ASCII and 0.019 s when 10% of its
   lines are wide, so the string is too, against 0.0085 s and 0.031 s with a
   `StringBuilder` and a `String` between (#216, which took them from 0.020 s
-  and 0.045 s); most of what is left of the wide one is the JDK's UTF-8
-  decoder, which leaves its ASCII fast path at a buffer's first other byte.
+  and 0.045 s); most of what was left of the wide one was the JDK's UTF-8
+  decoder, which leaves its ASCII fast path at a buffer's first other byte,
+  so M11-06 decodes it ourselves (below).
   `u8-ready?` on a file is still always `#t`: a read of a file never
   blocks, and at its end, where the stream's `available()` is 0, R7RS §6.13.2 says *"If port is at end of file, then
   u8-ready? returns #t"* (chibi-scheme answers `#f` there). The context
@@ -1967,7 +1969,17 @@ Each entry: the decision, why, and what was rejected.
   port copied again: decoding was 0.0115 s of `read-string`'s 0.017 s for a
   whole 10 MB file with 10% of its lines wide, against 0.002 s for an ASCII
   one (#220). Decoding that file into the string's arrays ourselves takes
-  0.010 s, decoding included (host microbenchmark).
+  0.010 s, decoding included (host microbenchmark). Once compiled, reading
+  #220's 10 MB files (opening and closing them included) takes, against
+  the JDK's decoder: `read-string` of the whole wide file 0.011 s against
+  0.020 s, of the whole ASCII one 0.004 s against 0.007 s; `read-line` to
+  the end 0.016 s against 0.026 s (wide) and 0.009 s against 0.014 s
+  (ASCII); `read-char` to the end 0.031 s against 0.063 s and 0.029 s
+  against 0.055 s (interleaved A/B, 5 fresh JVMs each, the median of each
+  JVM's later iterations, load 9-10). A line that ends in the buffer and is
+  ASCII is found and copied with one scan; any other goes into an array
+  with room for what the buffer can still make of it, so it grows only
+  between buffers.
   - *Rejected:* `TruffleString` (`fromByteArray` in UTF-8, then
     `switchEncoding` to UTF-32 or a code point iterator). It replaces
     malformed input differently: three U+FFFD for an encoded surrogate where
