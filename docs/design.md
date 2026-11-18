@@ -1239,7 +1239,8 @@ Each entry: the decision, why, and what was rejected.
       exact numbers' only: it had taken -0.0 and a NaN for zeros, so
       `(expt +nan.0 0.5)` was 0.0 and `(magnitude -0.0)` -0.0. Each caller
       now tests a flonum's cases itself, as R7RS §6.2.4 and IEEE 754 have
-      them: a NaN operand gives NaN (`(expt 0. +nan.0)` too), any number
+      them: a NaN operand gives NaN (`(expt 0. +nan.0)` too; but 1 to any
+      power is 1, below), any number
       to a zero power is 1 (also a NaN or a negative base: `(expt -1. 0.)`
       is 1.0, not 1.0+0.0i), magnitude is abs, and max and min take 0.0
       above -0.0 (IEEE 754-2019's maximum and minimum).
@@ -1266,16 +1267,84 @@ Each entry: the decision, why, and what was rejected.
       even with a NaN one (IEEE 754's hypot), and closer to the nearest
       flonum than `sqrt(x²+y²)` (not correctly rounded in 13% and 17% of a
       sweep of 200,000 arguments). An exact one is exact if it can be,
-      `(magnitude 3+4i)` 5, and otherwise the root of its exact sum of
-      squares, unless that is beyond the flonums' range.
+      `(magnitude 3+4i)` 5, and otherwise the flonum nearest to the root
+      of its exact sum of squares (`sqrt`, below), also beyond the
+      flonums' range.
+    - **A real and a complex number** (M11-01, #244's follow-ups). `+`,
+      `-`, `*` and `/` take the real number with each part of the complex
+      one on its own, C99 Annex G.5.1's table: x(u+iv) = xu + i(xv),
+      (u+iv)/x = u/x + i(v/x), x + (u+iv) = (x+u) + iv, x − (u+iv) =
+      (x−u) + i(−v), (u+iv) − x = (u−x) + iv, and x/(u+iv) =
+      x(u−iv)/(u²+v²), the real times the conjugate (Annex G leaves this
+      one to complex division; ours drops its terms that would multiply
+      the real's 0 imaginary part). The real used to become x + 0i, an
+      exact 0 that `flo` made 0.0, so 0·∞ made `(* 2. (make-rectangular
+      +inf.0 1.))` +inf.0+nan.0i (chibi-scheme and Annex G: +inf.0+2.0i),
+      and 0 + -0.0 made `(+ 1. (make-rectangular 1. -0.))` 2.0+0.0i. Each
+      part is now one IEEE 754 operation (or, for x/(u+iv), the same ones
+      as before, without the zero terms), so its sign of zero is IEEE
+      754-2019's: a product or quotient's is the exclusive or of the
+      operands' (§6.3), an exactly zero sum of opposite signs (or difference
+      of like ones) is +0 (§6.3, round to nearest), and negation flips it
+      (§5.5.1). The audit, case by case, against the value before: `+`
+      keeps the complex number's imaginary part, -0.0 included; `-` keeps
+      it or negates it, so `(- 1. (make-rectangular 1. 0.))` is
+      0.0-0.0i, as Annex G has it (0 − 0.0 was 0.0); `*` gives the
+      imaginary part x·v's sign, `(* -2. (make-rectangular 1. 0.))`
+      -2.0-0.0i (x·v + 0·u was +0.0 whenever x·v was a zero); `/` by a
+      real divides each part, without the square of x, so `(/
+      (make-rectangular 1. 2.) 1e200)` is 1.0e-200+2.0e-200i, not 0.0+0.0i,
+      and a division by ±0.0 gives signed infinities, not NaN; a real
+      divided by a complex number has the conjugate's sign, `(/ 1.
+      (make-rectangular 1. 0.))` 1.0-0.0i, as 1/z is conj(z)/|z|².
+      R7RS §6.2.4 makes -0.0 "distinct (in the sense of eqv?) from 0.0"
+      and doesn't fix these signs, nor this accuracy; Annex G and IEEE
+      754 do. Unchanged: an exact real with exact parts stays exact (and
+      `(* 0 +inf.0+1.i)`'s real part NaN, #243's rule for an exact 0);
+      mixed exactness makes both parts inexact; two complex numbers take
+      the textbook formulas; and a division by a complex number, of a real
+      or a complex one, still squares the divisor's parts, so `(/ 1.
+      (make-rectangular +inf.0 1.))` is +nan.0-0.0i, not 0.0-0.0i, and
+      `(/ 1. (make-rectangular 1e200 1e200))` 0.0-0.0i (Annex G's
+      `_Cdivd` scales the divisor and recovers infinities: a follow-up).
+    - **`sqrt` of an exact non-square** is the flonum nearest to its root,
+      one rounding of the exact value, as `inexact` of an exact number is
+      (above) and as IEEE 754-2019's squareRoot is of its operand (§5.4.1).
+      It was `Math.sqrt(flo(z))`: +inf.0 for a z beyond the flonums' range
+      whose root is inside it (`(sqrt (* 2 (expt 10 400)))`, now
+      1.414213562373095e+200), 0.0 for a tiny one (now
+      1.414213562373095e-200 for `(sqrt (/ 2 (expt 10 400)))`, and a
+      subnormal where it is one), and an ulp off now and then from the
+      double rounding (`(sqrt 719831/227121)` was 1.7802730894245993, the
+      nearest is 1.7802730894245995). It is integer arithmetic
+      (`Arithmetic.nearestSqrt`): q = ⌊√(n·4^s/d)⌋ of about 64 bits, and
+      (q + ½)/2^s rounded once (`Numbers.nearestDouble`), which rounds as
+      the irrational root does since no rounding boundary lies between q
+      and q+1. A fixnum up to 2^53, exactly a flonum, keeps `Math.sqrt`.
+      Checked against Python's integer square root on 3,000 random big
+      integers and ratios of up to 2,300 bits: all the same.
+    - **`(expt 1. +nan.0)` is 1.0** (M11-01; #243 had made it +nan.0).
+      IEEE 754-2019 §9.2.1: "pow(+1, y) is 1 for any y (even a quiet
+      NaN)", as C99 F.9.4.4 has it; Java's `pow` gives NaN for any NaN
+      power. R7RS §6.2.4 allows either: "An arithmetic operation where one
+      operand is NaN returns NaN, unless the implementation can prove that
+      the result would be the same if the NaN were replaced by any
+      rational number", and 1^q is 1 for every rational q. §6.2.3
+      recommends IEEE 754-2008's transcendental functions "particularly
+      with respect to infinities and NaNs", and pow(±1, ±∞) is already 1
+      here (#244), so a base of 1 (exact or inexact) to any real power is
+      1.0. chibi-scheme agrees (C's `pow`). Not pow(−1, NaN), which IEEE
+      leaves NaN, nor a NaN base to a non-zero power.
     - Tests: `NumbersTest` (known values, a sweep against `StrictMath`, the
       sweep interpreted and compiled, what the sign of each special value
       gives, NaN and -0.0 against R7RS and IEEE 754, `expt` of negative
-      bases and `magnitude` at infinities, and polar literals against
-      `make-polar`), `tests/diff/numbers-transcendental.scm` (values that
+      bases and `magnitude` at infinities, a real and a complex number,
+      `sqrt` of exact numbers, and polar literals against `make-polar`),
+      `tests/diff/numbers-transcendental.scm` (values that
       both fdlibm and chibi-scheme round to the nearest),
       `tests/diff/numbers-special-values.scm` (NaN and -0.0 where chibi-scheme
-      agrees with R7RS) and `tests/diff/numbers-expt-magnitude.scm`.
+      agrees with R7RS), `tests/diff/numbers-expt-magnitude.scm` and
+      `tests/diff/numbers-complex-edges.scm`.
     - *Rejected:* `Math` (above); `StrictMath` for `exp` and `log` only,
       which wouldn't have fixed the case found, since fdlibm's `(exp 1)` is
       the one an ulp off, and leaves the rest platform-dependent; a correctly

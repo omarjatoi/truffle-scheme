@@ -165,6 +165,9 @@ final class Arithmetic {
         if (!(a instanceof SComplex) && !(b instanceof SComplex)) {
             return real(who, op, a, b);
         }
+        if (!(a instanceof SComplex) || !(b instanceof SComplex)) {
+            return realAndComplex(who, op, a, b);
+        }
         Object ar = realPart(a);
         Object ai = imagPart(a);
         Object br = realPart(b);
@@ -179,6 +182,35 @@ final class Arithmetic {
                 Object re = real(who, Op.ADD, real(who, Op.MUL, ar, br), real(who, Op.MUL, ai, bi));
                 Object im = real(who, Op.SUB, real(who, Op.MUL, ai, br), real(who, Op.MUL, ar, bi));
                 yield SComplex.make(real(who, Op.DIV, re, d), real(who, Op.DIV, im, d));
+            }
+        };
+    }
+
+    /**
+     * A real and a complex number, either way round: C99 Annex G.5.1's table, the real number
+     * taken with each part on its own, x(u+iv) = xu + i(xv), (u+iv)/x = u/x + i(v/x), x ±
+     * (u+iv) = (x ± u) + i(±v), and x/(u+iv) = x(u-iv)/(u²+v²). Never the real as x+0i, whose
+     * 0·∞ made {@code (* 2. (make-rectangular +inf.0 1.))} +inf.0+nan.0i, and whose 0 + -0.0 made
+     * the imaginary part of {@code (+ 1. (make-rectangular 1. -0.))} 0.0 (M11-01). Each part is
+     * IEEE 754's round-to-nearest result, its sign of zero included (design.md D1).
+     */
+    private static Object realAndComplex(String who, Op op, Object a, Object b) {
+        boolean complexFirst = a instanceof SComplex;
+        SComplex z = (SComplex) (complexFirst ? a : b);
+        Object x = complexFirst ? b : a;
+        Object u = z.real;
+        Object v = z.imag;
+        // + and * of two reals commute, also in IEEE 754, its signs of zero included.
+        return switch (op) {
+            case ADD -> SComplex.make(real(who, Op.ADD, x, u), v);
+            case SUB -> complexFirst ? SComplex.make(real(who, Op.SUB, u, x), v) : SComplex.make(real(who, Op.SUB, x, u), negate(v));
+            case MUL -> SComplex.make(real(who, Op.MUL, x, u), real(who, Op.MUL, x, v));
+            case DIV -> {
+                if (complexFirst) {
+                    yield SComplex.make(real(who, Op.DIV, u, x), real(who, Op.DIV, v, x));
+                }
+                Object d = real(who, Op.ADD, real(who, Op.MUL, u, u), real(who, Op.MUL, v, v));
+                yield SComplex.make(real(who, Op.DIV, real(who, Op.MUL, x, u), d), real(who, Op.DIV, real(who, Op.MUL, x, negate(v)), d));
             }
         };
     }
@@ -509,11 +541,8 @@ final class Arithmetic {
         }
         if (isExact(c)) {
             // Exact when the sum of the squares is a perfect square, (magnitude 3+4i) => 5, and
-            // otherwise the sum's flonum's root, unless the sum is beyond the flonums' range.
-            Object root = sqrt(add(mul(c.real, c.real), mul(c.imag, c.imag)));
-            if (!(root instanceof Double r) || Double.isFinite(r) && r != 0) {
-                return root;
-            }
+            // otherwise the flonum nearest to its root, also beyond the flonums' range (M11-01).
+            return sqrt(add(mul(c.real, c.real), mul(c.imag, c.imag)));
         }
         // IEEE 754's hypot: no overflow or underflow of the squares, and +inf.0 for an infinite
         // part, even with a NaN one; log's real part is the log of the same (#243's follow-up).
@@ -544,6 +573,10 @@ final class Arithmetic {
             if (n[1].signum() == 0 && d[1].signum() == 0) {
                 Object root = SRational.make(n[0], d[0]);
                 return negative ? SComplex.make(0L, root) : root;
+            } else if (!(a instanceof Long l && l <= 1L << 53)) {
+                // Beyond 2^53 or not an integer, flo(a) is rounded, and may be +inf.0 or 0.0.
+                double root = nearestSqrt(numerator(a), denominator(a));
+                return negative ? complexResult(0.0, root) : (Object) root;
             }
         }
         if (!(z instanceof SComplex)) {
@@ -557,6 +590,23 @@ final class Arithmetic {
         double re = Math.sqrt((r + x) / 2);
         double im = Math.sqrt((r - x) / 2);
         return complexResult(re, y < 0 ? -im : im);
+    }
+
+    /**
+     * The flonum nearest to √(n/d), for n, d > 0 and n/d not an exact square: one rounding, as
+     * {@code inexact} of an exact number (design.md D1), where {@code Math.sqrt(flo(n/d))} rounds
+     * twice and overflows to +inf.0 (or underflows to 0.0) for an n/d beyond the flonums' range
+     * whose root is inside it (M11-01). With s chosen so that n·4^s/d has about 128 bits, q =
+     * ⌊√⌊n·4^s/d⌋⌋ = ⌊√(n·4^s/d)⌋ has about 64, and the root lies strictly between q and q+1 (the
+     * root of a rational that isn't a square is irrational). Every boundary between two roundings
+     * of a number of 64 bits to 53 (or fewer, a subnormal's) is an integer, so (q + 1/2)/2^s
+     * rounds as the root does.
+     */
+    private static double nearestSqrt(BigInteger n, BigInteger d) {
+        int s = (128 - (n.bitLength() - d.bitLength())) / 2;
+        BigInteger scaled = s >= 0 ? n.shiftLeft(2 * s).divide(d) : n.divide(d.shiftLeft(-2 * s));
+        BigInteger halfUlps = scaled.sqrt().shiftLeft(1).setBit(0);
+        return s >= -1 ? Numbers.nearestDouble(halfUlps, BigInteger.ONE.shiftLeft(s + 1)) : Numbers.nearestDouble(halfUlps.shiftLeft(-s - 1), BigInteger.ONE);
     }
 
     @TruffleBoundary
@@ -648,12 +698,14 @@ final class Arithmetic {
             double b = flo(base);
             double p = flo(power);
             // IEEE 754's pow: x^0 is 1 for every x, also a NaN, an infinity or a negative x, whose
-            // e^(0 log x) would be complex or NaN; a NaN power gives NaN (R7RS §6.2.4). A positive
+            // e^(0 log x) would be complex or NaN; a NaN power gives NaN (R7RS §6.2.4), but for
+            // the base 1 (below). A positive
             // or NaN base's power is real, and so is a negative base's to an integer-valued flonum
             // power, an infinity included: every flonum beyond 2^53 is an even integer, so pow's
             // |x|^±inf is the limit. Only a negative base to a finite non-integer power is complex.
-            // IEEE 754-2008 made pow(±1, ±inf) 1, where Java's pow, C89's, is NaN.
-            if (p == 0 || Double.isInfinite(p) && Math.abs(b) == 1) {
+            // IEEE 754-2008 made pow(±1, ±inf) 1, and pow(+1, y) 1 for every y, a NaN too, where
+            // Java's pow, C89's, is NaN; R7RS §6.2.4 allows either for a NaN (M11-01, design.md D1).
+            if (p == 0 || Double.isInfinite(p) && Math.abs(b) == 1 || b == 1) {
                 return 1.0;
             } else if (Double.isNaN(p) || !(b < 0) || power instanceof Double && Math.rint(p) == p) {
                 return StrictMath.pow(b, p);
