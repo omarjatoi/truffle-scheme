@@ -4946,6 +4946,11 @@ over, behind a boundary.
     the nodes don't have. Calls and callbacks 1.00-1.01. In
     the interpreter, array reads 0.93 times (against `main` 0.89, A/A
     1.02) and field reads 0.32 (against `main` 0.56, A/A 0.89).
+  - Scheme alone, with both: `bench-check` all 25 within their thresholds
+    (machine factor 1.03, adjusted ratios 0.97-1.07, load 4.7-5.7); and
+    its measures interleaved with `main` (4 rounds, load 3.5-9.6), medians
+    of the ratios: `cpstak` 1.03 (both sides 97 or 119-122 ms by run),
+    `fibc` 0.96, `peval` 0.88 (0.61-1.60), `puzzle` 1.02, `takl` 1.01.
 
 **Testing with a second language.** The tests need another Truffle language.
 `org.graalvm.truffle:truffle-sl`, GraalVM's SimpleLanguage, is on Maven

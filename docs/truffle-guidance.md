@@ -397,8 +397,10 @@ The page also links, in its body, [the DSL guidance](https://www.graalvm.org/lat
 (*"refer to their Javadoc, the DSL guidance, and the Truffle Libraries
 documentation"*). Truffle Libraries are for dispatch over receiver types
 across languages (interop): we export `InteropLibrary` messages for Scheme
-values (D10) and use no libraries of our own, since our values' dispatch is
-DSL specializations on their Java classes. Follow.
+values (D10), reach foreign values through `InteropLibrary`s cached in each
+call site's or primitive's node (`@CachedLibrary`, design.md D20, "Foreign
+access in compiled code"), and use no libraries of our own, since our
+values' dispatch is DSL specializations on their Java classes. Follow.
 
 ## Fixes
 
