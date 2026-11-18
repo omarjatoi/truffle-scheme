@@ -45,9 +45,12 @@ function main() { o = new(); o.add = add; o.callBack = callBack; return o; }"))
   (let loop ((i 0) (s 0))
     (if (= i n) s (loop (+ i 1) (+ s (foreign-ref tokenizer 'ttype))))))
 
-;; SL calls a Scheme procedure n times.
+;; SL calls a Scheme procedure n times: n / 1000 calls of an SL loop of 1000 callbacks. (One SL
+;; call of a loop of n would time how far SL's tiers had got with that one call, OSR or not.)
 (define (callbacks n)
-  (call-back (lambda (i) (+ i 1)) n))
+  (let ((f (lambda (i) (+ i 1))))
+    (let loop ((i 0) (s 0))
+      (if (>= i n) s (loop (+ i 1000) (+ s (call-back f 1000)))))))
 
 (define cases
   (list (list "calls" calls (lambda (n) n))
@@ -55,7 +58,7 @@ function main() { o = new(); o.add = add; o.callBack = callBack; return o; }"))
         (list "elements" elements (lambda (n) (+ (* (quotient n 1000) 499500)
                                                  (let ((r (remainder n 1000))) (quotient (* r (- r 1)) 2)))))
         (list "members" members (lambda (n) (* -4 n)))
-        (list "callbacks" callbacks (lambda (n) (quotient (* n (+ n 1)) 2)))))
+        (list "callbacks" callbacks (lambda (n) (* (quotient (+ n 999) 1000) 500500)))))
 
 (define arguments (cdr (command-line)))
 (define iterations (string->number (car arguments)))
