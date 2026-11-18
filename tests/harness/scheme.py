@@ -1,4 +1,5 @@
-"""The `scheme` launcher (//:scheme): `bazel-bin/scheme [option...] [-I dir]... [file.scm [arg...]]`.
+"""The `scheme` launcher (//:scheme_py, which //:scheme runs once it has checked its platform and its
+JDK: bazel/launcher.bzl): `bazel-bin/scheme [option...] [-I dir]... [file.scm [arg...]]`.
 
 Runs scheme.launcher.SchemeMain on the pinned GraalVM with the language and GraalVM's tools on the
 module path (--inspect, --dap, --cpusampler and --memtracer work). With no file, a REPL. Its

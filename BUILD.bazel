@@ -2,6 +2,7 @@ load("@rules_python//python:defs.bzl", "py_binary")
 load("@graalvm//:version.bzl", GRAALVM_VERSION = "VERSION")
 load("@rules_cc//cc:defs.bzl", "cc_binary")
 load("//bazel:java_module.bzl", "java_module_jar", "module_dir", "native_library", "native_setting", "polyglot_isolate", "prelude_image", "scheme_runtime")
+load("//bazel:launcher.bzl", "launcher")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -107,11 +108,20 @@ scheme_runtime(
     module = ":launcher_module",
 )
 
-# `bazel-bin/scheme [option...] [-I dir]... [file.scm [arg...]]` (docs/usage.md).
-py_binary(
+# `bazel-bin/scheme [option...] [-I dir]... [file.scm [arg...]]` (docs/usage.md): the Python
+# launcher, once a shell script has checked that it runs on its platform and that its JDK is there
+# (bazel/launcher.bzl, design.md D11 "An output directory per platform").
+launcher(
     name = "scheme",
+    jdk = "//bazel:jdk",
+    launcher = ":scheme_py",
+)
+
+py_binary(
+    name = "scheme_py",
     srcs = ["//tests/harness:scheme.py"],
     data = [":scheme_runtime"],
+    main = "//tests/harness:scheme.py",
     deps = ["//tests/harness"],
 )
 

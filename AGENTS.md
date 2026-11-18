@@ -308,7 +308,8 @@ prelude and declarations files are in `src/prelude/scheme/prelude/`.
 MODULE.bazel               Bazel modules, TRUFFLE_VERSION, Maven artifacts (locked in maven_install.json)
 BUILD.bazel                the scheme, scheme.launcher modules (jars), the prelude image, bazel-bin/scheme, bazel-bin/scheme-native
 bazel/                     the GraalVM toolchain (graalvm.bzl), module jars and the native library (java_module.bzl),
-                           chibi-scheme (chibi.bzl), lint tests (lint/), platforms (platforms/: Linux remote, macOS here)
+                           bazel-bin/scheme's checks (launcher.bzl), chibi-scheme (chibi.bzl), lint tests (lint/),
+                           platforms (platforms/: Linux remote, macOS here)
 flake.nix, flake.lock      dev shell: bazel, Python, gh, chibi-scheme, GraalVM 25.5
 .buildkite/                CI: the pipeline and its pre-command hook
 src/reader/                reader + datum labels

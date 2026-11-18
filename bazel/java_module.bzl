@@ -150,8 +150,8 @@ def _jdk_tree_impl(ctx):
         mnemonic = "JdkTree",
         progress_message = "Copying the JDK into one directory",
         # For a target that isn't Linux (this machine), copied here, so the files keep the release's
-        # modification times however often Bazel makes the tree again (after a Linux build replaced
-        # it at the same path, or a switch of configuration) while the AOT cache's action is still
+        # modification times however often Bazel makes the tree again (after a switch of
+        # configuration, between --config=local and the remote one) while the AOT cache's action is still
         # up to date: the cache's stamp records them (design.md D17, "Where it is valid"). From the
         # remote cache, they would be the time of each download.
         execution_requirements = {} if linux else {"no-remote": "1"},

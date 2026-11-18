@@ -514,6 +514,23 @@ harness_test(
     tags = ["lint"],
 )
 
+# design.md D11 "An output directory per platform": bazel-bin/scheme runs a program, and on another
+# platform than its own, without its JDK or without its runfiles exits with one line naming the
+# command to run (bazel/launcher.bzl).
+harness_test(
+    name = "launcher",
+    check = "launcher",
+    args = [
+        "--scheme=$(rlocationpath //:scheme)",
+        "--jdk=$(rlocationpath //bazel:jdk)",
+    ],
+    data = [
+        "//:scheme",
+        "//bazel:jdk",
+    ],
+    size = "small",
+)
+
 # design.md D17 "The launcher's JVM": its collector, compiler threads and AOT cache, unless its JVM
 # options (its --vm. options among them) say otherwise; "VM options"; "Options" (Graal compiled for
 # HotSpot with the compiler's instrumentation).

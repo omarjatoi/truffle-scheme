@@ -3988,7 +3988,8 @@ Each entry: the decision, why, and what was rejected.
   a native executable without one, it sets them in the process
   (`RuntimeOptions`).
   - *The JVM launcher.* `bazel-bin/scheme` is that script
-    (`tests/harness/scheme.py`): `Runtime.launcher` takes each `--vm.` option
+    (`tests/harness/scheme.py`, behind the checks of `bazel/launcher.bzl`,
+    D11): `Runtime.launcher` takes each `--vm.` option
     before the program file out (`split_vm_options`, which parses as
     `SchemeMain.preprocessArguments` does) and starts the JVM with it as
     `-<option>` (`--vm.cp=` and `--vm.classpath=` as `-cp`, `--vm.p=` and
