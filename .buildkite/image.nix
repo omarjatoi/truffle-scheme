@@ -83,7 +83,8 @@ dockerTools.buildLayeredImage {
   inherit contents;
   # The Nix database, written by the image's own Nix, so that it holds every path in the image.
   extraCommands = ''
-    mkdir -p tmp root var/empty lib64 nix/var/nix/gcroots
+    # /var/tmp too: skopeo (the `image` step) unpacks the image's archive there.
+    mkdir -p tmp var/tmp root var/empty lib64 nix/var/nix/gcroots
     ln -s ${pkgs.nix-ld}/libexec/nix-ld lib64/ld-linux-x86-64.so.2
     NIX_REMOTE="local?root=$PWD" USER=root \
       ${nixPackage}/bin/nix-store --load-db < ${registration}/registration
@@ -96,7 +97,7 @@ dockerTools.buildLayeredImage {
     ln -s ${nixPackage} nix/var/nix/profiles/default
   '';
   fakeRootCommands = ''
-    chmod 1777 tmp
+    chmod 1777 tmp var/tmp
   '';
   config = {
     Cmd = [ "/bin/bash" ];
