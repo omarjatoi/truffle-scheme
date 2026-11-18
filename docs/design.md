@@ -4982,6 +4982,27 @@ Each entry: the decision, why, and what was rejected.
       0.360 against 0.316 (the JVM's 0.268 and 0.248 against 0.252);
       `compiler`, `scheme`, `dynamic`, `peval`, `slatex` and `browse`
       within the A/A pairs' differences on both.
+    - *`case` on long lists of characters.* That loop still walked about
+      25 elements for each character `parsing` scanned. `memv` or `memq`
+      of a quoted list of more than 16 datums, all characters (up to
+      4,096: `ConstantMember.charList`), now compiles to one operation,
+      `MemberChar`: a binary search of the list's code points, sorted,
+      each with the tail at its first occurrence, which the node makes
+      from the literal list the first time it runs (a literal's pairs
+      can't change, D1); a key that isn't a character is in no such list.
+      `MemberCharTest` checks the instructions and the primitive's values.
+      In the same runs as the loop above, `parsing`'s steady state is
+      0.443 s natively (the loop alone 0.531, `main` 0.719) and 0.286 s
+      on the JVM (0.409, 0.433); the other programs within the A/A pairs'
+      differences. The interpreter (`--engine.Compilation=false`, 5
+      interleaved JVMs, 10 iterations at a hundredth of the count, the
+      median of the last five) takes 0.466 s against `main`'s 0.488, the
+      first iteration 1.075 against 1.071; the native interpreter 0.519
+      against 0.549 (3 processes). The operation adds a case to the
+      bytecode interpreter: `continueAt`'s host compilations
+      (`-Djdk.graal.PrintCompilation=true`, interpreted `parsing`) are the
+      same sizes as `main`'s within their run-to-run spread (40.4-40.7 KB
+      of bytecode against 40.4-40.7, 14-16 KB of code against 14-16).
   - **Rejected: a 1 GB minimum heap for the native launcher (#189).** The
     image was built for a while with `-R:MinHeapSize=1g`, a default for the
     executable's minimum heap that its own `-Xms` or `-XX:MinHeapSize=`

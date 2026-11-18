@@ -74,6 +74,7 @@ import scheme.runtime.value.SPair;
 @OperationProxy(value = Intrinsics.IsPair.class, name = "IsPair")
 @OperationProxy(value = Intrinsics.Eq.class, name = "Eq")
 @OperationProxy(value = Intrinsics.Assoc.class, name = "Assoc")
+@OperationProxy(value = Intrinsics.MemberChar.class, name = "MemberChar")
 @OperationProxy(value = Intrinsics.Not.class, name = "Not")
 @OperationProxy(value = Intrinsics.Add.class, name = "Add")
 @OperationProxy(value = Intrinsics.Sub.class, name = "Sub")

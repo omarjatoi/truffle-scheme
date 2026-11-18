@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import scheme.runtime.value.SBigInteger;
+import scheme.runtime.value.SChar;
 import scheme.runtime.value.SComplex;
 import scheme.runtime.value.SConstant;
 import scheme.runtime.value.SPair;
@@ -24,6 +25,10 @@ import scheme.runtime.value.SRational;
  * one a pair (else the primitive's error, when it gets that far). For {@code memv} and
  * {@code assv}, every datum (every key) must be one that {@code eq?} compares as {@code eqv?} does
  * (design.md D1): anything but an exact number that isn't a fixnum.
+ *
+ * <p>A call of {@code memv} or {@code memq} whose quoted list is longer, and of characters only
+ * ({@link #charList}, M12-04), compiles to one {@code MemberChar} operation instead, which finds the
+ * key by a binary search of their code points.
  */
 final class ConstantMember {
 
@@ -80,7 +85,35 @@ final class ConstantMember {
     }
 
     static boolean isConstantMember(Ast.Call call) {
-        return matches(call) != null;
+        return matches(call) != null || charList(call) != null;
+    }
+
+    /** The most datums {@link #charList} takes: a longer list (or a circular one) calls the primitive. */
+    static final int CHAR_LIMIT = 4096;
+
+    /**
+     * The quoted list of a call of {@code memv} or {@code memq} with more than {@link #LIMIT} datums,
+     * every one a character, which compiles to one {@code MemberChar} operation, a binary search of
+     * their code points (design.md D17, "The native launcher's steady state"); else null.
+     */
+    static Object charList(Ast.Call call) {
+        if (!(call.procedure instanceof Ast.GlobalRef g && g.cell.isFixed() && call.arguments.size() == 2 &&
+                        call.arguments.get(1) instanceof Ast.Const list)) {
+            return null;
+        }
+        String name = g.cell.name.toString();
+        if (!name.equals("memv") && !name.equals("memq")) {
+            return null;
+        }
+        int n = 0;
+        Object rest = list.value;
+        while (rest instanceof SPair p) {
+            if (!(p.car instanceof SChar) || ++n > CHAR_LIMIT) {
+                return null;
+            }
+            rest = p.cdr;
+        }
+        return rest == SConstant.EMPTY_LIST && n > LIMIT ? list.value : null;
     }
 
     /** Whether eq? compares {@code datum} with any object as eqv? does. */
