@@ -873,6 +873,91 @@ public class EmbeddingTest {
         }
     }
 
+    /** The exit a program ends with, from a context of its own (an exit closes it). */
+    private static PolyglotException exit(String name, String text) {
+        return exit(Context.newBuilder(SCHEME).out(new ByteArrayOutputStream()), name, text);
+    }
+
+    private static PolyglotException exit(Context.Builder builder, String name, String text) {
+        try (Context context = builder.build()) {
+            context.eval(source(name, text));
+        } catch (PolyglotException e) {
+            assertTrue(name + ": " + e, e.isExit());
+            return e;
+        }
+        throw new AssertionError(name + ": no exit");
+    }
+
+    /**
+     * An exit is located as an error would be (design.md D8): at the program's call of
+     * {@code exit} or {@code emergency-exit}, the innermost frame of code that isn't internal, not
+     * in the prelude's {@code exit}; also when a trampoline runs the primitive (here, {@code apply}'s
+     * tail call), and after a tail call, at the call of the procedure that made it.
+     */
+    @Test
+    public void exitsAreLocatedAtTheProgramsCall() {
+        PolyglotException e = exit("exit.scm", """
+                        (define (run n)
+                          (list (exit n)))
+                        (run 3)
+                        """);
+        assertEquals(3, e.getExitStatus());
+        assertEquals("exit.scm:2 (exit n)", at(e.getSourceLocation()));
+        if (!TORTURE) {
+            // Under torture, run's frame and the program's wait on the heap, and an exit's trace
+            // (Truffle's) doesn't unwind through them as an error's does.
+            assertEquals(List.of("run 2", "<program> 3"), guestFrames(e).subList(0, 2));
+        }
+
+        e = exit("emergency.scm", """
+                        (define (run n)
+                          (list (emergency-exit n)))
+                        (run 4)
+                        """);
+        assertEquals(4, e.getExitStatus());
+        assertEquals("emergency.scm:2 (emergency-exit n)", at(e.getSourceLocation()));
+
+        e = exit("apply.scm", """
+                        (define (run n)
+                          (list (apply emergency-exit (list n))))
+                        (run 5)
+                        """);
+        assertEquals(5, e.getExitStatus());
+        assertEquals("apply.scm:2 (apply emergency-exit (list n))", at(e.getSourceLocation()));
+
+        e = exit("top.scm", """
+                        (display "before")
+                        (exit 6)
+                        (display "after")
+                        """);
+        assertEquals(6, e.getExitStatus());
+        assertEquals("top.scm:2 (exit 6)", at(e.getSourceLocation()));
+
+        // In tail position, as an error: the frame that made the tail call is gone.
+        e = exit("tail.scm", """
+                        (define (leave n)
+                          (exit n))
+                        (define (run n)
+                          (list (leave n)))
+                        (run 7)
+                        """);
+        assertEquals(7, e.getExitStatus());
+        assertEquals("tail.scm:4 (leave n)", at(e.getSourceLocation()));
+
+        // Deep enough to spill, so the outer frames wait on the heap. Under torture every frame
+        // does, the caller of exit's too, and the location is that pending frame's.
+        Context.Builder spilling = Context.newBuilder(SCHEME).out(new ByteArrayOutputStream()).allowExperimentalOptions(true).option("scheme.SpillDepth", "5");
+        e = exit(spilling, "deep.scm", """
+                        (define (down n)
+                          (if (= n 0)
+                              (list (exit 8))
+                              (+ 1 (down (- n 1)))))
+                        (down 30)
+                        """);
+        assertEquals(8, e.getExitStatus());
+        assertEquals("deep.scm:3 (exit 8)", at(e.getSourceLocation()));
+    }
+
     /**
      * The guest object is what {@code raise} raised (design.md D10): an exception, and also that
      * Scheme value, with its Scheme display string and meta object, a number or a boolean included.

@@ -1,17 +1,24 @@
 package scheme.runtime;
 
+import java.util.List;
+
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.RootCallTarget;
+import com.oracle.truffle.api.Truffle;
 import com.oracle.truffle.api.TruffleStackTrace;
 import com.oracle.truffle.api.TruffleStackTraceElement;
 import com.oracle.truffle.api.bytecode.BytecodeNode;
 import com.oracle.truffle.api.bytecode.ContinuationRootNode;
 import com.oracle.truffle.api.exception.AbstractTruffleException;
+import com.oracle.truffle.api.frame.FrameInstance;
+import com.oracle.truffle.api.frame.FrameInstance.FrameAccess;
 import com.oracle.truffle.api.interop.ExceptionType;
 import com.oracle.truffle.api.interop.InteropLibrary;
 import com.oracle.truffle.api.interop.UnsupportedMessageException;
 import com.oracle.truffle.api.library.CachedLibrary;
 import com.oracle.truffle.api.library.ExportLibrary;
 import com.oracle.truffle.api.library.ExportMessage;
+import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.nodes.RootNode;
 import com.oracle.truffle.api.source.SourceSection;
 
@@ -203,20 +210,83 @@ public final class SchemeError extends AbstractTruffleException {
      * (docs/upstream.md): its procedure's root says.
      */
     private SourceSection location() {
-        if (syntax) {
-            return syntaxLocation;
+        return syntax ? syntaxLocation : innermostLocation(this);
+    }
+
+    private static SourceSection innermostLocation(Throwable exception) {
+        for (TruffleStackTraceElement element : TruffleStackTrace.getStackTrace(exception)) {
+            SourceSection section = locationOf(element);
+            if (section != null) {
+                return section;
+            }
         }
-        for (TruffleStackTraceElement element : TruffleStackTrace.getStackTrace(this)) {
-            RootNode root = element.getTarget().getRootNode();
-            if (root instanceof ContinuationRootNode continuation) {
-                root = (RootNode) continuation.getSourceRootNode();
+        return null;
+    }
+
+    /** The element's location, if its code isn't internal. */
+    private static SourceSection locationOf(TruffleStackTraceElement element) {
+        if (isInternal(element.getTarget().getRootNode())) {
+            return null;
+        }
+        BytecodeNode bytecode = BytecodeNode.get(element);
+        return bytecode == null ? null : bytecode.getSourceLocation(element.getBytecodeIndex());
+    }
+
+    /** Whether the code is internal: a resumed frame's continuation root's procedure says. */
+    private static boolean isInternal(RootNode root) {
+        if (root instanceof ContinuationRootNode continuation) {
+            return ((RootNode) continuation.getSourceRootNode()).isInternal();
+        }
+        return root.isInternal();
+    }
+
+    /**
+     * Where an error raised at {@code node} now would be located ({@link #location}): the innermost
+     * frame with a location whose code isn't internal, counting the frames a prompt holds on the
+     * heap (its asynchronous frames: a spill's, and every frame under torture) where its driver is.
+     * For an exit, which is Truffle's exception rather than an error, and which Truffle locates at
+     * the node it is given (design.md D8). Never on a fast path: it walks the stack.
+     */
+    @TruffleBoundary
+    public static SourceSection locate(Node node) {
+        // The current frame's location is the node's: Truffle finds it, in a resumed frame too, as
+        // for an exception thrown there. A frame instance has only its call node.
+        Probe probe = new Probe(node);
+        List<TruffleStackTraceElement> trace = TruffleStackTrace.fillIn(probe) == null ? null : TruffleStackTrace.getStackTrace(probe);
+        TruffleStackTraceElement current = trace == null || trace.isEmpty() ? null : trace.get(0);
+        boolean[] first = {true};
+        return Truffle.getRuntime().iterateFrames(frame -> {
+            SourceSection section = pendingLocation(frame);
+            if (section != null) {
+                return section;
             }
-            if (root.isInternal()) {
-                continue;
+            if (first[0]) {
+                first[0] = false;
+                return current == null ? null : locationOf(current);
             }
-            BytecodeNode bytecode = BytecodeNode.get(element);
-            if (bytecode != null) {
-                SourceSection section = bytecode.getSourceLocation(element.getBytecodeIndex());
+            if (!(frame.getCallTarget() instanceof RootCallTarget target) || isInternal(target.getRootNode())) {
+                return null;
+            }
+            BytecodeNode bytecode = BytecodeNode.get(frame);
+            return bytecode == null ? null : bytecode.getSourceLocation(frame);
+        });
+    }
+
+    /** An exception made only for the stack trace of where it is made, and never thrown. */
+    private static final class Probe extends AbstractTruffleException {
+        private static final long serialVersionUID = 1L;
+
+        Probe(Node location) {
+            super(location);
+        }
+    }
+
+    /** The location of the innermost of the frames a prompt's driver holds on the heap, if any. */
+    private static SourceSection pendingLocation(FrameInstance frame) {
+        List<TruffleStackTraceElement> pending = TruffleStackTrace.getAsynchronousStackTrace(frame.getCallTarget(), frame.getFrame(FrameAccess.READ_ONLY));
+        if (pending != null) {
+            for (TruffleStackTraceElement element : pending) {
+                SourceSection section = locationOf(element);
                 if (section != null) {
                     return section;
                 }

@@ -1929,7 +1929,20 @@ Each entry: the decision, why, and what was rejected.
     (D10), since delegated to the Java value they had no language and no
     meta object, and `(raise #t)` showed as `true`.
   - `exit` and `emergency-exit` are Truffle's (`closeExited`, D9), an `EXIT`
-    with its status; `Context.interrupt` and `close(true)` (and the
+    with its status, **located as an error would be (M12-08)**: at the
+    innermost call of code that isn't internal, the program's call of
+    `exit`. Truffle locates an exit at the node `closeExited` is given, by
+    its source section, and the primitive's own node, run in place in the
+    prelude's `exit`, had only that procedure's: the whole of `exit`'s
+    definition. `emergency-exit` gives it a node of its own instead, made as
+    the context exits (none on any call path), whose section it finds by
+    walking the stack: the current frame's location from a stack trace
+    filled in at the primitive's node (so a resumed frame's comes out right
+    too), the others' from their call nodes, and a prompt's pending frames
+    (its asynchronous stack: a spill's, and every frame under torture) where
+    the prompt's driver is. `EmbeddingTest` checks `exit`, `emergency-exit`,
+    a primitive a trampoline runs (`apply`'s tail call), a tail call's
+    caller, and a spill. `Context.interrupt` and `close(true)` (and the
     resource limits that cancel) are Truffle's too: not `SchemeError`s, so
     no prompt runs Scheme code for them (no handler, no after-thunk; an
     interrupted context goes on with the dynamic environment it had before
@@ -1947,10 +1960,6 @@ Each entry: the decision, why, and what was rejected.
     this change: a raised symbol 28.4 and 28.2 ms, `(car i)` caught 70.3
     and 70.7, an error 10 frames down 101.1 and 98.9, `error` 30.2 and
     30.7, `raise-continuable` 26.2 and 25.9: the same.
-  - *Not done:* `exit`'s location is the prelude's `exit`, the root of the
-    primitive's caller: `closeExited` takes a node, and a primitive run in
-    place has no node of its own for the call. Its stack trace does show
-    the program's frames.
 
 ### D9. Spec traps decided up front
 
