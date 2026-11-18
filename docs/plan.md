@@ -1517,7 +1517,7 @@ that may change performance measures with interleaved A/B runs.
   - **Done when** the image builds with a bound set from its current count
     plus a margin (both recorded in design.md D17), a build past the bound
     fails, and `//tests:conformance_native` passes.
-- [ ] **M11-10 · Compact object headers, re-measured**
+- [x] **M11-10 · Compact object headers, re-measured**
   - design.md "The launcher's JVM: memory and start-up": rejected at M8-05,
     measured without the AOT cache and with 12 host compiler threads (with
     the serial collector 5% faster overall, slower on `nboyer` and
@@ -1529,6 +1529,14 @@ that may change performance measures with interleaved A/B runs.
     way (first runs, steady state, peak RSS, start-up), and design.md
     records the result; the launcher's default changes only if it wins
     without costing memory or start-up.
+  - Done (2026-11-18), still rejected (design.md D17, "The collector"): on
+    36 programs, 3 interleaved rounds with an A/A floor, each with its own
+    cache, the first iteration 0.997 times (A/A 1.004), the later
+    iterations' mean 0.998 (0.997) and best 0.954 (0.994), whole processes
+    0.998, peak RSS 0.978; start-up the same (hello world 126.7 ms against
+    125.4-126.1). The steady state's gain is `mperm`'s and `paraffins`'
+    collections; without them the flag costs 2-3% (`earley` 1.30), so the
+    launcher's default is unchanged.
 - [ ] **M11-11 · `ISOLATED` and `UNTRUSTED` sandbox policies**
   - #226 declared `SandboxPolicy.CONSTRAINED`. The stricter policies run the
     guest in a polyglot isolate, which on Community Edition needs the
