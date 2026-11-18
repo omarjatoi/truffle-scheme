@@ -4889,6 +4889,23 @@ over, behind a boundary.
   number that fits in a `long`, in compiled code, and leaves the rest
   (strings, big numbers, Java objects, which keep their identity through
   a table) to `InteropValues.toScheme`, behind its boundary.
+- *The `foreign-*` procedures.* Each is a node of the runtime's
+  (`ForeignNodes`: `ReadNode`, `WriteNode`, `LengthNode`, `InvokeNode`,
+  `InstantiateNode`, `IsInstanceNode`, `IsNullNode`, `ElementsNode`), a
+  child of the primitive's node, so a call site that runs the primitive in
+  place ("Primitives run in place") has a cache of its own. Each caches the
+  receiver's library (the type's, for `foreign-instance?`); `foreign-ref`
+  and `foreign-set!` have one specialization for an array element (an exact
+  integer key on a value with array elements) and one for a hash or a
+  member. A symbol as a member name is a constant of its own cache
+  (`MemberNameNode`: a symbol's name can't change), so the member's cache
+  in the other language sees a constant name; a string's is read each time.
+  `foreign-keys`, `foreign->list` and `foreign->vector` loop with a second,
+  dispatched library for the iterator or the members' array. Each message
+  that may run foreign code is a foreign operation, with its errors, as
+  before; `foreign?` needs no interop. The `polyglot-*` procedures and
+  `java-type`, which go through the Env, run once and stay behind their
+  boundaries.
 - *The interpreter's host compilation.* `doForeign` is an
   `@InliningCutoff`, in `Call` and in the trampoline, as `doDirect` and
   `doIndirect` are ("The interpreter's first runs", M10-02;
@@ -4899,9 +4916,12 @@ over, behind a boundary.
   to 2,259 over its compilations against 1,827 to 2,290, `doForeign` cut.
 - *Tests.* `PolyglotTest` checks, in every mode, that a site's call node
   and a trampoline's each cache a library for SL's function
-  (`foreignCallsUseTheSitesInteropCaches`, through `Introspection`), and
-  that loops of calls, tail calls and callbacks compile with no performance
-  warning (`compiler.TracePerformanceWarnings=all`).
+  (`foreignCallsUseTheSitesInteropCaches`, through `Introspection`), that
+  each `foreign-ref` and `foreign-set!` in a loop over an SL object and
+  Java's arrays, lists, maps and fields caches a library
+  (`foreignAccessorsUseTheirInteropCaches`), and that loops of calls, tail
+  calls, callbacks and every `foreign-*` procedure compile with no
+  performance warning (`compiler.TracePerformanceWarnings=all`).
 - *Measured* (`bench/polyglot/foreign.scm`, bench/README.md "Polyglot"):
   interleaved against `main` and `main` against a copy of itself (the A/A
   noise floor), 8 rounds in a rotating order, a fresh JVM each, the
@@ -4914,6 +4934,36 @@ over, behind a boundary.
   callbacks into Scheme, which this doesn't change, 1.005 (1.011). In the
   interpreter, the median of iterations 6-10 of 100,000: calls 0.63 times
   (A/A 1.025), tail calls 0.74 (1.011), callbacks 0.99 (0.98).
+  - The `foreign-*` procedures as nodes, in the same runs (against the
+    cached calls alone, and against `main`): `foreign-ref` of a Java
+    `int[]`'s element 60 ms to 0.89 ms (0.015 times; against `main`, 82
+    ms, 0.011; A/A 0.83), and of a Java object's field 118 ms to 0.44
+    (0.004; against `main`, 34 ms, 0.013; A/A 1.00). The uncached reads
+    were bimodal from one JVM to the next (`main`'s array reads 20 to 99
+    ms by round, its field reads 33 to 84, and 33 to 129 after the cached
+    calls; each case run alone, the field reads were 31-36 ms either way),
+    an effect of the host's profile of the uncached library's code, which
+    the nodes don't have. Calls and callbacks 1.00-1.01. In
+    the interpreter, array reads 0.93 times (against `main` 0.89, A/A
+    1.02) and field reads 0.32 (against `main` 0.56, A/A 0.89).
+  - First iterations (JIT, the same runs, both changes against `main`):
+    calls 0.91 times (A/A 1.10), tail calls 0.69 (1.05), array reads 0.92
+    (1.04), field reads 0.71 (0.97), callbacks 1.00 (1.00).
+  - Native: the native launcher has neither SL nor Java classes (above),
+    so foreign values reach native code through an embedder, here a JVM
+    that runs Scheme in the polyglot isolate (`ISOLATED`, the native
+    `//:scheme_isolate`) and hands it a `ProxyExecutable`, a `ProxyArray`
+    and a `ProxyObject` through the bindings. Each access crosses to the
+    host's JVM, about 1 µs, so caching is a smaller share: 15 iterations of
+    100,000 a run, the median of the last 5, 8 interleaved rounds against
+    `main`'s isolate and a copy of it (load 3.7-9.8): calls 0.95 times (A/A
+    0.99), tail calls 0.95 (1.00), array reads 0.93 (0.99), member reads
+    0.94 (1.01); first iterations 0.94-0.97 (A/A 0.99-1.00).
+  - Scheme alone, with both: `bench-check` all 25 within their thresholds
+    (machine factor 1.03, adjusted ratios 0.97-1.07, load 4.7-5.7); and
+    its measures interleaved with `main` (4 rounds, load 3.5-9.6), medians
+    of the ratios: `cpstak` 1.03 (both sides 97 or 119-122 ms by run),
+    `fibc` 0.96, `peval` 0.88 (0.61-1.60), `puzzle` 1.02, `takl` 1.01.
 
 **Testing with a second language.** The tests need another Truffle language.
 `org.graalvm.truffle:truffle-sl`, GraalVM's SimpleLanguage, is on Maven
