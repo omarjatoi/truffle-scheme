@@ -1725,7 +1725,7 @@ measures with interleaved A/B runs.
     deep recursion that spills equal its calls, with a test, or each is
     recorded in docs/upstream.md with a reproducer and issue text (filing
     it is a human's call), and docs/usage.md's table says what's left.
-- [ ] **M12-08 · `exit`'s source location**
+- [x] **M12-08 · `exit`'s source location**
   - #258's follow-up: a `PolyglotException` from `exit` is located at the
     prelude's `exit` (the root of `emergency-exit`'s caller), since
     `closeExited` takes a node and a primitive run in place has none for

@@ -9,12 +9,14 @@ import java.util.Map;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.TruffleLanguage;
 import com.oracle.truffle.api.nodes.Node;
+import com.oracle.truffle.api.source.SourceSection;
 
 import scheme.runtime.Features;
 import scheme.runtime.PrimitiveNode;
 import scheme.runtime.PrimitiveSpec;
 import scheme.runtime.PrimitiveSpec.Result;
 import scheme.runtime.SchemeContext;
+import scheme.runtime.SchemeError;
 import scheme.runtime.value.SConstant;
 import scheme.runtime.value.SPair;
 import scheme.runtime.value.SString;
@@ -129,8 +131,29 @@ final class ProcessTimePrimitives {
             }
             SchemeContext context = SchemeContext.get(location);
             context.out().flush();
-            context.getEnv().getContext().closeExited(location, status);
+            context.getEnv().getContext().closeExited(new ExitLocation(SchemeError.locate(location)), status);
             throw new IllegalStateException("closeExited returned");
+        }
+    }
+
+    /**
+     * Where an exit is: Truffle locates it at the node {@code closeExited} is given, by its source
+     * section. The primitive's own node is in the frame that exits, the prelude's {@code exit}'s
+     * when {@code exit} was called, and is located at the whole of that procedure, as a primitive
+     * run in place has no source section of its own. This one is located as an error raised there
+     * would be: at the innermost call of code that isn't internal (design.md D8), the program's.
+     * Made only as the context exits, so no call site has one.
+     */
+    private static final class ExitLocation extends Node {
+        private final SourceSection section;
+
+        ExitLocation(SourceSection section) {
+            this.section = section;
+        }
+
+        @Override
+        public SourceSection getSourceSection() {
+            return section;
         }
     }
 
