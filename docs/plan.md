@@ -1462,7 +1462,7 @@ that may change performance measures with interleaved A/B runs.
     counts invalidations) or recorded in design.md with its evidence;
     `fibc`, `ctak` and the torture modes' times unchanged or faster;
     `bench-check` passes.
-- [ ] **M11-05 · The call sites' inline caches**
+- [x] **M11-05 · The call sites' inline caches**
   - #215's follow-ups: `Call`'s `doPrimitive` is a specialization of its own
     in front of `doDirect` (a limit of 4 each); the one-entry shape #215
     gave the trampoline's caches may suit it too. A trampoline past its
