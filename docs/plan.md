@@ -1509,7 +1509,7 @@ that may change performance measures with interleaved A/B runs.
   - **Done when** `module-info.java` has only qualified exports, a check
     reads the module's descriptor and fails on an unqualified export, and
     the embedding tests and docs/embedding.md's samples pass.
-- [ ] **M11-09 · A bound on runtime-compiled methods**
+- [x] **M11-09 · A bound on runtime-compiled methods**
   - GraalVM's language jars set `-H:MaxRuntimeCompileMethods=<n>` in their
     `native-image.properties` (SimpleLanguage 250, TRegex 900, Sulong
     10000), so an image whose partial evaluation reaches more methods fails

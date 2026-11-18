@@ -299,12 +299,18 @@ def _native_library_impl(ctx):
     # framework creates the launcher class it names, runs the startup hooks once the options are
     # processed (so not as the isolate is created: -H:-InitializeVM), and handles signals as an
     # executable does by default. Not -H:-ParseRuntimeOptions, which would ignore the options the
-    # thin launcher creates the isolate with.
-    library = ctx.actions.declare_file("lib%s.%s" % (ctx.label.name, "so" if linux else "dylib"))
+    # thin launcher creates the isolate with. The bound on runtime-compiled methods that the jars'
+    # native-image.properties add up (-H:MaxRuntimeCompileMethods: Truffle's runtime's and the
+    # language's) fails the build only when enforced, as GraalVM's gates enforce it (design.md D17,
+    # "Runtime-compiled methods").
+    if ctx.attr.should_fail:
+        out = ctx.actions.declare_file(ctx.label.name + ".log")
+    else:
+        out = ctx.actions.declare_file("lib%s.%s" % (ctx.label.name, "so" if linux else "dylib"))
     module_path = _module_path([ctx.attr.module])
     args = ctx.actions.args()
     args.add(jdk.java_home)
-    args.add(library)
+    args.add(out)
     args.add_joined(module_path, join_with = ctx.configuration.host_path_separator)
     args.add(module_name)
     args.add("lib" + ctx.label.name)
@@ -314,6 +320,7 @@ def _native_library_impl(ctx):
         "-H:+UnlockExperimentalVMOptions",
         "-H:-InitializeVM",
         "-H:+InstallExitHandlers",
+        "-H:+EnforceMaxRuntimeCompileMethods",
         "-H:-UnlockExperimentalVMOptions",
         "-R:+EnableSignalHandling",
         "-R:+InstallSegfaultHandler",
@@ -322,21 +329,27 @@ def _native_library_impl(ctx):
     args.add_all(ctx.attr.options)
     if gc == "serial":
         args.add_all(ctx.attr.serial_options)
+
+    # The image's working files (its C headers among them) go to a temporary directory; only the
+    # library is the output. native-image compiles and links with the C compiler on the action's
+    # PATH, on the execution platform the target's C++ toolchain chose (below). With
+    # `should_fail`, the output is instead native-image's output and exit status, whatever it is.
+    command = ('home="$1" out="$2" mp="$3" module="$4" name="$5"; shift 5; tmp="$(mktemp -d)"; ' +
+               '"$home/bin/native-image" -p "$mp" --add-modules="$module" -o "$tmp/$name" "$@"')
+    if ctx.attr.should_fail:
+        command = '{ %s; echo "native-image exit status: $?"; } > "$2" 2>&1' % command
+    else:
+        command += ' && cp "$tmp/$(basename "$out")" "$out"'
     ctx.actions.run_shell(
-        # The image's working files (its C headers among them) go to a temporary directory; only
-        # the library is the output. native-image compiles and links with the C compiler on the
-        # action's PATH, on the execution platform the target's C++ toolchain chose (below).
-        command = 'home="$1" out="$2" mp="$3" module="$4" name="$5"; shift 5; tmp="$(mktemp -d)"; ' +
-                  '"$home/bin/native-image" -p "$mp" --add-modules="$module" -o "$tmp/$name" "$@" && ' +
-                  'cp "$tmp/$(basename "$out")" "$out"',
+        command = command,
         arguments = [args],
         inputs = depset(transitive = [module_path, jdk.files]),
-        outputs = [library],
+        outputs = [out],
         mnemonic = "NativeImage",
         progress_message = "Building the native launcher's library %{label}",
         use_default_shell_env = True,
     )
-    return [DefaultInfo(files = depset([library]))]
+    return [DefaultInfo(files = depset([out]))]
 
 native_library = rule(
     implementation = _native_library_impl,
@@ -353,6 +366,9 @@ native_library = rule(
         "module": attr.label(mandatory = True, providers = [JavaModuleInfo]),
         "options": attr.string_list(),
         "serial_options": attr.string_list(doc = "more options, with the serial collector only"),
+        "should_fail": attr.bool(doc = "for a build that should fail: the target is then " +
+                                       "`<name>.log`, native-image's output and exit status, " +
+                                       "instead of the library"),
         "_linux": attr.label(default = "@platforms//os:linux"),
     },
     toolchains = use_cc_toolchain(mandatory = True),
