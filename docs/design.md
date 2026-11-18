@@ -4646,12 +4646,13 @@ executable.
   leaves the Scheme root as that same exception, after the after-thunks it
   skips (D8), so the language or embedder that called Scheme gets its own
   exception back.
-- **A Scheme error in another language** is D10's: a `SchemeError`, an
-  `AbstractTruffleException` whose interop delegates to the raised object,
-  which the other language can catch. If it comes back into Scheme through
-  the foreign frames uncaught, it is raised again at the foreign call's site
-  as the object Scheme raised (`eq?` to it), so a `guard` around the
-  foreign call catches what a callback inside it raised.
+- **A Scheme error in another language** is D10's and D8's ("Errors as
+  Truffle exceptions"): a `SchemeError`, an `AbstractTruffleException` that
+  is the raised object to interop, with its message, location and stack
+  trace, which the other language can catch. If it comes back into Scheme
+  through the foreign frames uncaught, it is raised again at the foreign
+  call's site as the object Scheme raised (`eq?` to it), so a `guard`
+  around the foreign call catches what a callback inside it raised.
 - Internal Java exceptions are still never converted (D8), and Truffle's
   exit and cancel exceptions pass through every frame untouched.
 
@@ -4723,9 +4724,34 @@ frame on the stack"* (GraalVM's Espresso Continuations guide).
   policy is for applications *"whose access to host resources should be
   regulated"*, and `Env.getSandboxPolicy()` is there so that *"a language
   can ... make language-specific verifications that the sandbox
-  requirements are met"*. The language's own policy stays `CONSTRAINED`
-  (D10): the rest of the library is gated by permissions that the sandbox
-  already restricts.
+  requirements are met"*. The language itself declares `UNTRUSTED` (D10,
+  M11-11): the rest of the library is gated by what the policies already
+  restrict, the context's permitted languages, its polyglot access and its
+  `HostAccess`.
+- **Under `ISOLATED` and `UNTRUSTED`** the language runs in the polyglot
+  isolate (D10, "ISOLATED and UNTRUSTED"), whose library holds Scheme alone.
+  So `polyglot-eval` reaches only Scheme there (`polyglot-language-available?`
+  is true of `scheme` and of nothing else), and a context that permits
+  another language with Scheme can't be built: Truffle refuses it (*"No
+  native isolate library is available for the requested language(s)"*), as
+  every language it permits must be in the isolate, and declared for the
+  policy. `java-type` is refused by the policy (above). Everything else
+  works as on the JVM, through the isolate's handles: the polyglot
+  bindings, the values the embedder hands Scheme (proxies, and Java objects
+  as the policy's `HostAccess` allows: by default only members annotated
+  `@HostAccess.Export`, and no list, array or map access, which `UNTRUSTED`
+  forbids enabling, so a Java list is a foreign value with no elements),
+  host functions called and calling Scheme back, a host exception raised in
+  Scheme as itself, and the continuation checks (a continuation can't
+  escape through the host's frames). Nothing in the library needed to
+  change for the isolate.
+  - *Under `TRUSTED`, an isolate* (`engine.SpawnIsolate`, which any policy
+    may set) is a native image too, so `java-type` gives the native-image
+    error below, though the isolate's host lookups go to the host's JVM,
+    which has the classes' metadata: a Java object handed in works there.
+    The language can't tell the isolate from the native launcher (both are
+    native-image shared libraries); telling them apart needs a constant the
+    isolate's build sets. An open question (below).
 - The `scheme` launcher's context is the launcher framework's,
   `allowAllAccess(true)` (D17), as GraalVM's own launchers' are: a script
   can use the library, but only Scheme is on the launcher's module path, so
@@ -4749,4 +4775,33 @@ objects (arrays, lists, maps, exceptions) cover the rest through host
 interop. It is a **test-only** dependency (D11): pinned in
 `maven_install.json` at `TRUFFLE_VERSION`, on the module path of
 `PolyglotTest` alone, never in the language's module, the launcher or the
-native image.
+native image. `PolyglotTest.Isolated` runs the library in the polyglot
+isolate under `ISOLATED`, `UNTRUSTED` and a `TRUSTED` isolate, with no
+second language; like `SandboxTest.Isolated`, only when named
+(`//tests:unit_isolate_PolyglotTest`), since the isolate is a native-image
+build.
+
+**Open questions**, for the maintainer's review before D20 and its
+implementation merge:
+
+- *The names.* `polyglot-*` for languages and bindings, `foreign-*` for
+  values, `java-type` for classes; `foreign-instance?` for `instanceof`.
+  `polyglot-import` answers `#f` for an unbound name, so an exported `#f`
+  and no binding look alike.
+- *The test-only dependency*, `truffle-sl` and the ANTLR runtime (above),
+  a new Maven artifact.
+- *Continuations across foreign frames.* An error in both directions, and
+  D10's semantics at the same depth, so a generator another language drives
+  works; or confine each callback's continuations to its own activation.
+- *The native launcher.* It has only Scheme in the image and no reflection
+  metadata, so a script there gets little from the library: `polyglot-eval`
+  of another language is the "not available" error and `java-type` the
+  native-image error. Whether to support it (other languages built into the
+  image, reflection metadata for chosen classes) or call the library
+  JVM-only is open.
+- *`java-type` under `CONSTRAINED`* is refused even when the embedder's
+  class filter allows the class, and `HostAccess.CONSTRAINED` would limit
+  it to exported members; so are `ISOLATED` and `UNTRUSTED`, whose
+  `HostAccess` scopes it further.
+- *`java-type` in a `TRUSTED` isolate* is refused as in any native image,
+  though it could work there (above).
