@@ -560,7 +560,7 @@ allows (design.md D20); a program that doesn't import it sees none of it.
 | `(polyglot-eval language source)`, `(polyglot-eval-file language path)` | Evaluates code of another language of the context: `allowPolyglotAccess`, and the language permitted (`Context.newBuilder("scheme", "js")`). |
 | `(polyglot-language-available? language)` | Whether `polyglot-eval` may evaluate that language. |
 | `(polyglot-import name)`, `(polyglot-export name value)` | The polyglot bindings, `context.getPolyglotBindings()` in Java (`allowPolyglotAccess`); `polyglot-import` answers `#f` for a name nothing exports. |
-| `(java-type name)` | A Java class (`allowHostClassLookup`), refused under `SandboxPolicy.CONSTRAINED`. |
+| `(java-type name)` | A Java class (`allowHostClassLookup`), refused under `SandboxPolicy.CONSTRAINED` and the stricter policies, and in a native image (the native launcher, a polyglot isolate). |
 | `(foreign? x)`, `(foreign-null? x)` | Whether `x` is a foreign value, and a foreign null (Java's `null`). |
 | `(foreign-ref obj key)`, `(foreign-set! obj key value)` | An array element (an exact integer key), a map's value (`HostAccess` with map access), or a member: a field, a method, another language's property (a string or symbol key). |
 | `(foreign-length obj)`, `(foreign-keys obj)` | An array's or a map's size; a map's keys, or an object's member names. |
@@ -619,3 +619,13 @@ called that language. A continuation can't cross the other language's
 frames: invoking, inside a callback, one captured outside it, or, after the
 foreign call has returned, one captured in its callback, is a Scheme error
 (design.md D20, "Continuations across foreign frames").
+
+Under `ISOLATED` and `UNTRUSTED` ([above](#isolated-and-untrusted)), Scheme
+runs in the isolate, which holds no other language: `polyglot-eval` reaches
+only Scheme, and a context that permits another language with Scheme can't
+be built (*"No native isolate library is available for the requested
+language(s)"*). `java-type` is refused. The polyglot bindings, values you
+hand Scheme (proxies, Java objects under the policy's `HostAccess`, which has
+no list, array or map access by default) and functions it calls back work
+as on the JVM, through the isolate's handles, and so do errors and the
+continuation rules above (design.md D20, "Permissions and the sandbox").

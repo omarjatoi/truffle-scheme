@@ -3,9 +3,11 @@ package scheme.test;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -13,6 +15,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.Engine;
@@ -22,6 +25,9 @@ import org.graalvm.polyglot.PolyglotException;
 import org.graalvm.polyglot.SandboxPolicy;
 import org.graalvm.polyglot.Value;
 import org.graalvm.polyglot.io.IOAccess;
+import org.graalvm.polyglot.proxy.ProxyArray;
+import org.graalvm.polyglot.proxy.ProxyExecutable;
+import org.graalvm.polyglot.proxy.ProxyObject;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -403,6 +409,148 @@ public class PolyglotTest {
                 assertTrue(e.getMessage(), e.getMessage().contains("foreign?"));
             }
             assertEquals("ok", context.eval(SCHEME, "(import (scheme base) (prefix (graalvm polyglot) pg:)) (if (pg:foreign? 1) 'no 'ok)").toString());
+        }
+    }
+
+    /**
+     * The library under {@code ISOLATED} and {@code UNTRUSTED}, which run the language in
+     * //:scheme_isolate's polyglot isolate (design.md D10, "ISOLATED and UNTRUSTED"; D20, "Permissions
+     * and the sandbox"). Run only when named, as {@code //tests:unit_isolate_PolyglotTest}, like
+     * {@code SandboxTest.Isolated}: the library is a native-image build. The isolate holds Scheme
+     * alone, so SL, on this JVM's module path, is not a language Scheme can reach there.
+     */
+    public static class Isolated {
+
+        private final ByteArrayOutputStream out = new ByteArrayOutputStream();
+
+        /** A context under ISOLATED, with the limits it requires and every polyglot permission. */
+        private Context.Builder isolated() {
+            return Context.newBuilder(SCHEME).sandbox(SandboxPolicy.ISOLATED).out(out).err(out).option("engine.MaxIsolateMemory", "256MB").option("sandbox.MaxCPUTime",
+                            "20s").allowPolyglotAccess(PolyglotAccess.ALL).allowHostClassLookup(name -> !name.isEmpty());
+        }
+
+        /** A context under UNTRUSTED, with the limits it requires and every polyglot permission. */
+        private Context.Builder untrusted() {
+            return Context.newBuilder(SCHEME) //
+                            .sandbox(SandboxPolicy.UNTRUSTED) //
+                            .in(new ByteArrayInputStream(new byte[0])) //
+                            .out(out) //
+                            .err(out) //
+                            .option("engine.MaxIsolateMemory", "512MB") //
+                            .option("sandbox.MaxHeapMemory", "128MB") //
+                            .option("sandbox.MaxCPUTime", "20s") //
+                            .option("sandbox.MaxASTDepth", "50") //
+                            .option("sandbox.MaxThreads", "1") //
+                            .option("sandbox.MaxOutputStreamSize", "1MB") //
+                            .option("sandbox.MaxErrorStreamSize", "1MB") //
+                            .allowPolyglotAccess(PolyglotAccess.ALL) //
+                            .allowHostClassLookup(name -> !name.isEmpty());
+        }
+
+        /** The message of what {@code body} raises, or its value. */
+        private static String message(Context context, String body) {
+            return show(context, "(guard (e ((error-object? e) (error-object-message e))) " + body + ")");
+        }
+
+        @Test
+        public void polyglotEvalReachesOnlyTheLanguagesInTheIsolate() {
+            for (Context.Builder builder : List.of(isolated(), untrusted())) {
+                try (Context context = builder.build()) {
+                    // Scheme itself is there; SL, on this JVM's module path, is not.
+                    assertEquals("(#f #t (\"sl\" (\"scheme\")) 3)", show(context, """
+                                    (list (polyglot-language-available? "sl")
+                                          (polyglot-language-available? "scheme")
+                                          (guard (e ((error-object? e) (error-object-irritants e))) (polyglot-eval "sl" "function main() { return 1; }"))
+                                          (guard (e ((error-object? e) (error-object-message e))) (polyglot-eval "scheme" "(+ 1 2)")))
+                                    """));
+                }
+            }
+            // A context can't permit SL: the isolate library is Scheme's alone.
+            IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> Context.newBuilder(SCHEME, SL).sandbox(SandboxPolicy.ISOLATED).out(out).err(out).option(
+                            "engine.MaxIsolateMemory",
+                            "256MB").option("sandbox.MaxCPUTime", "20s").build().close());
+            assertTrue(e.getMessage(), e.getMessage().contains("No native isolate library is available for the requested language(s) [scheme, sl]"));
+        }
+
+        @Test
+        public void javaTypeIsRefusedUnderBothPolicies() {
+            try (Context context = isolated().build()) {
+                assertEquals("\"java-type: host class lookup is refused under the ISOLATED sandbox policy\"", message(context, "(java-type \"java.util.ArrayList\")"));
+            }
+            try (Context context = untrusted().build()) {
+                assertEquals("\"java-type: host class lookup is refused under the UNTRUSTED sandbox policy\"", message(context, "(java-type \"java.util.ArrayList\")"));
+            }
+        }
+
+        @Test
+        public void anIsolateUnderTrustedRefusesJavaTypeAsANativeImageDoes() {
+            // engine.SpawnIsolate runs the language in the isolate under any policy. The isolate is
+            // a native image, so java-type refuses as it does in the native launcher, though its
+            // lookups would go to this JVM (D20's open questions); a Java object handed in works,
+            // under the embedder's HostAccess.
+            try (Context context = Context.newBuilder(SCHEME).out(out).err(out).option("engine.SpawnIsolate", "true").allowHostAccess(HostAccess.ALL).allowHostClassLookup(
+                            name -> !name.isEmpty()).build()) {
+                assertEquals("\"java-type: Java classes are not available in a native image, which is built without their reflection metadata: java.util.ArrayList\"",
+                                message(context, "(java-type \"java.util.ArrayList\")"));
+                List<Object> list = new ArrayList<>();
+                Value add = run(context, "(lambda (l) (foreign-invoke l 'add \"x\") (list (foreign-length l) (foreign->list l)))");
+                assertEquals("(1 (\"x\"))", add.execute(list).toString());
+                assertEquals("[x]", list.toString());
+            }
+        }
+
+        @Test
+        public void thePolyglotBindingsCrossTheIsolate() {
+            for (Context.Builder builder : List.of(isolated(), untrusted())) {
+                try (Context context = builder.build()) {
+                    context.getPolyglotBindings().putMember("greeting", "Hello");
+                    run(context, "(polyglot-export \"greet\" (lambda (name) (string-append (polyglot-import \"greeting\") \", \" name \"!\")))");
+                    assertEquals("Hello, Ada!", context.getPolyglotBindings().getMember("greet").execute("Ada").asString());
+                    // (A boolean from the isolate is a Java one.)
+                    assertFalse(run(context, "(polyglot-import \"nothing\")").asBoolean());
+                }
+            }
+        }
+
+        @Test
+        public void hostValuesAreForeignValuesInTheIsolate() {
+            for (Context.Builder builder : List.of(isolated(), untrusted())) {
+                try (Context context = builder.build()) {
+                    Value probe = run(context, """
+                                    (lambda (object array twice fail items)
+                                      (list (foreign? object) (foreign-ref object "x") (foreign-keys object)
+                                            (foreign-length array) (foreign->list array) (procedure? twice) (twice 21)
+                                            (twice (lambda (x) (* x 10)))
+                                            (guard (e ((error-object? e) (list (foreign? e) (error-object-message e)))) (fail))
+                                            (guard (e ((error-object? e) (error-object-message e))) (foreign-length items))))
+                                    """);
+                    ProxyExecutable twice = args -> args[0].canExecute() ? args[0].execute(2) : args[0].asInt() * 2;
+                    ProxyExecutable fail = args -> {
+                        throw new IllegalStateException("from the host, with " + args.length + " arguments");
+                    };
+                    // A proxy's members and elements, a host function called and calling back, a host
+                    // exception raised in Scheme as itself; but a Java list is no array: the
+                    // policy's HostAccess has no list access.
+                    assertEquals("(#t 5 (\"x\") 3 (1 2 3) #t 42 20 (#t \"from the host, with 0 arguments\") \"foreign-length: not supported by this foreign value\")", probe.execute(
+                                    ProxyObject.fromMap(Map.of("x", 5)),
+                                    ProxyArray.fromArray(1, 2, 3), twice, fail, List.of(1, 2)).toString());
+                }
+            }
+        }
+
+        @Test
+        public void aContinuationCantEscapeThroughAHostFrame() {
+            for (Context.Builder builder : List.of(isolated(), untrusted())) {
+                try (Context context = builder.build()) {
+                    Value probe = run(context, """
+                                    (lambda (call)
+                                      (guard (e ((error-object? e) (error-object-message e)))
+                                        (call/cc (lambda (k) (call (lambda () (k 1)))))))
+                                    """);
+                    ProxyExecutable call = args -> args[0].execute();
+                    assertEquals("\"continuation would escape through a foreign frame: it was captured outside the foreign call that this code runs in\"", probe.execute(call).toString());
+                }
+            }
         }
     }
 }

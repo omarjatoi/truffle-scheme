@@ -130,6 +130,18 @@ junit_test(
     test_class = "scheme.test.SandboxTest$Isolated",
 )
 
+# PolyglotTest.Isolated: (graalvm polyglot) under ISOLATED and UNTRUSTED, in //:scheme_isolate's
+# polyglot isolate (design.md D20, "Permissions and the sandbox"), as unit_isolate_SandboxTest.
+junit_test(
+    name = "unit_isolate_PolyglotTest",
+    size = "large",
+    jvm_flags = ["-Dpolyglot.engine.userResourceCache=$TEST_TMPDIR/resources"],
+    module = ":unit_module_PolyglotTest",
+    modules = ["//:scheme_isolate"],
+    tags = ["manual"],
+    test_class = "scheme.test.PolyglotTest$Isolated",
+)
+
 # The test drivers (diff, spec and space programs, conformance sections), in Java: they run in
 # the pinned JDK and start the language in a child JVM (bazel/jvm_test.bzl java_driver_test).
 scheme_java_library(
