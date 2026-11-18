@@ -1395,7 +1395,7 @@ the CI image (#232), Bazel 9 and GraalVM 25.6. Benchmarks are local
 (bench/README.md: the load rule, `-Xmx2g`, the serial collector); each task
 that may change performance measures with interleaved A/B runs.
 
-- [ ] **M11-01 · Complex arithmetic's edges** *(early)*
+- [x] **M11-01 · Complex arithmetic's edges** *(early)*
   - #244's follow-ups, against R7RS §6.2 (with its errata), C99 Annex G.5.1
     and IEEE 754. Numbers area only (AGENTS.md "Areas").
   - `*` and `/` of a real and a complex number promote the real to a

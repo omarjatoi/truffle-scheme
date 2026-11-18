@@ -414,7 +414,10 @@ public class NumbersTest {
                         {"(expt -2. +inf.0)", "+inf.0"}, {"(expt -.5 +inf.0)", "0.0"}, {"(expt -1. +inf.0)", "1.0"}, {"(expt -2. -inf.0)", "0.0"},
                         {"(expt -.5 -inf.0)", "+inf.0"}, {"(expt -1 -inf.0)", "1.0"}, {"(expt -inf.0 +inf.0)", "+inf.0"}, {"(expt -inf.0 -inf.0)", "0.0"},
                         // ... where IEEE 754-2008's pow(±1, ±∞) is 1, Java's NaN (C89's)
-                        {"(expt 1. +inf.0)", "1.0"}, {"(expt 1 -inf.0)", "1.0"}, {"(expt 1. +nan.0)", "+nan.0"},
+                        {"(expt 1. +inf.0)", "1.0"}, {"(expt 1 -inf.0)", "1.0"},
+                        // ... and pow(+1, y) is 1 for every y, a NaN too (M11-01; Java's is NaN), but not pow(-1, NaN)
+                        {"(expt 1. +nan.0)", "1.0"}, {"(expt 1 +nan.0)", "1.0"}, {"(expt 1. -nan.0)", "1.0"}, {"(expt 1/1 +nan.0)", "1.0"},
+                        {"(expt -1. +nan.0)", "+nan.0"}, {"(expt -1 +nan.0)", "+nan.0"}, {"(expt 1.0000000000000002 +nan.0)", "+nan.0"},
                         // a negative infinite base to an integer-valued power
                         {"(expt -inf.0 2.)", "+inf.0"}, {"(expt -inf.0 3.)", "-inf.0"}, {"(expt -inf.0 -2.)", "0.0"}, {"(expt -inf.0 -3.)", "-0.0"},
                         {"(expt -inf.0 3)", "-inf.0"},
@@ -445,6 +448,78 @@ public class NumbersTest {
                         {"(magnitude 1+2i)", "2.23606797749979"}, {"(magnitude 3.+4.i)", "5.0"}, {"(magnitude 1.5+2.5i)", "2.9154759474226504"},
                         {"(magnitude (make-rectangular 0. -0.))", "0.0"},
                         {"(let ((z 1e300+1e300i)) (= (real-part (log z)) (log (magnitude z))))", "#t"},
+        };
+        assertWrites(cases);
+    }
+
+    /**
+     * M11-01 (#244's follow-ups). A real and a complex number: C99 Annex G.5.1's table, each part
+     * on its own, x(u+iv) = xu + i(xv), (u+iv)/x = u/x + i(v/x), x ± (u+iv) = (x ± u) + i(±v),
+     * and x/(u+iv) = x(u-iv)/(u²+v²), never the real promoted to x+0i, whose 0·∞ made {@code (* 2.
+     * (make-rectangular +inf.0 1.))} +inf.0+nan.0i and whose 0 + -0.0 made {@code (+ 1.
+     * (make-rectangular 1. -0.))}'s imaginary part 0.0. An exact real times an inexact part is the
+     * inexact product (R7RS §6.2.2 allows exact 0 too; #244). Mixing exactness makes both parts
+     * inexact (design.md D1). The expected values and their signs of zero are IEEE 754's
+     * round-to-nearest results of those formulas.
+     */
+    @Test
+    public void realAndComplexArithmeticTakeEachPart() {
+        String[][] cases = {
+                        // * : each part times the real, also an infinite one
+                        {"(* 2. (make-rectangular +inf.0 1.))", "+inf.0+2.0i"}, {"(* (make-rectangular +inf.0 1.) 2.)", "+inf.0+2.0i"},
+                        {"(* 2 (make-rectangular +inf.0 1.))", "+inf.0+2.0i"}, {"(* 2. (make-rectangular 1. -inf.0))", "2.0-inf.0i"},
+                        {"(* +inf.0 (make-rectangular 1. 2.))", "+inf.0+inf.0i"}, {"(* 1e200 (make-rectangular 1e200 1.))", "+inf.0+1.0e+200i"},
+                        {"(* +nan.0 (make-rectangular 1. 2.))", "+nan.0+nan.0i"}, {"(* 1.5 1+2i)", "1.5+3.0i"}, {"(* 1/2 1+2i)", "1/2+i"},
+                        // ... with its signs of zero
+                        {"(* 2. (make-rectangular 1. -0.))", "2.0-0.0i"}, {"(* -2. (make-rectangular 1. 0.))", "-2.0-0.0i"},
+                        {"(* -2. (make-rectangular -0. 1.))", "0.0-2.0i"}, {"(* 0 (make-rectangular 1.5 -2.5))", "0.0-0.0i"},
+                        {"(* -0. (make-rectangular 1. 2.))", "-0.0-0.0i"},
+                        // / by a real: each part divided, without squaring the divisor
+                        {"(/ (make-rectangular +inf.0 1.) 2.)", "+inf.0+0.5i"}, {"(/ (make-rectangular 1. 2.) 1e200)", "1.0e-200+2.0e-200i"},
+                        {"(/ (make-rectangular 3. 4.) 0.)", "+inf.0+inf.0i"}, {"(/ (make-rectangular 3. -4.) -0.)", "-inf.0+inf.0i"},
+                        {"(/ (make-rectangular 1. -0.) 2.)", "0.5-0.0i"}, {"(/ 1+2i 2)", "1/2+i"},
+                        // a real divided by a complex number: the conjugate's parts times the real
+                        {"(/ 1. (make-rectangular 1. 0.))", "1.0-0.0i"}, {"(/ 1. (make-rectangular 2. -0.))", "0.5+0.0i"},
+                        {"(/ 2. (make-rectangular 0. 1.))", "0.0-2.0i"}, {"(/ -2. (make-rectangular 0. 1.))", "-0.0+2.0i"}, {"(/ 2 1+i)", "1-i"},
+                        {"(/ 1 1+2i)", "1/5-2/5i"}, {"(/ 1. 3.+4.i)", "0.12-0.16i"},
+                        // + and -: the complex number's imaginary part, kept or negated
+                        {"(+ 1. (make-rectangular 1. -0.))", "2.0-0.0i"}, {"(+ (make-rectangular 1. -0.) 1.)", "2.0-0.0i"},
+                        {"(+ 1 (make-rectangular 1. -0.))", "2.0-0.0i"}, {"(+ +nan.0 (make-rectangular 1. -0.))", "+nan.0-0.0i"},
+                        {"(- 1. (make-rectangular 1. -0.))", "0.0+0.0i"}, {"(- 1. (make-rectangular 1. 0.))", "0.0-0.0i"},
+                        {"(- (make-rectangular 1. -0.) 1.)", "0.0-0.0i"}, {"(- (make-rectangular 1. 0.) 1)", "0.0+0.0i"},
+                        {"(- 0 (make-rectangular 1. 0.))", "-1.0-0.0i"}, {"(- 0. (make-rectangular 0. -0.))", "0.0+0.0i"},
+                        {"(+ 1.5 1+2i)", "2.5+2.0i"}, {"(- 1/2 1+2i)", "-1/2-2i"}, {"(- 1.5 1+2i)", "0.5-2.0i"},
+        };
+        assertWrites(cases);
+    }
+
+    /**
+     * M11-01 (#244's follow-up). The square root of an exact non-square is the flonum nearest to
+     * it, by integer arithmetic (as {@code inexact} of an exact number is, design.md D1): {@code
+     * Math.sqrt(flo(z))} overflowed to +inf.0 for a z beyond the flonums' range whose root is in it,
+     * underflowed to 0.0 for a tiny one, and rounded twice (z to a flonum, then its root) for a
+     * big integer or a rational, an ulp off now and then. An exact square stays exact.
+     */
+    @Test
+    public void sqrtOfAnExactNumberIsTheNearestFlonum() {
+        String[][] cases = {
+                        // beyond the flonums' range, with a root inside it
+                        {"(sqrt (* 2 (expt 10 400)))", "1.414213562373095e+200"}, {"(sqrt (expt 10 401))", "3.1622776601683794e+200"},
+                        {"(sqrt (+ (expt 10 400) 1))", "1.0e+200"}, {"(sqrt (/ (* 2 (expt 10 400)) 3))", "8.16496580927726e+199"},
+                        {"(sqrt (/ (+ (expt 10 700) 1) (expt 10 300)))", "1.0e+200"}, {"(sqrt (- (* 2 (expt 10 400))))", "0.0+1.414213562373095e+200i"},
+                        {"(sqrt (expt 2 2047))", "1.2711610061536464e+308"},
+                        // ... and with a root beyond it: +inf.0
+                        {"(sqrt (- (expt 2 2048) 1))", "+inf.0"}, {"(sqrt (* 3 (expt 2 2100)))", "+inf.0"},
+                        // tiny: a normal or a subnormal root, or 0.0
+                        {"(sqrt (/ 2 (expt 10 400)))", "1.414213562373095e-200"}, {"(sqrt (/ 3 (expt 10 640)))", "1.732e-320"},
+                        {"(sqrt (/ 2 (expt 10 640)))", "1.414e-320"}, {"(sqrt (/ (expt 2 2149)))", "5.0e-324"}, {"(sqrt (/ 3 (expt 2 2150)))", "5.0e-324"},
+                        {"(sqrt (/ 3 (expt 2 2200)))", "0.0"}, {"(sqrt (- (/ 2 (expt 10 400))))", "0.0+1.414213562373095e-200i"},
+                        // within the range: rounded once
+                        {"(sqrt 607022712050045950413189)", "779116622881.354"}, {"(sqrt 719831/227121)", "1.7802730894245995"},
+                        {"(sqrt (- (expt 2 1024) 1))", "1.3407807929942597e+154"}, {"(sqrt 2)", "1.4142135623730951"}, {"(sqrt 1/3)", "0.5773502691896257"},
+                        {"(sqrt -2)", "0.0+1.4142135623730951i"}, {"(sqrt 9007199254740993)", "94906265.62425156"},
+                        // exact squares stay exact
+                        {"(sqrt (expt 10 400))", "1" + "0".repeat(200)}, {"(sqrt (/ 9 (expt 10 400)))", "3/1" + "0".repeat(200)}, {"(sqrt -4/9)", "0+2/3i"},
         };
         assertWrites(cases);
     }
