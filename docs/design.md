@@ -2593,14 +2593,17 @@ Each entry: the decision, why, and what was rejected.
       What is left of the rejection is the steady state, measured at M8-05
       without the AOT cache and with 12 host compiler threads: 5% faster
       overall with the serial collector, slower on `nboyer` and `earley`.
-      Not re-measured since. Today,
-      `--vm.XX:+UseCompactObjectHeaders` on `bazel-bin/scheme` is given the
-      build's cache all the same, which the JVM then refuses (*"The AOT
+      Not re-measured since. Until the launcher asked the JVM ("The AOT
+      cache", "Which JVM options it takes"),
+      `--vm.XX:+UseCompactObjectHeaders` on `bazel-bin/scheme` was given the
+      build's cache all the same, which the JVM then refused (*"The AOT
       cache's UseCompactObjectHeaders setting (disabled) does not equal the
       current UseCompactObjectHeaders setting (enabled)"*, with `-Xlog:aot`),
-      so the program starts with no class sharing (346 ms in the same runs):
-      the launcher leaves the cache out only for options that choose class
-      sharing, and for ZGC.
+      silently: the program started with no class sharing (346 ms in the
+      same runs). It now starts without the cache, and no faster: GraalVM CE
+      25.5's JDK has no class-sharing archive for compact headers either
+      (`lib/server/` has only `classes.jsa`), so with them the JVM shares no
+      classes whatever the launcher passes.
 - **The launcher's JVM: memory and start-up.** Besides the collector, the
   JVM launcher starts its JVM with 4 host compiler threads and, for
   `bazel-bin/scheme`, an AOT cache (`tests/harness/harness.py`:
@@ -2724,10 +2727,61 @@ Each entry: the decision, why, and what was rejected.
       files first (17 `stat`s) and leaves the cache out when they differ
       (Bazel downloaded a jar again, say), as well as when the JVM options
       choose class sharing themselves (`-Xshare`, `-XX:SharedArchiveFile`,
-      `-XX:AOTCache`, ...) or ZGC, with which the JVM maps no cache (it does
-      with the serial, parallel and G1 collectors). It also turns the
-      JVM's `aot` and `cds` logging off, unless the options configure
-      logging, so that a cache refused after all prints nothing.
+      `-XX:AOTCache`, ...).
+    - *Which JVM options it takes.* The JVM checks a cache against far
+      more than class sharing (JDK 25's `FileMapHeader::validate`,
+      `FileMapInfo::validate_aot_class_linking`,
+      `AOTClassLocationConfig::validate`, `Modules::ArchivedProperty`,
+      `CDSConfig::has_unsupported_runtime_module_options`): the object
+      layout (`-XX:+UseCompactObjectHeaders`, `-XX:ObjectAlignmentInBytes`,
+      `-XX:-CompactStrings`), compressed pointers (`-XX:-UseCompressedOops`,
+      and so a heap over 32 GB: `-Xmx40g`, or `-XX:MaxRAMPercentage=50` on
+      a 128 GB machine), the collector (ZGC uses none),
+      verification (`-Xverify:all`), the profiles' settings when it has
+      profiles (`-XX:TypeProfileLevel`, which `-Xint` and
+      `-XX:-UseJVMCICompiler` change), the module options (`--add-opens`,
+      `--add-exports`, `--add-modules`, so `-XX:StartFlightRecording`'s
+      `jdk.jfr` too; `--limit-modules`, `--patch-module`), a longer boot
+      class path, `java.system.class.loader`, `java.security.manager`, a
+      JDWP agent and any agent with a class-file hook. Some depend on
+      values and on the machine, and each JDK adds some, so no list the
+      launcher kept would be right. So it asks the JVM: it passes the cache
+      with `-XX:AOTMode=on` (JEP 483: the JVM must use the cache, or it
+      stops as it starts with *"Unable to use AOT cache."* and the reason),
+      and given JVM options of the user's (the command's, `--vm.`,
+      `JDK_JAVA_OPTIONS`, `JAVA_TOOL_OPTIONS`) or of its own beyond the
+      cache's (#219's `-XX:-UseJVMCINativeLibrary`), it first runs the same
+      `java` command with `--dry-run` (the JVM starts and loads the main
+      class, and runs nothing), its output dropped, and leaves the cache out
+      if that fails. Before, with `-XX:AOTMode=auto` (the default) and its
+      `aot` and `cds` logging off, the JVM refused the cache silently and
+      started with no class sharing at all (`MetaspaceShared::
+      initialize_runtime_shared_and_meta_spaces` turns `UseSharedSpaces`
+      off; it doesn't fall back to the JDK's archive). Options that the
+      JVM doesn't check the cache against need no asking: system properties
+      other than the JDK's, `-Xss` and `-Xlog:`; nor do the serial, parallel
+      and G1 collectors, which `//tests:launcher_vm` checks it takes. The
+      `--dry-run` adds about 45 ms where the JVM takes the cache and 25 where
+      it refuses it. A hello-world program (the launcher's choice and its
+      `java` command, the old harness against the new, 19-23 interleaved
+      rounds, the medians, an Apple M3 Max at a load of 5.5-10, rounds above
+      10 left out): with no options 132 ms either way, with `-Dx=y` or G1
+      133-134; with `-Xmx1g` 178 against 132 (the check); with compact
+      headers 360 against 336 and with `-XX:-UseCompressedOops` 358 against
+      339 (the check: the JDK has no archive for either, so neither shares
+      any class); with `--add-opens` in `JDK_JAVA_OPTIONS` 319 against 341
+      (the JDK's archive, which the refused cache had turned off); with no
+      cache (`-Xshare:auto`) 289. Leaving the cache out prints nothing: the
+      user's option takes effect, and what gives way is the launcher's own
+      default, as the serial collector does to `--vm.XX:+UseG1GC`; a note
+      would be on the program's stderr on every run (docs/usage.md says
+      it). With `-XX:AOTMode=on` and the logging on, a cache the JVM refuses
+      after all (one of those collectors, say) is an error that says why.
+      *Rejected:* a list of the options the cache records (above);
+      `-XX:AOTMode=auto` with the JVM's warning (the run starts with no
+      class sharing, where the JDK's archive is often still usable); and
+      retrying when the JVM refuses it: the launcher `exec`s the JVM, whose
+      stderr is the program's.
     - *Why not on the tests' runtime.* `//:launcher_runtime`, which the
       tests and `bazel run //:r7rs` (the benchmarks) run, has none: every
       test would wait for the action, and none could use it on the

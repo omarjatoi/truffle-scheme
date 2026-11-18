@@ -58,13 +58,27 @@ LAUNCHER_INSTRUMENT_VM_ARGS = ['-XX:-UseJVMCINativeLibrary']
 _INSTRUMENT_OPTION = re.compile(r'^--(compiler|engine)\.Instrument(Boundaries|Branches)(=true)?$')
 _INSTRUMENT_PROPERTY = re.compile(r'^-Dpolyglot\.(compiler|engine)\.Instrument(Boundaries|Branches)=true$')
 _LIBGRAAL_CHOICE = re.compile(r'^-XX:[+-]UseJVMCINativeLibrary$')
-# The AOT cache ("The AOT cache", bazel/java_module.bzl: scheme_runtime): its run-time options, and
-# the logging they turn off, so that a cache the JVM refuses after all costs the start-up it saves
-# and prints nothing. Not with options that choose a cache, an archive or class sharing themselves,
-# nor with a collector the JVM maps none with (ZGC).
+# The AOT cache ("The AOT cache", bazel/java_module.bzl: scheme_runtime): the run-time options it
+# was trained with. The launcher passes it with -XX:AOTMode=on, with which a JVM that can't use it
+# stops as it starts and says why, rather than starting with no class sharing at all; so only
+# where the JVM takes it. It does with the launcher's own options (the cache's), and with the ones
+# in _AOT_TAKEN. With any other JVM option (the object layout, the heap's size, the collector, the
+# modules, an agent, ...: the JVM checks dozens, some by their values), the launcher asks a JVM
+# started with them first (_AOT_PROBE_ARGS), and leaves the cache out if it doesn't. Not with
+# options that choose a cache, an archive or class sharing themselves.
 AOT_VM_ARGS = ['--add-modules=jdk.internal.vm.ci']
-_AOT_COLLECTORS = ('-XX:+UseSerialGC', '-XX:+UseParallelGC', '-XX:+UseG1GC')
-_AOT_QUIET_VM_ARGS = ['-Xlog:aot=off', '-Xlog:cds=off']
+_AOT_REQUIRED_VM_ARGS = ['-XX:AOTMode=on']
+# java's --dry-run: the JVM starts and loads the main class, and runs nothing. With -XX:AOTMode=on,
+# exit status 0 if it took the cache (about 40 ms); 1, about 10 ms in, if it didn't.
+_AOT_PROBE_ARGS = ['--dry-run']
+_AOT_PROBE_TIMEOUT = 10
+# Options the JVM takes the cache with, which need no asking: system properties other than the
+# JDK's (FileMapHeader::validate and FileMapInfo::validate_aot_class_linking check
+# java.system.class.loader and java.security.manager, Modules::ArchivedProperty the jdk.module.*
+# the module options set), the thread stacks' size and logging, which it doesn't check the cache
+# against; and the collectors whose archived objects it maps or loads (HeapShared), which
+# //tests:launcher_vm checks it takes. Were one wrong, the run would be the JVM's error.
+_AOT_TAKEN = re.compile(r'^(-D(?!(java|jdk|sun)\.)|-Xss|-Xlog:|-XX:\+Use(Serial|Parallel|G1)GC$)')
 _AOT_CHOICE = re.compile(r'^(-Xshare:|-XX:(SharedArchiveFile|AOTCache|AOTCacheOutput|AOTMode|AOTConfiguration|'
                          r'ArchiveClassesAtExit|[+-]AutoCreateSharedArchive)\b)')
 
@@ -240,21 +254,38 @@ class Runtime:
 
     def launcher(self, args, jvm_args=(), env=os.environ):
         """The command line that runs the `scheme` launcher with these arguments, with its JVM
-        options (launcher_vm_args), and the AOT cache where it is valid and the JVM options
-        choose neither class sharing nor a collector it doesn't map with. The arguments' `--vm.`
-        options are JVM options (split_vm_options), after jvm_args."""
+        options (launcher_vm_args), and the AOT cache where it is valid, the JVM options don't
+        choose class sharing, and the JVM takes it with them (aot_cache_taken). The arguments'
+        `--vm.` options are JVM options (split_vm_options), after jvm_args."""
         vm_options, args = split_vm_options(args)
         jvm_args = list(jvm_args) + vm_options
         defaults = launcher_vm_args(jvm_args, env, options=_launcher_options(args))
         given = _given_vm_args(jvm_args, env)
         module_path = None
-        if (not any(_AOT_CHOICE.match(a) for a in given)
-                and all(a in _AOT_COLLECTORS for a in given if _GC_CHOICE.match(a))):
+        if not any(_AOT_CHOICE.match(a) for a in given):
             module_path = self.aot_module_path()
             if module_path:
-                quiet = [] if any(a.startswith('-Xlog') for a in given) else _AOT_QUIET_VM_ARGS
-                defaults += AOT_VM_ARGS + quiet + [f'-XX:AOTCache={self.aot_cache}']
+                aot = AOT_VM_ARGS + _AOT_REQUIRED_VM_ARGS + [f'-XX:AOTCache={self.aot_cache}']
+                # Those the launcher's arguments add (the instrumentation's) aren't the cache's.
+                checked = [a for a in given if not _AOT_TAKEN.match(a)]
+                if ((checked or defaults != launcher_vm_args(jvm_args, env))
+                        and not self.aot_cache_taken(defaults + aot + jvm_args, module_path, env)):
+                    module_path = None
+                else:
+                    defaults += aot
         return self.command(defaults + list(jvm_args), LAUNCHER_MAIN, module_path) + list(args)
+
+    def aot_cache_taken(self, jvm_args, module_path, env):
+        """Whether the launcher's JVM, started with these options (-XX:AOTCache and
+        -XX:AOTMode=on among them), takes the AOT cache: a start that runs nothing (_AOT_PROBE_ARGS),
+        its output dropped. JAVA_TOOL_OPTIONS and JDK_JAVA_OPTIONS in env count, as they do in the
+        run itself."""
+        try:
+            return subprocess.run(self.command(jvm_args + _AOT_PROBE_ARGS, LAUNCHER_MAIN, module_path), env=env,
+                                  stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                  timeout=_AOT_PROBE_TIMEOUT).returncode == 0
+        except subprocess.TimeoutExpired:
+            return False
 
     def run(self, jvm_args, main, args, cwd=None, env=None, timeout=None):
         """Runs java; returns (exit status, stdout, stderr)."""

@@ -13,8 +13,6 @@ scheme_java_library(
     deps = [
         "@jvm//:org_graalvm_polyglot_polyglot",
         "@jvm//:org_graalvm_sdk_launcher_common",
-        # Unused since #211 removed the native launcher's restart (#203's SchemeMain.restart).
-        "@jvm//:org_graalvm_sdk_nativeimage",
         # Line editing and history in the REPL (M7-07).
         "@jvm//:org_graalvm_shadowed_jline",
     ],
