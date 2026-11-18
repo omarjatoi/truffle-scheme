@@ -290,7 +290,23 @@ starts in about half the time (design.md D17). The cache names the real paths
 of the jars in Bazel's output tree, so it is only for the `bazel-bin/scheme`
 of the machine that built it, and the launcher leaves it out when those files
 have changed since (rebuild to train it again), and when the JVM options
-choose class sharing themselves (`-Xshare:off`, `-XX:AOTCache=...`) or ZGC.
+choose class sharing themselves (`-Xshare:off`, `-XX:AOTCache=...`).
+
+The JVM can't use the cache with some options: compact object headers
+(`--vm.XX:+UseCompactObjectHeaders`), uncompressed pointers (and so a heap
+over 32 GB), ZGC, module options such as `--add-opens`, an agent, and many
+more. With JVM options of yours (as `--vm.` options, or in `JDK_JAVA_OPTIONS`
+or `JAVA_TOOL_OPTIONS`), the launcher first asks the JVM whether it takes the
+cache with them, by starting it once without running anything (about 45 ms
+when it does, 25 when it doesn't), and leaves the cache out if it doesn't: the
+options take effect, the program starts without the cache (a hello-world
+program in about 320-360 ms instead of 130), and nothing is printed about it.
+System properties other than the JDK's (`--vm.Dname=value`,
+`--vm.Dpolyglot.…`), `--vm.Xss`, `--vm.Xlog:` and the serial, parallel and G1
+collectors need no asking (design.md D17, "Which JVM options it takes"). The
+launcher passes the cache with `-XX:AOTMode=on`, so were the JVM to refuse it
+after all, it would stop with *"Unable to use AOT cache."* and the reason,
+rather than start slowly; `--vm.Xshare:auto` starts it without the cache.
 
 `bazel-bin/scheme` runs the launcher in a JVM with the tools below on its
 module path. Without them, it is a `java` command on the jars that

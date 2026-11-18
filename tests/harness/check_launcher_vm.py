@@ -1,7 +1,7 @@
 """Test: design.md D17 "The launcher's JVM": the `scheme` launcher's JVM uses the serial collector, 4
-compiler threads where the JVM would start more, and the AOT cache where it is valid, unless its
-JVM options (on the command line, its `--vm.` options, in JDK_JAVA_OPTIONS or in
-JAVA_TOOL_OPTIONS) set those themselves. Its `--vm.<option>`s are the JVM's `-<option>`s ("VM
+compiler threads where the JVM would start more, and the AOT cache where it is valid and the JVM
+takes it, unless its JVM options (on the command line, its `--vm.` options, in JDK_JAVA_OPTIONS or
+in JAVA_TOOL_OPTIONS) set those themselves. Its `--vm.<option>`s are the JVM's `-<option>`s ("VM
 options"), and the launcher started with java rejects one the JVM wasn't started with. Every class of
 option takes effect or fails clearly (plan.md M10-04, docs/usage.md "Options")."""
 
@@ -11,8 +11,8 @@ import re
 import subprocess
 import tempfile
 
-from harness import (LAUNCHER_COMPILER_VM_ARGS, LAUNCHER_INSTRUMENT_VM_ARGS, LAUNCHER_MAIN, Runtime, check, launcher_vm_args, log,
-                     split_vm_options)
+from harness import (AOT_VM_ARGS, LAUNCHER_COMPILER_VM_ARGS, LAUNCHER_GC_VM_ARGS, LAUNCHER_INSTRUMENT_VM_ARGS, LAUNCHER_MAIN, Runtime,
+                     check, launcher_vm_args, log, split_vm_options)
 
 _FLAG = re.compile(r'^\s*\S+\s+(\w+)\s+:?=\s+(\S*)\s+\{[^}]*\}\s+\{([^}]*)\}')
 
@@ -68,12 +68,10 @@ def launcher_vm(o):
     check(flags(runtime, ['-XX:CICompilerCount=2'])['CICompilerCount'][0] == '2', '-XX:CICompilerCount should set the count')
     log('serial collector, compiler threads; the JVM options replace each')
 
-    # The AOT cache: used where it was made (bazel-bin/scheme), and not with ZGC (which maps none) or a
-    # stale stamp. Where it was made elsewhere (an executor's action), the launcher leaves it out.
+    # The AOT cache: used where it was made (bazel-bin/scheme), and not with a stale stamp. Where it
+    # was made elsewhere (an executor's action), the launcher leaves it out.
     aot = Runtime.from_manifest(o.aot_runtime)
     check(aot.aot_cache and aot.aot_stamp, f'{o.aot_runtime} should have an AOT cache')
-    _, command = run(aot, ['--version'], ['-XX:+UseZGC'])
-    check(not any('AOTCache' in a for a in command), f'the AOT cache should be left out with ZGC: {command}')
     with tempfile.NamedTemporaryFile('w', suffix='.stamp', dir=os.environ.get('TEST_TMPDIR')) as stale:
         stale.write('0 0 /nonexistent\n')
         stale.flush()
@@ -88,6 +86,65 @@ def launcher_vm(o):
     else:
         check(not any('AOTCache' in a for a in command), f'a stale AOT cache should be left out: {command}')
         log('AOT cache: made elsewhere, left out')
+
+
+def trained(runtime):
+    """runtime with an AOT cache and its stamp made here, as bazel/java_module.bzl's _AOT_COMMAND
+    makes bazel-bin/scheme's but trained on `--version`: one the launcher finds valid wherever the
+    test runs, the executors included."""
+    tmp = tempfile.mkdtemp(dir=os.environ.get('TEST_TMPDIR'))
+    cache, stamp = os.path.join(tmp, 'launcher.aot'), os.path.join(tmp, 'launcher.aot.stamp')
+    jars = [os.path.realpath(j) for j in runtime.module_path.split(os.pathsep)]
+    env = {k: v for k, v in os.environ.items() if k not in ('JDK_JAVA_OPTIONS', 'JAVA_TOOL_OPTIONS')}
+    training = LAUNCHER_GC_VM_ARGS + AOT_VM_ARGS + ['-Xlog:aot=off', '-Xlog:cds=off', f'-XX:AOTCacheOutput={cache}']
+    execute(runtime.command(training, LAUNCHER_MAIN, os.pathsep.join(jars)) + ['--version'], env)
+    with open(stamp, 'w', encoding='utf-8') as f:
+        for path in [os.path.join(os.path.dirname(os.path.dirname(runtime.java)), 'lib', 'modules')] + jars:
+            st = os.stat(path)
+            f.write(f'{st.st_size} {int(st.st_mtime)} {os.path.realpath(path)}\n')
+    aot = Runtime(runtime.java, runtime.module_path.split(os.pathsep), runtime.release, cache, stamp)
+    check(aot.aot_module_path(), 'the AOT cache trained here should be valid')
+    return aot
+
+
+def flag_values(out):
+    """The flags -XX:+PrintFlagsFinal printed: name -> value."""
+    return {m.group(1): m.group(2) for m in map(_FLAG.match, out.splitlines()) if m}
+
+
+def aot_cache(o):
+    """design.md D17 "The AOT cache": the launcher passes the cache with -XX:AOTMode=on (so a JVM
+    that can't use it is an error, not a start with no class sharing), where the JVM takes it with
+    the JVM options given; with any it doesn't (the object layout, the heap's mode, the collector,
+    the module options; on the command line, as --vm. options or in JDK_JAVA_OPTIONS), the
+    launcher leaves it out, and the JVM says nothing about a cache. With no options, it is used."""
+    aot = trained(Runtime.from_manifest(o.runtime))
+    out, command = run(aot, ['--version'])
+    check(f'-XX:AOTCache={aot.aot_cache}' in command and '-XX:AOTMode=on' in command and out.startswith('R7RS Scheme ('),
+          f'with no options, the AOT cache should be used, and required:\n{command}\n{out}')
+    # Options the JVM takes it with: system properties and logging, which it isn't checked against,
+    # and options it is, for which the launcher asks the JVM first.
+    for args in (['--vm.Dscheme.test.vm=given'], ['--vm.ea', '--vm.Xmx300m'], ['--vm.XX:+UseG1GC'], ['--vm.XX:+UseParallelGC']):
+        out, command = run(aot, args + ['--vm.Xlog:class+load=info', '--version'])
+        check(f'-XX:AOTCache={aot.aot_cache}' in command and re.search(r'scheme\.launcher\.SchemeMain source: shared objects file', out),
+              f'{args} should keep the AOT cache, and the launcher\'s classes should come from it:\n{command}\n{out[-3000:]}')
+    log('AOT cache: used with no options, with properties, -ea, -Xmx, G1 and the parallel collector')
+    # Options it doesn't: the cache is left out, the JVM says nothing about it, and the option
+    # takes effect.
+    for args, jdk_java_options, flag, value in ((['--vm.XX:+UseCompactObjectHeaders'], None, 'UseCompactObjectHeaders', 'true'),
+                                                (['--vm.XX:-UseCompressedOops'], None, 'UseCompressedOops', 'false'),
+                                                (['--vm.XX:+UseZGC'], None, 'UseZGC', 'true'),
+                                                ([], '-XX:+UseCompactObjectHeaders', 'UseCompactObjectHeaders', 'true')):
+        out, command = run(aot, args + ['--vm.XX:+PrintFlagsFinal', '--version'], jdk_java_options=jdk_java_options)
+        given = args or [f'JDK_JAVA_OPTIONS={jdk_java_options}']
+        check(not any('AOTCache' in a for a in command), f'{given} should leave the AOT cache out: {command}')
+        check('AOT cache' not in out and 'shared archive' not in out, f'{given}: the JVM should say nothing about the AOT cache:\n{out[-3000:]}')
+        check(flag_values(out).get(flag) == value, f'{given} should set {flag} to {value}: {flag_values(out).get(flag)}')
+    # A module option the cache's module graph was made without, in JDK_JAVA_OPTIONS.
+    out, command = run(aot, ['--version'], jdk_java_options='--add-opens=java.base/java.lang=ALL-UNNAMED')
+    check(not any('AOTCache' in a for a in command) and 'AOT cache' not in out and out.rstrip().endswith(')'),
+          f'--add-opens in JDK_JAVA_OPTIONS should leave the AOT cache out, quietly:\n{command}\n{out}')
+    log('AOT cache: left out with compact headers, uncompressed oops, ZGC, --add-opens; nothing said')
 
 
 def vm_options(o):
@@ -118,11 +175,7 @@ def vm_options(o):
     out, _ = run(runtime, ['--vm.Dpolyglot.scheme.NoSuchOption=1', '--version'], status=1)
     check('scheme.NoSuchOption' in out and out.startswith('ERROR: ') and '\tat ' not in out,
           f'--vm.Dpolyglot.scheme.NoSuchOption=1 should reach the engine, and be a clear error:\n{out}')
-    # A collector the AOT cache maps none with leaves it out, as among the JVM options.
-    _, command = run(Runtime.from_manifest(o.aot_runtime), ['--vm.XX:+UseZGC', '--version'])
-    check('-XX:+UseZGC' in command and not any('AOTCache' in a for a in command),
-          f'--vm.XX:+UseZGC should leave the AOT cache out: {command}')
-    log('--vm.: collector, heap, compiler threads, properties, class path; the AOT cache gives way')
+    log('--vm.: collector, heap, compiler threads, properties, class path')
 
     # The program's arguments stay the program's.
     program = os.path.join(tmp, 'command-line.scm')
@@ -244,5 +297,6 @@ if __name__ == '__main__':
     parser.add_argument('--aot-runtime', required=True)
     options = parser.parse_args()
     launcher_vm(options)
+    aot_cache(options)
     vm_options(options)
     option_classes(options)
