@@ -1,7 +1,10 @@
 package scheme.runtime;
 
+import java.util.Arrays;
+
 import com.oracle.truffle.api.CompilerAsserts;
 import com.oracle.truffle.api.CompilerDirectives;
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.HostCompilerDirectives.InliningCutoff;
 import com.oracle.truffle.api.bytecode.ConstantOperand;
 import com.oracle.truffle.api.bytecode.OperationProxy;
@@ -355,6 +358,87 @@ public final class Intrinsics {
                 keys[i] = ((SPair) entries[i]).car;
             }
             return keys;
+        }
+    }
+
+    /**
+     * {@code (memv key 'list)} or {@code (memq key 'list)} with a quoted list of characters longer
+     * than a chain of {@code Eq} operations may be (the compiler's ConstantMember): what {@code case}
+     * makes of a clause such as {@code ((#\a #\b ... #\z) ...)}. The tail of the list whose car is
+     * the key, or #f. A binary search of the list's code points, sorted (each with the tail of its
+     * first occurrence), which the node makes the first time it runs, from the literal list (whose
+     * pairs can't change, design.md D1); a key that isn't a character is in no such list. The
+     * primitive's loop instead compared the key with each datum in turn, behind a boundary: the
+     * native image compiles that loop ahead of time, and {@code parsing} spent a third of its time
+     * in it (design.md D17, "The native launcher's steady state").
+     */
+    @OperationProxy.Proxyable(storeBytecodeIndex = false)
+    @GenerateInline(false)
+    @ConstantOperand(type = Object.class, name = "list")
+    public abstract static class MemberChar extends IntrinsicNode {
+        public abstract Object execute(Object list, Object key);
+
+        @Specialization
+        static Object doChar(@SuppressWarnings("unused") Object list, SChar key,
+                        @Cached(value = "codePoints(list)", dimensions = 1) int[] codePoints,
+                        @Cached(value = "tails(list, codePoints)", dimensions = 1) Object[] tails) {
+            int c = key.codePoint;
+            int lo = 0;
+            int hi = codePoints.length - 1;
+            while (lo <= hi) {
+                int mid = (lo + hi) >>> 1;
+                int m = codePoints[mid];
+                if (m < c) {
+                    lo = mid + 1;
+                } else if (m > c) {
+                    hi = mid - 1;
+                } else {
+                    return tails[mid];
+                }
+            }
+            return false;
+        }
+
+        @Fallback
+        static Object doOther(@SuppressWarnings("unused") Object list, @SuppressWarnings("unused") Object key) {
+            return false;
+        }
+
+        /** The list's distinct code points, in ascending order. */
+        @NeverDefault
+        @TruffleBoundary
+        static int[] codePoints(Object list) {
+            int n = 0;
+            for (SPair p = SPair.asPair(list); p != null; p = SPair.asPair(p.cdr)) {
+                n++;
+            }
+            int[] all = new int[n];
+            int i = 0;
+            for (SPair p = SPair.asPair(list); p != null; p = SPair.asPair(p.cdr)) {
+                all[i++] = ((SChar) p.car).codePoint;
+            }
+            Arrays.sort(all);
+            int distinct = 0;
+            for (int k = 0; k < n; k++) {
+                if (k == 0 || all[k] != all[k - 1]) {
+                    all[distinct++] = all[k];
+                }
+            }
+            return Arrays.copyOf(all, distinct);
+        }
+
+        /** For each of {@code codePoints}, the tail of the list that starts at its first occurrence. */
+        @NeverDefault
+        @TruffleBoundary
+        static Object[] tails(Object list, int[] codePoints) {
+            Object[] tails = new Object[codePoints.length];
+            for (SPair p = SPair.asPair(list); p != null; p = SPair.asPair(p.cdr)) {
+                int i = Arrays.binarySearch(codePoints, ((SChar) p.car).codePoint);
+                if (tails[i] == null) {
+                    tails[i] = p;
+                }
+            }
+            return tails;
         }
     }
 

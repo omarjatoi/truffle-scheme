@@ -884,6 +884,15 @@ final class CodeGenerator {
             }
             return constantMember(c.arguments.get(0), matches, ctx);
         }
+        Object chars = ConstantMember.charList(c);
+        if (chars != null) {
+            // memv or memq of a long quoted list of characters: one operation, a binary search.
+            List<Runnable> seq = new ArrayList<>();
+            seq.add(() -> b.beginMemberChar(chars));
+            seq.add(gen(c.arguments.get(0), Ctx.VALUE));
+            seq.add(b::endMemberChar);
+            return valued(seq, ctx);
+        }
         List<Runnable> arguments = new ArrayList<>();
         for (Expr a : c.arguments) {
             arguments.add(gen(a, Ctx.VALUE));
