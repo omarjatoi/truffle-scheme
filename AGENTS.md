@@ -296,7 +296,8 @@ tests/tools/               programs the tools tests debug and profile (tests/har
 tests/spec/                tail-call / continuation / depth cases; existing cases read-only
 tests/scheme/test/         JUnit unit tests; add freely
 docs/                      design.md (decisions), plan.md (milestones, status block), usage.md, embedding.md,
-                           truffle-guidance.md (GraalVM's guidance audited), upstream.md (Truffle bugs we work around),
-                           performance-research.md, benchmarks.md (the comparative report, generated)
+                           truffle-guidance.md and graalvm-configuration.md (GraalVM's guidance, audited),
+                           upstream.md (Truffle bugs we work around), performance-research.md,
+                           benchmarks.md (the comparative report, generated)
 docs/examples/             programs and sources that docs/usage.md and docs/embedding.md run (the readme check)
 ```
