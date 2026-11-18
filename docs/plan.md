@@ -1721,7 +1721,7 @@ measures with interleaved A/B runs.
     passes; `ctak` and `fibc` on the JIT and the native launcher, first
     runs and steady state, unchanged or faster (interleaved A/B), and
     `bench-check` passes.
-- [ ] **M12-07 · The tools across spills and resumptions**
+- [x] **M12-07 · The tools across spills and resumptions**
   - #261's follow-ups: stepping across a spill stops again at the resumed
     frame's statement and returns to the prompt rather than to its spilled
     caller; and the CPU tracer and coverage (shipped since #271) count a
