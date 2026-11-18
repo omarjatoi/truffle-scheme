@@ -249,6 +249,53 @@ public class PolyglotTest {
     }
 
     // ---------------------------------------------------------------------------------------------
+    // Stack depth across foreign frames
+
+    /** A recursion of {@code depth} levels through SL: each level calls SL, which calls Scheme back. */
+    private static String bounce(int depth, String around) {
+        return """
+                        (define bounce (polyglot-eval "sl" "function bounce(f, n) { return f(n); } function main() { return bounce; }"))
+                        (define (down n) (if (= n 0) 0 (+ 1 (bounce down (- n 1)))))
+                        %s
+                        """.formatted(around.formatted(depth));
+    }
+
+    @Test
+    public void aRecursionThroughAnotherLanguageOverflowsAsASchemeError() {
+        try (Context context = context()) {
+            // Scheme can't spill the SL frames, so the Java stack overflows: a Scheme error, raised
+            // where the overflow left a foreign call, which the guard outside catches (D20).
+            assertEquals("(caught \"stack overflow: too many nested calls through other languages or Java\")",
+                            show(context, bounce(1_000_000, "(guard (e ((error-object? e) (list 'caught (error-object-message e)))) (down %d))")));
+            // The context goes on, and so does a recursion that fits.
+            assertEquals(50, run(context, bounce(50, "(down %d)")).asInt());
+            // Uncaught, it reaches Java as a Scheme error.
+            PolyglotException e = assertThrows(PolyglotException.class, () -> run(context, bounce(1_000_000, "(down %d)")));
+            assertTrue(e.getMessage(), e.isGuestException() && e.getMessage().contains("stack overflow"));
+            // SL alone, recursing in a polyglot-eval: the same error, at the polyglot-eval.
+            assertEquals("(caught \"stack overflow: too many nested calls through other languages or Java\")", show(context, """
+                            (guard (e ((error-object? e) (list 'caught (error-object-message e))))
+                              (polyglot-eval "sl" "function f(n) { return f(n + 1) + 1; } function main() { return f(0); }"))
+                            """));
+        }
+    }
+
+    @Test
+    public void maxStackFramesCountsTheOtherLanguagesFrames() {
+        // sandbox.MaxStackFrames counts the guest frames of every language of the context: SL's
+        // with Scheme's, two a level (D20, "Stack depth across foreign frames").
+        try (Context context = Context.newBuilder(SCHEME, SL).out(new ByteArrayOutputStream()).allowPolyglotAccess(PolyglotAccess.ALL).option("sandbox.MaxStackFrames",
+                        "60").build()) {
+            assertEquals(20, run(context, bounce(20, "(down %d)")).asInt());
+            PolyglotException e = assertThrows(PolyglotException.class, () -> run(context, bounce(40, "(down %d)")));
+            assertTrue(e.getMessage(), e.isCancelled() && e.getMessage().contains("Maximum frame limit of 60 exceeded"));
+        } catch (PolyglotException e) {
+            // Closing a cancelled context throws the cancel again.
+            assertTrue(e.getMessage(), e.isCancelled());
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------------
     // Errors in both directions
 
     @Test

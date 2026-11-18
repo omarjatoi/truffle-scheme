@@ -621,6 +621,14 @@ frames: invoking, inside a callback, one captured outside it, or, after the
 foreign call has returned, one captured in its callback, is a Scheme error
 (design.md D20, "Continuations across foreign frames").
 
+A recursion through another language (Scheme calls it, it calls Scheme back,
+and so on) keeps every level on the Java stack: Scheme spills its own frames
+to the heap, but not the other language's. Too deep, it overflows the Java
+stack, which is a Scheme error raised where Scheme called the other
+language, and `guard` catches it; `sandbox.MaxStackFrames` counts the
+frames of every language of the context, so it stops such a recursion too
+(design.md D20, "Stack depth across foreign frames").
+
 Under `ISOLATED` and `UNTRUSTED` ([above](#isolated-and-untrusted)), Scheme
 runs in the isolate, which holds no other language: `polyglot-eval` reaches
 only Scheme, and a context that permits another language with Scheme can't
