@@ -2733,7 +2733,11 @@ Each entry: the decision, why, and what was rejected.
   Scheme code. Instrumentation is off until a tool attaches, so it costs
   nothing otherwise (the Bytecode DSL user guide, "Instrumentation": tag
   instructions are added by reparsing when a tool asks for them).
-  docs/usage.md's tools section rates each tool.
+  `bazel-bin/scheme` ships the debugger's servers, the profilers and the
+  coverage tool (D17, `//bazel:tools_modules`), and `//tests:tools` checks
+  each against Scheme code (the coverage tool's statement, line and root
+  coverage exactly, in its JSON and LCOV outputs); the native launcher
+  ships none (#219). docs/usage.md's tools section rates each tool.
   - *Where the tags sit.* Root: every root, by the Bytecode DSL. Root body:
     the body after the prologue binds the arguments, by the compiler
     (`enableRootBodyTagging = false`): `RootBodyTag` says *"when the
@@ -3007,8 +3011,9 @@ Each entry: the decision, why, and what was rejected.
   (`org.graalvm.launcher.AbstractLanguageLauncher`, the `launcher-common`
   library at the Truffle version, D11). That gives the standard command line
   for free: `--engine.*` and `--compiler.*` options, `--log.*`, `--inspect`
-  (Chrome DevTools), `--dap` (debug adapter), `--cpusampler` and
-  `--memtracer` when those tools are on the module path, `--help`, and
+  (Chrome DevTools), `--dap` (debug adapter), `--cpusampler`,
+  `--memtracer` and `--coverage` when those tools are on the module path,
+  `--help`, and
   `--version`.
 - With a file, it runs it as a program (D15) with the remaining arguments as
   `command-line`; `-I dir` adds to the library path; with no file, it starts
@@ -4047,14 +4052,16 @@ Each entry: the decision, why, and what was rejected.
     with it) and `//tests:launcher_vm_native` (the image fixed `off`:
     `--scheme.Torture=shared` and `--vm.Dpolyglot.scheme.Torture=owned` are
     the error).
-- The Chrome inspector, DAP and profiler tools (the CPU sampler and tracer,
-  the memory tracer, the heap monitor) are optional modules
-  (`//bazel:tools_modules`), which `bazel-bin/scheme` puts on the module
-  path, and CI runs a smoke test of each against a Scheme program
+- The Chrome inspector, DAP, profiler tools (the CPU sampler and tracer,
+  the memory tracer, the heap monitor) and coverage tool are optional
+  modules (`//bazel:tools_modules`, Maven artifacts at `TRUFFLE_VERSION`
+  like Truffle's, D11), which `bazel-bin/scheme` puts on the module path,
+  and CI runs a smoke test of each against a Scheme program
   (`//tests:tools`; D13's tags and source sections are what they consume).
-  The coverage tool, Insight and the heap dump are other artifacts
-  (`org.graalvm.tools:coverage-tool`, `insight-tool`, `insight-heap-tool`),
-  not among them: docs/usage.md's tools section says what each would need.
+  The native launcher is built without them (#219). Insight and the heap
+  dump are other artifacts (`org.graalvm.tools:insight-tool`,
+  `insight-heap-tool`), not among them: docs/usage.md's tools section says
+  what each would need.
 - **Native image (M6-06).** `bazel build //:scheme-native` builds `scheme` as
   a native executable with the pinned GraalVM CE's `native-image` and the
   target's C toolchain (`native_library` in `bazel/java_module.bzl`: on the
@@ -4493,7 +4500,7 @@ Each entry: the decision, why, and what was rejected.
       would make 40% fewer of the spill's own allocations, and about a
       tenth fewer of a deep interpreted descent's, against the third as
       many collections of a 1 GB minimum heap above, so they stay.
-  - Limits: the tools (inspector, DAP, profilers) are only on the JVM
+  - Limits: the tools (inspector, DAP, profilers, coverage) are only on the JVM
     launcher (`bazel-bin/scheme`); the executable is for its target platform
     (this machine's by default, Linux x86-64 on the executors with
     `--platforms=//bazel/platforms:linux_x86_64`, as the tests build it: D11);

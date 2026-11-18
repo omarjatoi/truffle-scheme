@@ -61,6 +61,7 @@ maven.install(
         # GraalVM's tools: //:scheme and the tools tests put them on the module path.
         "org.graalvm.shadowed:json:" + TRUFFLE_VERSION,
         "org.graalvm.tools:chromeinspector-tool:" + TRUFFLE_VERSION,
+        "org.graalvm.tools:coverage-tool:" + TRUFFLE_VERSION,
         "org.graalvm.tools:dap-tool:" + TRUFFLE_VERSION,
         "org.graalvm.tools:profiler-tool:" + TRUFFLE_VERSION,
         # TEST ONLY: GraalVM's SimpleLanguage (and the ANTLR runtime it requires), the second

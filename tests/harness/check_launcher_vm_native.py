@@ -240,7 +240,7 @@ def option_classes(o):
     log('--engine. (TraceTransferToInterpreter too), --compiler., --scheme.')
 
     # The tools, which the native launcher is built without; logging.
-    for option in ('--cpusampler', '--inspect=9229'):
+    for option in ('--cpusampler', '--inspect=9229', '--coverage'):
         _, err = run([native, option, program], status=2)
         check('built without GraalVM\'s tools' in err and 'bazel-bin/scheme' in err, f'{option} should be an error naming the JVM launcher:\n{err}')
     log_file = os.path.join(tmp, 'engine.log')

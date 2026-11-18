@@ -132,7 +132,7 @@ public final class SchemeMain extends AbstractLanguageLauncher {
      * The tools the JVM launcher has on its module path (//bazel:tools_modules), which the native
      * launcher is built without.
      */
-    private static final Set<String> JVM_TOOLS = Set.of("inspect", "dap", "cpusampler", "cputracer", "memtracer", "heapmonitor");
+    private static final Set<String> JVM_TOOLS = Set.of("inspect", "dap", "cpusampler", "cputracer", "memtracer", "heapmonitor", "coverage");
     /**
      * A Truffle option that is the process's on HotSpot: the process's first engine fixes it, and
      * a later engine's value only gets a warning (HotSpotTruffleRuntime: "it was previously

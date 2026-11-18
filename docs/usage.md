@@ -425,6 +425,30 @@ bazel-bin/scheme --cputracer docs/examples/fib.scm
 ...
 ```
 
+The coverage tool prints what share of each file's statements, lines and
+procedures ran:
+
+<!-- readme: run -->
+```sh
+bazel-bin/scheme --coverage docs/examples/fib.scm
+```
+
+<!-- readme: output -->
+```text
+196418
+...Code coverage histogram...
+ Path ...|  Statements |    Lines |    Roots
+...
+ ...docs/examples/fib.scm |     100.00% |  100.00% |  100.00%
+...
+```
+
+`--coverage.Output=detailed` also prints each line, marked covered or not,
+`--coverage.Output=json` and `--coverage.Output=lcov` write JSON and LCOV
+(for editors and coverage services), `--coverage.Count` counts how many
+times each statement and procedure ran, and `--coverage.OutputFile` writes
+the output to a file instead of standard output.
+
 The memory tracer, which is
 experimental, counts the Scheme objects each procedure allocates (pairs,
 vectors, strings, closures, records, bignums, ...):
@@ -489,7 +513,7 @@ of them (#219): they run with `bazel-bin/scheme`.
 | CPU tracer: `--cputracer` | Works; counts resumptions | Exact entries of each procedure, and of each statement and call with `TraceStatements` and `TraceCalls`. A frame that is resumed (after a spill, or each time a continuation re-enters it) counts as another entry of its procedure: a recursion 301 deep, spilled past 50, counts 555. A self tail call that loops, and a contified loop, enter once. |
 | Memory tracer: `--memtracer` (experimental) | Works | Pairs, vectors, strings, closures, records, bignums and bytevectors by the procedure that allocated them. |
 | Heap monitor: `--heapmonitor` (experimental) | Works | No output of its own; it feeds the heap summary other tools read. |
-| Coverage: `--coverage` (statement, line and root coverage; histogram, detailed, JSON, LCOV) | Works, not shipped | Not among the tools `bazel-bin/scheme` has: it is `org.graalvm.tools:coverage-tool` (with `org.graalvm.shadowed:json`, which the tools already have) added to `//bazel:tools_modules`. With that jar on the module path every output is right on the programs above, the counts (`--coverage.Count`) including resumptions as the CPU tracer's do. |
+| Coverage: `--coverage` (statement, line and root coverage; histogram, detailed, JSON, LCOV) | Works; counts resumptions | Each file's statements, lines and procedures (roots, the program's own among them), covered or not, in every output. A statement is what the debugger stops at (each form of a body, a `let`'s body, each top-level form, a definition at its name), so a branch of an `if` or a `cond` with one expression is part of the statement around it: its lines are covered when that statement runs, taken or not. The standard libraries' procedures are internal, so only the program's files and libraries show. With `--coverage.Count`, a procedure's count includes its resumptions, as the CPU tracer's does. |
 | Insight: `--insight` | Not shipped; unusable from Scheme | `org.graalvm.tools:insight-tool`. Its scripts are JavaScript, Python, Ruby, or any language that can call the `insight` object's `on` with a function: GraalVM CE has no JavaScript here, and Scheme would need two things it lacks, `insight` bound as a script's argument (Truffle passes it as a named argument of the script's parse, which the language ignores) and calling a foreign object's members (the `(graalvm polyglot)` library, #237). |
 | Heap dump: `--heap.dump` | Not shipped | `org.graalvm.tools:insight-heap-tool`, driven by an Insight script's `heap.dump(...)`: what Insight needs, then this. |
 
