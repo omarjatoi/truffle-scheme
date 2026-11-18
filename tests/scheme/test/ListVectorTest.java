@@ -1,13 +1,16 @@
 package scheme.test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.util.ArrayList;
 import java.util.List;
 
 import org.graalvm.polyglot.Context;
@@ -16,7 +19,11 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
+import com.oracle.truffle.api.dsl.Specialization;
+
 import scheme.launcher.SchemeMain;
+import scheme.runtime.Intrinsics;
+import scheme.runtime.value.SPair;
 
 /** M4-03: the list and vector procedures of R7RS §6.4 and §6.8, and (scheme cxr). */
 public class ListVectorTest {
@@ -332,6 +339,32 @@ public class ListVectorTest {
                           (let* ((a (sum (list 1 2 3))) (b (sum lit)) (c (sum (list 1 2 3))) (d (sum lit)))
                             (list a b c d (pair? lit) (pair? (list 1)) (try (list 1 2 3)) (try lit)
                                   (length lit) (length (list 1 2 3)) (memv 2 lit) (assq 'b '((a . 1) (b . 2))))))"""));
+    }
+
+    /**
+     * {@code car}, {@code cdr} and {@code pair?} take both classes of pair on one specialization,
+     * which tests the class with {@code instanceof} in the interpreter (design.md D1, "Literal pairs
+     * are immutable"): a specialization of its own for a literal's pairs, or a guard only they pass,
+     * is a branch in each handler that the host's profile of the bytecode interpreter's loop hasn't
+     * seen until a program's literal reaches it, and the loop is recompiled then (M10-07 measured
+     * one or two more compilations of it in a first interpreted run of {@code paraffins} and
+     * {@code browse}).
+     */
+    @Test
+    public void pairOperationsHaveOneSpecializationForBothClassesOfPair() {
+        for (Class<?> operation : List.of(Intrinsics.Car.class, Intrinsics.Cdr.class, Intrinsics.IsPair.class)) {
+            List<String> specializations = new ArrayList<>();
+            for (Method method : operation.getDeclaredMethods()) {
+                if (method.isAnnotationPresent(Specialization.class)) {
+                    specializations.add(method.getName());
+                    for (Class<?> parameter : method.getParameterTypes()) {
+                        assertFalse(operation.getSimpleName() + "." + method.getName(), SPair.class.isAssignableFrom(parameter));
+                    }
+                }
+            }
+            specializations.sort(null);
+            assertEquals(operation.getSimpleName(), operation == Intrinsics.IsPair.class ? List.of("doCheck") : List.of("doGeneric", "doPair"), specializations);
+        }
     }
 
     private String run(String program) {

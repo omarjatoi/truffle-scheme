@@ -1,5 +1,6 @@
 package scheme.runtime;
 
+import com.oracle.truffle.api.Assumption;
 import com.oracle.truffle.api.CompilerAsserts;
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.HostCompilerDirectives.InliningCutoff;
@@ -58,6 +59,33 @@ public final class Intrinsics {
     private Intrinsics() {
     }
 
+    /**
+     * Whether a {@code car} or {@code cdr} site has had a literal's pair in compiled code, which only
+     * compiled code reads and writes: until it has, the site's compiled code takes exactly an
+     * {@link SPair} and deoptimizes on a {@code LiteralPair}, so the value's exact class is known
+     * after it (a later {@code set-car!}'s test, a later {@code cdr}'s, fold away); after, it takes
+     * both. The interpreter never reads it, so the host's compilation of the bytecode interpreter's
+     * loop has no branch for it (design.md D1, "Literal pairs are immutable").
+     */
+    static final class LiteralPairs {
+        private final Assumption onlyRunTimePairs = Assumption.create("no literal pair at this site");
+
+        SPair pair(Object x) {
+            if (CompilerDirectives.inInterpreter()) {
+                return (SPair) x;
+            }
+            if (onlyRunTimePairs.isValid()) {
+                if (SPair.isMutable(x)) {
+                    return SPair.asMutable(x);
+                }
+                onlyRunTimePairs.invalidate();
+                CompilerDirectives.transferToInterpreter();
+                return (SPair) x;
+            }
+            return SPair.asPair(x);
+        }
+    }
+
     /** What the operations share: the primitive's own node, for every case the fast paths don't take. */
     abstract static class IntrinsicNode extends Node {
 
@@ -101,6 +129,11 @@ public final class Intrinsics {
                 return x instanceof SPair;
             }
             return SPair.asPair(x) != null;
+        }
+
+        @NeverDefault
+        static LiteralPairs literalPairs() {
+            return new LiteralPairs();
         }
 
         static boolean inBounds(long k, int length) {
@@ -181,8 +214,9 @@ public final class Intrinsics {
         public abstract Object execute(GlobalCell cell, boolean tail, Object x);
 
         @Specialization(guards = "isPair(pair)")
-        static Object doPair(@SuppressWarnings("unused") GlobalCell cell, @SuppressWarnings("unused") boolean tail, Object pair) {
-            return ((SPair) pair).car;
+        static Object doPair(@SuppressWarnings("unused") GlobalCell cell, @SuppressWarnings("unused") boolean tail, Object pair,
+                        @Cached("literalPairs()") LiteralPairs literals) {
+            return literals.pair(pair).car;
         }
 
         @Specialization
@@ -204,8 +238,9 @@ public final class Intrinsics {
         public abstract Object execute(GlobalCell cell, boolean tail, Object x);
 
         @Specialization(guards = "isPair(pair)")
-        static Object doPair(@SuppressWarnings("unused") GlobalCell cell, @SuppressWarnings("unused") boolean tail, Object pair) {
-            return ((SPair) pair).cdr;
+        static Object doPair(@SuppressWarnings("unused") GlobalCell cell, @SuppressWarnings("unused") boolean tail, Object pair,
+                        @Cached("literalPairs()") LiteralPairs literals) {
+            return literals.pair(pair).cdr;
         }
 
         @Specialization
