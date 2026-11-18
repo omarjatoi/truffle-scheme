@@ -13,16 +13,30 @@ import java.io.BufferedOutputStream;
 import java.io.ByteArrayOutputStream;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.PolyglotException;
+import org.graalvm.polyglot.Source;
+import org.graalvm.polyglot.SourceSection;
 import org.graalvm.polyglot.TypeLiteral;
 import org.graalvm.polyglot.Value;
 import org.junit.Test;
+
+import com.oracle.truffle.api.exception.AbstractTruffleException;
+import com.oracle.truffle.api.interop.ExceptionType;
+import com.oracle.truffle.api.interop.InteropLibrary;
+
+import scheme.compiler.ProgramCompiler;
+import scheme.runtime.GlobalCell;
+import scheme.runtime.SchemeContext;
 
 /**
  * M6-02: interop for embedders (design.md D10). Scheme values answer {@code InteropLibrary} as what
@@ -667,6 +681,284 @@ public class EmbeddingTest {
             assertEquals(4, e.getExitStatus());
         }
         assertEquals("after", out.toString(StandardCharsets.UTF_8));
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Errors as Truffle exceptions (design.md D8, docs/embedding.md "Errors")
+
+    private static PolyglotException error(Context context, Source source) {
+        return assertThrows(source.getName(), PolyglotException.class, () -> context.eval(source));
+    }
+
+    private static Source source(String name, String text) {
+        return Source.newBuilder(SCHEME, text, name).buildLiteral();
+    }
+
+    /**
+     * Torture mode: every frame runs resumed from a continuation, and Truffle 25.5 doesn't see a
+     * continuation's root as internal (docs/upstream.md, "Continuation roots are never internal"),
+     * so the prelude's frames (map's) show in the trace, and {@link #guestFrames} leaves them out.
+     */
+    private static final boolean TORTURE = Boolean.getBoolean("scheme.torture");
+
+    /** The guest frames as {@code name line}, innermost first. */
+    private static List<String> guestFrames(PolyglotException e) {
+        List<String> frames = new ArrayList<>();
+        for (PolyglotException.StackFrame frame : e.getPolyglotStackTrace()) {
+            SourceSection at = frame.getSourceLocation();
+            if (frame.isGuestFrame() && !(TORTURE && at != null && at.getSource().isInternal())) {
+                frames.add(frame.getRootName() + " " + (at == null ? "?" : at.getStartLine()));
+            }
+        }
+        return frames;
+    }
+
+    private static String at(SourceSection section) {
+        return section.getSource().getName() + ":" + section.getStartLine() + " " + section.getCharacters();
+    }
+
+    private static String at(com.oracle.truffle.api.source.SourceSection section) {
+        return section.getSource().getName() + ":" + section.getStartLine() + " " + section.getCharacters();
+    }
+
+    /**
+     * Another language, or Truffle code, sees a Scheme error through {@code InteropLibrary}: an
+     * exception of type {@code RUNTIME_ERROR} with its message, no cause, the source location of
+     * the Scheme code it came from, and its guest stack trace as an array of frames.
+     */
+    @Test
+    public void errorsAnswerInteropsExceptionMessages() throws Exception {
+        try (Context context = context()) {
+            context.eval(source("lib.scm", """
+                            (define (inner x)
+                              (+ 1 (car x)))
+                            (define (outer x)
+                              (list (inner x)))
+                            """));
+            context.enter();
+            try {
+                SchemeContext scheme = SchemeContext.get(null);
+                GlobalCell cell = new ProgramCompiler().interactionCell(scheme, scheme.symbols.intern("outer"));
+                InteropLibrary interop = InteropLibrary.getUncached();
+                AbstractTruffleException e = assertThrows(AbstractTruffleException.class, () -> interop.execute(cell.valueOrNull(), 5L));
+                assertTrue(interop.isException(e));
+                assertEquals(ExceptionType.RUNTIME_ERROR, interop.getExceptionType(e));
+                assertEquals("car: not a pair: 5", interop.asString(interop.getExceptionMessage(e)));
+                assertFalse(interop.hasExceptionCause(e));
+                assertTrue(interop.hasSourceLocation(e));
+                assertEquals("lib.scm:2 (car x)", at(interop.getSourceLocation(e)));
+                // The stack trace: the prelude's frames (raise's) are internal, Scheme's are named and located.
+                assertTrue(interop.hasExceptionStackTrace(e));
+                Object trace = interop.getExceptionStackTrace(e);
+                List<String> frames = new ArrayList<>();
+                for (long i = 0; i < interop.getArraySize(trace); i++) {
+                    Object frame = interop.readArrayElement(trace, i);
+                    if (!interop.isInternal(frame) && interop.hasExecutableName(frame)) {
+                        String name = interop.asString(interop.getExecutableName(frame));
+                        frames.add(name + (interop.hasSourceLocation(frame) ? " " + at(interop.getSourceLocation(frame)) : ""));
+                    }
+                }
+                assertEquals(List.of("inner lib.scm:2 (car x)", "outer lib.scm:4 (inner x)"), frames.subList(0, 2));
+                // The exception is also the raised object: here, the error object.
+                assertTrue(interop.hasMembers(e));
+                assertEquals("car: not a pair: 5", interop.asString(interop.readMember(e, "message")));
+                assertEquals("error-object", interop.asString(interop.getMetaSimpleName(interop.getMetaObject(e))));
+            } finally {
+                context.leave();
+            }
+        }
+    }
+
+    /**
+     * {@code PolyglotException}'s message, source location and stack trace show where Scheme code
+     * raised the error: the prelude's frames (map's, raise's) are internal, so neither the trace nor
+     * the location is ever in the prelude.
+     */
+    @Test
+    public void polyglotExceptionsLocateTheSchemeCode() {
+        try (Context context = context()) {
+            PolyglotException e = error(context, source("user.scm", """
+                            (define (check x)
+                              (map (lambda (y) (+ 1 (car y))) x))
+                            (define (run x)
+                              (list (check x)))
+                            (run '((1) 2))
+                            """));
+            assertTrue(e.isGuestException());
+            assertFalse(e.isExit() || e.isInterrupted() || e.isCancelled() || e.isInternalError() || e.isSyntaxError());
+            assertEquals("car: not a pair: 2", e.getMessage());
+            assertEquals("user.scm:2 (car y)", at(e.getSourceLocation()));
+            assertEquals(List.of("<lambda@user.scm:2:8> 2", "run 4", "<program> 5", "<prompt> 1"), guestFrames(e));
+
+            // In tail position, the error leaves the procedure's frame, as a tail call would: the
+            // location is the innermost frame left, not map's in the prelude.
+            e = error(context, source("tail.scm", """
+                            (define (check x)
+                              (map (lambda (y) (car y)) x))
+                            (define (run x)
+                              (list (check x)))
+                            (run '((1) 2))
+                            """));
+            assertEquals("tail.scm:4 (check x)", at(e.getSourceLocation()));
+            assertEquals(List.of("run 4", "<program> 5", "<prompt> 1"), guestFrames(e));
+
+            // A syntax error is a parse error, located at its form; one that ends early is incomplete.
+            e = error(context, source("syntax.scm", "(define (f)\n  (if))"));
+            assertTrue(e.isSyntaxError());
+            assertFalse(e.isIncompleteSource());
+            assertEquals("syntax.scm:2 (if)", at(e.getSourceLocation()));
+            e = error(context, source("open.scm", "(define (f)"));
+            assertTrue(e.isSyntaxError());
+            assertTrue(e.isIncompleteSource());
+        }
+    }
+
+    /**
+     * The guest stack trace has every frame the error left: those a deep recursion spilled to the
+     * heap, and those of a continuation re-entered after its call returned.
+     */
+    @Test
+    public void polyglotStackTracesHaveSpilledAndResumedFrames() {
+        Context.Builder builder = Context.newBuilder(SCHEME).out(new ByteArrayOutputStream()).allowExperimentalOptions(true);
+        try (Context context = builder.option("scheme.SpillDepth", "5").build()) {
+            PolyglotException e = error(context, source("deep.scm", """
+                            (define (down n)
+                              (if (= n 0)
+                                  (list (car n))
+                                  (+ 1 (down (- n 1)))))
+                            (down 30)
+                            """));
+            assertEquals("deep.scm:3 (car n)", at(e.getSourceLocation()));
+            List<String> frames = guestFrames(e);
+            assertEquals(frames.toString(), 31, frames.stream().filter(f -> f.startsWith("down ")).count());
+            assertEquals("down 3", frames.get(0));
+            assertEquals(Collections.nCopies(30, "down 4"), frames.subList(1, 31));
+            assertEquals(List.of("<program> 5", "<prompt> 1"), frames.subList(31, frames.size()));
+
+            // Through map: its frames, spilled and resumed too, are the prelude's, so internal.
+            e = error(context, source("map.scm", """
+                            (define (down n)
+                              (if (= n 0)
+                                  (list (car n))
+                                  (car (map (lambda (x) (down (- n 1))) '(1)))))
+                            (down 30)
+                            """));
+            assertEquals("map.scm:3 (car n)", at(e.getSourceLocation()));
+            frames = guestFrames(e);
+            assertEquals(frames.toString(), "down 3", frames.get(0));
+            assertEquals(frames.toString(), Collections.nCopies(30, "down 4"), frames.subList(1, 31));
+            assertEquals(List.of("<program> 5", "<prompt> 1"), frames.subList(31, frames.size()));
+
+            e = error(context, source("resumed.scm", """
+                            (define k #f)
+                            (define (wait n)
+                              (let ((v (+ 1 (call/cc (lambda (c) (set! k c) n)))))
+                                (list v)))
+                            (define (go) (list (wait 1)))
+                            (go)
+                            (k 'not-a-number)
+                            """));
+            assertEquals("+: not a number: not-a-number", e.getMessage());
+            assertEquals("resumed.scm:3 (+ 1 (call/cc (lambda (c) (set! k c) n)))", at(e.getSourceLocation()));
+            // wait and go returned long ago: their frames come from the continuation.
+            assertEquals(List.of("wait 3", "go 5", "<program> 6"), guestFrames(e).subList(0, 3));
+        }
+    }
+
+    /**
+     * The guest object is what {@code raise} raised (design.md D10): an exception, and also that
+     * Scheme value, with its Scheme display string and meta object, a number or a boolean included.
+     */
+    @Test
+    public void theGuestObjectIsTheRaisedObject() {
+        try (Context context = context()) {
+            String[][] cases = {
+                            {"(raise 42)", "42", "number"},
+                            {"(raise 1.5)", "1.5", "number"},
+                            {"(raise #t)", "#t", "boolean"},
+                            {"(raise 'boom)", "boom", "symbol"},
+                            {"(raise \"text\")", "\"text\"", "string"},
+                            {"(raise (list 1 2))", "(1 2)", "pair"},
+                            {"(error \"bad:\" 1)", "#<error \"bad:\" (1)>", "error-object"},
+            };
+            Value identity = eval(context, "(lambda (x) x)");
+            for (String[] c : cases) {
+                PolyglotException e = assertThrows(c[0], PolyglotException.class, () -> eval(context, c[0]));
+                Value raised = e.getGuestObject();
+                assertTrue(c[0], raised.isException());
+                assertEquals(c[0], c[1], raised.toString());
+                assertEquals(c[0], c[2], raised.getMetaObject().getMetaSimpleName());
+                // Passed back into Scheme, it is the raised object itself, no longer an exception.
+                Value back = identity.execute(raised);
+                assertFalse(c[0], back.isException());
+                assertEquals(c[0], c[1], back.toString());
+                // Thrown again, it is the same exception.
+                PolyglotException again = assertThrows(c[0], PolyglotException.class, raised::throwException);
+                assertEquals(c[0], e.getMessage(), again.getMessage());
+            }
+            assertEquals(42, assertThrows(PolyglotException.class, () -> eval(context, "(raise 42)")).getGuestObject().asInt());
+            assertTrue(assertThrows(PolyglotException.class, () -> eval(context, "(raise #t)")).getGuestObject().asBoolean());
+        }
+    }
+
+    /**
+     * {@code Context.interrupt} stops a running evaluation with an interrupt, not a Scheme error:
+     * Scheme handlers can't catch it, the after-thunks it leaves don't run, and the context goes on;
+     * {@code close(true)} cancels it, and the context is closed.
+     */
+    @Test
+    public void interruptAndCancelAreNotSchemeErrors() throws Exception {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try (Context context = Context.newBuilder(SCHEME).out(out).build()) {
+            PolyglotException e = whileLooping(context, out, () -> context.interrupt(Duration.ofMinutes(2)));
+            assertTrue(e.toString(), e.isInterrupted());
+            assertFalse(e.toString(), e.isCancelled() || e.isExit() || e.isInternalError());
+            // The context goes on, with none of the loop's handlers left.
+            assertEquals(3, eval(context, "(+ 1 2)").asInt());
+            PolyglotException uncaught = assertThrows(PolyglotException.class, () -> eval(context, "(raise 'still-uncaught)"));
+            assertEquals("uncaught exception: still-uncaught", uncaught.getMessage());
+        }
+        out.reset();
+        Context context = Context.newBuilder(SCHEME).out(out).build();
+        PolyglotException e = whileLooping(context, out, () -> context.close(true));
+        assertTrue(e.toString(), e.isCancelled());
+        assertFalse(e.toString(), e.isInterrupted() || e.isExit() || e.isInternalError());
+    }
+
+    /** Runs a loop that can't end (in a dynamic-wind, under handlers) on a thread, stops it, and returns what it threw. */
+    private static PolyglotException whileLooping(Context context, ByteArrayOutputStream out, ThrowingRunnable stop) throws Exception {
+        AtomicReference<Throwable> thrown = new AtomicReference<>();
+        Thread evaluation = new Thread(() -> {
+            try {
+                eval(context, """
+                                (guard (e (#t 'caught))
+                                  (with-exception-handler (lambda (e) 'handled)
+                                    (lambda ()
+                                      (dynamic-wind (lambda () (display "go") (flush-output-port))
+                                                    (lambda () (let loop () (loop)))
+                                                    (lambda () (display " after") (flush-output-port))))))
+                                """);
+            } catch (Throwable t) {
+                thrown.set(t);
+            }
+        });
+        evaluation.start();
+        long deadline = System.nanoTime() + TimeUnit.MINUTES.toNanos(2);
+        while (out.size() == 0 && evaluation.isAlive() && System.nanoTime() < deadline) {
+            Thread.sleep(10);
+        }
+        stop.run();
+        evaluation.join(TimeUnit.MINUTES.toMillis(2));
+        assertFalse("still running", evaluation.isAlive());
+        assertEquals("go", out.toString(StandardCharsets.UTF_8));
+        if (!(thrown.get() instanceof PolyglotException e)) {
+            throw new AssertionError("not a PolyglotException", thrown.get());
+        }
+        return e;
+    }
+
+    private interface ThrowingRunnable {
+        void run() throws Exception;
     }
 
     // ---------------------------------------------------------------------------------------------

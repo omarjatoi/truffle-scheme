@@ -8,7 +8,7 @@ status** line: what oracle/graal's issues, pull requests and `master` say
 about it, on the date given. The newest release is still 25.5.5.0.3;
 `master` is 25.6.0-dev.
 
-All eight are in Truffle 25.5.5.0.3 (Maven Central), on GraalVM CE 25.5.5.0.3
+All nine are in Truffle 25.5.5.0.3 (Maven Central), on GraalVM CE 25.5.5.0.3
 (JDK 25.0.5.0.3, `nix develop`).
 
 ## The reproducers are inverted tests
@@ -19,7 +19,7 @@ the bug is there**. It runs with every other unit test in `bazel test //...`, an
 alone with:
 
 ```
-bazel test //tests:unit_jit_UpstreamAsyncStacksTest //tests:unit_jit_UpstreamAstDepthTest //tests:unit_jit_UpstreamNestedRootSourceTest //tests:unit_jit_UpstreamReportPolymorphismTest //tests:unit_jit_UpstreamInterruptTest //tests:unit_jit_UpstreamPreinitializationDeadlockTest
+bazel test //tests:unit_jit_UpstreamAsyncStacksTest //tests:unit_jit_UpstreamAstDepthTest //tests:unit_jit_UpstreamNestedRootSourceTest //tests:unit_jit_UpstreamReportPolymorphismTest //tests:unit_jit_UpstreamInterruptTest //tests:unit_jit_UpstreamPreinitializationDeadlockTest //tests:unit_jit_UpstreamContinuationRootTest
 ```
 
 When a Truffle upgrade fixes a bug, its test fails. Then remove the
@@ -41,6 +41,7 @@ instrumentation and one trivial operation (the DSL warns if a root has none).
 | [Context pre-initialization with synchronous compilation](#context-pre-initialization-with-synchronous-compilation) | `UpstreamPreinitializationDeadlockTest` | `ContextPreinitializationTest`'s child JVMs (`tests/scheme/test/`) |
 | [Instrumented compilations fail in libgraal](#instrumented-compilations-fail-in-libgraal) | none yet (a launcher command, below) | `bazel-bin/scheme` runs Graal compiled for HotSpot for it (`launcher_vm_args`, `tests/harness/harness.py`); `SchemeMain` rejects it with libgraal and in the native launcher |
 | [MaxASTDepth on Bytecode DSL roots](#maxastdepth-on-bytecode-dsl-roots) | `UpstreamAstDepthTest` | None: docs/graalvm-configuration.md lists the limit as not enforced, and docs/embedding.md doesn't offer it |
+| [Continuation roots are never internal](#continuation-roots-are-never-internal) | `UpstreamContinuationRootTest` | `PromptDriver.unwind` and `SchemeError.location` (`src/runtime/scheme/runtime/`) |
 
 ## Nested root source sections
 
@@ -919,4 +920,102 @@ limited on its own. `checkAstDepth` could materialize the root's tags before the
 `BytecodeRootNode`, update its `BytecodeRootNodes` with a `BytecodeConfig` that includes the
 language's provided tags), or measure the depth of the bytecode node's full tag tree instead of the
 node tree.
+````
+
+## Continuation roots are never internal
+
+**Found in** the errors' interop audit (`EmbeddingTest`, "Errors as Truffle
+exceptions", under torture). **Test:** `UpstreamContinuationRootTest`.
+
+**Upstream status** (checked 2026-11-18): still present on `master`, and
+unreported (no issue or pull request found). On `master` the generated
+`ContinuationRootNodeImpl` (`ContinuationRootNodeImplElement`) delegates
+`getName`, `findBytecodeIndex`, `isCaptureFramesForTrace` and
+`translateStackTraceElement` to its source root, but not `isInternal` or
+`getSourceSection`. The issue text is ready to file.
+
+A Bytecode DSL root that yields is resumed through its continuation root
+(`ContinuationRootNode`, `ContinuationResult.continueWith`). That root says it
+isn't internal even when its source root is: `RootNode.isInternal()` asks the
+root's own source section, and a continuation root has none.
+
+- **Expected:** a continuation root of an internal root is internal, as
+  `getSourceRootNode()` is.
+- **Actual:** `isInternal()` is false and `getSourceSection()` is null. Stack
+  traces ask the frame's root (`DefaultBytecodeStackTraceElement.isInternal`,
+  which `PolyglotException` uses to leave internal frames out), so a resumed
+  frame of internal code shows in the guest stack trace, and in
+  `getExceptionStackTrace` as not internal.
+- **Our workaround:** an error unwinding through frames a prompt holds on the
+  heap (a spill's, a continuation's) passes only through those of code that
+  isn't internal (`PromptDriver.unwind`), and an error's source location skips
+  a resumed frame whose source root is internal (`SchemeError.location`). A
+  prelude frame (`map`, `for-each`) that is *running* resumed when an error
+  passes through it still shows: under torture every frame does, so
+  `EmbeddingTest.guestFrames` leaves frames of internal sources out there.
+  `SchemeRootNode` can't translate the stack trace element itself: the
+  Bytecode DSL in 25.5 generates `translateStackTraceElement` in the root, and
+  fails to compile if the root declares it final.
+
+### Issue text
+
+````markdown
+**Title:** Bytecode DSL: a continuation root isn't internal when its source root is
+
+**Version:** Truffle 25.5.5.0.3 (GraalVM CE 25.5.5.0.3, JDK 25.0.5.0.3); the generator is unchanged on `master`
+
+The generated `ContinuationRootNodeImpl` delegates `getName`, `findBytecodeIndex` and
+`translateStackTraceElement` to its source root, but not `isInternal`. `RootNode.isInternal()`
+then asks the continuation root's own source section, which is null, and answers false. A frame
+resumed from a continuation of internal code therefore shows in guest stack traces:
+`DefaultBytecodeStackTraceElement.isInternal()` asks `element.getTarget().getRootNode()`, the
+continuation root, and `PolyglotException.getPolyglotStackTrace()` keeps every frame that isn't
+internal.
+
+Reproducer: a root with `enableYield = true` built from an internal `Source`:
+
+```java
+@GenerateBytecode(languageClass = UpstreamLanguage.class, enableYield = true)
+public abstract class UpstreamYieldRoot extends RootNode implements BytecodeRootNode {
+    protected UpstreamYieldRoot(UpstreamLanguage language, FrameDescriptor frameDescriptor) {
+        super(language, frameDescriptor);
+    }
+
+    @Operation
+    public static final class Identity {
+        @Specialization
+        static Object doObject(Object value) {
+            return value;
+        }
+    }
+}
+```
+
+```java
+// In an entered context of UpstreamLanguage:
+Source internal = Source.newBuilder("upstream-repro", "yield", "internal.txt").internal(true).build();
+UpstreamYieldRoot root = UpstreamYieldRootGen.create(language, BytecodeConfig.WITH_SOURCE, b -> {
+    b.beginRoot();
+    b.beginSource(internal);
+    b.beginSourceSection(0, internal.getLength());
+    b.beginReturn();
+    b.beginYield();
+    b.emitLoadConstant(1);
+    b.endYield();
+    b.endReturn();
+    b.endSourceSection();
+    b.endSource();
+    b.endRoot();
+}).getNode(0);
+root.isInternal();                                                // true
+
+ContinuationResult yielded = (ContinuationResult) root.getCallTarget().call();
+ContinuationRootNode continuation = yielded.getContinuationRootNode();
+((RootNode) continuation.getSourceRootNode()).isInternal();       // true
+continuation.isInternal();                                        // false; expected true
+continuation.getSourceSection();                                  // null
+```
+
+`ContinuationRootNodeImpl` could override `isInternal()` (and `getSourceSection()`) to return its
+source root's, as it does for `getName()`.
 ````

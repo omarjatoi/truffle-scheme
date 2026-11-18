@@ -1726,6 +1726,72 @@ Each entry: the decision, why, and what was rejected.
     that transfers control (calls a continuation of the prompt, exits) ends
     the unwinding there, as an escape from an after-thunk during a jump
     does: the prompt goes on from where it went, and returns its value.
+- **Errors as Truffle exceptions.** An error that leaves Scheme is a
+  `SchemeError` whatever was raised (D10: the exception *is* the raised
+  object, and answers every other interop message as it). What it answers
+  as an exception, to another language through `InteropLibrary` and to an
+  embedder through `PolyglotException` (docs/embedding.md has the table;
+  `EmbeddingTest`, "Errors as Truffle exceptions", checks each):
+  - `isException`; `getExceptionType` `RUNTIME_ERROR`, or `PARSE_ERROR` for a
+    syntax error (D13), with `isExceptionIncompleteSource`;
+    `getExceptionMessage`, the message `PolyglotException.getMessage()`
+    shows; no cause (`hasExceptionCause` false: Scheme raises one object,
+    and an error that replaces another, from an after-thunk or a handler,
+    replaces it).
+  - **Its source location is the innermost frame that isn't internal**:
+    the frame the guest stack trace starts with, since Truffle leaves the
+    prelude's frames (internal sources) out of `getPolyglotStackTrace()`.
+    Before, it was the innermost frame with a location of any kind, so an
+    error in a procedure that `map` called in tail position was located in
+    `lists-vectors.scm`, a frame the trace didn't show.
+  - **The prelude's frames stay out of the trace when they were on the
+    heap.** A resumed frame runs in the Bytecode DSL's continuation root,
+    which Truffle never sees as internal (docs/upstream.md, "Continuation
+    roots are never internal"): so an error unwinding through a spill's
+    pending frames ("Spilled frames in tools") passes only through those of
+    code that isn't internal, and each user frame is then the location of
+    the one inside it, its call of the prelude's code (a recursion through
+    `map` 30 deep showed 30 `map` frames). The location skips a resumed
+    frame whose procedure is internal. A prelude frame *running* resumed
+    when the error passes (a `for-each` re-entered through a continuation)
+    still shows, until Truffle fixes it: the Bytecode DSL in 25.5 generates
+    the root's `translateStackTraceElement`, so the root can't translate it.
+  - **The stack trace through interop is Truffle's** (`hasExceptionStackTrace`
+    true, `getExceptionStackTrace` is `AbstractTruffleException`'s
+    `createGuestStackTrace`): an array of the frames the error left, each with
+    its executable name and source location, and `isInternal` for the
+    prelude's, which the consumer leaves out as `PolyglotException` does.
+    These are `PolyglotException`'s frames, so a spill's and a resumed
+    continuation's are there too ("Spilled frames in tools"). Before, it
+    was false (D10, M7-06): another language saw no frames at all.
+  - **A raised `long`, `double` or `boolean` has Scheme's language view**:
+    the exception answers `hasLanguageId`, `getMetaObject` and
+    `toDisplayString` for it as `getLanguageView` does for the bare value
+    (D10), since delegated to the Java value they had no language and no
+    meta object, and `(raise #t)` showed as `true`.
+  - `exit` and `emergency-exit` are Truffle's (`closeExited`, D9), an `EXIT`
+    with its status; `Context.interrupt` and `close(true)` (and the
+    resource limits that cancel) are Truffle's too: not `SchemeError`s, so
+    no prompt runs Scheme code for them (no handler, no after-thunk; an
+    interrupted context goes on with the dynamic environment it had before
+    the call, M8-06).
+  - *Cost:* none on `guard` and `raise`. `raise` calls the handler and
+    `guard` escapes through its prompt (D4): neither throws a Java
+    exception. A primitive's error is caught by the operation that called
+    it, in the same frame (above), so it leaves no call target, and
+    Truffle records frames only as an exception leaves call targets
+    (`AbstractTruffleException` makes no Java stack trace). The location
+    and both stack traces are computed when asked for. Measured, a
+    `guard`/`raise` micro-benchmark (each kernel 200,000 times; the median
+    over 6 fresh JVMs of each JVM's median of rounds 4 to 11, the two
+    builds interleaved, load 4.7 to 9.0 on the M3 Max), before and after
+    this change: a raised symbol 28.4 and 28.2 ms, `(car i)` caught 70.3
+    and 70.7, an error 10 frames down 101.1 and 98.9, `error` 30.2 and
+    30.7, `raise-continuable` 26.2 and 25.9: the same.
+  - *Not done:* `exit`'s location is the prelude's `exit`, the root of the
+    primitive's caller: `closeExited` takes a node, and a primitive run in
+    place has no node of its own for the call. Its stack trace does show
+    the program's frames.
 
 ### D9. Spec traps decided up front
 
@@ -2097,8 +2163,9 @@ Each entry: the decision, why, and what was rejected.
     `error-object-message` and `error-object-irritants` return, and its meta
     object is `error-object`. Passed back into Scheme, it is the raised
     object itself (`eq?` to it), so a Scheme procedure can examine it. Its
-    guest stack trace is the exception's (`PolyglotException`'s frames),
-    not an interop array (`hasExceptionStackTrace` is false).
+    guest stack trace is the exception's: `PolyglotException`'s frames, and
+    to other languages the interop array Truffle makes of the same frames
+    (D8, "Errors as Truffle exceptions").
   - **Values from outside** (arguments, array elements, bindings) become the
     one Scheme representation of each: interop's integers are exact
     integers, floats and doubles flonums, a `char` a character, a string a

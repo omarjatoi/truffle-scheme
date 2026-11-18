@@ -93,6 +93,7 @@ unit_tests(
         "SuiteReadSyntaxTest": "core",
         "UpstreamAstDepthTest": "upstream",
         "UpstreamAsyncStacksTest": "upstream",
+        "UpstreamContinuationRootTest": "upstream",
         "UpstreamInterruptTest": "upstream",
         "UpstreamNestedRootSourceTest": "upstream",
         "UpstreamPreinitializationDeadlockTest": "upstream",
