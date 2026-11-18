@@ -103,10 +103,17 @@ public class SteppingTest {
      * {@code located}.
      */
     private static List<String> steps(int line, String steps, boolean located) {
+        return steps(PROGRAM, line, steps, located, Context.newBuilder(SCHEME));
+    }
+
+    /**
+     * {@link #steps(int, String, boolean)} on {@code program}, in a context from {@code builder}.
+     */
+    private static List<String> steps(String program, int line, String steps, boolean located, Context.Builder builder) {
         Assume.assumeFalse("torture mode", SchemeLanguage.constant(SchemeLanguage.TORTURE) != SchemeLanguage.Torture.OFF);
-        Source source = Source.newBuilder(SCHEME, PROGRAM, "step.scm").buildLiteral();
+        Source source = Source.newBuilder(SCHEME, program, "step.scm").buildLiteral();
         List<String> stops = new ArrayList<>();
-        try (Context context = Context.newBuilder(SCHEME).out(new ByteArrayOutputStream()).build()) {
+        try (Context context = builder.out(new ByteArrayOutputStream()).build()) {
             try (DebuggerSession session = Debugger.find(context.getEngine()).startSession(event -> {
                 char step = stops.size() < steps.length() ? steps.charAt(stops.size()) : 'c';
                 stops.add(stop(event));
@@ -184,5 +191,56 @@ public class SteppingTest {
     public void aLetsBodyIsAStatement() {
         // top's let binds r, then its body (+ r 1) is the next statement.
         assertEquals(List.of("<program>:31 @2", "top:29 @3", "sq:3 @4", "top:29=4 @3", "top:30 @3", "<program>:31=7 @2"), steps(31, "iiiio"));
+    }
+
+    // top's call of down spills (past 50 nested calls), so every frame then on the stack, top's,
+    // outer's and the program's, is resumed from the heap by the root prompt.
+    private static final String SPILLING = """
+                    (import (scheme base))
+                    (define (down n)
+                      (if (= n 0)
+                          0
+                          (+ 1 (down (- n 1)))))
+                    (define (top)
+                      (let ((r (down 100)))
+                        (+ r 1)))
+                    (define (outer)
+                      (let ((t (top)))
+                        (* t 2)))
+                    (outer)
+                    """;
+
+    private static List<String> spilling(int line, String steps) {
+        return steps(SPILLING, line, steps, false, Context.newBuilder(SCHEME).allowExperimentalOptions(true).option("scheme.SpillDepth", "50"));
+    }
+
+    @Test
+    public void aStepOverACallThatSpillsGoesOn() {
+        // top's frame goes to the heap during its call of down and comes back: the debugger takes
+        // that for a generator's yield and resumption (design.md D13, "Yields and tools"), and the
+        // step over stops at top's next statement. Only top and the prompt are on the Java stack
+        // then; outer and the program are pending on the heap. (Continued, it stops at the
+        // breakpoint again when outer comes back: aBreakpointIsHitAgainWhenItsFrameResumes.)
+        assertEquals(List.of("outer:10 @3", "top:7 @4", "top:8 @2", "outer:10 @2"), spilling(10, "io"));
+    }
+
+    @Test
+    public void aStepOutOfAFrameResumedFromTheHeapStopsInThePrompt() {
+        // Known limitation (docs/upstream.md, "A resumed frame returns to what resumed it"): top,
+        // resumed from the heap, returns to the root prompt that resumed it, not to outer, so the
+        // step out stops in the prompt with top's value. To Truffle, outer's resumption is a call
+        // the prompt makes: a step into goes on there, at the statement outer resumes in, ...
+        assertEquals(List.of("top:8 @2", "<prompt>:1=101 @1", "outer:10 @2", "outer:11 @2", "<prompt>:1=202 @1"), spilling(8, "uiii"));
+        // ... and a step over or out from the prompt runs to the end.
+        assertEquals(List.of("top:8 @2", "<prompt>:1=101 @1"), spilling(8, "uo"));
+        assertEquals(List.of("top:8 @2", "<prompt>:1=101 @1"), spilling(8, "oo"));
+    }
+
+    @Test
+    public void aBreakpointIsHitAgainWhenItsFrameResumes() {
+        // Known limitation (docs/upstream.md, "A breakpoint is hit again when its frame resumes"):
+        // outer's statement on line 10, where the breakpoint is, holds the call that spilled, and
+        // when outer's frame comes back from the heap the breakpoint stops there again.
+        assertEquals(List.of("outer:10 @3", "top:7 @4", "top:8 @2", "<prompt>:1=101 @1", "outer:10 @2"), spilling(10, "iooo"));
     }
 }

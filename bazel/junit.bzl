@@ -31,6 +31,8 @@ def unit_tests(name, tests, support, kinds, resources = {}, extra_srcs = {}):
       polyglot  full, and a second Truffle language, test-only (//bazel:test_languages, design.md D20)
       core      only the runtime and the reader (:core_module)
       upstream  only Truffle (tests/scheme/test/upstream)
+      upstream_tools  upstream, and GraalVM's tools on the module path (//bazel:tools_modules), which
+                its tests drive through their options
 
     `resources[Class]`: files the class reads as resources (from the `tests/` root);
     `extra_srcs[Class]`: other test classes it uses."""
@@ -41,6 +43,7 @@ def unit_tests(name, tests, support, kinds, resources = {}, extra_srcs = {}):
         "polyglot": ([":" + support, "//src/compiler", "//src/launcher", "//src/reader", "//src/runtime"], ["//:launcher_module", "//bazel:test_languages"],
                      ["org.graalvm.polyglot", "org.graalvm.truffle", "scheme", "scheme.launcher"]),
         "upstream": ([], ["//bazel:truffle_modules"], ["org.graalvm.polyglot", "org.graalvm.truffle"]),
+        "upstream_tools": ([], ["//bazel:truffle_modules", "//bazel:tools_modules"], ["org.graalvm.polyglot", "org.graalvm.truffle"]),
     }
     by_mode = {mode: [] for mode in _UNIT_MODES}
     for src in tests:
@@ -48,12 +51,12 @@ def unit_tests(name, tests, support, kinds, resources = {}, extra_srcs = {}):
         kind = kinds.get(cls, "full")
         package = src.removesuffix(".java").rsplit("/", 1)[0].replace("/", ".")
         deps, module_deps, requires = kinds_deps[kind]
-        srcs = [src] + extra_srcs.get(cls, []) + ([f for f in native.glob(["scheme/test/upstream/*.java"]) if not f.endswith("Test.java")] if kind == "upstream" else [])
+        srcs = [src] + extra_srcs.get(cls, []) + ([f for f in native.glob(["scheme/test/upstream/*.java"]) if not f.endswith("Test.java")] if kind.startswith("upstream") else [])
         java_library(
             name = "%s_lib_%s" % (name, cls),
             srcs = srcs,
             # The upstream tests' UpstreamRoot is a Bytecode DSL root.
-            javacopts = BYTECODE_ROOT_JAVACOPTS if kind == "upstream" else SCHEME_JAVACOPTS,
+            javacopts = BYTECODE_ROOT_JAVACOPTS if kind.startswith("upstream") else SCHEME_JAVACOPTS,
             resource_strip_prefix = native.package_name() if cls in resources else None,
             resources = resources.get(cls, []),
             deps = deps + [
@@ -80,7 +83,7 @@ def unit_tests(name, tests, support, kinds, resources = {}, extra_srcs = {}):
                 name = test,
                 # Only Truffle runs the upstream tests: the language isn't there, so its options
                 # (the tortures' scheme.Torture) would be unknown ones, which Truffle refuses.
-                jvm_flags = [f for f in flags if not f.startswith("-Dpolyglot.scheme.")] if kind == "upstream" else flags,
+                jvm_flags = [f for f in flags if not f.startswith("-Dpolyglot.scheme.")] if kind.startswith("upstream") else flags,
                 module = ":%s_module_%s" % (name, cls),
                 size = size,
                 tags = tags,

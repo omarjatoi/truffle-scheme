@@ -3135,16 +3135,22 @@ Each entry: the decision, why, and what was rejected.
     a capture, every non-tail call under torture) is a Bytecode DSL yield,
     which every enclosing tag reports as `onYield`, and its resumption as
     `onResume`. Tools that don't override those take them for a return and
-    an entry: the CPU tracer and the coverage tool's counts include a
-    procedure's resumed frames (in the audit, a 301-deep recursion spilled
-    past 50 counted 555 entries of its root), though not its statements.
-    The debugger takes a yield for a generator's suspension: a step that
-    started in a frame waits for that frame's resumption. So, known
-    limitations: a step across a call during which its frame spilled stops
-    again at the statement when the frame resumes, and the spilled callers
-    then return to the prompt that resumed them; and a step through an
-    escape (invoking `k`, which abandons the frames between: an APPLY or
-    ESCAPE capture) never completes, as the abandoned frame never resumes.
+    an entry (M12-07, docs/upstream.md, each with a reproducer and its issue
+    text): the CPU tracer and the coverage tool count a resumed frame as
+    another entry of its procedure and of the statement it was in (a
+    301-deep recursion spilled past 50 counts 555 of each), and a line
+    breakpoint is hit again when a frame resumes in its statement. The
+    debugger's stepping takes a yield for a generator's suspension: a step
+    that started in a frame waits for that frame's resumption, and a step
+    over a call during which the frame spilled stops at the next statement,
+    as it should (`SteppingTest`). But to the debugger, a resumed frame's
+    caller is what resumed it: a step out of (or over the end of) a frame
+    resumed from the heap stops in the root prompt, not in the frame the
+    prompt resumes next, which is a new call to it, so only a step into goes
+    on there (docs/upstream.md, "A resumed frame returns to what resumed
+    it", a feature request). And a step through an escape (invoking `k`,
+    which abandons the frames between: an APPLY or ESCAPE capture) never
+    completes, as the abandoned frame never resumes.
     The CPU sampler walks stacks and isn't affected.
   - *Ending an escaped frame for tools (M12-06, not done).* The escape's
     yield serves nothing (`Capture.addSegment` drops an abandoning
@@ -3199,11 +3205,15 @@ Each entry: the decision, why, and what was rejected.
       pending frames. Tried with the return above, the APPLY step stopped
       at the resumed caller's statement (the one that called `call/cc`)
       and went on; the ESCAPE step stopped after the call of `call/cc`, in
-      the frame that called it, still with the capture as the value. But `PolyglotException`
-      leaves internal frames out of guest stack traces, so `<prompt>`,
-      `call/cc` and `%call-with-prompt` would leave every trace
-      (`EmbeddingTest` and `SpilledFramesTest` expect `<prompt>`): a
-      decision of its own (AGENTS.md, "Read first").
+      the frame that called it, still with the capture as the value. But
+      `PolyglotException` leaves internal frames out of guest stack traces,
+      so `<prompt>`, `call/cc` and `%call-with-prompt` would leave every
+      trace (`EmbeddingTest` and `SpilledFramesTest` expect `<prompt>`): a
+      decision of its own (AGENTS.md, "Read first"). It would also let a
+      step over the end of a frame resumed from the heap skip the prompt
+      and stop where the next frame resumes, as the APPLY step did, but
+      not a step out (M12-07, above): `SteppingStrategy.StepOut` takes
+      that resumption for a call entry, and stops only after a return.
 - **Logging.** The language logs through Truffle (`TruffleLogger`), so
   `--log.scheme.level=FINE` (the launcher), `-Dpolyglot.log.scheme.level=FINE`
   or `Context.Builder.option("log.scheme.level", "FINE")` turns it on, and

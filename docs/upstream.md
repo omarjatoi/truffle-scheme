@@ -1,14 +1,15 @@
 # Upstream reports
 
-Bugs in Truffle that this implementation works around, each with a minimal
-reproducer that doesn't use Scheme. Filing them at
+Bugs in Truffle that this implementation works around or lives with, and one
+missing feature, each with a reproducer (a minimal one that doesn't use
+Scheme, for each bug). Filing them at
 <https://github.com/oracle/graal/issues> is a human's call: we haven't filed
 any. Each section has the issue text, ready to paste, and an **Upstream
 status** line: what oracle/graal's issues, pull requests and `master` say
 about it, on the date given. The newest release is still 25.5.5.0.3;
 `master` is 25.6.0-dev.
 
-All ten are in Truffle 25.5.5.0.3 (Maven Central), on GraalVM CE 25.5.5.0.3
+All thirteen are in Truffle 25.5.5.0.3 (Maven Central), on GraalVM CE 25.5.5.0.3
 (JDK 25.0.5.0.3, `nix develop`).
 
 ## The reproducers are inverted tests
@@ -19,7 +20,7 @@ the bug is there**. It runs with every other unit test in `bazel test //...`, an
 alone with:
 
 ```
-bazel test //tests:unit_jit_UpstreamAsyncStacksTest //tests:unit_jit_UpstreamAstDepthTest //tests:unit_jit_UpstreamNestedRootSourceTest //tests:unit_jit_UpstreamReportPolymorphismTest //tests:unit_jit_UpstreamInterruptTest //tests:unit_jit_UpstreamPreinitializationDeadlockTest //tests:unit_jit_UpstreamContinuationRootTest
+bazel test //tests:unit_jit_UpstreamAsyncStacksTest //tests:unit_jit_UpstreamAstDepthTest //tests:unit_jit_UpstreamNestedRootSourceTest //tests:unit_jit_UpstreamReportPolymorphismTest //tests:unit_jit_UpstreamInterruptTest //tests:unit_jit_UpstreamPreinitializationDeadlockTest //tests:unit_jit_UpstreamContinuationRootTest //tests:unit_jit_UpstreamResumedEntriesTest //tests:unit_jit_UpstreamResumedBreakpointTest
 ```
 
 When a Truffle upgrade fixes a bug, its test fails. Then remove the
@@ -30,6 +31,10 @@ The tests share a tiny language that has nothing to do with Scheme,
 `UpstreamLanguage` (id `upstream-repro`): every program is one statement that
 returns 42, in as many nested expressions as the program starts with `(`. Its roots are `UpstreamRoot`, a `@GenerateBytecode` root with tag
 instrumentation and one trivial operation (the DSL warns if a root has none).
+The tests of yields build `UpstreamYieldRoot` (yields) and
+`UpstreamTaggedYieldRoot` (yields and tags) themselves, and
+`UpstreamResumedEntriesTest` has GraalVM's tools on its module path, which it
+drives through their options.
 
 | Bug | Test | Our workaround |
 |---|---|---|
@@ -43,6 +48,9 @@ instrumentation and one trivial operation (the DSL warns if a root has none).
 | [MaxASTDepth on Bytecode DSL roots](#maxastdepth-on-bytecode-dsl-roots) | `UpstreamAstDepthTest` | Under `UNTRUSTED` only, which requires the limit: the compiler builds the guest's roots with `BytecodeConfig.COMPLETE` (`ProgramCompiler.generate`, `SchemeContext.materializesTags`); elsewhere the limit isn't enforced |
 | [Continuation roots are never internal](#continuation-roots-are-never-internal) | `UpstreamContinuationRootTest` | `PromptDriver.unwind` and `SchemeError.location` (`src/runtime/scheme/runtime/`) |
 | [An engine that closes as the JVM exits](#an-engine-that-closes-as-the-jvm-exits) | none (a race; the reproducer is below) | `SchemeMain`'s warm-up closes under a lock the program's thread takes before the JVM exits (`src/launcher/scheme/launcher/`) |
+| [Tools take a resumption for an entry](#tools-take-a-resumption-for-an-entry) | `UpstreamResumedEntriesTest` | none: docs/usage.md's tools table says the CPU tracer's and coverage's counts include resumed frames |
+| [A breakpoint is hit again when its frame resumes](#a-breakpoint-is-hit-again-when-its-frame-resumes) | `UpstreamResumedBreakpointTest` | none: docs/usage.md's tools table says so |
+| [A resumed frame returns to what resumed it](#a-resumed-frame-returns-to-what-resumed-it) (a feature request) | `SteppingTest.aStepOutOfAFrameResumedFromTheHeapStopsInThePrompt` (Scheme) | none: docs/usage.md says to step into from the prompt |
 
 ## Nested root source sections
 
@@ -1120,4 +1128,198 @@ public class RaceProbe {
 
 `onVMShutdown` could skip an engine that is closed (`closed` is set under the same lock, before the
 handler is closed), or the handler's `flush` could do nothing once it is closed.
+````
+
+## Tools take a resumption for an entry
+
+**Found in** #261's audit of the tools; reproduced without Scheme in M12-07.
+**Test:** `UpstreamResumedEntriesTest`.
+
+**Upstream status** (checked 2026-11-18): still present on `master`
+(f452039e44): `CPUTracer.CounterNode` and the coverage tool's
+`CountingCoverageNode` override `onEnter` only, and
+`ExecutionEventNode.onResume` still calls `onEnter`. Unreported (no issue or
+pull request found). The issue text is ready to file.
+
+A Bytecode DSL root that yields reports `onYield` to every tag around the
+yield, and `onResume` when it is resumed (`ExecutionEventNode`, since 24.0).
+By default `onYield` calls `onReturnValue` and `onResume` calls `onEnter`, so
+a tool that counts `onEnter` counts each resumption as one more entry.
+
+- **Expected:** a root entered once, yielding once and resumed once, has a
+  count of 1 in the CPU tracer and in the coverage tool, and so has the
+  statement the yield is in.
+- **Actual:** 2 each: the CPU tracer's JSON `count` of the root, and the
+  coverage tool's (`--coverage.Count`) of the root and of its statement.
+- **In Scheme:** a frame that spills to the heap ("Stack-depth spill" in
+  design.md) is resumed once. `(down 300)`, a non-tail recursion of 301
+  calls, run with `--scheme.SpillDepth=50`, counts 555 entries of `down`'s
+  root and 555 executions of its one statement, in both tools; 301 without
+  the spill.
+- **Our workaround:** none. docs/usage.md's tools table says so.
+
+### Issue text
+
+````markdown
+**Title:** CPU tracer and coverage: a Bytecode DSL frame that yields and is resumed counts as two entries
+
+**Version:** Truffle 25.5.5.0.3 (GraalVM CE 25.5.5.0.3, JDK 25.0.5.0.3); unchanged on `master`
+
+`ExecutionEventNode.onResume` calls `onEnter` by default, and `onYield` calls `onReturnValue`. The
+CPU tracer's `CPUTracer.CounterNode` and the coverage tool's `CountingCoverageNode` override
+`onEnter` only, so they count every resumption of a yielded frame as another entry of its root and
+of the statement around the yield. For a generator that is fine if a resumption is meant as a call;
+for a language that yields frames to move them off the Java stack (a deep recursion spilled to the
+heap, a continuation's frames), every count of a frame that was ever suspended is too high.
+
+Reproducer: a Bytecode DSL root, `enableYield = true, enableTagInstrumentation = true`, whose
+program is one `StatementTag` around `return yield 1`:
+
+```java
+UpstreamTaggedYieldRoot root = UpstreamTaggedYieldRootGen.create(language, BytecodeConfig.WITH_SOURCE, b -> {
+    b.beginSource(source);
+    b.beginSourceSection(0, source.getLength());
+    b.beginRoot();
+    b.beginTag(StandardTags.StatementTag.class);
+    b.beginReturn();
+    b.beginYield();
+    b.emitLoadConstant(1);
+    b.endYield();
+    b.endReturn();
+    b.endTag(StandardTags.StatementTag.class);
+    b.endRoot();
+    b.endSourceSection();
+    b.endSource();
+}).getNode(0);
+```
+
+Run in a context built with `cputracer=true, cputracer.Output=json` (or `coverage=true,
+coverage.Count=true, coverage.Output=json`):
+
+```java
+ContinuationResult yielded = (ContinuationResult) root.getCallTarget().call(); // yields 1
+yielded.continueWith(2);                                                       // returns 2
+// After close: the CPU tracer's JSON has "count": 2 for the root, and the coverage tool's
+// "count": 2 for the root and for the statement. Expected: 1 each.
+```
+
+`CounterNode` and the coverage nodes could override `onResume` (and `onYield`) to do nothing, so
+that a resumption is neither an entry nor a call.
+````
+
+## A breakpoint is hit again when its frame resumes
+
+**Found in** M12-07: #261's "a step across a spill stops again at the
+statement" was this breakpoint, not the step. **Test:**
+`UpstreamResumedBreakpointTest`.
+
+**Upstream status** (checked 2026-11-18): still present on `master`
+(f452039e44): `Breakpoint.BreakpointBeforeNode` overrides `onEnter` only.
+Unreported (no issue or pull request found). The issue text is ready to
+file.
+
+A line breakpoint's node overrides `onEnter` only, so `onResume`, which
+calls `onEnter`, hits it again: a breakpoint on a statement that a frame
+yields inside stops a second time when the frame is resumed, although the
+frame goes on from the middle of the statement. The debugger's stepping
+nodes handle the yield and the resumption (`SteppingNode.onYield`,
+`SteppingStrategy.setYieldBreak` and `setYieldResume`), and stepping over
+such a statement stops at the next one; the breakpoint doesn't.
+
+- **Expected:** one hit, before the statement runs.
+- **Actual:** two, the second as the frame resumes.
+- **In Scheme:** a breakpoint on a statement whose call spills stops again
+  when its frame comes back from the heap
+  (`SteppingTest.aBreakpointIsHitAgainWhenItsFrameResumes`).
+- **Our workaround:** none. docs/usage.md's tools table says so.
+
+### Issue text
+
+````markdown
+**Title:** Debugger: a breakpoint is hit again when a Bytecode DSL frame resumes inside its statement
+
+**Version:** Truffle 25.5.5.0.3 (GraalVM CE 25.5.5.0.3, JDK 25.0.5.0.3); unchanged on `master`
+
+`Breakpoint.BreakpointBeforeNode` overrides `onEnter` only, and `ExecutionEventNode.onResume` calls
+`onEnter`, so when a frame yields inside a statement that has a breakpoint and is resumed, the
+breakpoint is hit a second time, at a statement the frame isn't entering but continuing. Stepping
+handles the resumption (`SteppingNode.onResume`, `SteppingStrategy.setYieldResume`): a step over
+the statement stops at the next one. The breakpoint should do the same.
+
+Reproducer: a Bytecode DSL root, `enableYield = true, enableTagInstrumentation = true`, whose
+program is one `StatementTag` around `return yield 1` (built as in the root above, with its
+`Source` from `Source.newBuilder(languageId, "return yield 1", "resumed.txt").build()`):
+
+```java
+try (DebuggerSession session = Debugger.find(context.getEngine()).startSession(event -> { })) {
+    Breakpoint breakpoint = Breakpoint.newBuilder(source).lineIs(1).build();
+    session.install(breakpoint);
+    context.enter();
+    UpstreamTaggedYieldRoot root = /* as above */;
+    ContinuationResult yielded = (ContinuationResult) root.getCallTarget().call();
+    breakpoint.getHitCount();  // 1
+    yielded.continueWith(2);
+    breakpoint.getHitCount();  // 2; expected 1
+    context.leave();
+}
+```
+
+`BreakpointBeforeNode` could override `onResume` to do nothing (and `BreakpointAfterNode` `onYield`,
+which now calls `onReturnValue`, so an after-breakpoint is likely hit at a yield).
+````
+
+## A resumed frame returns to what resumed it
+
+**Found in** #261's audit; M12-07. **Test:**
+`SteppingTest.aStepOutOfAFrameResumedFromTheHeapStopsInThePrompt` (a Scheme
+test of what we see, since this is a missing feature, not a bug).
+
+**Upstream status** (checked 2026-11-18): no API on `master` (f452039e44)
+for it, and no issue or pull request found. The issue text is ready to file
+as a feature request.
+
+To the debugger, a frame that yields and is resumed is a generator's: what
+resumes it is its caller. `DebuggerSession.RootSteppingDepthNode` counts a
+root's `onResume` as a call entry and its `onYield` as a return. For a
+generator, that is right. For Scheme's frames spilled to the heap or
+captured in a continuation, the root prompt resumes the pending frames one
+after the other, each with the value of the one before: the frame a resumed
+frame returns to is the next one the prompt resumes, which waits there for
+its call's value.
+
+- **Expected** (with a way for the language to say so): a step out of a
+  resumed frame stops in the frame the prompt resumes next, after its call,
+  as for a frame on the Java stack.
+- **Actual:** the step stops in the prompt's frame, after its call of the
+  resumed frame, with that frame's value. From there a step over or out
+  runs to the end, since the next frame's resumption is a call from the
+  prompt; a step into stops at the statement the next frame resumes in.
+- **Our workaround:** none; docs/usage.md says to step into from the
+  prompt. The prompt roots do report the pending frames, as asynchronous
+  frames (`RootNode.findAsynchronousFrames`), so stacks show them.
+
+### Issue text
+
+````markdown
+**Title:** Debugger: let a language say which frame a resumed frame returns to
+
+**Version:** Truffle 25.5.5.0.3 (GraalVM CE 25.5.5.0.3, JDK 25.0.5.0.3); unchanged on `master`
+
+A Scheme on the Bytecode DSL moves frames off the Java stack by yielding them (a deep recursion is
+spilled to the heap; a continuation's frames are captured), and a driver root resumes them later,
+one after the other, innermost first: each resumed frame's return value is the value the next one
+is resumed with. The driver root reports those pending frames through
+`RootNode.findAsynchronousFrames`, so the debugger's stacks show the logical stack.
+
+Stepping doesn't follow it. `DebuggerSession.RootSteppingDepthNode` counts a root's `onResume` as a
+call entry and its `onYield` as a return, as for a generator, so a step out of a resumed frame stops
+in the driver's frame (`notifyCallerReturn`, at the driver's root, since it has no instrumentable
+call node), and the next frame's resumption is a call one level deeper than the step: a step over or
+out from the driver never stops in it. A step into does.
+
+Could a root say where a resumed frame returns, so that a step out or over that leaves a resumed
+frame stops in the frame that is resumed next, as it would stop after a call returns? For example,
+the debugger could take the driver's first asynchronous frame (`findAsynchronousFrames`) as the
+returning frame's caller, and stop when that frame is resumed (`onResume`, matched with
+`TruffleInstrument.Env.isSameFrame`) at its call node, after the call.
 ````
