@@ -46,6 +46,7 @@ import scheme.runtime.GlobalCell;
 import scheme.runtime.GlobalEnvironment;
 import scheme.runtime.SchemeContext;
 import scheme.runtime.SchemeLanguage;
+import scheme.runtime.SchemeLogs;
 import scheme.runtime.SchemeRootNode;
 import scheme.runtime.SchemeRootNodeGen;
 import scheme.runtime.value.SBigInteger;
@@ -95,7 +96,7 @@ final class PreludeImage {
     /** The build-time image's name among the prelude's resources (SourceDir.Resources). */
     static final String RESOURCE = "prelude.image";
 
-    private static final TruffleLogger LOG = TruffleLogger.getLogger(SchemeLanguage.ID, "preludeImage");
+    private static final TruffleLogger LOG = SchemeLogs.PRELUDE;
 
     private static final int MAGIC = 0x52375049;
     /** The format's version: change it whenever what the image holds or how it is written changes. */
@@ -280,6 +281,7 @@ final class PreludeImage {
         synchronized (PreludeImage.class) {
             if (image == null) {
                 image = built;
+                LOG.fine("built a prelude image in memory: later contexts of this JVM restore from it");
             }
         }
     }

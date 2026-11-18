@@ -106,6 +106,10 @@ final class StackBudget {
     static void initialize(SchemeContext context, int spillDepth, long stackSize) {
         context.sizedThread = stackSize > 0 ? Thread.currentThread() : null;
         context.sizedThreadLimit = limitFor(stackSize);
+        if (stackSize > 0 && spillDepth == 0 && SchemeLogs.on(SchemeLogs.SPILL)) {
+            SchemeLogs.SPILL.fine("the stack of thread " + Thread.currentThread().getName() + " is " + stackSize + " bytes (scheme.StackSize), so recursion on it spills past " +
+                            context.sizedThreadLimit + " bytes");
+        }
         if (spillDepth > 0) {
             context.interpretedCallCost = 1;
             context.compiledCallCost = 1;
@@ -246,6 +250,9 @@ final class StackBudget {
             long limit = remaining - Math.max(RESERVE, remaining / 8);
             measured = (int) Math.max(FLOOR, Math.min(limit, MAX_LIMIT));
             MEASURED.set(measured);
+            if (SchemeLogs.on(SchemeLogs.SPILL)) {
+                SchemeLogs.SPILL.fine("measured the stack of thread " + Thread.currentThread().getName() + ": " + remaining + " bytes left, so recursion spills past " + measured + " bytes");
+            }
         }
         context.stackLimit = measured;
         context.stackMeasured = true;

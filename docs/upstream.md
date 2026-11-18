@@ -8,7 +8,7 @@ status** line: what oracle/graal's issues, pull requests and `master` say
 about it, on the date given. The newest release is still 25.5.5.0.3;
 `master` is 25.6.0-dev.
 
-All nine are in Truffle 25.5.5.0.3 (Maven Central), on GraalVM CE 25.5.5.0.3
+All ten are in Truffle 25.5.5.0.3 (Maven Central), on GraalVM CE 25.5.5.0.3
 (JDK 25.0.5.0.3, `nix develop`).
 
 ## The reproducers are inverted tests
@@ -42,6 +42,7 @@ instrumentation and one trivial operation (the DSL warns if a root has none).
 | [Instrumented compilations fail in libgraal](#instrumented-compilations-fail-in-libgraal) | none yet (a launcher command, below) | `bazel-bin/scheme` runs Graal compiled for HotSpot for it (`launcher_vm_args`, `tests/harness/harness.py`); `SchemeMain` rejects it with libgraal and in the native launcher |
 | [MaxASTDepth on Bytecode DSL roots](#maxastdepth-on-bytecode-dsl-roots) | `UpstreamAstDepthTest` | None: docs/graalvm-configuration.md lists the limit as not enforced, and docs/embedding.md doesn't offer it |
 | [Continuation roots are never internal](#continuation-roots-are-never-internal) | `UpstreamContinuationRootTest` | `PromptDriver.unwind` and `SchemeError.location` (`src/runtime/scheme/runtime/`) |
+| [An engine that closes as the JVM exits](#an-engine-that-closes-as-the-jvm-exits) | none (a race; the reproducer is below) | `SchemeMain`'s warm-up closes under a lock the program's thread takes before the JVM exits (`src/launcher/scheme/launcher/`) |
 
 ## Nested root source sections
 
@@ -1018,4 +1019,99 @@ continuation.getSourceSection();                                  // null
 
 `ContinuationRootNodeImpl` could override `isInternal()` (and `getSourceSection()`) to return its
 source root's, as it does for `getName()`.
+````
+
+## An engine that closes as the JVM exits
+
+**Found in** the logging task: another agent saw one launcher run (of 4, stdout
+piped into `wc`, on `main`) print `java.lang.AssertionError: The log handler is
+closed.` from `PolyglotEngineImpl.onVMShutdown`. **Test:** none: it is a race
+between two threads; the reproducer below hits it in about half its runs at
+the right delay.
+
+**Upstream status** (checked 2026-11-18): still present on `master`, and
+unreported (no issue or pull request found for "log handler is closed").
+`Engine.EngineShutDownHook` and `PolyglotEngineImpl.onVMShutdown` are the
+same on `master`.
+
+Truffle's shutdown hook (`Engine.EngineShutDownHook`) copies the set of open
+engines, then calls `onVMShutdown` on each, which flushes the engine's log
+handler under the engine's lock. An engine that another thread closes in
+between (`ensureClosed` closes the log handler and removes the engine from
+the set, under the same lock) is still in the copy: the hook flushes its
+closed handler, whose `checkClosed` throws `AssertionError("The log handler is
+closed.")`, and the handler's `ErrorManager` prints it on standard error. Any
+log level, or none: the default handler is a stream handler, and it is
+flushed whether or not anything was logged.
+
+- **Expected:** nothing printed; a closed engine has nothing to flush.
+- **Actual:** `java.util.logging.ErrorManager: 2:` and the assertion's stack
+  trace (`PolyglotLoggers$AbstractLogHandler.checkClosed`, from
+  `StreamLogHandler.flush`, from `PolyglotEngineImpl.onVMShutdown`), with exit
+  status 0.
+- **Where we hit it:** the launcher's warm-up (design.md D17, M8-03) runs in
+  a context of its own on a daemon thread, which closes it when the warm-up
+  ends. A program that ends as the warm-up does exits while that context's
+  engine closes. Measured: `RaceProbe` (below, against `main`'s jars) printed
+  it in 1 of 6 runs with no delay before `System.exit` and 3 of 6 with 200
+  microseconds, none at 1 ms or more; the launcher itself, in 96 runs of
+  programs that last 50 to 600 ms, never (the window is a few microseconds
+  wide, where the warm-up's close meets the exit).
+- **Our workaround:** `SchemeMain` closes the warm-up's context under a lock,
+  and once the program has run, the program's thread takes the lock (waiting
+  for a close in progress) and marks the warm-up abandoned, so it is never
+  closed after that: an engine still open when the JVM exits is flushed
+  without complaint. Every other context the launcher makes is closed by the
+  program's thread before it exits.
+
+### Issue text
+
+````markdown
+**Title:** `onVMShutdown` flushes the log handler of an engine closed after the shutdown hook started: "AssertionError: The log handler is closed."
+
+**Version:** Truffle 25.5.5.0.3 (GraalVM CE 25.5.5.0.3, JDK 25.0.5.0.3); `Engine.EngineShutDownHook` and `PolyglotEngineImpl.onVMShutdown` are unchanged on `master`
+
+`Engine.EngineShutDownHook` copies `ENGINES`, then calls `onVMShutdown` on each engine of the copy, which
+flushes `logHandler` if it isn't null. When another thread closes one of those engines in between,
+`ensureClosed` closes its `logHandler` (and removes the engine from `ENGINES`, too late for the copy),
+and the hook's flush fails `AbstractLogHandler.checkClosed`, which the handler's `ErrorManager` prints:
+
+```
+java.util.logging.ErrorManager: 2:
+java.lang.RuntimeException: java.lang.AssertionError: The log handler is closed.
+	at org.graalvm.truffle/com.oracle.truffle.polyglot.PolyglotLoggers$AbstractLogHandler.checkClosed(PolyglotLoggers.java:310)
+	at org.graalvm.truffle/com.oracle.truffle.polyglot.PolyglotLoggers$StreamLogHandler.flush(PolyglotLoggers.java:440)
+	at org.graalvm.truffle/com.oracle.truffle.polyglot.PolyglotEngineImpl.onVMShutdown(PolyglotEngineImpl.java:2620)
+	at org.graalvm.truffle/com.oracle.truffle.polyglot.PolyglotEngineDispatch.shutdown(PolyglotEngineDispatch.java:322)
+	at org.graalvm.polyglot/org.graalvm.polyglot.Engine$EngineShutDownHook.run(Engine.java:2180)
+	at java.base/java.lang.Thread.run(Thread.java:1474)
+```
+
+Reproducer (any language; run it a few times, with `args[0]` around 0 to 200 microseconds):
+
+```java
+public class RaceProbe {
+    public static void main(String[] args) throws Exception {
+        long delayNanos = Long.parseLong(args[0]) * 1000;
+        CountDownLatch closing = new CountDownLatch(1);
+        Thread thread = new Thread(() -> {
+            Context context = Context.newBuilder(LANGUAGE).build();
+            context.eval(LANGUAGE, PROGRAM);
+            closing.countDown();
+            context.close();
+        });
+        thread.setDaemon(true);
+        thread.start();
+        closing.await();
+        long end = System.nanoTime() + delayNanos;
+        while (System.nanoTime() < end) {
+            Thread.onSpinWait();
+        }
+        System.exit(0); // the shutdown hook runs while the other thread closes its context's engine
+    }
+}
+```
+
+`onVMShutdown` could skip an engine that is closed (`closed` is set under the same lock, before the
+handler is closed), or the handler's `flush` could do nothing once it is closed.
 ````
