@@ -15,7 +15,6 @@ import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.nodes.Node;
 
-import scheme.runtime.value.LiteralPair;
 import scheme.runtime.value.SChar;
 import scheme.runtime.value.SClosure;
 import scheme.runtime.value.SConstant;
@@ -88,15 +87,20 @@ public final class Intrinsics {
         }
 
         /**
-         * Whether {@code x} is a pair made at run time ({@link SPair#isMutable}): {@code car},
-         * {@code cdr} and {@code pair?} check the exact class, as {@code set-car!} does, so that a
-         * site that has seen only such pairs proves the exact class, and a {@code set-car!} of the
-         * same value checks nothing more ({@code instanceof SPair}, now that {@code SPair} has a
-         * subclass, wouldn't prove it, and would also load a supertype of the value's class). A
-         * literal's pair, a final class, is a specialization of its own, also one class compare.
+         * Whether {@code x} is a pair, of either class ({@link SPair}, or a literal's
+         * {@code LiteralPair}; design.md D1): {@code car}, {@code cdr} and {@code pair?} have one
+         * specialization for both, so a literal's pair takes the path a run-time pair takes. In the
+         * interpreter, {@code instanceof}: the host compiles the bytecode interpreter's loop with the
+         * handlers inlined, and a test only a literal's pair passes would be a branch the host's
+         * profile hasn't seen, an uncommon trap and a recompilation of the loop the first time a
+         * program's literal reaches it (design.md D1). Compiled, the exact class compared with each
+         * of the two, which proves {@code set-car!}'s test on the first.
          */
-        static boolean isMutable(Object x) {
-            return SPair.isMutable(x);
+        static boolean isPair(Object x) {
+            if (CompilerDirectives.inInterpreter()) {
+                return x instanceof SPair;
+            }
+            return SPair.asPair(x) != null;
         }
 
         static boolean inBounds(long k, int length) {
@@ -176,14 +180,9 @@ public final class Intrinsics {
     public abstract static class Car extends IntrinsicNode {
         public abstract Object execute(GlobalCell cell, boolean tail, Object x);
 
-        @Specialization(guards = "isMutable(pair)")
+        @Specialization(guards = "isPair(pair)")
         static Object doPair(@SuppressWarnings("unused") GlobalCell cell, @SuppressWarnings("unused") boolean tail, Object pair) {
-            return SPair.asMutable(pair).car;
-        }
-
-        @Specialization
-        static Object doLiteral(@SuppressWarnings("unused") GlobalCell cell, @SuppressWarnings("unused") boolean tail, LiteralPair pair) {
-            return pair.car;
+            return ((SPair) pair).car;
         }
 
         @Specialization
@@ -204,14 +203,9 @@ public final class Intrinsics {
     public abstract static class Cdr extends IntrinsicNode {
         public abstract Object execute(GlobalCell cell, boolean tail, Object x);
 
-        @Specialization(guards = "isMutable(pair)")
+        @Specialization(guards = "isPair(pair)")
         static Object doPair(@SuppressWarnings("unused") GlobalCell cell, @SuppressWarnings("unused") boolean tail, Object pair) {
-            return SPair.asMutable(pair).cdr;
-        }
-
-        @Specialization
-        static Object doLiteral(@SuppressWarnings("unused") GlobalCell cell, @SuppressWarnings("unused") boolean tail, LiteralPair pair) {
-            return pair.cdr;
+            return ((SPair) pair).cdr;
         }
 
         @Specialization
@@ -255,19 +249,9 @@ public final class Intrinsics {
     public abstract static class IsPair extends IntrinsicNode {
         public abstract boolean execute(Object x);
 
-        @Specialization(guards = "isMutable(x)")
-        static boolean doPair(@SuppressWarnings("unused") Object x) {
-            return true;
-        }
-
         @Specialization
-        static boolean doLiteral(@SuppressWarnings("unused") LiteralPair x) {
-            return true;
-        }
-
-        @Fallback
-        static boolean doOther(@SuppressWarnings("unused") Object x) {
-            return false;
+        static boolean doCheck(Object x) {
+            return isPair(x);
         }
     }
 
