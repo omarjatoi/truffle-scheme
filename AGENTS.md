@@ -4,6 +4,29 @@ R7RS-small Scheme on GraalVM Truffle (Bytecode DSL). Goal: full R7RS-small
 conformance, including re-entrant multi-shot continuations and proper tail
 calls, with JIT performance.
 
+## Direction
+
+What the repository has decided, and where:
+
+- **R7RS is the target**, with its errata (r7rs.org). The vendored suites
+  are how we check it, not what defines it: where a suite expects a result
+  R7RS calls "an error", R7RS wins and the test is a listed exception
+  (`tests/r7rs-larceny/README.md`), and chibi-scheme's own behaviour is a
+  reference for `tests/diff`, not the spec (design.md D8, D9, D18).
+- **GraalVM's and Truffle's own mechanisms over custom ones**, wherever
+  they fit, conformance first (design.md's preamble, D13, D17;
+  docs/truffle-guidance.md checks the runtime against GraalVM's guidance).
+- **Usability: an option takes effect or fails with a clear error**, never
+  silently ignored (plan.md M10-04, the maintainer's rule).
+- **Remote-first Bazel.** Linux actions and tests run on BuildBuddy's
+  executors; macOS's C and C++ run on this Mac until remote Macs exist
+  (design.md D11).
+- **CI runs what runs on every commit**; benchmarks, the threshold check
+  and the native image are local (design.md D11, the maintainer's choice).
+- **Performance claims are measured**: interleaved A/B runs on one machine,
+  stating its load, and leaving out runs whose 1-minute load was above 10
+  (bench/README.md "Thresholds"; plan.md M8-M10).
+
 ## Read first
 
 - `docs/design.md`: architecture and the **Decisions** section. Don't
@@ -17,11 +40,14 @@ calls, with JIT performance.
 
 Take the next task all the way to a merged PR, then carry on with the next
 one. There are no human gates: don't wait for approval, and merge your own
-PR once it's green.
+PR once it's green. Several agents may work at once, each on its own task
+in its own worktree (as in M4, and M10's *(early)* tasks): another agent's
+open PR is theirs to finish, and a task an open PR already covers isn't
+yours to take.
 
 1. **Sync.** `git fetch origin && git switch main && git pull --ff-only`.
-   If a PR is still open (`gh pr list`), finish it first: address its
-   review, fix red checks, or merge it if it's green.
+   If one of your PRs is still open (`gh pr list`), finish it first:
+   address its review, fix red checks, or merge it if it's green.
 2. **Choose** the first unchecked task in the current milestone (the first
    one in `docs/plan.md` with unchecked tasks) whose dependencies are
    checked. If none qualifies, take the next milestone's *(early)* tasks.
@@ -29,8 +55,11 @@ PR once it's green.
    tasks in the same format, as a PR titled `Plan: Draft the M<n> tasks`.
    Say in one line what you picked.
 3. **Work** on a branch `<id>-<short-name>`, following "Working style".
-   Tick the task's checkbox in `docs/plan.md` (outside the status block).
-   Run `bazel test //...` before opening the PR (AGENTS.md "Commands").
+   If the task needs a decision design.md doesn't record, or changes one,
+   that goes first, in a PR of its own ("Read first"; M10-01 did: #210 and
+   #214, then #211). Tick the task's checkbox in `docs/plan.md` (outside
+   the status block). Run `bazel test //...` before opening the PR
+   (AGENTS.md "Commands").
 4. **Open the PR** (not a draft), titled `<ID>: <what the change does>`,
    for example `M2-05: Spill deep non-tail recursion to the heap at a depth
    threshold`. The title becomes the squash commit on `main`
@@ -39,7 +68,9 @@ PR once it's green.
 5. **Merge** once the Buildkite build, `buildkite/truffle-scheme`, is
    green (`gh pr checks <n> --watch`):
    `gh pr merge <n> --squash --delete-branch`. If a check fails, fix it on
-   the branch. Never merge red.
+   the branch. Never merge red. `main`'s ruleset requires the branch to be
+   up to date: if the PR is behind, `gh pr update-branch <n> --rebase`, and
+   wait for the new build.
 6. **Finish** with the PR link and one line of evidence for each "Done
    when" item, then go back to step 1.
 
@@ -230,8 +261,9 @@ Benchmarks, the threshold check and the native image are local commands.
 
 ## Areas
 
-M4 runs one agent per area, in parallel. Each area owns its files, so two
-areas never edit the same file. To add a primitive, add its class and its
+The areas are the ownership map for primitives and prelude code. M4 ran
+one agent per area, in parallel; each area owns its files, so two areas
+never edit the same file, and agents working in parallel still don't. To add a primitive, add its class and its
 `PrimitiveSpec` to the area's builtins file. To add a procedure written in
 Scheme, add it to the area's prelude file and its name to the area's
 declarations file's `export`. Don't edit another area's files, the standard
