@@ -4613,10 +4613,10 @@ executable.
   handler. It is the one type predicate that answers for foreign values,
   because calling is the one operation R7RS's procedures have, and it is
   what GraalVM's languages do with each other's functions. A call whose
-  callee is not a Scheme closure (the call's fallback, until now the "not a
-  procedure" error) makes the call through `InteropLibrary.execute`, with
-  an uncached library behind a boundary (a follow-up can cache it per
-  site). The arguments go out unconverted and the result comes back
+  callee is not a Scheme closure (until now the "not a procedure" error)
+  makes the call through `InteropLibrary.execute`, with an inline cache of
+  libraries of the site's own (below, "Foreign access in compiled code").
+  The arguments go out unconverted and the result comes back
   converted; an `ArityException` or an `UnsupportedTypeException` is a
   Scheme error (D8).
 - **Rule 1 (D5).** Foreign code may call Scheme back, so the interop calls
@@ -4858,6 +4858,54 @@ and so neither can the Scheme frames below them.
     for two classes, as an embedder's jar gives it, and runs `java-type`
     through it. (Until the review below, it refused in every native
     image.)
+
+**Foreign access in compiled code.** Foreign values are reached as
+InteropLibrary's documentation asks of a language: through libraries
+cached in nodes of the site's own (`@CachedLibrary`, `ForeignNodes`), so
+that compiled code sends the other language's own message for the value
+the site has seen (an SL function's call, a Java field's read) and can
+inline it, with no boundary between the two. Each cache holds up to 3
+receivers, then the DSL's uncached version of the specialization takes
+over, behind a boundary.
+
+- *Calls.* `Call` and each cache of a trampoline (`Trampoline.TailCalls`,
+  which also makes a prompt's calls: a callback's procedure, `apply`'s
+  tail call) have a specialization for a callee that isn't a closure,
+  `doForeign`, with a node of its own (`ForeignNodes.CallNode`) that caches
+  the callee's library; a value that isn't executable is the "not a
+  procedure" error, as before. Nothing else about the call changed: it
+  counts as a foreign call on the stack (`Foreign.enter`), so continuations
+  are checked as above, and its errors and exceptions are Scheme's as
+  above. The result comes in through `ForeignNodes.IncomingNode`, which
+  takes a `long`, `double`, `boolean` or `int`, and a foreign boolean or
+  number that fits in a `long`, in compiled code, and leaves the rest
+  (strings, big numbers, Java objects, which keep their identity through
+  a table) to `InteropValues.toScheme`, behind its boundary.
+- *The interpreter's host compilation.* `doForeign` is an
+  `@InliningCutoff`, in `Call` and in the trampoline, as `doDirect` and
+  `doIndirect` are ("The interpreter's first runs", M10-02;
+  `HostInliningCutoffTest`), so HotSpot's compilations of `continueAt` don't
+  take it in. With `-Djdk.graal.Log=HostInliningPhase` and the
+  interpreter: `fib`'s `continueAt` is the same graph as before (cost
+  1,280), and the foreign benchmark's (below), whose sites call SL, 1,749
+  to 2,259 over its compilations against 1,827 to 2,290, `doForeign` cut.
+- *Tests.* `PolyglotTest` checks, in every mode, that a site's call node
+  and a trampoline's each cache a library for SL's function
+  (`foreignCallsUseTheSitesInteropCaches`, through `Introspection`), and
+  that loops of calls, tail calls and callbacks compile with no performance
+  warning (`compiler.TracePerformanceWarnings=all`).
+- *Measured* (`bench/polyglot/foreign.scm`, bench/README.md "Polyglot"):
+  interleaved against `main` and `main` against a copy of itself (the A/A
+  noise floor), 8 rounds in a rotating order, a fresh JVM each, the
+  launcher's JVM options and `-Xmx2g`, an Apple M3 Max shared with other
+  agents (1-minute load 4.2 to 6.5 at every run's start and end); the
+  medians of the per-round ratios. With the JIT, the median of iterations
+  21-30 of 1,000,000 calls each: a call of SL's `add` at a call site 22.5
+  ms to 0.33 ms (0.015 times; A/A 1.002), and as a tail call 22.8 to 0.34
+  (0.015; 1.003): compiled, the loop inlines SL's function. SL's loop of
+  callbacks into Scheme, which this doesn't change, 1.005 (1.011). In the
+  interpreter, the median of iterations 6-10 of 100,000: calls 0.63 times
+  (A/A 1.025), tail calls 0.74 (1.011), callbacks 0.99 (0.98).
 
 **Testing with a second language.** The tests need another Truffle language.
 `org.graalvm.truffle:truffle-sl`, GraalVM's SimpleLanguage, is on Maven
