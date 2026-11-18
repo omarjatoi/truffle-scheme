@@ -1946,6 +1946,39 @@ Each entry: the decision, why, and what was rejected.
     on the cleaner's thread, outside the context (D10: single-threaded), and
     would write through an embedder's file system from a thread it doesn't
     expect.
+- **Textual input file ports decode UTF-8 themselves (M11-06).** The port
+  reads the file's bytes into its own 8 KB buffer and decodes them straight
+  into what D1 stores: Latin-1 bytes while every character is at most 255,
+  code points from the first one above. `read-char` and `peek-char` decode
+  one character from the buffer, and `read-string` and `read-line` decode a
+  run of them into the string's own array, with no `char[]` or reader
+  between. A sequence that a buffer's end cuts is completed from the next
+  read. Malformed input is replaced exactly as the JDK's UTF-8 decoder
+  replaces it (what the port did until then, through
+  `TruffleFile.newBufferedReader`'s `InputStreamReader`): one U+FFFD for each
+  malformed sequence, with the decoder's lengths (an encoded surrogate,
+  `ED A0 80`, is one; a byte that can't start or continue a sequence is
+  one; a sequence the file's end cuts is one). The console port keeps the
+  JDK's reader, whose `ready()` is what `char-ready?` asks; a string port
+  keeps its `StringReader`. R7RS says nothing of encodings: this keeps
+  what files read as and makes it faster. The JDK's decoder took its ASCII
+  fast path only at the start of each buffer, so after a buffer's first
+  other byte it went a byte at a time, and decoded into UTF-16 that the
+  port copied again: decoding was 0.0115 s of `read-string`'s 0.017 s for a
+  whole 10 MB file with 10% of its lines wide, against 0.002 s for an ASCII
+  one (#220). Decoding that file into the string's arrays ourselves takes
+  0.010 s, decoding included (host microbenchmark).
+  - *Rejected:* `TruffleString` (`fromByteArray` in UTF-8, then
+    `switchEncoding` to UTF-32 or a code point iterator). It replaces
+    malformed input differently: three U+FFFD for an encoded surrogate where
+    the JDK has one, and its iterator one for each byte of a sequence the
+    end cuts; of 100,000 random byte strings of up to 7 bytes, 309 decode
+    differently through `switchEncoding` and 9,893 through the iterator. A
+    stream still needs its own handling of a sequence cut by a buffer's end,
+    and the UTF-32 bytes still need copying into the `int[]`. In runtime
+    code, behind the port's boundary, it was also slower: 0.019 s for the
+    wide file against 0.010 s, and the same 0.003 s for the ASCII one (host
+    microbenchmark, an 8 KB chunk at a time).
 - **Ports in compiled code.** The I/O primitives' compiled code sees a port
   it can't know the class of (it comes from a parameter or an argument), so
   nothing it calls on `SPort` is virtual: a port's direction and kind are
