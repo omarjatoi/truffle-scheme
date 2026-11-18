@@ -407,7 +407,8 @@ harness_test(
 # --- GraalVM's tools (tests/tools) -------------------------------------------------------------
 
 # `tools_<test>`: --help lists the tools only with them; DAP and the Chrome inspector stop at a
-# breakpoint, show the stack and locals, step and continue; the CPU sampler and memory tracer run.
+# breakpoint, show the stack and locals, step and continue; the CPU sampler and memory tracer run;
+# the CPU tracer and the coverage tool count exactly.
 tools_tests(
     name = "tools",
     programs = glob(["tools/*.scm"]),

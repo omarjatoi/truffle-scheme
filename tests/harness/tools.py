@@ -13,6 +13,8 @@ tests/tools/:
   procedures, and its samples of a recursion deeper than the spill depth have every frame (M6-04).
 - `cputracer`: the CPU tracer counts each procedure's entries and each statement's executions,
   exactly (design.md D13, "Tools").
+- `coverage`: the coverage tool's statement, line and root coverage of a program with code that
+  never runs, exactly, in its histogram, JSON and LCOV outputs (design.md D13, "Tools").
 - `memtracer`: the memory tracer's histogram counts the allocations of the program's procedures
   (the language reports them, M7-07).
 - `terminal`: the REPL on a pseudo-terminal (M7-07): line editing, the history and its file (an
@@ -63,6 +65,8 @@ _PROFILE_PROGRAM = 'profileme.scm'
 # tests/tools/spillme.scm: spin, at the bottom of a recursion 500 deep, most of it on the heap.
 _SPILL_PROGRAM = 'spillme.scm'
 _SPILL_DEPTH = 500
+# tests/tools/coverme.scm: classify, called 3 times, never with a negative n; never-called, never.
+_COVERAGE_PROGRAM = 'coverme.scm'
 
 
 class SmokeFailure(Exception):
@@ -537,6 +541,82 @@ def _cputracer(workdir, commands):
     log(f'  cputracer: fib entered {expected[("fib", 2, 1)]} times, make-table\'s loop test run {expected[("make-table", 8, 5)]} times')
 
 
+def _coverage(workdir, commands):
+    # The coverage tool counts what the language tags (design.md D13, "Tools"): a root per procedure
+    # and one for the program, and the statements. tests/tools/coverme.scm's 4 roots are <program>,
+    # classify, never-called and count-up (whose named let is a loop of its root, plan.md M7-02);
+    # never-called never runs. Its 12 statements: classify's cond, run 3 times, and its first
+    # clause's body, (display "negative") and 'negative, never run; never-called's 2; the program's
+    # 3 definitions (each at its name) and 2 top-level forms; count-up's let and the let's body,
+    # the loop's test, run 4 times. So 8 of 12 statements, 3 of 4 roots, and 12 of the 16 lines
+    # with a statement or a root (all but the import) are covered: lines 4-5 and 9-10 are not.
+    program = join(workdir, _COVERAGE_PROGRAM)
+    covered, uncovered = 8, 4
+    lines_found, lines_hit = 16, 12
+    roots_found, roots_hit = 4, 3
+
+    # The histogram (the default output): each source's percentages, the program the only one (the
+    # standard libraries are internal).
+    histogram = _profile(workdir, commands.tools, lambda out: ['--coverage', '--coverage.OutputFile=' + out],
+                         [r'^Code coverage histogram\.', r'^ Path +\| +Statements \| +Lines \| +Roots *$'], program=_COVERAGE_PROGRAM)
+    rows = re.findall(r'^ (\S+) +\| +([\d.]+)% \| +([\d.]+)% \| +([\d.]+)% *$', histogram, re.MULTILINE)
+    expected_row = (program, f'{100 * covered / (covered + uncovered):.2f}', f'{100 * lines_hit / lines_found:.2f}', f'{100 * roots_hit / roots_found:.2f}')
+    _check(rows == [expected_row], f'coverage: the histogram should have the one row {expected_row}, not {rows}:\n{histogram}')
+    log(f'  coverage: the histogram has the program only, at {expected_row[1]}% of statements, {expected_row[2]}% of lines, {expected_row[3]}% of roots')
+
+    # JSON, with counts: each root, and each statement under its root, covered or not and how often.
+    files = json.loads(_profile(workdir, commands.tools, lambda out: ['--coverage', '--coverage.Count', '--coverage.Output=json', '--coverage.OutputFile=' + out],
+                                [r'"roots"'], program=_COVERAGE_PROGRAM))
+    _check([(f['path'], f['name']) for f in files] == [(program, _COVERAGE_PROGRAM)], f'coverage: the JSON should have {program} only: {[f["path"] for f in files]}')
+    roots, statements = {}, {}
+    for root in files[0]['roots']:
+        roots[root['name']] = (root['source_section']['start_line'], root['covered'], root['count'])
+        for statement in root['sections']:
+            section = statement['source_section']
+            key = (root['name'], section['start_line'], section['start_column'])
+            _check(key not in statements, f'coverage: the JSON has two statements at {key}')
+            statements[key] = (statement['covered'], statement.get('count', 0))
+    # name: (line, covered, count)
+    expected_roots = {'<program>': (1, True, 1), 'classify': (2, True, 3), 'never-called': (8, False, 0), 'count-up': (11, True, 1)}
+    _check(roots == expected_roots, f'coverage: the JSON\'s roots (line, covered, count) should be {expected_roots}, not {roots}')
+    # (root, line, column): (covered, count)
+    expected_statements = {
+        ('<program>', 2, 10): (True, 1), ('<program>', 8, 10): (True, 1), ('<program>', 11, 10): (True, 1),
+        ('<program>', 16, 1): (True, 1), ('<program>', 17, 1): (True, 1),
+        ('classify', 3, 3): (True, 3), ('classify', 4, 10): (False, 0), ('classify', 5, 10): (False, 0),
+        ('never-called', 9, 3): (False, 0), ('never-called', 10, 3): (False, 0),
+        ('count-up', 12, 3): (True, 1), ('count-up', 13, 5): (True, 4),
+    }
+    _check(statements == expected_statements,
+           f'coverage: the JSON\'s statements, (root, line, column): (covered, count), should be {expected_statements}, not {statements}')
+    hit = [c for c, _ in statements.values()]
+    _check((hit.count(True), hit.count(False)) == (covered, uncovered), f'coverage: {hit.count(True)} statements covered and {hit.count(False)} not')
+    log(f'  coverage: the JSON has {roots_hit} of {roots_found} roots and {covered} of {covered + uncovered} statements covered, '
+        'classify entered 3 times, count-up\'s loop test run 4 times')
+
+    # LCOV, with counts: one record, the program's, with its procedures (FN, FNDA, FNF, FNH) and
+    # lines (DA, LF, LH).
+    lcov = _profile(workdir, commands.tools, lambda out: ['--coverage', '--coverage.Count', '--coverage.Output=lcov', '--coverage.OutputFile=' + out],
+                    [r'^end_of_record$'], program=_COVERAGE_PROGRAM)
+    fields = collections.defaultdict(list)
+    for line in lcov.strip().splitlines():
+        tag, _, value = line.partition(':')
+        fields[tag].append(value)
+    expected_fields = {'TN': [''], 'SN': [_COVERAGE_PROGRAM], 'SF': [program], 'FNF': [str(roots_found)], 'FNH': [str(roots_hit)],
+                       'LF': [str(lines_found)], 'LH': [str(lines_hit)], 'end_of_record': ['']}
+    _check(set(fields) == set(expected_fields) | {'FN', 'FNDA', 'DA'}, f'coverage: the LCOV\'s records should be one program\'s:\n{lcov}')
+    for tag, values in expected_fields.items():
+        _check(fields[tag] == values, f'coverage: the LCOV\'s {tag} should be {values}, not {fields[tag]}:\n{lcov}')
+    functions = {name: int(line) for line, name in (v.split(',', 1) for v in fields['FN'])}
+    function_counts = {name: int(count) for count, name in (v.split(',', 1) for v in fields['FNDA'])}
+    line_counts = {int(line): int(count) for line, count in (v.split(',', 1) for v in fields['DA'])}
+    _check(functions == {name: line for name, (line, _, _) in expected_roots.items()}, f'coverage: the LCOV\'s functions (FN): {functions}')
+    _check(function_counts == {name: count for name, (_, _, count) in expected_roots.items()}, f'coverage: the LCOV\'s function counts (FNDA): {function_counts}')
+    expected_lines = {2: 1, 3: 3, 4: 0, 5: 0, 6: 3, 7: 3, 8: 1, 9: 0, 10: 0, 11: 1, 12: 1, 13: 4, 14: 4, 15: 4, 16: 1, 17: 1}
+    _check(line_counts == expected_lines, f'coverage: the LCOV\'s line counts (DA) should be {expected_lines}, not {line_counts}')
+    log(f'  coverage: the LCOV has {lines_hit} of {lines_found} lines covered (not 4-5 and 9-10), and {roots_hit} of {roots_found} functions, with their counts')
+
+
 def _memtracer(workdir, commands):
     # The memory tracer writes to stdout (it has no output file option). make-table's loop (lines
     # 7-10, a loop of make-table's own, plan.md M7-02) makes a pair and an 8-element vector per
@@ -773,7 +853,7 @@ def _terminal(workdir, commands):
 
 def _help(workdir, commands):
     command = commands.tools
-    tools = ['--inspect', '--dap', '--cpusampler', '--cputracer', '--memtracer']
+    tools = ['--inspect', '--dap', '--cpusampler', '--cputracer', '--memtracer', '--coverage']
     with _Launcher(command(['--help:tools']), workdir) as launcher:
         status = launcher.wait()
         text = launcher.stdout()
@@ -783,14 +863,14 @@ def _help(workdir, commands):
     with _Launcher(command(['--help']), workdir) as launcher:
         launcher.wait()
         listed = launcher.stdout()
-    for tool in ('inspect', 'dap', 'cpusampler', 'cputracer', 'memtracer'):
+    for tool in ('inspect', 'dap', 'cpusampler', 'cputracer', 'memtracer', 'coverage'):
         _check(re.search(r'^  ' + tool + r' ', listed, re.MULTILINE), f'--help\'s Tools table does not list {tool}:\n{listed[-2000:]}')
     with _Launcher(commands.bare(['--help:tools']), workdir) as launcher:
         launcher.wait()
         bare = launcher.stdout()
     present = [t for t in tools if re.search(r'^\s+' + re.escape(t) + r'\b', bare, re.MULTILINE)]
     _check(not present, f'without the tools jars, --help:tools should list no tool options, but lists {present}')
-    log('  help: the Tools table and --help:tools list inspect, dap, cpusampler, cputracer and memtracer; without the tools jars, none')
+    log('  help: the Tools table and --help:tools list inspect, dap, cpusampler, cputracer, memtracer and coverage; without the tools jars, none')
 
 
 def _with_free_port(test, attempts=3):
@@ -813,6 +893,7 @@ SMOKE_TESTS = {
     'inspect': ('Chrome inspector: breakpoint, call frames, scope variables, step over, resume', _with_free_port(_inspect)),
     'cpusampler': ('CPU sampler: histogram, call tree and flame graph name the procedures', _cpusampler),
     'cputracer': ('CPU tracer counts entries and statements exactly', _cputracer),
+    'coverage': ('coverage tool: exact statement, line and root coverage in its histogram, JSON and LCOV', _coverage),
     'memtracer': ('memory tracer counts the program\'s allocations', _memtracer),
     'terminal': ('the REPL on a terminal: line editing, history, interrupts, read-line', _terminal),
 }
@@ -834,7 +915,7 @@ def run(names, programs_dir, commands):
         start = time.time()
         with tempfile.TemporaryDirectory(prefix='r7rs-tools-') as workdir:
             workdir = os.path.realpath(workdir)
-            for program in (_DEBUG_PROGRAM, _PROFILE_PROGRAM, _SPILL_PROGRAM):
+            for program in (_DEBUG_PROGRAM, _PROFILE_PROGRAM, _SPILL_PROGRAM, _COVERAGE_PROGRAM):
                 with open(join(programs_dir, program), encoding='utf-8') as src, open(join(workdir, program), 'w', encoding='utf-8') as dst:
                     dst.write(src.read())
             try:

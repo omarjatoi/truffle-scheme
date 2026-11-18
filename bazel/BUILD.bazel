@@ -63,13 +63,14 @@ java_library(
     ],
 )
 
-# GraalVM's tools: the Chrome inspector, the debug adapter, the CPU sampler and memory tracer. Nothing
+# GraalVM's tools: the Chrome inspector, the debug adapter, the profilers and the coverage tool. Nothing
 # requires them; //:scheme and the tools tests put them on the module path.
 java_library(
     name = "tools_modules",
     runtime_deps = [
         "@jvm//:org_graalvm_shadowed_json",
         "@jvm//:org_graalvm_tools_chromeinspector_tool",
+        "@jvm//:org_graalvm_tools_coverage_tool",
         "@jvm//:org_graalvm_tools_dap_tool",
         "@jvm//:org_graalvm_tools_profiler_tool",
     ],

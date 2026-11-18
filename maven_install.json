@@ -12,6 +12,7 @@
     "org.graalvm.shadowed:jline": -1636938843,
     "org.graalvm.shadowed:json": 610194981,
     "org.graalvm.tools:chromeinspector-tool": -1928217933,
+    "org.graalvm.tools:coverage-tool": 1797284244,
     "org.graalvm.tools:dap-tool": 636893705,
     "org.graalvm.tools:profiler-tool": -1378574187,
     "org.graalvm.truffle:truffle-api": -334244289,
@@ -35,6 +36,7 @@
     "org.graalvm.shadowed:jline": 1327301855,
     "org.graalvm.shadowed:json": -1826162905,
     "org.graalvm.tools:chromeinspector-tool": -661654276,
+    "org.graalvm.tools:coverage-tool": 1070487929,
     "org.graalvm.tools:dap-tool": -1322702269,
     "org.graalvm.tools:profiler-tool": -814842834,
     "org.graalvm.truffle:truffle-api": 2110087315,
@@ -114,6 +116,12 @@
     "org.graalvm.tools:chromeinspector-tool": {
       "shasums": {
         "jar": "6e3be3bc3fa57037d2692a70e562395ec5ba6bd2f20b723ee230f94f0f341788"
+      },
+      "version": "25.5.5.0.3"
+    },
+    "org.graalvm.tools:coverage-tool": {
+      "shasums": {
+        "jar": "12d48986694925fdb4b3c5a7fe652d96c604c8f24f812cc7e0705812ec45390d"
       },
       "version": "25.5.5.0.3"
     },
@@ -197,6 +205,10 @@
     "org.graalvm.tools:chromeinspector-tool": [
       "org.graalvm.shadowed:json",
       "org.graalvm.tools:profiler-tool",
+      "org.graalvm.truffle:truffle-api"
+    ],
+    "org.graalvm.tools:coverage-tool": [
+      "org.graalvm.shadowed:json",
       "org.graalvm.truffle:truffle-api"
     ],
     "org.graalvm.tools:dap-tool": [
@@ -346,6 +358,10 @@
       "com.oracle.truffle.tools.utils.java_websocket.server",
       "com.oracle.truffle.tools.utils.java_websocket.util"
     ],
+    "org.graalvm.tools:coverage-tool": [
+      "com.oracle.truffle.tools.coverage",
+      "com.oracle.truffle.tools.coverage.impl"
+    ],
     "org.graalvm.tools:dap-tool": [
       "com.oracle.truffle.tools.dap.instrument",
       "com.oracle.truffle.tools.dap.server",
@@ -466,6 +482,7 @@
       "org.graalvm.shadowed:jline",
       "org.graalvm.shadowed:json",
       "org.graalvm.tools:chromeinspector-tool",
+      "org.graalvm.tools:coverage-tool",
       "org.graalvm.tools:dap-tool",
       "org.graalvm.tools:profiler-tool",
       "org.graalvm.truffle:truffle-api",
@@ -511,6 +528,11 @@
         "com.oracle.truffle.tools.chromeinspector.instrument.InspectorInstrumentProvider",
         "com.oracle.truffle.tools.chromeinspector.instrument.OutputConsumerInstrumentProvider",
         "com.oracle.truffle.tools.chromeinspector.instrument.TypeProfileInstrumentProvider"
+      ]
+    },
+    "org.graalvm.tools:coverage-tool": {
+      "com.oracle.truffle.api.instrumentation.provider.TruffleInstrumentProvider": [
+        "com.oracle.truffle.tools.coverage.impl.CoverageInstrumentProvider"
       ]
     },
     "org.graalvm.tools:dap-tool": {
