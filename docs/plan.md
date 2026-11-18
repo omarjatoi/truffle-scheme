@@ -1335,8 +1335,48 @@ measures with interleaved A/B runs.
     `destruc`, `nboyer`, `mazefun`, the `length` and `set-car!`
     micro-benchmarks, and 10 million conses natively), or the remaining
     cost is recorded in design.md D1 and the maintainer decides.
+  - *Measured, awaiting the maintainer's decision (2026-11-18).* #245 rebases
+    the branch onto M10-02 and re-measures: memory unchanged, the JIT
+    neutral, and a cost left in the interpreter (`set-car!`
+    micro-benchmark 1.057 times, `paraffins`' first run 1.036) and the
+    native launcher's first runs (`destruc`, `mazefun` 1.013-1.016), which
+    #245's design.md D1 records. #245 stays open for the maintainer.
 
 **Exit:** every task above is done, or its note records what was measured and
 why it isn't; `docs/benchmarks.md` and `bench/thresholds.json` are regenerated
 on the final M10 code; both suites pass in every mode, including through the
 native launcher.
+
+**Exit met** (2026-11-18, at `ea5043091c40`, locally), with M10-07 measured
+and not merged: its note records what was measured, and #245 waits for the
+maintainer's decision; every other task is ticked. `bench/thresholds.json`
+was re-measured on that code (12 runs, 1-minute load 4.2-6.4, so none left
+out): the geometric mean of the 25 baselines 0.96 times M9's, `browse` 120.3
+→ 104.0 ms, `startup` 296.6 → 267.6, `deriv-interpreter` 84.5 → 76.9, and
+only `string-interpreter` slower, 59.4 → 60.4. `docs/benchmarks.md` was
+regenerated on it (its commit, `2f2af35640fc`, is that code plus the new
+thresholds; `--scale 0.1 --interpreter-timeout 60` with the native column,
+83 minutes, 1-minute load 4.19 at the start, 5.99 at most, 3.54 at the end).
+Geometric mean ×fastest against M9's report (`4dbb81c16acf`), with the
+native column, as both pages give it: JIT first run 4.27 → 4.17, steady state
+1.82 → 1.76, native first run 3.38 → 3.19, native steady 2.28 → 2.21, native
+with startup 3.76 → 3.60, interpreter 46.93 → 44.40 (54 of 57 within its 60 s
+limit, as at M9; `tak` 59.4 s, `ack` 52.1 s), Chez 1.20 → 1.20. Without the
+native column, as M9's exit note gives them: JIT first run 3.92 → 3.82,
+steady state 1.67 → 1.61, interpreter 42.89 → 40.52 (0.94 times; M10-02's
+first clause asked for 38.6). Our raw times over M9's: JIT first run 0.96,
+steady 0.95, interpreter 0.93, native first run 0.93, native steady 0.95,
+where the other implementations ran 0.98. `peval`'s JIT first run 0.37
+times, `tail`'s 0.73 (its steady state 0.42); natively, `browse` 0.50 and
+`tail` 0.47; slower, `mperm`'s first runs (JIT 1.27, native 1.34), `fft`'s
+JIT first run 1.27, `pnpoly` interpreted 1.35. Median peak RSS: our JIT 955
+→ 955 MB, the native launcher 182 → 192, the interpreter 708 → 707. Suites:
+`bazel test //...` passes (679 tests, every conformance section
+interpreted, compiled and under both tortures); `bazel run //:r7rs -- test
+--compile` passes chibi 1225/1225 and Larceny 2160/2166 (the six listed
+exceptions); the native launcher (`bazel-bin/scheme-native`, built on the M3
+Max) passes the same both interpreted and with `--compile`; and
+`//tests:readme_native`, `//tests:conformance_native`,
+`//tests:space_native` and `//tests:launcher_vm_native` pass, as does
+`//tests:launcher_vm_native` for this Mac
+(`--platforms=//bazel/platforms:macos_arm64`). M11 is not drafted here.
