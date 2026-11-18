@@ -164,10 +164,11 @@ public class SteppingTest {
 
     @Test
     public void stepIntoCallCC() {
-        // call/cc is a tail call of esc's; its receiver runs below call/cc's frame. Stepping on
-        // across the escape (k 5) is a known limitation (design.md D13, "Yields and tools").
+        // call/cc is a tail call of esc's; its receiver runs below call/cc's frame. The escape
+        // (k 5) ends the receiver's frame, and (esc) returns 5, so a step into goes on at the next
+        // top-level form (design.md D13, "Ending an escaped frame for tools").
         assertEquals(List.of("<program>:24 @2", "esc:17 @3", "<program>:24=#<tail call (call/cc #<procedure>)> @2", "<lambda@step.scm:17:12>:18 @4", "sq:3 @5",
-                        "<lambda@step.scm:17:12>:18=4 @4", "<lambda@step.scm:17:12>:19 @4"), steps(24, "iiiiii"));
+                        "<lambda@step.scm:17:12>:18=4 @4", "<lambda@step.scm:17:12>:19 @4", "<program>:25 @2"), steps(24, "iiiiiii"));
     }
 
     @Test

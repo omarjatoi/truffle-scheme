@@ -17,6 +17,7 @@ import java.util.function.Consumer;
 import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.Source;
 import org.graalvm.polyglot.io.IOAccess;
+import org.junit.Assume;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -29,8 +30,12 @@ import com.oracle.truffle.api.debug.DebugValue;
 import com.oracle.truffle.api.debug.DebugException;
 import com.oracle.truffle.api.debug.Debugger;
 import com.oracle.truffle.api.debug.DebuggerSession;
+import com.oracle.truffle.api.debug.SuspendAnchor;
 import com.oracle.truffle.api.debug.SuspendedEvent;
 import com.oracle.truffle.api.debug.SuspensionFilter;
+import com.oracle.truffle.api.source.SourceSection;
+
+import scheme.runtime.SchemeLanguage;
 
 /**
  * Truffle's debugger on Scheme code (design.md D13), through the API the DAP server and the Chrome
@@ -606,5 +611,135 @@ public class DebuggerTest {
         for (String r : returned) {
             assertFalse(returned.toString(), r.contains("foreign") || r.contains("TailCall"));
         }
+    }
+
+    /** {@code name:line} of each stop, with {@code =value} after a call, and the stack's depth. */
+    private static String stop(SuspendedEvent event) {
+        if (event.getException() != null) {
+            return "exception: " + event.getException().getMessage();
+        }
+        SourceSection section = event.getSourceSection();
+        StringBuilder sb = new StringBuilder(event.getTopStackFrame().getName()).append(':').append(section == null ? "?" : Integer.toString(section.getStartLine()));
+        if (event.getSuspendAnchor() == SuspendAnchor.AFTER) {
+            sb.append('=').append(event.getReturnValue() == null ? "?" : event.getReturnValue().toDisplayString());
+        }
+        int depth = 0;
+        for (@SuppressWarnings("unused")
+        DebugStackFrame frame : event.getStackFrames()) {
+            depth++;
+        }
+        return sb.append(" @").append(depth).toString();
+    }
+
+    /**
+     * Runs {@code program} with a breakpoint on {@code line} (none if 0), and with an exception
+     * breakpoint (caught and uncaught, a front end's "pause on exceptions") if {@code exceptions};
+     * at each stop, the next of {@code steps} ({@code i} into, {@code o} over, {@code u} out),
+     * then continue. Returns the stops, then the program's value. With {@code located}, the
+     * stepping filter the DAP server and the Chrome inspector set: stop only where there is a
+     * source location to show.
+     */
+    private static List<String> steps(String program, int line, String steps, boolean located, boolean exceptions) {
+        // Not under torture, as SteppingTest: there every non-tail call suspends its frame and the
+        // root prompt resumes it, which Truffle's debugger takes for a generator's suspension and a
+        // new call (design.md D13, "Yields and tools").
+        Assume.assumeFalse("torture mode", SchemeLanguage.constant(SchemeLanguage.TORTURE) != SchemeLanguage.Torture.OFF);
+        Source source = Source.newBuilder(SCHEME, program, "steps.scm").buildLiteral();
+        List<String> stops = new ArrayList<>();
+        try (Context context = Context.newBuilder(SCHEME).out(new ByteArrayOutputStream()).build()) {
+            try (DebuggerSession session = Debugger.find(context.getEngine()).startSession(event -> {
+                char step = stops.size() < steps.length() ? steps.charAt(stops.size()) : 'c';
+                stops.add(stop(event));
+                switch (step) {
+                    case 'i' -> event.prepareStepInto(1);
+                    case 'o' -> event.prepareStepOver(1);
+                    case 'u' -> event.prepareStepOut(1);
+                    default -> event.prepareContinue();
+                }
+            })) {
+                if (located) {
+                    session.setSteppingFilter(SuspensionFilter.newBuilder().sourceSectionAvailableOnly(true).build());
+                }
+                if (line > 0) {
+                    session.install(Breakpoint.newBuilder(source.getURI()).lineIs(line).build());
+                }
+                if (exceptions) {
+                    session.install(Breakpoint.newExceptionBuilder(true, true).build());
+                }
+                stops.add(context.eval(source).toString());
+            }
+        }
+        return stops;
+    }
+
+    /**
+     * Each k is invoked in a non-tail call in its receiver's body, in a procedure the receiver
+     * calls, or in a handler of an error an operation raised there, so the frames between it and
+     * call/cc's prompt are abandoned (design.md D13, "Ending an escaped frame for tools").
+     */
+    private static final String ESCAPES = """
+                    (import (scheme base))
+                    (define (escape)
+                      (let ((r (call/cc (lambda (k)
+                                          (k 5)
+                                          0))))
+                        (+ r 1)))
+                    (define (g k)
+                      (k 6)
+                      0)
+                    (define (nested)
+                      (let ((r (call/cc (lambda (k) (+ 1 (g k))))))
+                        (+ r 1)))
+                    (define saved #f)
+                    (define (full)
+                      (let ((r (call/cc (lambda (k)
+                                          (set! saved k)
+                                          (k 7)
+                                          0))))
+                        (+ r 1)))
+                    (define (handled)
+                      (let ((r (call/cc (lambda (k)
+                                          (with-exception-handler
+                                            (lambda (e) (k 9))
+                                            (lambda ()
+                                              (+ 1 (car 5))))))))
+                        (+ r 1)))
+                    (list (escape) (nested) (full) (handled))
+                    """;
+
+    private static final String VALUE = "(6 7 8 10)";
+
+    /** {@link #steps} with and without the stepping filter, which must stop at the same places. */
+    private static void assertSteps(List<String> expected, int line, String steps) {
+        assertEquals(expected, steps(ESCAPES, line, steps, false, false));
+        assertEquals(expected, steps(ESCAPES, line, steps, true, false));
+    }
+
+    @Test
+    public void aStepOverAnEscapeStopsAtTheNextStatementAfterThePrompt() {
+        // An escape-only k (ESCAPE): the receiver's frame ends, and the step stops at the statement
+        // after call/cc, in the frame that called it.
+        assertSteps(List.of("<lambda@steps.scm:3:21>:4 @5", "escape:6 @3", VALUE), 4, "o");
+        // From a procedure the receiver called: both frames end. A step out of it goes there too.
+        assertSteps(List.of("g:8 @6", "nested:12 @3", VALUE), 8, "o");
+        assertSteps(List.of("g:8 @6", "nested:12 @3", VALUE), 8, "u");
+    }
+
+    @Test
+    public void aStepOverAFullContinuationsInvocationStopsWhereItResumes() {
+        // A full continuation (APPLY): the frames below the root prompt end, and the prompt resumes
+        // the continuation's, in the middle of full's let, whose statement the step stops at first.
+        assertSteps(List.of("<lambda@steps.scm:15:21>:17 @2", "full:15 @2", "full:19 @2", VALUE), 17, "oo");
+        // From the handler of an error that car raised (k is a full continuation there, since the
+        // handler keeps it): the frame car raised it in ends, without the call site's check.
+        assertSteps(List.of("<lambda@steps.scm:24:25>:25 @3", "handled:21 @2", "handled:26 @2", VALUE), 25, "oo");
+    }
+
+    @Test
+    public void anExceptionBreakpointDoesntStopAtAnEscape() {
+        // An escape ends its frames with a control-flow exception, which is no guest exception
+        // (design.md D13, "Ending an escaped frame for tools"). car's error is raised in its frame,
+        // to the handler, so it leaves no tag either.
+        assertEquals(List.of(VALUE), steps(ESCAPES, 0, "", false, true));
     }
 }

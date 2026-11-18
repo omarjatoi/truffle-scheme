@@ -378,6 +378,15 @@ final class PromptDriver extends Node {
      * again, and the frame goes on to suspend into a new segment if it suspends again.
      */
     private Object resume(Capture.Segment segment, Resumption value, SchemeContext context) {
+        try {
+            return resumeSegment(segment, value, context);
+        } catch (AbandonedFrames e) {
+            // The resumed frames got an abandoning capture, in code with tools (design.md D13).
+            return e.capture;
+        }
+    }
+
+    private Object resumeSegment(Capture.Segment segment, Resumption value, SchemeContext context) {
         if (segment.isOwned(context)) {
             context.inPlaceResumes++;
             if (SchemeRootNode.TORTURE) {
@@ -591,15 +600,31 @@ final class PromptDriver extends Node {
         }
     }
 
+    /**
+     * Calls {@code procedure} with no arguments. Its value, or the abandoning capture whose frames
+     * ended by throwing it, in code with tools ({@link AbandonedFrames}): a prompt goes on with it as
+     * with a capture returned.
+     */
     Object callThunk(Object procedure) {
-        return calls.executeCall(procedure, new Object[]{procedure});
+        try {
+            return calls.executeCall(procedure, new Object[]{procedure});
+        } catch (AbandonedFrames e) {
+            return e.capture;
+        }
     }
 
-    /** Index 0 of {@code arguments} is (or is set to) the procedure. */
+    /**
+     * Index 0 of {@code arguments} is (or is set to) the procedure. As {@link #callThunk}, an
+     * {@link AbandonedFrames} is its capture.
+     */
     Object callWithProcedure(Object procedure, Object[] arguments) {
         // Not a closure: a foreign executable, or the "not a procedure" error (ForeignNodes.CallNode).
         arguments[0] = procedure;
-        return calls.executeCall(procedure, arguments);
+        try {
+            return calls.executeCall(procedure, arguments);
+        } catch (AbandonedFrames e) {
+            return e.capture;
+        }
     }
 
     /** Torture mode: the original frame of a resumed segment still equals a copy taken before. */

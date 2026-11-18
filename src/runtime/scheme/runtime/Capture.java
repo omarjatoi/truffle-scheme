@@ -245,7 +245,7 @@ public final class Capture implements TruffleObject {
     }
 
     /** Whether the frames and prompts this capture passes are abandoned: APPLY and ESCAPE. */
-    private boolean abandons() {
+    boolean abandons() {
         return kind == Kind.APPLY || kind == Kind.ESCAPE;
     }
 
