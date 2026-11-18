@@ -1712,21 +1712,19 @@ measures with interleaved A/B runs.
     test and interleaved A/B runs of the JIT's and the native launcher's
     first runs and steady state on the report's subset, and `bench-check`
     re-measured if a threshold is left far too loose.
-- [ ] **M12-06 · Stepping through a continuation's escape** *(needs two
-  decisions: design.md D13, "Ending an escaped frame for tools")*
+- [x] **M12-06 · Stepping through a continuation's escape**
   - #261's and #271's follow-up: a call site that receives an abandoning
     capture (ESCAPE, APPLY) suspends its frame, which `Capture.addSegment`
     then drops. The debugger takes that yield for a generator's suspension
     and waits for a resumption that never comes, so a step over `(k v)`
-    never completes. Returning the capture instead of suspending would end
-    the frame as the debugger expects. `CallSiteEmitter` (rule 2).
-  - Tried (D13, "Ending an escaped frame for tools"): the return costs four
-    instructions at every non-tail call site, against M7-02's budget of
-    six, and still stops in the prompt's frame, where the APPLY step is
-    lost; unwinding with a control-flow exception reaches no tag, so the
-    tools' counts drift. A fix needs the call site's size decided, measured,
-    and the prompt roots made internal, which takes `<prompt>` and
-    `call/cc` out of guest stack traces: each a design.md decision first.
+    never completes. `CallSiteEmitter` (rule 2).
+  - Done (design.md D13, "Ending an escaped frame for tools", decided in
+    #296): in bytecode with tags, such a frame throws the capture as
+    `AbandonedFrames`, the Bytecode DSL's unwind exception, which every
+    tag sees end the frame and the prompt catches. Uninstrumented code,
+    and the call site, are unchanged. #285's two attempts, and a return
+    from every call site with internal prompt roots, measured and
+    rejected, are in the decision.
   - **Done when** a test in `DebuggerTest` steps over an escaping `(k v)`
     and stops at the next statement after the prompt; every torture mode
     passes; `ctak` and `fibc` on the JIT and the native launcher, first

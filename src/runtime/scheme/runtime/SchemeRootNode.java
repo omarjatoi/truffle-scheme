@@ -65,6 +65,7 @@ import scheme.runtime.value.SPair;
  * arguments are bound ({@code enableRootBodyTagging = false}, design.md D13 "Tools").
  */
 @GenerateBytecode(languageClass = SchemeLanguage.class, storeBytecodeIndexInFrame = true, enableTagInstrumentation = true, enableRootBodyTagging = false, enableSerialization = true, //
+                unwindExceptions = AbandonedFrames.class, //
                 enableTailCallHandlers = true, //
                 boxingEliminationTypes = {long.class, double.class, boolean.class}, tagTreeNodeLibrary = SchemeTagTreeNodeExports.class)
 @OperationProxy(value = Intrinsics.Car.class, name = "Car")
@@ -211,6 +212,10 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
     @Override
     public Object interceptControlFlowException(ControlFlowException ex, VirtualFrame frame, BytecodeNode bytecodeNode, int bci) throws Throwable {
         if (ex instanceof AbandonedFrame abandoned) {
+            if (AbandonedFrames.unwinds(abandoned.capture, bytecodeNode, SchemeContext.get(this))) {
+                // As at a call site (IsValue): the frame ends for the tools around it.
+                throw AbandonedFrames.of(abandoned.capture);
+            }
             return abandoned.capture;
         }
         throw ex;
@@ -552,7 +557,9 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
      * The boolean converter of {@code CallSite}: whether a call's result is a value, not a
      * {@link Capture}. A capture is handed to the {@link SuspendFrame} that runs next, through the
      * context ({@link SchemeContext#suspending}): the short circuit drops the operand it converted.
-     * No Scheme code runs in between. A site that never sees a capture has only the first
+     * No Scheme code runs in between. In bytecode with tags, an abandoning capture is thrown instead
+     * ({@link AbandonedFrames}), so that the tools see the frame end (design.md D13, "Ending an
+     * escaped frame for tools"). A site that never sees a capture has only the first
      * specialization's type check, which return-type profiling folds in compiled code (M0-03). (An
      * {@code @Operation} only because the Truffle 25.5 DSL processor fails on a converter that
      * isn't one.)
@@ -560,8 +567,12 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
     @Operation(storeBytecodeIndex = false)
     public static final class IsValue {
         @Specialization
-        static boolean doCapture(Capture capture, @Bind Node node) {
-            SchemeContext.get(node).suspending = capture;
+        static boolean doCapture(Capture capture, @Bind Node node, @Bind BytecodeNode bytecode) {
+            SchemeContext context = SchemeContext.get(node);
+            if (AbandonedFrames.unwinds(capture, bytecode, context)) {
+                throw AbandonedFrames.of(capture);
+            }
+            context.suspending = capture;
             return false;
         }
 

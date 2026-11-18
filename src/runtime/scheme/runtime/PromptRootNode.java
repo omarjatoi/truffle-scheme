@@ -43,7 +43,13 @@ public final class PromptRootNode extends RootNode {
         DynEnv outer = context.getDynamicEnv();
         StackBudget.enterRoot(context);
         try {
-            Object first = body.call(NO_ARGUMENTS);
+            Object first;
+            try {
+                first = body.call(NO_ARGUMENTS);
+            } catch (AbandonedFrames e) {
+                // The program's frames got an abandoning capture, in code with tools (design.md D13).
+                first = e.capture;
+            }
             return driver.run(frame, Capture.ROOT_TAG, first, null, context);
         } catch (SchemeError e) {
             return driver.leave(frame, e, outer, context);
