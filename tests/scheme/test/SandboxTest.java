@@ -19,6 +19,7 @@ import org.graalvm.polyglot.Engine;
 import org.graalvm.polyglot.PolyglotException;
 import org.graalvm.polyglot.ResourceLimits;
 import org.graalvm.polyglot.SandboxPolicy;
+import org.graalvm.polyglot.Source;
 import org.graalvm.polyglot.io.FileSystem;
 import org.graalvm.polyglot.io.IOAccess;
 import org.junit.After;
@@ -166,6 +167,153 @@ public class SandboxTest {
         // Standard output reaches the limit's stream as its buffer is written (design.md D10).
         PolyglotException output = stopped(constrained().option("sandbox.MaxOutputStreamSize", "10KB"), "(let loop () (display \"hello\") (loop))");
         assertTrue(output.getMessage(), output.isResourceExhausted());
+    }
+
+    // sandbox.MaxStackFrames counts Scheme frames, those a deep recursion keeps on the heap too
+    // (design.md D10, "Sandboxing"; docs/embedding.md).
+
+    private static final String DEPTH = "(define (depth n) (if (= n 0) 0 (+ 1 (depth (- n 1)))))";
+    /** Spill depths for the frame limit's tests: where the stack needs it (null), and every few calls. */
+    private static final String[] SPILL_DEPTHS = {null, "1", "5", "20"};
+    /** The frame limit of these tests: a program's body is a frame, and (depth n) adds n + 1. */
+    private static final int LIMIT = 100;
+    private static final int DEEPEST = LIMIT - 2;
+
+    /**
+     * A context with {@link #LIMIT} as its frame limit, which spills its frames every
+     * {@code spillDepth} nested calls (null: as its stack needs). A trusted one: CONSTRAINED refuses
+     * {@code scheme.SpillDepth}, an option for tests.
+     */
+    private Context.Builder framed(String spillDepth) {
+        Context.Builder builder = Context.newBuilder(SCHEME).out(out).err(err).option("sandbox.MaxStackFrames", Integer.toString(LIMIT));
+        return spillDepth == null ? builder : builder.allowExperimentalOptions(true).option("scheme.SpillDepth", spillDepth);
+    }
+
+    /**
+     * That {@code context}'s frame count is where it started: a recursion as deep as the limit
+     * allows still runs, and one a frame deeper is stopped. Cancels the context
+     * ({@link #closeCancelled}).
+     */
+    private static void countsFramesFromZero(String what, Context context) {
+        assertEquals(what, Integer.toString(DEEPEST), eval(context, "(depth " + DEEPEST + ")"));
+        PolyglotException e = assertThrows(PolyglotException.class, () -> context.eval(SCHEME, "(depth " + (DEEPEST + 1) + ")"));
+        assertTrue(what + ": " + e.getMessage(), e.isResourceExhausted());
+        assertTrue(what + ": " + e.getMessage(), e.getMessage().contains("Maximum frame limit of " + LIMIT + " exceeded. Frames on stack: " + (LIMIT + 1)));
+    }
+
+    /** Closes a context that may have been cancelled, which throws its cancellation again. */
+    private static void closeCancelled(Context context) {
+        try {
+            context.close();
+        } catch (PolyglotException e) {
+            if (!e.isCancelled()) {
+                throw e;
+            }
+        }
+    }
+
+    @Test
+    public void theFrameLimitStopsARecursionDeeperThanItEvenWhenItsFramesSpill() {
+        // A recursion as deep as the limit allows runs, and one a frame deeper is stopped, however
+        // many of its frames are on the heap: one every call, every 5 or 20, or as the stack needs.
+        for (String spill : SPILL_DEPTHS) {
+            Context context = framed(spill).build();
+            try {
+                context.eval(SCHEME, DEPTH);
+                countsFramesFromZero("spill depth " + spill, context);
+            } finally {
+                closeCancelled(context);
+            }
+        }
+        // Under CONSTRAINED, where the stack decides: the first spill is 50 calls deep.
+        Context context = constrained().option("sandbox.MaxStackFrames", Integer.toString(LIMIT)).build();
+        try {
+            assertEquals(Integer.toString(DEEPEST), eval(context, DEPTH + "(depth " + DEEPEST + ")"));
+            PolyglotException e = assertThrows(PolyglotException.class, () -> context.eval(SCHEME, "(depth 1000000)"));
+            assertTrue(e.getMessage(), e.isResourceExhausted());
+            assertTrue(e.getMessage(), e.getMessage().contains("Maximum frame limit of " + LIMIT + " exceeded"));
+        } finally {
+            closeCancelled(context);
+        }
+    }
+
+    @Test
+    public void tailCallsDontGrowTheFrameCount() {
+        for (String spill : SPILL_DEPTHS) {
+            try (Context context = framed(spill).option("sandbox.MaxStackFrames", "10").build()) {
+                assertEquals("spill depth " + spill, "1000000", eval(context, "(let loop ((i 0)) (if (< i 1000000) (loop (+ i 1)) i))"));
+                // A non-tail call in each iteration returns before the next.
+                assertEquals("spill depth " + spill, "100000", eval(context, "(define (add1 x) (+ x 1)) (let loop ((i 0)) (if (< i 100000) (loop (add1 i)) i))"));
+            }
+        }
+    }
+
+    @Test
+    public void reenteringAndEscapingDontDriftTheFrameCount() {
+        String program = DEPTH + """
+                        (define k #f)
+                        (define (deep m) (if (= m 0) (call/cc (lambda (c) (set! k c) 0)) (+ 1 (deep (- m 1)))))
+                        (define (escape m out) (if (= m 0) (out 'out) (+ 1 (escape (- m 1) out))))
+                        (define (deep-raise m) (if (= m 0) (raise 'boom) (+ 1 (deep-raise (- m 1)))))
+                        (define (deep-error m) (if (= m 0) (car '()) (+ 1 (deep-error (- m 1)))))
+                        (define (repeat times thunk) (let loop ((i 0)) (if (< i times) (begin (thunk) (loop (+ i 1))))))
+                        ;; A continuation 60 frames deep, re-entered 200 times from the top: the count is
+                        ;; exact, so a frame lost or gained each time would show.
+                        (define n 0)
+                        (deep 60)
+                        (set! n (+ n 1))
+                        (if (< n 200) (k 0))
+                        ;; Escapes from 60 frames deep (a full continuation, and an escape-only one,
+                        ;; whose escape procedure is a local's), and raises caught 60 frames up.
+                        (repeat 200 (lambda () (call/cc (lambda (out) (escape 60 out)))))
+                        (define (escape-only)
+                          (define (escape m out) (if (= m 0) (out 'out) (+ 1 (escape (- m 1) out))))
+                          (call/cc (lambda (out) (escape 60 out))))
+                        (repeat 200 escape-only)
+                        (repeat 200 (lambda () (guard (e (#t 0)) (deep-raise 60))))
+                        ;; A composable continuation 30 frames deep, reinstated 200 times 30 frames
+                        ;; deep: into the root prompt, and into an inner one, which a spill passes
+                        ;; and an abort leaves.
+                        (define (deep-capture m) (if (= m 0) (%capture-to-prompt 'p (lambda (c) c)) (+ 1 (deep-capture (- m 1)))))
+                        (define composable (%call-with-prompt 'p (lambda () (deep-capture 30))))
+                        (define (reinstate d) (if (= d 0) (composable 0) (+ 1 (reinstate (- d 1)))))
+                        (repeat 200 (lambda () (reinstate 30)))
+                        (define (deep-abort m)
+                          (if (= m 0)
+                              (begin (%capture-to-prompt 'p (lambda (c) c)) (depth 20) (%capture-to-prompt 'q (lambda (c) 0)))
+                              (+ 1 (deep-abort (- m 1)))))
+                        (define aborting (%call-with-prompt 'p (lambda () (deep-abort 30))))
+                        (define (reinstate-aborting d) (if (= d 0) (aborting 0) (+ 1 (reinstate-aborting (- d 1)))))
+                        (repeat 200 (lambda () (%call-with-prompt 'q (lambda () (reinstate-aborting 30)))))
+                        ;; ... and one that a full continuation leaves.
+                        (define leave-q #f)
+                        (define (deep-leave m) (if (= m 0) (begin (%capture-to-prompt 'p (lambda (c) c)) (leave-q 0)) (+ 1 (deep-leave (- m 1)))))
+                        (define leaving (%call-with-prompt 'p (lambda () (deep-leave 30))))
+                        (define (reinstate-leaving d) (if (= d 0) (leaving 0) (+ 1 (reinstate-leaving (- d 1)))))
+                        (repeat 200 (lambda () (call/cc (lambda (out) (set! leave-q out) (%call-with-prompt 'q (lambda () (reinstate-leaving 30)))))))
+                        ;; A continuation 60 frames deep, re-entered 200 times from 30 frames deep.
+                        (define (again d) (if (= d 0) (k 0) (+ 1 (again (- d 1)))))
+                        (set! n 0)
+                        (deep 60)
+                        (set! n (+ n 1))
+                        (if (< n 200) (again 30))
+                        """;
+        for (String spill : SPILL_DEPTHS) {
+            Context context = framed(spill).build();
+            try {
+                context.eval(SCHEME, program);
+                // An error that leaves the program unwinds through its frames. One source,
+                // parsed (and compiled) once.
+                Source error = Source.create(SCHEME, "(deep-error 60)");
+                for (int i = 0; i < 100; i++) {
+                    PolyglotException e = assertThrows(PolyglotException.class, () -> context.eval(error));
+                    assertTrue(e.getMessage(), e.isGuestException());
+                }
+                countsFramesFromZero("spill depth " + spill, context);
+            } finally {
+                closeCancelled(context);
+            }
+        }
     }
 
     @Test

@@ -1016,6 +1016,9 @@ follow it or deviate, with the decision below that says why.
   - Both stop after 10,000 pending frames, as a JVM limits trace depth. Tools
     only pay when they ask. On the normal path the costs are the slot write
     (virtual in compiled code) and `Resumed`'s type check on each resume.
+  - *The sandbox counts them too.* A driver reports each pending frame as
+    an enter and a return of an internal `RootTag` node, so
+    `sandbox.MaxStackFrames` counts it (D10, "Sandboxing").
   - *Not done:* making `getStackFrames()` itself include them. Truffle builds
     it from a walk of the Java stack, and the spill exists precisely so that
     those frames aren't there.
@@ -1822,10 +1825,68 @@ Each entry: the decision, why, and what was rejected.
   `CONSTRAINED` context couldn't use it at all. `ISOLATED` and `UNTRUSTED`
   need the language built as a polyglot isolate, which nothing builds.
   Truffle's limits work as GraalVM documents them (statements, CPU time,
-  output size, interrupt and cancel), except `sandbox.MaxStackFrames`, which
-  counts Java frames: a recursion past the spill depth keeps few of them
-  (D12). docs/graalvm-configuration.md has the audit; `SandboxTest` the
-  checks.
+  output size, stack frames, interrupt and cancel); `sandbox.MaxASTDepth`
+  isn't enforced on Bytecode DSL roots (docs/upstream.md).
+  docs/graalvm-configuration.md has the audit; `SandboxTest` the checks.
+  - *`sandbox.MaxStackFrames` counts the program's frames, on the Java stack
+    or on the heap.* The limit is on the program's stack depth, so a frame
+    counts while the program will return to it: the frames on the Java
+    stack, and the frames a prompt driver holds pending, those of a spill
+    ("Stack-depth spill") or of a continuation the program goes on with. A
+    continuation the program only keeps (in a variable) doesn't count until
+    it is invoked, and then all its frames do. A tail call adds nothing: its
+    caller's frame has returned (AGENTS.md rule 5).
+  - *How Truffle counts.* The sandbox instrument counts, per thread, the
+    enter and return events of `RootTag` nodes (25.5's
+    `SandboxInstrument.FrameCounterNode`, attached with
+    `SourceSectionFilter.newBuilder().tagIs(RootTag.class)`, which includes
+    internal code). It doesn't override `onYield` and `onResume`, so
+    `ExecutionEventNode`'s defaults apply: *"Delegates to
+    `onReturnValue`"* and *"Delegates to `onEnter`"*. The Bytecode DSL reports
+    a yield and a resume for every tag around each `@Yield`, the implicit
+    root tag included (the generated `tag.yieldNull` and `tag.resume`
+    instructions, `doEmitTagYieldNull` and `doEmitTagResume` in the
+    builder), so a Scheme frame that suspends leaves the count and comes back
+    when it is resumed: balanced, with no drift (measured: the deepest
+    recursion a limit allows is the same after 1,000 re-entries of a
+    continuation). That is Truffle's model of a yield, a generator's frame
+    is off the stack until resumed; but it left every spilled frame out, so
+    once a recursion spilled it never reached the limit (#228: with
+    `scheme.SpillDepth=20`, a limit of 40 let a recursion of any depth run).
+  - *What the drivers add.* Each prompt driver has a `PendingFramesNode`:
+    tagged `RootTag`, with an internal source section, so the tools that leave
+    out internal code (the debugger, the CPU sampler and tracer, coverage)
+    never see it. A driver reports an enter of it for each suspended frame
+    that joins its pending list (from a capture, a spill, a re-entered
+    continuation, a reinstated composable one), and a return for each that
+    leaves it: resumed (the frame then reports its own resume), dropped (an
+    escape, an abort, a full continuation that replaces the current one, an
+    error unwinding through it) or passed on to an outer prompt's driver,
+    which enters it there. A suspended frame's yield and the driver's enter
+    cancel out, as do the driver's return and the frame's resume, so the
+    count is the program's depth. Whatever a driver holds when it returns or
+    throws, it drops (a `finally`): an exception that leaves the driver,
+    such as an interrupt, takes its frames off the count.
+  - *Cost.* The node is wrapped only when an instrument binds `RootTag` nodes
+    in internal code (the sandbox's frame and AST depth limits); until then
+    the driver's check of its child folds away in compiled code, and is an
+    `instanceof` in the interpreter: without the limit, the launcher ran a
+    recursion a million deep (five times a round) and a `ctak` with a
+    continuation 100 frames deep re-entered 20,000 times as fast as before,
+    interleaved, within noise (348 to 354 ms and 76 to 82 ms, against 349
+    to 356 and 74 to 79), and `bench-check` passed. Under the limit, each
+    frame a recursion spills costs an enter and a return more (that recursion
+    took 650 ms instead of 354), re-entering a full continuation a call per
+    frame of it, and dropping the current one a call per frame, where without
+    it both are O(1).
+  - *Considered:* reporting enter and return on the suspended frame's own
+    root tag (every instrument would see the procedure entered twice:
+    coverage's counts, the debugger's stepping); leaving the yield and resume
+    events out for a spill (the Bytecode DSL emits them for every yield, to
+    every instrument); and counting Java frames only, as before
+    (#228), with `sandbox.MaxHeapMemory` bounding deep recursion instead
+    (memory isn't depth: the limit bounded nothing once a recursion spilled,
+    and a runaway recursion ran until the heap limit).
 - **Out of scope:** Scheme-side access to other languages and the host,
   threads, and SRFIs. Avoid reflection and dynamic class loading: the native
   launcher (D17) is built without any reflection configuration.
