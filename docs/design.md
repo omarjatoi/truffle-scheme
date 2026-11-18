@@ -859,7 +859,10 @@ follow it or deviate, with the decision below that says why.
     Making the driver's loop a Truffle `LoopNode`, so that the program's root
     prompt (which runs once, so is never compiled) is compiled on the stack,
     gained about 3% on `ack` for compilations of 130 to 240 KB that kept
-    being invalidated: not done.
+    being invalidated: not done. That was measured in M8-01, before M9-01
+    stopped a first descent's compiled frames from deoptimizing one by one
+    (below), which may have been what kept invalidating them; not
+    re-measured since.
   - *The driver's loop and the host profile (M9-04).* The root prompt's
     driver loop is a Java loop in a root that runs once, as the trampoline's
     was before #167, so it runs as fast as HotSpot compiles
@@ -2440,6 +2443,25 @@ Each entry: the decision, why, and what was rejected.
     uses unless it chooses otherwise, and a program with a large live
     heap and a high allocation rate (`nboyer`) can choose it back
     (`JDK_JAVA_OPTIONS=-XX:+UseG1GC`).
+    - *Since the AOT cache (#188), start-up no longer decides it* for
+      `bazel-bin/scheme`: a cache holds the JDK's classes too, and one
+      trained with the flag maps with it. A hello-world program (the `java`
+      command `bazel-bin/scheme` runs, 21 interleaved runs, medians, an
+      Apple M3 Max at a load of 5-7, `main` at `74d5b76`): 128 ms with the
+      serial collector and the build's cache; 129 ms with compact headers
+      and a cache trained the same way with them (`-XX:AOTCacheOutput`, on
+      `bazel/aot-training.scm`); 341 ms with compact headers and no cache.
+      What is left of the rejection is the steady state, measured at M8-05
+      without the AOT cache and with 12 host compiler threads: 5% faster
+      overall with the serial collector, slower on `nboyer` and `earley`.
+      Not re-measured since. Today,
+      `--vm.XX:+UseCompactObjectHeaders` on `bazel-bin/scheme` is given the
+      build's cache all the same, which the JVM then refuses (*"The AOT
+      cache's UseCompactObjectHeaders setting (disabled) does not equal the
+      current UseCompactObjectHeaders setting (enabled)"*, with `-Xlog:aot`),
+      so the program starts with no class sharing (346 ms in the same runs):
+      the launcher leaves the cache out only for options that choose class
+      sharing, and for ZGC.
 - **The launcher's JVM: memory and start-up.** Besides the collector, the
   JVM launcher starts its JVM with 4 host compiler threads and, for
   `bazel-bin/scheme`, an AOT cache (`tests/harness/harness.py`:
