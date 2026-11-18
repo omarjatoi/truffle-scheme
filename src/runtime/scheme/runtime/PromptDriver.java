@@ -17,6 +17,7 @@ import com.oracle.truffle.api.frame.FrameDescriptor;
 import com.oracle.truffle.api.frame.FrameSlotKind;
 import com.oracle.truffle.api.frame.MaterializedFrame;
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.instrumentation.ProbeNode;
 import com.oracle.truffle.api.nodes.DirectCallNode;
 import com.oracle.truffle.api.nodes.IndirectCallNode;
 import com.oracle.truffle.api.nodes.Node;
@@ -50,7 +51,8 @@ import scheme.runtime.value.SClosure;
  * keeps them in its root's frame ({@link #PENDING_SLOT}) whenever it calls out, and its root reports
  * them as its asynchronous stack ({@link #pendingFrames}), which the debugger and the CPU sampler
  * show after the frames on the Java stack. An uncaught error that leaves the driver unwinds through
- * them first ({@link #unwind}), so its guest stack trace has every frame.
+ * them first ({@link #unwind}), so its guest stack trace has every frame. And an instrument that
+ * counts frames ({@code sandbox.MaxStackFrames}) counts them too ({@link PendingFramesNode}).
  */
 final class PromptDriver extends Node {
 
@@ -71,6 +73,8 @@ final class PromptDriver extends Node {
     /** Performs the calls and tail calls the driver makes, through an inline cache (plan.md M5-10). */
     @Child private Trampoline calls = Trampoline.create();
     @Child private ResumeNode resumeNode = PromptDriverFactory.ResumeNodeGen.create();
+    /** What instruments that count frames see of the pending ones (design.md D10, "Sandboxing"). */
+    @Child private PendingFramesNode pendingFrames = new PendingFramesNode();
     /** Created the first time an uncaught error unwinds (see {@link #unwind}). */
     private RootCallTarget unwindTarget;
 
@@ -93,193 +97,256 @@ final class PromptDriver extends Node {
      * <p>No Java local keeps what the program has gone on with (design.md "Tail calls keep nothing
      * alive"): {@code value} is overwritten by each step's result, a capture's value is taken from
      * it, and a resumed frame gets its value in a {@link Resumption}, which it empties.
+     *
+     * <p>Every segment in {@code pending} is one of the program's frames: an instrument that counts
+     * frames sees it enter as it joins the list and return as it leaves, resumed or dropped
+     * ({@link #enterPending}, {@link #leavePending}). Whatever the driver still holds when it returns
+     * or throws, it drops.
      */
     Object run(VirtualFrame frame, Object tag, Object value, SegmentList initialPending, SchemeContext context) {
         DynEnv promptEnv = context.getDynamicEnv();
         SegmentList pending = initialPending;
-        while (true) {
-            try {
-                if (value instanceof PendingRaise r) {
-                    try {
-                        frame.setObject(PENDING_SLOT, pending);
-                        value = callWithProcedure(context.raise, new Object[]{null, r.condition()});
-                    } catch (SchemeError e) {
-                        // raise itself failed: the frame it was raising for is unwound too, and
-                        // the error goes on to the one after it (the SchemeError catch below).
-                        // Handled here, so a jump or escape out of raise leaves nothing behind. An
-                        // error that leaves the driver instead unwinds through that frame too.
-                        if (e.isRaisable() && context.raise instanceof SClosure) {
-                            pending = pending.tail;
+        enterPending(frame, pending, null);
+        try {
+            while (true) {
+                try {
+                    if (value instanceof PendingRaise r) {
+                        try {
+                            frame.setObject(PENDING_SLOT, pending);
+                            value = callWithProcedure(context.raise, new Object[]{null, r.condition()});
+                        } catch (SchemeError e) {
+                            // raise itself failed: the frame it was raising for is unwound too, and
+                            // the error goes on to the one after it (the SchemeError catch below).
+                            // Handled here, so a jump or escape out of raise leaves nothing behind. An
+                            // error that leaves the driver instead unwinds through that frame too.
+                            if (e.isRaisable() && context.raise instanceof SClosure) {
+                                leavePending(frame, pending, pending.tail);
+                                pending = pending.tail;
+                            }
+                            throw e;
                         }
-                        throw e;
+                        continue;
                     }
-                    continue;
-                }
-                if (value instanceof Capture capture) {
-                    switch (capture.kind) {
-                        case REINSTATE: {
-                            // Composable continuation: its segments go on top of the invoker's.
-                            pending = SegmentList.concat(capture.continuation.segments, capture.segmentsBefore(pending));
-                            value = capture.takeValue();
-                            continue;
-                        }
-                        case APPLY: {
-                            // A full continuation invoked: it replaces the current one, up to the
-                            // root prompt (design.md "Continuations").
-                            if (tag != Capture.ROOT_TAG) {
-                                return capture;
+                    if (value instanceof Capture capture) {
+                        switch (capture.kind) {
+                            case REINSTATE: {
+                                // Composable continuation: its segments go on top of the invoker's.
+                                SegmentList outer = pending;
+                                pending = SegmentList.concat(capture.continuation.segments, capture.segmentsBefore(pending));
+                                enterPending(frame, pending, outer);
+                                value = capture.takeValue();
+                                continue;
                             }
-                            pending = capture.continuation.segments;
-                            context.setDynamicEnv(capture.continuation.dynEnv);
-                            value = capture.takeValue();
-                            continue;
-                        }
-                        case ESCAPE: {
-                            // An escape-only continuation invoked (M5-04): its prompt returns.
-                            if (capture.tag == tag) {
-                                return capture.takeValue();
-                            }
-                            SegmentList marker = SegmentList.markerOf(pending, capture.tag);
-                            if (marker == null) {
-                                if (tag == Capture.ROOT_TAG) {
-                                    throw escapedTooFar();
+                            case APPLY: {
+                                // A full continuation invoked: it replaces the current one, up to the
+                                // root prompt (design.md "Continuations").
+                                if (tag != Capture.ROOT_TAG) {
+                                    return capture;
                                 }
-                                // Abandoned with the rest of this prompt.
-                                return capture;
+                                leavePending(frame, pending, null);
+                                pending = capture.continuation.segments;
+                                enterPending(frame, pending, null);
+                                context.setDynamicEnv(capture.continuation.dynEnv);
+                                value = capture.takeValue();
+                                continue;
                             }
-                            // Its prompt is flattened into this driver's pending segments.
-                            pending = marker.tail;
-                            value = capture.takeValue();
-                            continue;
-                        }
-                        case TORTURE: {
-                            if (tag != Capture.ROOT_TAG) {
-                                capture.addOuter(pending, new Capture.PromptMarker(tag, promptEnv));
-                                return capture;
+                            case ESCAPE: {
+                                // An escape-only continuation invoked (M5-04): its prompt returns.
+                                if (capture.tag == tag) {
+                                    return capture.takeValue();
+                                }
+                                SegmentList marker = SegmentList.markerOf(pending, capture.tag);
+                                if (marker == null) {
+                                    if (tag == Capture.ROOT_TAG) {
+                                        throw escapedTooFar();
+                                    }
+                                    // Abandoned with the rest of this prompt.
+                                    return capture;
+                                }
+                                // Its prompt is flattened into this driver's pending segments.
+                                leavePending(frame, pending, marker);
+                                pending = marker.tail;
+                                value = capture.takeValue();
+                                continue;
                             }
-                            context.tortureCaptures++;
-                            if (SchemeRootNode.TORTURE_OWNED) {
-                                // Owned torture: only this driver holds the frames, as a spill's.
+                            case TORTURE: {
+                                if (tag != Capture.ROOT_TAG) {
+                                    capture.addOuter(pending, new Capture.PromptMarker(tag, promptEnv));
+                                    return capture;
+                                }
+                                context.tortureCaptures++;
+                                if (SchemeRootNode.TORTURE_OWNED) {
+                                    // Owned torture: only this driver holds the frames, as a spill's.
+                                    capture.claim(context);
+                                } else {
+                                    // Torture checks every resume (rule 3): so every segment is shared.
+                                    context.shareSegments();
+                                }
+                                SegmentList outer = pending;
+                                pending = capture.segmentsBefore(pending);
+                                enterPending(frame, pending, outer);
+                                value = capture.takeValue();
+                                continue;
+                            }
+                            case SPILL: {
+                                // Only the root prompt resets the depth: inner prompts pass it on.
+                                if (tag != Capture.ROOT_TAG) {
+                                    capture.addOuter(pending, new Capture.PromptMarker(tag, promptEnv));
+                                    return capture;
+                                }
+                                context.spills++;
+                                // Only this driver holds the spilled frames: it resumes them in place.
                                 capture.claim(context);
-                            } else {
-                                // Torture checks every resume (rule 3): so every segment is shared.
-                                context.shareSegments();
+                                SegmentList outer = pending;
+                                pending = capture.segmentsBefore(pending);
+                                enterPending(frame, pending, outer);
+                                Object[] arguments = (Object[]) capture.takeValue();
+                                frame.setObject(PENDING_SLOT, pending);
+                                value = callWithProcedure(arguments[0], arguments);
+                                continue;
                             }
-                            pending = capture.segmentsBefore(pending);
-                            value = capture.takeValue();
-                            continue;
-                        }
-                        case SPILL: {
-                            // Only the root prompt resets the depth: inner prompts pass it on.
-                            if (tag != Capture.ROOT_TAG) {
-                                capture.addOuter(pending, new Capture.PromptMarker(tag, promptEnv));
-                                return capture;
-                            }
-                            context.spills++;
-                            // Only this driver holds the spilled frames: it resumes them in place.
-                            capture.claim(context);
-                            pending = capture.segmentsBefore(pending);
-                            Object[] arguments = (Object[]) capture.takeValue();
-                            frame.setObject(PENDING_SLOT, pending);
-                            value = callWithProcedure(arguments[0], arguments);
-                            continue;
-                        }
-                        case FULL: {
-                            if (tag != Capture.ROOT_TAG) {
-                                capture.addOuter(pending, new Capture.PromptMarker(tag, promptEnv));
-                                return capture;
-                            }
-                            Continuation k = Continuation.capture(capture.segmentsBefore(pending), capture.dynEnv, false, context);
-                            pending = k.segments;
-                            frame.setObject(PENDING_SLOT, pending);
-                            value = receive(context, capture.receiver, k, capture.dynEnv, capture.dynEnv);
-                            continue;
-                        }
-                        default: {
-                            if (!Capture.sameTag(tag, capture.tag) && !capture.hasPrompt(capture.tag) && !SegmentList.hasPrompt(pending, capture.tag)) {
-                                // Not this prompt, nor one flattened into the capture or this
-                                // driver's pending segments: pass it on (segmentsBefore hands the
-                                // capture's list over, so it is only called once the capture stays).
-                                if (tag == Capture.ROOT_TAG) {
-                                    throw noPrompt(capture.tag);
+                            case FULL: {
+                                if (tag != Capture.ROOT_TAG) {
+                                    capture.addOuter(pending, new Capture.PromptMarker(tag, promptEnv));
+                                    return capture;
                                 }
-                                capture.addOuter(pending, new Capture.PromptMarker(tag, promptEnv));
-                                return capture;
-                            }
-                            SegmentList all = capture.segmentsBefore(pending);
-                            SegmentList.Split split = SegmentList.splitAt(all, capture.tag);
-                            if (split != null) {
-                                // A prompt flattened into this driver's pending segments.
-                                pending = split.after();
+                                Continuation k = Continuation.capture(capture.segmentsBefore(pending), capture.dynEnv, false, context);
+                                enterPending(frame, k.segments, pending);
+                                pending = k.segments;
                                 frame.setObject(PENDING_SLOT, pending);
-                                value = receive(context, capture.receiver, Continuation.capture(split.before(), capture.dynEnv, true, context), capture.dynEnv, split.marker().dynEnv());
-                            } else {
-                                // This prompt: abort to it.
-                                pending = null;
-                                frame.setObject(PENDING_SLOT, pending);
-                                value = receive(context, capture.receiver, Continuation.capture(all, capture.dynEnv, true, context), capture.dynEnv, promptEnv);
+                                value = receive(context, capture.receiver, k, capture.dynEnv, capture.dynEnv);
+                                continue;
                             }
-                            continue;
+                            default: {
+                                if (!Capture.sameTag(tag, capture.tag) && !capture.hasPrompt(capture.tag) && !SegmentList.hasPrompt(pending, capture.tag)) {
+                                    // Not this prompt, nor one flattened into the capture or this
+                                    // driver's pending segments: pass it on (segmentsBefore hands the
+                                    // capture's list over, so it is only called once the capture stays).
+                                    if (tag == Capture.ROOT_TAG) {
+                                        throw noPrompt(capture.tag);
+                                    }
+                                    capture.addOuter(pending, new Capture.PromptMarker(tag, promptEnv));
+                                    return capture;
+                                }
+                                SegmentList outer = pending;
+                                SegmentList all = capture.segmentsBefore(pending);
+                                SegmentList.Split split = SegmentList.splitAt(all, capture.tag);
+                                if (split != null) {
+                                    // A prompt flattened into this driver's pending segments: the
+                                    // frames before it leave with the continuation.
+                                    enterPending(frame, all, outer);
+                                    leavePending(frame, split.before(), null);
+                                    pending = split.after();
+                                    frame.setObject(PENDING_SLOT, pending);
+                                    value = receive(context, capture.receiver, Continuation.capture(split.before(), capture.dynEnv, true, context), capture.dynEnv, split.marker().dynEnv());
+                                } else {
+                                    // This prompt: abort to it.
+                                    leavePending(frame, outer, null);
+                                    pending = null;
+                                    frame.setObject(PENDING_SLOT, pending);
+                                    value = receive(context, capture.receiver, Continuation.capture(all, capture.dynEnv, true, context), capture.dynEnv, promptEnv);
+                                }
+                                continue;
+                            }
                         }
-                    }
-                } else if (value instanceof TailCall tail) {
-                    // The escape prompt (M5-04) whose return this tail call's continuation is, if
-                    // any: this one with nothing pending, or one flattened next in line.
-                    EscapeRootNode.Target target = null;
-                    if (pending == null) {
-                        if (tag instanceof EscapeRootNode.Target t) {
+                    } else if (value instanceof TailCall tail) {
+                        // The escape prompt (M5-04) whose return this tail call's continuation is, if
+                        // any: this one with nothing pending, or one flattened next in line.
+                        EscapeRootNode.Target target = null;
+                        if (pending == null) {
+                            if (tag instanceof EscapeRootNode.Target t) {
+                                target = t;
+                            }
+                        } else if (pending.head instanceof Capture.PromptMarker marker && marker.tag() instanceof EscapeRootNode.Target t) {
                             target = t;
                         }
-                    } else if (pending.head instanceof Capture.PromptMarker marker && marker.tag() instanceof EscapeRootNode.Target t) {
-                        target = t;
-                    }
-                    if (target != null) {
-                        if (EscapeRootNode.escapesTo(tail.procedure, target, context)) {
-                            // k, tail-called in its own prompt's tail position: no need to throw.
-                            value = EscapeRootNode.values(tail.arguments);
-                            if (pending == null) {
-                                return value;
+                        if (target != null) {
+                            if (EscapeRootNode.escapesTo(tail.procedure, target, context)) {
+                                // k, tail-called in its own prompt's tail position: no need to throw.
+                                value = EscapeRootNode.values(tail.arguments);
+                                if (pending == null) {
+                                    return value;
+                                }
+                                pending = pending.tail;
+                                continue;
                             }
-                            pending = pending.tail;
-                            continue;
+                            if (tail.arguments.length == 2 && tail.procedure instanceof SClosure c && c.callTarget.getRootNode() instanceof EscapeRootNode callEC) {
+                                // %call/ec in that prompt's tail position has the same continuation, so it
+                                // runs in that prompt, in constant space (R7RS §3.5).
+                                frame.setObject(PENDING_SLOT, pending);
+                                value = callWithProcedure(tail.arguments[1], new Object[]{null, callEC.continuation(target, context)});
+                                continue;
+                            }
                         }
-                        if (tail.arguments.length == 2 && tail.procedure instanceof SClosure c && c.callTarget.getRootNode() instanceof EscapeRootNode callEC) {
-                            // %call/ec in that prompt's tail position has the same continuation, so it
-                            // runs in that prompt, in constant space (R7RS §3.5).
-                            frame.setObject(PENDING_SLOT, pending);
-                            value = callWithProcedure(tail.arguments[1], new Object[]{null, callEC.continuation(target, context)});
-                            continue;
-                        }
-                    }
-                    frame.setObject(PENDING_SLOT, pending);
-                    value = callWithProcedure(tail.procedure, tail.arguments);
-                } else if (pending == null) {
-                    return value;
-                } else {
-                    Object head = pending.head;
-                    pending = pending.tail;
-                    if (head instanceof Capture.Segment segment) {
                         frame.setObject(PENDING_SLOT, pending);
-                        Resumption resumption = new Resumption(value);
-                        value = null;
-                        value = resume(segment, resumption, context);
+                        value = callWithProcedure(tail.procedure, tail.arguments);
+                    } else if (pending == null) {
+                        return value;
+                    } else {
+                        Object head = pending.head;
+                        leavePending(frame, pending, pending.tail);
+                        pending = pending.tail;
+                        if (head instanceof Capture.Segment segment) {
+                            frame.setObject(PENDING_SLOT, pending);
+                            Resumption resumption = new Resumption(value);
+                            value = null;
+                            value = resume(segment, resumption, context);
+                        }
+                        // A PromptMarker: that prompt returns the value normally.
                     }
-                    // A PromptMarker: that prompt returns the value normally.
+                } catch (SchemeError e) {
+                    // An error escaped a frame this driver called (a resumed segment, a tail call, a
+                    // spilled call). Unsegmented, it would have reached the call site of the next pending
+                    // frame, which raises it there (design.md D8): so raise it for that frame. If raise
+                    // itself fails, that frame is unwound too, and the error goes to the one after it
+                    // (the PendingRaise case drops it).
+                    while (pending != null && !(pending.head instanceof Capture.Segment)) {
+                        // A flattened inner prompt: the error leaves it, to the frame that installed it.
+                        pending = pending.tail;
+                    }
+                    if (!e.isRaisable() || !(context.raise instanceof SClosure) || pending == null) {
+                        // The frames it unwinds through are resumed, so they leave first.
+                        SegmentList unwound = pending;
+                        leavePending(frame, unwound, null);
+                        pending = null;
+                        throw unwind(e, unwound);
+                    }
+                    value = new PendingRaise(e.getErrorObject());
                 }
-            } catch (SchemeError e) {
-                // An error escaped a frame this driver called (a resumed segment, a tail call, a
-                // spilled call). Unsegmented, it would have reached the call site of the next pending
-                // frame, which raises it there (design.md D8): so raise it for that frame. If raise
-                // itself fails, that frame is unwound too, and the error goes to the one after it
-                // (the PendingRaise case drops it).
-                while (pending != null && !(pending.head instanceof Capture.Segment)) {
-                    // A flattened inner prompt: the error leaves it, to the frame that installed it.
-                    pending = pending.tail;
+            }
+        } finally {
+            leavePending(frame, pending, null);
+        }
+    }
+
+    /**
+     * The segments of {@code list} before {@code end} have joined this driver's pending ones: each is
+     * a frame on the heap, which an instrument that counts frames sees enter ({@link PendingFramesNode},
+     * design.md D10). Nothing, at no cost, unless such an instrument is attached.
+     */
+    private void enterPending(VirtualFrame frame, SegmentList list, SegmentList end) {
+        ProbeNode probe = PendingFramesNode.probe(pendingFrames);
+        if (probe != null) {
+            for (SegmentList l = list; l != end && l != null; l = l.tail) {
+                if (l.head instanceof Capture.Segment) {
+                    probe.onEnter(frame);
                 }
-                if (!e.isRaisable() || !(context.raise instanceof SClosure) || pending == null) {
-                    throw unwind(e, pending);
+            }
+        }
+    }
+
+    /**
+     * The segments of {@code list} before {@code end} have left this driver's pending ones: resumed
+     * (the frame then reports its own resume), dropped, or passed on to an outer prompt (whose
+     * driver reports them).
+     */
+    private void leavePending(VirtualFrame frame, SegmentList list, SegmentList end) {
+        ProbeNode probe = PendingFramesNode.probe(pendingFrames);
+        if (probe != null) {
+            for (SegmentList l = list; l != end && l != null; l = l.tail) {
+                if (l.head instanceof Capture.Segment) {
+                    probe.onReturnValue(frame, null);
                 }
-                value = new PendingRaise(e.getErrorObject());
             }
         }
     }

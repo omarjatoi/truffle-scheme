@@ -55,7 +55,7 @@ fixes:
 | `ResourceLimits.newBuilder().statementLimit(100000, null)`, an endless loop | Cancelled: *"Statement count limit of 100000 exceeded."* (`isResourceExhausted()`): each expression of a body and each root's body is a statement (`CodeGenerator.tags`, D13) |
 | `sandbox.MaxCPUTime=200ms`, an endless loop | Cancelled after 203 ms |
 | `sandbox.MaxOutputStreamSize=10KB`, `display` in a loop | Cancelled at 16,368 bytes: standard output reaches the limit's stream in 8 KB writes (D10, "Standard output is buffered") |
-| `sandbox.MaxStackFrames=40`, a recursion 50 deep | Cancelled with 41 frames; but with `scheme.SpillDepth=20` it ran (below) |
+| `sandbox.MaxStackFrames=40`, a recursion 50 deep | Cancelled with 41 frames; but with `scheme.SpillDepth=20` it ran (below; fixed in #240) |
 | `sandbox.MaxASTDepth=2`, nested arithmetic 6 deep | Ran: not enforced (below) |
 | `Context.interrupt` from another thread, an endless loop | Stopped (`isInterrupted()`), and the context went on |
 | `Context.close(true)` from another thread, an endless loop | Cancelled (`isCancelled()`) |
@@ -116,7 +116,7 @@ Sources: 25.5's `SandboxPolicy` Javadoc and the
 | A language checks the policy where it must | `Env.getSandboxPolicy()`: *"A language can use the returned sandbox policy to make language-specific verifications that the sandbox requirements are met."* | Nothing to check: no language-specific resource is outside the Env. The one thread the runtime starts (`StackBudget`'s stack probe, on the first deep recursion when the stack size is unknown) runs no guest code and touches nothing outside the JVM. | Follow |
 | `ISOLATED`, `UNTRUSTED` | *"In this mode, guest and host application execute on separate virtual machine instances."*; CE needs the language's `-isolate-community` artifact | Not declared: running in a polyglot isolate needs the language built into an isolate library (packaging, below), which nothing builds. | Follow-up |
 | Resource limits | *"The ISOLATED and UNTRUSTED sandbox policies require setting certain resource limits for a context."*; statements, CPU time, output, stack frames, AST depth, heap, threads | Statement limits (`ResourceLimits` and `sandbox.MaxStatements`), CPU time, output size, interrupts and cancelling work (above; `SandboxTest` checks the first three and `close(true)`). | Follow |
-| `sandbox.MaxStackFrames` | *"Specifies the maximum number of frames a context can push onto the stack."*; counted at `RootTag` enters and returns (`SandboxInstrument.FrameCounterNode`) | Counts Java frames: deep recursion spills to the heap (D12), so past the spill depth it never trips (with `scheme.SpillDepth=20`, a limit of 40 let a recursion 50 deep run), and frames resumed from the heap return without having entered, so the count drifts up by one per resumed frame. | Deviation by design (D12): the heap limit (`sandbox.MaxHeapMemory`) bounds deep recursion instead. A follow-up: decrement on resume, or document it as Java frames. |
+| `sandbox.MaxStackFrames` | *"Specifies the maximum number of frames a context can push onto the stack."*; counted per thread at the enter and return events of `RootTag` nodes (`SandboxInstrument.FrameCounterNode`), whose `onYield` and `onResume` are `ExecutionEventNode`'s defaults, *"Delegates to `onReturnValue`"* and *"Delegates to `onEnter`"* | Counted Java frames: the Bytecode DSL reports a yield and a resume around every `@Yield` (`tag.yieldNull`, `tag.resume`), so a frame suspended on the heap left the count. Past the spill depth a recursion never reached the limit (with `scheme.SpillDepth=20`, a limit of 40 let a recursion 50 deep run). The count didn't drift: yields and resumes balance (the audit's guess that resumed frames return without entering was wrong; measured: the same deepest recursion after 1,000 re-entries). | Mistake, fixed in #240: each prompt driver reports its pending frames as enters and returns of an internal `RootTag` node (`PendingFramesNode`), so the limit counts the program's frames, on the heap too (design.md D10, "Sandboxing"). |
 | `sandbox.MaxASTDepth` | *"A limit on the maximum expression depth of a guest language function. Only instrumentable nodes count towards the limit."* | Not enforced: the instrument measures a root's depth by walking its child nodes (`SandboxInstrument.checkAstDepth`, `NodeUtil.forEachChild`), and a Bytecode DSL root's only nested nodes are the tags some instrument has asked for; the sandbox asks only for `RootTag`. | Upstream: it affects every Bytecode DSL language. docs/upstream.md, ["MaxASTDepth on Bytecode DSL roots"](upstream.md#maxastdepth-on-bytecode-dsl-roots): `UpstreamAstDepthTest` and the issue text, not filed |
 
 ## Embedding
@@ -174,6 +174,7 @@ SimpleLanguage's, TRegex's, Sulong's `native-image.properties`).
 |---|---|---|
 | #218 | Each option's help ends with its default, each has a usage syntax, `scheme.SpillDepth` takes only 0 or more and names itself in its error; docs/embedding.md's "Options and engines" | `LanguageOptionsTest`: every option's help and syntax, a bad value of each refused naming it, an experimental one needing `allowExperimentalOptions`, an option from a context's builder, its engine's (each context's default, the context's own first) and a system property. `EmbeddingGuideTest.engine`, docs/embedding.md's sample. |
 | #226 | `sandbox = CONSTRAINED` on the language and on its options but `scheme.SpillDepth`; a file type detector for `.scm` and `.sld`; docs/embedding.md's "Sandboxing and resource limits", design.md D10's "Sandboxing" | `SandboxTest` (above), in every test mode; `FileTypeDetectorTest`: `Source.findLanguage` and `findMimeType` of `.scm` and `.sld` files; `EmbeddingGuideTest.limits` |
+| #240 | `sandbox.MaxStackFrames` counts the frames prompt drivers hold on the heap (`PendingFramesNode`); design.md D10, docs/embedding.md | `SandboxTest`, in every test mode: with frames spilled every 1, 5 or 20 calls or as the stack needs, a recursion as deep as the limit allows runs and one a frame deeper is stopped; a million-iteration loop runs under a limit of 10; after re-entering, escaping from, raising through, reinstating and aborting deep continuations 200 times each, and 100 errors unwinding 60 frames, the deepest recursion allowed is the same |
 
 ## Follow-ups
 
@@ -186,9 +187,6 @@ SimpleLanguage's, TRegex's, Sulong's `native-image.properties`).
 - **`ISOLATED` and `UNTRUSTED`**: building the language as a polyglot isolate
   library (`-isolate-community`), and checking every limit those policies
   require (`sandbox.MaxASTDepth`, `MaxHeapMemory`, `MaxThreads`).
-- **`sandbox.MaxStackFrames`** counts Java frames and drifts after a spill or
-  a resumed continuation: decrement the count when a frame is resumed from the
-  heap, or say so in docs/embedding.md.
 - **`sandbox.MaxASTDepth`** isn't enforced on Bytecode DSL roots (its
   instrument walks a root's child nodes, which hold only the tags some
   instrument asked for): reproduced without Scheme in docs/upstream.md,

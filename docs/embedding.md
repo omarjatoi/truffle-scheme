@@ -186,9 +186,12 @@ or writes too much, and cancel it: `ResourceLimits`' statement limit (each
 expression of a body is a statement), and the `sandbox.MaxCPUTime` and
 `sandbox.MaxOutputStreamSize` options; so do
 `Context.interrupt` and `Context.close(true)` from another thread.
-`sandbox.MaxStackFrames` counts only the frames on the Java stack, so it
-doesn't bound the depth of a recursion, which moves its frames to the heap as
-it deepens (design.md "Continuations").
+So does `sandbox.MaxStackFrames`, which bounds the depth of Scheme's stack:
+it counts the frames the program will return to, those a deep recursion has
+moved to the heap (design.md "Continuations") as well as those on the Java
+stack, and those of a continuation the program re-enters (design.md D10,
+"Sandboxing"). A program's body is a frame, and each procedure call it is
+in; a tail call adds none, so a loop runs under any limit.
 
 <!-- readme: file tests/scheme/test/EmbeddingGuideTest.java#limits -->
 ```java
