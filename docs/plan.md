@@ -1771,7 +1771,7 @@ measures with interleaved A/B runs.
     input on the JIT and the native launcher); and a long `read-string` on
     a stream without `available()` is measured and sized ahead or recorded
     as is.
-- [ ] **M12-11 · The isolate library in CI, pre-initialized**
+- [x] **M12-11 · The isolate library in CI, pre-initialized**
   - #256's and #263's follow-ups: `//tests:unit_isolate_SandboxTest` runs
     only locally (a manual test), since AGENTS.md keeps native images out
     of CI; and the first `ISOLATED` context takes 0.6-0.8 s to build, where

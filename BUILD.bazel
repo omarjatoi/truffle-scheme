@@ -292,7 +292,9 @@ native_library(
 # their languages' (design.md D10, "ISOLATED and UNTRUSTED"). The library is native-image's
 # --shared build of scheme.jar with the optimizing runtime and polyglot isolates' guest side. Built
 # only when named, like //:scheme-native, on the same executors; on x86-64 Linux for the baseline
-# CPU, as //:schemevm.
+# CPU, as //:schemevm. With a context pre-initialized at build time, as //:schemevm has, which each
+# isolate's first context takes over (SchemeLanguage.patchContext; design.md D10, "A pre-initialized
+# context in the isolate").
 polyglot_isolate(
     name = "scheme_isolate",
     add_modules = [
@@ -308,7 +310,7 @@ polyglot_isolate(
     libs = ["//src/isolate"],
     module = ":scheme_module",
     module_name = "scheme.isolate",
-    options = select({
+    options = ["-Dpolyglot.image-build-time.PreinitializeContexts=scheme"] + select({
         "//bazel:linux_x86_64": ["-march=compatibility"],
         "//conditions:default": [],
     }),

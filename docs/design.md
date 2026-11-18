@@ -2611,6 +2611,56 @@ Each entry: the decision, why, and what was rejected.
       `engine.IsolateLauncher`. An embedder whose own application is a
       native image (Truffle then reads internal resources at its build time)
       is untested.
+  - *A pre-initialized context in the isolate (M12-11).* The library is
+    built with `-Dpolyglot.image-build-time.PreinitializeContexts=scheme`,
+    as `//:scheme-native` is (D17, "A pre-initialized context"): native-image
+    creates a context at build time, with the standard libraries restored
+    from the prelude image, and Truffle's own mechanism hands it to the
+    first context of each isolate. The guest builds its engine through the
+    same `PolyglotImpl.buildEngine` as a host does (25.5's
+    `GuestPolyglotIsolateServices.buildEngine`), so a context with a bound
+    engine (`Context.newBuilder`, no explicit `Engine`) takes the image's
+    pre-initialized engine, and Truffle calls `SchemeLanguage.patchContext`
+    with the run's Env, as in the native launcher; nothing else changed.
+    And since every context spawns an isolate of its own, from a fresh
+    copy of the image heap, each one gets a pre-initialized context, not
+    just the process's first. Everything that patch rebinds comes from the
+    run: `SandboxTest.Isolated` checks, in one isolate after another, the
+    embedder's file system and `scheme.LibraryPath` (a library and a file
+    read from a zip file's), environment variables, command line, standard
+    input, output and error, and `scheme.BufferOutput` (a write per call
+    unbuffered, two when buffered), and that Truffle logged the patch;
+    under `UNTRUSTED`, that the patched context materializes the guest's
+    tags (`sandbox.MaxASTDepth` refuses deep nesting) and reads the
+    redirected input; and that a context with `scheme.PreludeImage=false`
+    declines the patch and gets a new context, which expands the standard
+    libraries. Without the option, the two tests that look for the patch
+    fail.
+    - *Measured* on this Mac (Apple M3 Max, 1-minute load 3.0 to 4.7):
+      a host JVM with `scheme_isolate_jars` creates three `ISOLATED`
+      contexts in turn, each built, initialized (`Context.initialize`) and
+      given `(display (map ...))`; the median of 21 JVMs per library,
+      interleaved, with Truffle's resource cache already unpacked, and of 7
+      with an empty one. Milliseconds:
+
+      | | Without | With |
+      |---|---:|---:|
+      | First context: build (spawns the isolate) | 178 | 178 |
+      | First context: initialize | 3.2 | 0.7 |
+      | First context in all (and its first `eval`) | 186 | 184 |
+      | Second and third: initialize | 2.2, 2.0 | 0.0, 0.0 |
+      | Second and third in all | 4.0, 3.2 | 2.0, 1.3 |
+      | First context, empty resource cache | 844 (initialize 6.0) | 841 (0.8) |
+
+      So the 0.6–0.8 s that #263 saw is not the context: it is the
+      first use of a library on a machine, which unpacks the 50 MB
+      library into the resource cache and loads it for the first time
+      (about 650 ms here), once per library version; after that, the
+      first context's 180 ms are almost all the host JVM's polyglot
+      start-up and the isolate's spawn, which pre-initialization doesn't
+      touch. It takes away the context's own share, about 2.5 ms a
+      context: later contexts start in half the time. The library
+      grows from 49.5 MB to 50.5 MB (49,489,800 to 50,546,600 bytes).
   - *The language declares `UNTRUSTED`*, and so do the options an embedder
     sets (`scheme.LibraryPath`, `scheme.BufferOutput`, `scheme.StackSize`),
     but `scheme.PreludeImage`, `ISOLATED` (below): the stricter policies take
@@ -4590,7 +4640,10 @@ Each entry: the decision, why, and what was rejected.
     contexts may share code, and this language's don't (`EXCLUSIVE`, no
     sharing layer). Only the default engine's first context is the
     pre-initialized one; an embedder's explicit `Engine`, a second context,
-    or an image built without the option starts a context as before.
+    or an image built without the option starts a context as before. The
+    polyglot isolate library is built with the option too, where every
+    isolate's first context is the pre-initialized one (D10, "A
+    pre-initialized context in the isolate").
   - Code that partial evaluation reaches must not reach a method
     native-image blocklists for runtime compilation. On HotSpot such a path
     only costs code size, but native-image refuses to build: a call through
@@ -4669,6 +4722,16 @@ Each entry: the decision, why, and what was rejected.
     What a program costs over `--version` drops from 3.3 ms to 1.3 ms
     (restoring the prelude image and running the library bodies is the
     part that goes), and 3 MB of RSS; the executable grows by 1 MB.
+
+    Measured again at M12-11 (`2be9e46`, the thin launcher and
+    `libschemevm` built with and without the option, the median of 41
+    runs each, interleaved, 1-minute load 9.1 to 9.4), it still pays:
+    `--version` 9.8 ms and 16.3 MB without, 9.6 ms and 16.4 MB with; a
+    hello-world program 12.3 ms and 24.6 MB without, 10.2 ms and 21.1 MB
+    with; `libschemevm.dylib` 54.8 MB without, 55.9 MB with (54,846,496
+    and 55,903,296 bytes). So the launcher keeps it, and the polyglot
+    isolate library now has it too (D10, "A pre-initialized context in
+    the isolate").
 
     The build takes 50–90 s and about 3 GB on that machine; the
     executable was 55 MB (since M10-01, the library is, and the thin

@@ -13,6 +13,8 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -490,6 +492,111 @@ public class SandboxTest {
             } finally {
                 closeCancelled(context);
             }
+        }
+
+        /** What Truffle logs at {@code log.engine.level=FINE} when a context takes over a pre-initialized one. */
+        private static final String PATCHED = "Successfully patched context of language: scheme";
+
+        /** What a program sees of its run, all of which a pre-initialized context must take from the run. */
+        private static final String RUN_PROGRAM = """
+                        (import (scheme base) (scheme write) (scheme file) (scheme process-context) (greet hello))
+                        (display "a") (display "b") (newline)
+                        (write (command-line)) (newline)
+                        (write (get-environment-variable "M12_11")) (newline)
+                        (write (call-with-input-file "/data.txt" read-line)) (newline)
+                        (write (greet (read-line))) (newline)
+                        (write 'to-stderr (current-error-port))
+                        """;
+
+        /** An output stream that keeps each write it gets: unbuffered output is a write per call. */
+        private static final class Writes extends OutputStream {
+            final List<String> writes = new ArrayList<>();
+
+            @Override
+            public void write(int b) {
+                writes.add(String.valueOf((char) b));
+            }
+
+            @Override
+            public void write(byte[] b, int off, int len) {
+                writes.add(new String(b, off, len, StandardCharsets.UTF_8));
+            }
+        }
+
+        /** A zip file of a library, {@code /lib/greet/hello.sld}, and a file, {@code /data.txt}. */
+        private static Path runFiles(Path dir) throws IOException {
+            Path zip = dir.resolve("run.zip");
+            try (ZipOutputStream zipOut = new ZipOutputStream(Files.newOutputStream(zip))) {
+                zipOut.putNextEntry(new ZipEntry("lib/greet/hello.sld"));
+                zipOut.write("(define-library (greet hello) (export greet) (import (scheme base)) (begin (define (greet name) (string-append \"hello, \" name))))".getBytes(StandardCharsets.UTF_8));
+                zipOut.closeEntry();
+                zipOut.putNextEntry(new ZipEntry("data.txt"));
+                zipOut.write("line one\n".getBytes(StandardCharsets.UTF_8));
+                zipOut.closeEntry();
+            }
+            return zip;
+        }
+
+        /**
+         * The isolate library is built with a pre-initialized context (design.md D10, "A
+         * pre-initialized context in the isolate"), which each isolate's context takes over: it
+         * sees its own run's file system, library path, environment, command line and streams, and
+         * its own scheme.BufferOutput, nothing of the build's, in one isolate after another.
+         */
+        @Test
+        public void eachIsolatedContextTakesOverAPreInitializedOneWithItsRun() throws IOException {
+            Path zip = runFiles(Files.createTempDirectory("isolated"));
+            for (String buffer : new String[]{"true", "false"}) {
+                Writes writes = new Writes();
+                ByteArrayOutputStream errors = new ByteArrayOutputStream();
+                ByteArrayOutputStream log = new ByteArrayOutputStream();
+                try (java.nio.file.FileSystem zipFs = java.nio.file.FileSystems.newFileSystem(zip)) {
+                    IOAccess io = IOAccess.newBuilder().fileSystem(FileSystem.newFileSystem(zipFs)).build();
+                    try (Context context = isolated().allowIO(io).option("scheme.LibraryPath", "/lib").option("scheme.BufferOutput", buffer) //
+                                    .environment("M12_11", "buffer " + buffer).arguments(SCHEME, new String[]{"prog.scm", buffer}) //
+                                    .in(new ByteArrayInputStream("world\n".getBytes(StandardCharsets.UTF_8))).out(writes).err(errors) //
+                                    .option("log.engine.level", "FINE").logHandler(log).build()) {
+                        context.eval(SCHEME, RUN_PROGRAM);
+                    }
+                }
+                assertTrue(buffer + ": the context is the pre-initialized one", log.toString(StandardCharsets.UTF_8).contains(PATCHED));
+                String expected = "ab\n(\"prog.scm\" \"" + buffer + "\")\n\"buffer " + buffer + "\"\n\"line one\"\n\"hello, world\"\n";
+                assertEquals(expected, String.join("", writes.writes));
+                // Buffered, output is written when Scheme reads standard input and when control
+                // returns; unbuffered, at each write.
+                assertEquals(buffer, buffer.equals("true") ? 2 : 11, writes.writes.size());
+                assertEquals("to-stderr", errors.toString(StandardCharsets.UTF_8));
+            }
+        }
+
+        /** UNTRUSTED's contexts take over the pre-initialized context too, with their own policy. */
+        @Test
+        public void anUntrustedContextTakesOverAPreInitializedOne() {
+            ByteArrayOutputStream log = new ByteArrayOutputStream();
+            Context context = untrusted().option("log.engine.level", "FINE").logHandler(log).build();
+            try {
+                assertEquals("a line", context.eval(SCHEME, "(read-line)").asString());
+                // The guest's roots have their tags materialized, as the run's policy asks.
+                String nested = "(+ 1 ".repeat(60) + "0" + ")".repeat(60);
+                PolyglotException e = assertThrows(PolyglotException.class, () -> context.eval(SCHEME, nested));
+                assertTrue(e.getMessage(), e.getMessage().contains("AST depth limit of 50 nodes exceeded"));
+            } finally {
+                closeCancelled(context);
+            }
+            assertTrue(log.toString(StandardCharsets.UTF_8), log.toString(StandardCharsets.UTF_8).contains(PATCHED));
+        }
+
+        /**
+         * A context that doesn't restore the prelude image declines the pre-initialized one, which
+         * restored it, and gets a new context, which expands the standard libraries.
+         */
+        @Test
+        public void aContextWithoutThePreludeImageDeclinesThePreInitializedOne() {
+            ByteArrayOutputStream log = new ByteArrayOutputStream();
+            try (Context context = isolated().option("scheme.PreludeImage", "false").option("log.engine.level", "FINE").logHandler(log).build()) {
+                assertEquals("((1 . a) (2 . b))", eval(context, "(map cons '(1 2) '(a b))"));
+            }
+            assertFalse(log.toString(StandardCharsets.UTF_8), log.toString(StandardCharsets.UTF_8).contains(PATCHED));
         }
 
         @Test
