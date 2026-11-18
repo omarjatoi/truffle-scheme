@@ -6,6 +6,7 @@ import com.oracle.truffle.api.Assumption;
 import com.oracle.truffle.api.CompilerAsserts;
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.HostCompilerDirectives.InliningCutoff;
 import com.oracle.truffle.api.RootCallTarget;
 import com.oracle.truffle.api.bytecode.BytecodeNode;
 import com.oracle.truffle.api.bytecode.BytecodeRootNode;
@@ -295,7 +296,9 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
      * raised in this frame (design.md D8): this call's value is what calling Scheme {@code raise}
      * with the error object returns, so a capture in a handler (call/cc, guard) suspends this frame
      * like any other call. An uncaught error, or one before the prelude has installed raise, goes on.
+     * A rare path, cut from the host's inlining of the interpreter (see {@link Call}).
      */
+    @InliningCutoff
     static Object raiseHere(SchemeError e, SchemeContext context, Trampoline trampoline) {
         Object raise = context.raise;
         if (!e.isRaisable() || !(raise instanceof SClosure closure)) {
@@ -331,6 +334,17 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
      * bug, reproduced by {@code scheme.test.upstream.UpstreamReportPolymorphismTest},
      * docs/upstream.md#reportpolymorphism-on-an-operation. When that test fails after a Truffle
      * upgrade, put {@code @ReportPolymorphism.Megamorphic} here instead.)
+     *
+     * <p>A call of a procedure ({@code doDirect}, {@code doIndirect}) is an {@link InliningCutoff}:
+     * HotSpot compiles the bytecode interpreter's {@code continueAt} with the handler of every
+     * instruction a program has run inlined into it, and compiles it again whenever the program
+     * reaches one it hadn't (design.md "The host compiler"). Inlined, a call's whole path (the stack
+     * budget, the first descent's bookkeeping, Truffle's call and its argument profile, the
+     * trampoline) was in every one of those compilations; cut, it is a method of its own, compiled
+     * once, and each {@code continueAt} compilation takes about a quarter less time. A call costs an
+     * interpreted call's work either way, so the Java call it adds doesn't show (design.md, "The
+     * interpreter's first runs", M10-02). It is a hint to host inlining only: partial evaluation
+     * still inlines the call into compiled Scheme code.
      */
     @Operation(storeBytecodeIndex = true)
     public static final class Call {
@@ -351,6 +365,7 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
         }
 
         @Specialization(guards = "procedure.callTarget == cachedTarget", limit = "4")
+        @InliningCutoff
         static Object doDirect(SClosure procedure, @Variadic(startOffset = 1) Object[] arguments,
                         @Bind Node node,
                         @Shared @Cached Trampoline trampoline,
@@ -388,6 +403,7 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
         }
 
         @Specialization(replaces = "doDirect")
+        @InliningCutoff
         static Object doIndirect(SClosure procedure, @Variadic(startOffset = 1) Object[] arguments,
                         @Bind Node node,
                         @Shared @Cached Trampoline trampoline,

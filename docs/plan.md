@@ -1149,7 +1149,7 @@ measures with interleaved A/B runs.
     hello-world program 11.0 ms); and `//tests:conformance_native`,
     `//tests:readme_native`, `//tests:space_native` and
     `//tests:launcher_vm_native` pass.
-- [ ] **M10-02 · Interpreter warm-up and host compilation**
+- [x] **M10-02 · Interpreter warm-up and host compilation**
   - Carried from M9-03, not met: in M9's report the interpreter's geometric
     mean ×fastest, without the native column, is 42.89 against M8's 43.87,
     and `tak` (56.2 s) and `ack` (52.2 s) are close to its 60 s limit. A
@@ -1187,6 +1187,27 @@ measures with interleaved A/B runs.
     native column, improves by at least 10% over M9's report (42.89, so 38.6
     or less, in a report regenerated the same way), or each direction above
     is measured and recorded in design.md with its numbers.
+  - Done (2026-11-18) by its second clause: each direction is measured and
+    recorded (design.md "The interpreter's first runs", and D17 "The native
+    interpreter"). Kept: tail call handlers (#229), the native launcher's
+    interpreter 0.62 times as long, the JVM's code unchanged; a call's path,
+    `raiseHere` and the typed operations' generic path cut from the host's
+    inlining of `continueAt` (`@InliningCutoff`): each of its compilations
+    8-50% shorter, the 54 programs' first interpreted runs 0.94 times, the
+    JIT unchanged, the interpreter's later iterations of `tak` 1.04. Not
+    kept: the AOT cache's profiles (first runs 1.044 times with
+    `bazel-bin/scheme`'s training, 1.09 with one on interpreted programs),
+    `boolean` boxing elimination off (0.985-0.992, the longest programs
+    slower), `storeBytecodeIndexInFrame` off (1.006-1.020), Graal's
+    speculation options (1.03-1.04), the warm-up thread in the interpreter
+    (1.00-1.04). The first clause isn't met: the report's interpreter
+    column regenerated the same way on this code (`bench-report
+    --implementations interpreter --scale 0.1 --interpreter-timeout 60`,
+    against M9's other columns, without the native one) gives 40.92 against
+    42.89 (0.95 times, not 0.90); `tak` 55.9 s and `ack` 53.8 s. What is
+    left of a first run is HotSpot recompiling `continueAt` each time a
+    program reaches a new instruction (2-9 times a program): only the size
+    of each compilation is ours to change.
 - [x] **M10-03 · `apply`'s cost after #195**
   - #195 stopped marking primitive roots trivial (`PrimitiveRootNode.isTrivial`),
     so that Graal no longer prints *"Root node of target marked trivial but

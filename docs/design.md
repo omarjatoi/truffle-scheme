@@ -334,6 +334,89 @@ follow it or deviate, with the decision below that says why.
     compile instead of 131, and its first run 1.15 times as long though it
     makes almost no calls. `@HostCompilerDirectives.InliningCutoff` on the call
     path brought it back (152 ms).
+- **The interpreter's first runs (M10-02).** What a first interpreted run
+  pays for, and the directions measured against it. Unless said otherwise:
+  ecraven's programs at the report's interpreter scale (`bench-report
+  --scale 0.1`, the interpreter at 0.1 of that, a fresh JVM per run, the
+  launcher's options and `-Xmx2g`), 2 interleaved rounds, the medians; the
+  54 programs that finish within 60 s, or the 44 of them that take under
+  20 s; an Apple M3 Max shared with other agents, no run started at a
+  1-minute load above 10. The noise floor: a build whose JVM code is
+  identical (#229's, which only adds a native-image interpreter) measured
+  0.96-0.98 times by the geometric mean over the 44, single programs
+  ±30% and `tak` ±10%.
+  - *Where it goes.* HotSpot compiles `continueAt` (with libgraal) once a
+    program has run it enough, with the handlers of the instructions it has
+    seen inlined. When the program reaches an instruction the profile hadn't
+    seen (a new one, or a quickened variant of one it had), the compiled
+    code hits an uncommon trap at the dispatch `switch` (JFR's
+    `jdk.Deoptimization`: `unreached`, action `reinterpret`), and the method
+    runs as C1's profiling code until libgraal has compiled it again. Over
+    the first iteration of 12 programs: 2-9 compilations of `continueAt` and
+    2-8 traps a program, each compilation 75-245 ms (`browse` 4 of them,
+    532 ms in all, in a first iteration of 0.78 s; `dynamic` 6, 1,227 ms, in
+    1.58 s). The first iteration is 1.2-3 times the later ones (`browse`
+    0.65 s, then 0.40, 0.22). So a first run's cost follows how many times
+    `continueAt` is compiled and how large each compilation is.
+  - *Kept: a call's path cut from the host's inlining.* `Call.doDirect`,
+    `doIndirect` (the stack budget, the first descent's bookkeeping,
+    Truffle's call and argument profile, the trampoline), `raiseHere` and the
+    typed operations' `generic` path are `@InliningCutoff`s: methods
+    compiled on their own, called from `continueAt` (`HostInliningCutoffTest`).
+    The host graph of `browse`'s `continueAt` after inlining went from
+    4,364-5,286 to 3,737-5,005, each compilation took 8-50% less
+    (`deriv` 112 → 76 ms, `parsing`'s largest 159 → 104, `dynamic`'s 242 →
+    120, with the call path alone cut), and the 54 programs' first runs 0.94
+    times as long (0.935-0.950 in two runs of 2 rounds; `nqueens` 0.71, `compiler`, `conform`, `slatex`,
+    `maze` 0.80-0.82). The Java call it adds to each Scheme call is small
+    beside the call's own work: `tak`, `fib` and `ack`, whose time is
+    calls, within their noise in the report's runs (0.98-1.08), and the
+    interpreter's later iterations (`bench-check`'s interpreter cases, 8
+    interleaved rounds) `fib` 0.99, `tak` 1.04, `deriv` 0.95.
+    With the JIT (24 programs at the report's counts, 3 iterations, 3
+    rounds) the first iteration 1.00 times and the steady state 1.00.
+    M10-07 can read this as what makes the host stop inlining a handler: a cutoff, a `@TruffleBoundary`, a path dominated by
+    `transferToInterpreter`, or a call it can't devirtualize (a
+    primitive's `PrimitiveNode.invoke` from `Call.doPrimitive` and
+    `MakeTailCall.doPrimitive` is never inlined: *"not direct call:
+    polymorphic"*, so `SetPair.invoke`'s cost there is its own compiled
+    code's); and that anything that changes which instructions a program
+    reaches moves its first run by the cost of a compilation or two.
+  - *Measured, not kept.*
+    - The AOT cache with JDK 25's method profiles (JEP 515), trained on the
+      interpreter. JDK 25's cache holds no compiled code (only adapters and
+      stubs, behind diagnostic flags); it holds profiles, which HotSpot
+      installs as methods are linked and libgraal compiles from (with a
+      cache, `continueAt` was compiled at 197 ms into the run instead of
+      310, from the training's profile). Caches made for `//:launcher_runtime`'s jars by
+      hand, against none (24 programs, 3 rounds): trained on
+      `bazel/aot-training.scm`, as `bazel-bin/scheme`'s is, first runs 1.044
+      times (0.57-1.45: a profile that isn't the program's makes the
+      compiled code trap, or makes it large); trained with
+      `-XX:-AOTRecordTraining` (classes only) 1.004; trained on 15 of the
+      programs interpreted, 1.09 on 20 (17 of them not in the training: its
+      `continueAt` covered every handler the training had used, 320 ms to
+      compile, and slower code). With the
+      JIT (18 programs, 3 iterations, 3 rounds) the first two 0.99 and 1.01,
+      the steady state 1.00: `bazel-bin/scheme` keeps its cache as it is
+      (D17, "The AOT cache"), and the benchmarks' runtime gets none.
+    - Graal's speculation, as JVM options (44 programs):
+      `-Djdk.graal.RemoveNeverExecutedCode=false` (no trap for an unseen
+      instruction, but every method compiled with its cold paths) 1.041;
+      `-Djdk.graal.DeoptsToDisableOptimisticOptimization=3` (the same after
+      3 traps of a method) 1.033.
+    - The JIT's warm-up thread (D17) also in the interpreter, to start
+      `continueAt`'s profile early: 1.003 (1.035 by the fastest runs).
+    - `boolean` boxing elimination off (truffle-guidance.md): fewer
+      quickened variants, so fewer traps (36 against 47 over the 12 programs
+      above), but over the 54 alone 0.985 and 0.992 (`tak` 1.11, `nboyer`
+      1.06), and with the cutoffs above 0.925 against their 0.94, `tak`,
+      `ack`, `fib` and `nboyer` 1.08-1.14: what it gives short programs, the
+      longest give back, and those are the ones near the report's 60 s.
+    - `storeBytecodeIndexInFrame = false`, where D13 keeps it on: 1.006 and
+      1.020 over the 54 (1.025 over the 44): no cost to recover.
+    - `enableQuickening = false`: the Bytecode DSL keeps quickening when
+      `boxingEliminationTypes` needs it (the same jar).
 - **Tail calls keep nothing alive.** A tail call replaces the frame it is made
   from (R7RS §3.5), so nothing of that frame may stay reachable while the call
   runs: not its variables, nor the arguments it was called with. A tail loop
