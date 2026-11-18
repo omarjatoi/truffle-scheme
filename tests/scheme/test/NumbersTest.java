@@ -113,6 +113,162 @@ public class NumbersTest {
     }
 
     /**
+     * The transcendental functions of flonums are fdlibm's ({@code StrictMath}), on every platform,
+     * launcher and tier (design.md D1, "Transcendental functions"): the same digits everywhere,
+     * correctly rounded in most cases but not all. {@code (exp 1)} is fdlibm's, one ulp above the
+     * nearest flonum to e, 2.718281828459045, as is {@code (log 3)}, one below 1.0986122886681098;
+     * {@code java.lang.Math} gives the nearest on x86-64 (its intrinsics) and fdlibm's on AArch64.
+     * {@code (sin -1.6361793969095206)} is the nearest, which AArch64's {@code Math.sin} isn't.
+     */
+    @Test
+    public void transcendentalsHaveKnownValues() {
+        String[][] cases = {
+                        {"(exp 1)", "2.7182818284590455"},
+                        {"(exp 0.5)", "1.6487212707001282"},
+                        {"(exp -10)", "4.539992976248485e-05"},
+                        {"(log 10)", "2.302585092994046"},
+                        {"(log 3)", "1.0986122886681096"},
+                        {"(log 1000 10)", "2.9999999999999996"},
+                        {"(log 8 2)", "3.0"},
+                        {"(sin 1e22)", "-0.8522008497671888"},
+                        {"(cos 1e22)", "0.523214785395139"},
+                        {"(sin -1.6361793969095206)", "-0.9978632884277808"},
+                        {"(cos -3.091600611437693)", "-0.9987506580899693"},
+                        {"(tan 1)", "1.5574077246549023"},
+                        {"(asin 0.5)", "0.5235987755982989"},
+                        {"(acos 0.5)", "1.0471975511965979"},
+                        {"(atan 1)", "0.7853981633974483"},
+                        {"(atan 1 1)", "0.7853981633974483"},
+                        {"(atan -3 -4)", "-2.498091544796509"},
+                        {"(sqrt 2.)", "1.4142135623730951"},
+                        {"(expt 2.5 3.7)", "29.67413253642086"},
+                        {"(expt 1.1 100)", "13780.61233982238"},
+                        {"(exp +i)", "0.5403023058681398+0.8414709848078965i"},
+        };
+        for (String[] c : cases) {
+            assertEquals(c[0], c[1], write(c[0]));
+        }
+    }
+
+    /**
+     * A sweep of each transcendental function's arguments, with fdlibm's results for them. The calls
+     * are data, a quoted list, which {@link #RUN} runs at a few call sites: as code, they would make
+     * a procedure too large to compile.
+     */
+    private static final class Sweep {
+        final StringBuilder cases = new StringBuilder("'(");
+        final List<String> calls = new ArrayList<>();
+        final List<Double> expected = new ArrayList<>();
+
+        Sweep() {
+            java.util.Random random = new java.util.Random(20261117);
+            for (int i = 0; i < 150; i++) {
+                double small = random.nextDouble() * 20 - 10;
+                double wide = Math.copySign(Math.exp(random.nextDouble() * 50 - 20), random.nextDouble() - 0.5);
+                double positive = Math.exp(random.nextDouble() * 1400 - 700);
+                double unit = random.nextDouble() * 2 - 1;
+                double y = random.nextDouble() * 40 - 20;
+                add("exp", StrictMath.exp(small * 70), small * 70);
+                add("log", StrictMath.log(positive), positive);
+                add("log", StrictMath.log(positive) / StrictMath.log(-small + 10.5), positive, -small + 10.5);
+                add("sin", StrictMath.sin(small), small);
+                add("sin", StrictMath.sin(wide), wide);
+                add("cos", StrictMath.cos(small), small);
+                add("cos", StrictMath.cos(wide), wide);
+                add("tan", StrictMath.tan(wide), wide);
+                add("asin", StrictMath.asin(unit), unit);
+                add("acos", StrictMath.acos(unit), unit);
+                add("atan", StrictMath.atan(wide), wide);
+                add("atan", StrictMath.atan2(small, wide), small, wide);
+                add("sqrt", StrictMath.sqrt(positive), positive);
+                add("expt", StrictMath.pow(positive, y / 100), positive, y / 100);
+                add("expt", StrictMath.pow(-small + 10.5, y), -small + 10.5, y);
+            }
+            cases.append(')');
+        }
+
+        private void add(String f, double result, double... args) {
+            StringBuilder call = new StringBuilder("(").append(f);
+            for (double a : args) {
+                call.append(' ').append(Double.toString(a).replace('E', 'e'));
+            }
+            call.append(')');
+            cases.append(call);
+            calls.add(call.toString());
+            expected.add(result);
+        }
+
+        /** The calls whose results in {@code out}, what {@code (write (sweep cases))} wrote, are wrong. */
+        List<String> mismatches(String out) {
+            String[] got = out.substring(1, out.length() - 1).split(" ");
+            assertEquals(expected.size(), got.length);
+            List<String> wrong = new ArrayList<>();
+            for (int i = 0; i < got.length; i++) {
+                if (Double.doubleToRawLongBits(Double.parseDouble(got[i])) != Double.doubleToRawLongBits(expected.get(i))) {
+                    wrong.add(calls.get(i) + " is " + got[i] + ", not " + expected.get(i));
+                }
+            }
+            return wrong;
+        }
+    }
+
+    /** {@code (sweep cases)}: the result of each call in the list {@code cases}. */
+    private static final String RUN = """
+                    (define (procedure name)
+                      (case name
+                        ((exp) exp) ((log) log) ((sin) sin) ((cos) cos) ((tan) tan) ((asin) asin)
+                        ((acos) acos) ((atan) atan) ((sqrt) sqrt) ((expt) expt)))
+                    (define (call name args)
+                      (let ((f (procedure name)))
+                        (if (null? (cdr args)) (f (car args)) (f (car args) (cadr args)))))
+                    (define (sweep cases) (map (lambda (c) (call (car c) (cdr c))) cases))
+                    """;
+
+    @Test
+    public void transcendentalsAreFdlibms() {
+        Sweep sweep = new Sweep();
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try (Context context = Context.newBuilder("scheme").out(out).build()) {
+            context.eval("scheme", RUN + "(write (sweep " + sweep.cases + "))");
+        }
+        List<String> wrong = sweep.mismatches(out.toString(StandardCharsets.UTF_8));
+        assertTrue(wrong.size() + " of " + sweep.expected.size() + ": " + wrong, wrong.isEmpty());
+    }
+
+    /**
+     * The same sweep interpreted and in code the JIT compiled (at once, in the foreground) gives
+     * the same bits: the interpreter's and compiled code's primitives call the same functions.
+     */
+    @Test
+    public void transcendentalsAreTheSameInterpretedAndCompiled() {
+        Sweep sweep = new Sweep();
+        String program = RUN + "(define cases " + sweep.cases + ") (sweep cases) (sweep cases) (write (sweep cases))";
+        String[] outs = new String[2];
+        for (int compiled = 0; compiled < 2; compiled++) {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            Context.Builder builder = Context.newBuilder("scheme").allowExperimentalOptions(true).out(out);
+            if (compiled == 0) {
+                builder.option("engine.Compilation", "false");
+            } else {
+                builder.option("engine.Compilation", "true").option("engine.CompileImmediately", "true").option("engine.BackgroundCompilation", "false");
+            }
+            Context context;
+            try {
+                context = builder.build();
+            } catch (IllegalArgumentException e) {
+                org.junit.Assume.assumeNoException("no optimizing Truffle runtime", e);
+                throw e;
+            }
+            try (Context c = context) {
+                c.eval("scheme", program);
+            }
+            outs[compiled] = out.toString(StandardCharsets.UTF_8);
+        }
+        assertEquals(outs[0], outs[1]);
+        assertEquals(List.of(), sweep.mismatches(outs[1]));
+    }
+
+    /**
      * R7RS §6.2.6: inexact "returns an inexact representation of z. The value returned is the
      * inexact number that is numerically closest to the argument", so a rational rounds once to
      * the nearest flonum, ties to even, also just next to a tie, at the subnormals and at the

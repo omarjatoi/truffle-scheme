@@ -76,3 +76,13 @@ the generator stays clear of the others (`gen.py` says where).
 Not bugs, but avoided: what `(+ -0.0 0)` is (R7RS doesn't say whether an
 exact 0 is an identity there), and loops of 10^5 calls through `call/cc`,
 which take chibi-scheme minutes (it copies its stack on each capture).
+
+Also avoided: the transcendental functions of flonums (`exp`, `log`, `sin`,
+..., `expt` of flonums), since R7RS §6.2.6 doesn't fix their accuracy. #230's
+follow-up, `(exp 1)` here an ulp above the nearest flonum, which chibi-scheme
+gives, was looked into (design.md D1, "Transcendental functions"): ours are
+fdlibm's (`StrictMath`), the same digits on every platform, launcher and tier,
+and fdlibm's `(exp 1)` is `2.7182818284590455`. Neither side is always the
+nearest: on a sample, fdlibm's `exp` isn't in 9% of cases, and chibi-scheme's
+`(asin 0.5)` isn't on macOS. So comparing them would only find which library
+rounds a given argument better.

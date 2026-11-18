@@ -563,7 +563,7 @@ final class NumberPrimitives {
         private static Object atan2(Object y, Object x) {
             Arithmetic.checkReal("atan", y);
             Arithmetic.checkReal("atan", x);
-            return Math.atan2(Arithmetic.flo(y), Arithmetic.flo(x));
+            return StrictMath.atan2(Arithmetic.flo(y), Arithmetic.flo(x));
         }
     }
 
