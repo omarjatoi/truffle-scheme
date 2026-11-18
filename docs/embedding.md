@@ -183,8 +183,9 @@ for code you trust but whose access to the host you want to regulate:
 (`IOAccess.newBuilder().fileSystem(...)`, such as a zip file's through
 `FileSystem.newFileSystem`), from which libraries are then read too;
 `get-environment-variable` finds none; `exit` ends the context, not the
-JVM; and `java-type` is refused, whatever the class filter allows (design.md
-D20). `scheme.LibraryPath`, `scheme.BufferOutput` and `scheme.StackSize` can
+JVM; and `java-type` finds the classes your class filter allows, with only
+their members annotated `@HostAccess.Export` (`HostAccess.CONSTRAINED`, the
+policy's default; design.md D20). `scheme.LibraryPath`, `scheme.BufferOutput` and `scheme.StackSize` can
 be set under it, and under the stricter policies below.
 
 With or without a policy, Truffle's limits stop a context that runs too long
@@ -560,7 +561,7 @@ allows (design.md D20); a program that doesn't import it sees none of it.
 | `(polyglot-eval language source)`, `(polyglot-eval-file language path)` | Evaluates code of another language of the context: `allowPolyglotAccess`, and the language permitted (`Context.newBuilder("scheme", "js")`). |
 | `(polyglot-language-available? language)` | Whether `polyglot-eval` may evaluate that language. |
 | `(polyglot-import name [default])`, `(polyglot-export name value)` | The polyglot bindings, `context.getPolyglotBindings()` in Java (`allowPolyglotAccess`); `polyglot-import` answers `default`, or `#f`, for a name nothing exports, as JavaScript's `Polyglot.import` answers `undefined`. |
-| `(java-type name)` | A Java class (`allowHostClassLookup`), refused under `SandboxPolicy.CONSTRAINED` and the stricter policies, and in a native image (the native launcher, a polyglot isolate). |
+| `(java-type name)` | A Java class (`allowHostClassLookup` and its filter), with the members your `HostAccess` allows, under any sandbox policy. In a native image of yours, a class needs [reflection metadata](https://www.graalvm.org/latest/reference-manual/embed-languages/#configuring-native-host-reflection) (`reachability-metadata.json`); without it, `java-type` says so. |
 | `(foreign? x)`, `(foreign-null? x)` | Whether `x` is a foreign value, and a foreign null (Java's `null`). |
 | `(foreign-ref obj key)`, `(foreign-set! obj key value)` | An array element (an exact integer key), a map's value (`HostAccess` with map access), or a member: a field, a method, another language's property (a string or symbol key). |
 | `(foreign-length obj)`, `(foreign-keys obj)` | An array's or a map's size; a map's keys, or an object's member names. |
@@ -624,8 +625,11 @@ Under `ISOLATED` and `UNTRUSTED` ([above](#isolated-and-untrusted)), Scheme
 runs in the isolate, which holds no other language: `polyglot-eval` reaches
 only Scheme, and a context that permits another language with Scheme can't
 be built (*"No native isolate library is available for the requested
-language(s)"*). `java-type` is refused. The polyglot bindings, values you
-hand Scheme (proxies, Java objects under the policy's `HostAccess`, which has
-no list, array or map access by default) and functions it calls back work
+language(s)"*). The polyglot bindings, values you hand Scheme (proxies,
+Java objects under the policy's `HostAccess`, which has no list, array or map
+access by default), the classes `java-type` finds (looked up in your JVM,
+with the members the `HostAccess` exports) and functions it calls back work
 as on the JVM, through the isolate's handles, and so do errors and the
 continuation rules above (design.md D20, "Permissions and the sandbox").
+With `engine.SpawnIsolate` under no policy, `java-type` gives a class with
+all its members, as your `HostAccess` allows.

@@ -1,0 +1,6 @@
+{
+  "reflection": [
+    { "type": "java.util.ArrayList", "allPublicConstructors": true, "allPublicMethods": true },
+    { "type": "java.lang.Math", "allPublicMethods": true }
+  ]
+}

@@ -581,9 +581,12 @@ bazel-bin/scheme-native docs/examples/hello.scm
 Hello, world! Arguments: ()
 ```
 
-The image has Scheme alone, and no reflection metadata for Java classes, so
-`(graalvm polyglot)` ([Other languages and Java](#other-languages-and-java))
-finds no other language there, and `java-type` is an error that says why:
+The image has Scheme alone, as GraalVM's native standalones do, and no
+reflection metadata for Java classes, which a class's constructors, methods
+and fields need in a native image. So `(graalvm polyglot)` ([Other languages
+and Java](#other-languages-and-java)) finds no other language there, and
+`java-type` is an error that says why (design.md D20, "The launchers"); an
+embedder's own native image has the classes it gives metadata for:
 
 <!-- readme: run native -->
 ```sh
@@ -593,7 +596,7 @@ bazel-bin/scheme-native docs/examples/polyglot.scm
 <!-- readme: output -->
 ```text
 #t #f
-no-java "java-type: Java classes are not available in a native image, which is built without their reflection metadata: java.util.ArrayList"
+no-java "java-type: this native image has no reflection metadata for the class (reachability-metadata.json), so it has none of its constructors, methods or fields"
 ```
 
 On an Apple M3 Max (from design.md D17: native startup is the median of 41 runs,
@@ -611,9 +614,10 @@ launcher is 0.1 MB and the library 55 MB. It has no tools (they need the JVM lau
 on the platform it was built for: this machine by default (design.md D11). CI doesn't build it: a change to its
 configuration is checked by the tests `//tests:readme_native` (this section's
 commands), `//tests:conformance_native` (both conformance suites through
-the executable), `//tests:space_native`, `//tests:launcher_vm_native` and
+the executable), `//tests:space_native`, `//tests:launcher_vm_native`,
 `//tests:compile_bound_native` (its build fails past its bound on
-runtime-compiled methods), which are run only when named.
+runtime-compiled methods) and `//tests:polyglot_native` (`java-type` in an
+image built with reflection metadata), which are run only when named.
 
 The executable sizes its heap as native-image does by default: its young
 generation starts at 48 MB, and grows as a program allocates. A program whose

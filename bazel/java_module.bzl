@@ -323,6 +323,13 @@ def _native_library_impl(ctx):
         "-H:-InitializeVM",
         "-H:+InstallExitHandlers",
         "-H:+EnforceMaxRuntimeCompileMethods",
+    ])
+
+    # Reachability metadata (reflection for the classes host interop reaches) from a directory, as an
+    # embedder's jar gives it in `META-INF/native-image/` (design.md D20, "The launchers").
+    if ctx.file.metadata:
+        args.add("-H:ConfigurationFileDirectories=" + ctx.file.metadata.dirname)
+    args.add_all([
         "-H:-UnlockExperimentalVMOptions",
         "-R:+EnableSignalHandling",
         "-R:+InstallSegfaultHandler",
@@ -345,7 +352,7 @@ def _native_library_impl(ctx):
     ctx.actions.run_shell(
         command = command,
         arguments = [args],
-        inputs = depset(transitive = [module_path, jdk.files]),
+        inputs = depset(ctx.files.metadata, transitive = [module_path, jdk.files]),
         outputs = [out],
         mnemonic = "NativeImage",
         progress_message = "Building the native launcher's library %{label}",
@@ -365,6 +372,8 @@ native_library = rule(
         "graalvm": attr.label(mandatory = True, providers = [NativeSettingInfo], doc = "ce or oracle: which `jdk` is"),
         "jdk": attr.label(mandatory = True, providers = [java_common.JavaRuntimeInfo], doc = "whose native-image builds it"),
         "main": attr.string(mandatory = True, doc = "module/class: the launcher (an AbstractLanguageLauncher)"),
+        "metadata": attr.label(allow_single_file = [".json"], doc = "a `reachability-metadata.json` to build the image " +
+                                                                    "with, as an embedder's jar has it"),
         "module": attr.label(mandatory = True, providers = [JavaModuleInfo]),
         "options": attr.string_list(),
         "serial_options": attr.string_list(doc = "more options, with the serial collector only"),
