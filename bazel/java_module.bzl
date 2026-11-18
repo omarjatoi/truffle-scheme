@@ -138,6 +138,7 @@ def _jdk_tree_impl(ctx):
     args.add(jdk.java_home)
     args.add(out.path)
     args.add_all(files)
+    linux = ctx.target_platform_has_constraint(ctx.attr._linux[platform_common.ConstraintValueInfo])
     ctx.actions.run_shell(
         command = 'home="$1" out="$2"; shift 2; for f in "$@"; do rel="${f#"$home"/}"; ' +
                   'mkdir -p "$out/$(dirname "$rel")" && cp -pL "$f" "$out/$rel"; done',
@@ -146,6 +147,12 @@ def _jdk_tree_impl(ctx):
         outputs = [out],
         mnemonic = "JdkTree",
         progress_message = "Copying the JDK into one directory",
+        # For a target that isn't Linux (this machine), copied here, so the files keep the release's
+        # modification times however often Bazel makes the tree again (after a Linux build replaced
+        # it at the same path, or a switch of configuration) while the AOT cache's action is still
+        # up to date: the cache's stamp records them (design.md D17, "Where it is valid"). From the
+        # remote cache, they would be the time of each download.
+        execution_requirements = {} if linux else {"no-remote": "1"},
     )
     return [DefaultInfo(files = depset([out]))]
 
@@ -153,7 +160,7 @@ jdk_tree = rule(
     implementation = _jdk_tree_impl,
     doc = "`<name>/`: the target's JDK as one directory (tree artifact), without native-image's toolchain. " +
           "Tests take it as one input instead of ~2000 files, which remote execution stages much faster.",
-    attrs = {"_jdk": _JDK},
+    attrs = {"_jdk": _JDK, "_linux": attr.label(default = "@platforms//os:linux")},
 )
 
 # The launcher's AOT cache (design.md D17, "The AOT cache"): a run of the training program with

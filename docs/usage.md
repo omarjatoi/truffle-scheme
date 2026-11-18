@@ -45,7 +45,11 @@ bazel build //:scheme
 ```
 
 The commands below run inside that shell, from the repository's root.
-`bazel-bin/scheme` is the launcher.
+`bazel-bin/scheme` is the launcher. The tests build for the executors' Linux
+into the same directory, so on a Mac, after running tests, run `bazel build
+//:scheme` again (and `bazel build //:scheme-native` for the native
+launcher): seconds, from the caches (design.md D11, "One output directory for
+both platforms").
 
 ### Run a program
 

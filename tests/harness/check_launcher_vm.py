@@ -147,6 +147,17 @@ def aot_cache(o):
     log('AOT cache: left out with compact headers, uncompressed oops, ZGC, --add-opens; nothing said')
 
 
+def aligned_heap(f, size):
+    """The maximum heap HotSpot sets for `-Xmx<size>`, given its flags `f`: the size rounded up to
+    the heap's alignment (and then reported as ergonomic), which is the card table's (a card's
+    bytes times the page size: GCArguments::compute_heap_alignment) or with G1 a region if larger,
+    both powers of two. Without large pages, which would add theirs: 2 MB on Linux (4 KB pages), so
+    300m stays 300m, and 8 MB on macOS on arm64 (16 KB pages), so 304m."""
+    check(f['UseLargePages'][0] == 'false', f'the heap\'s alignment is computed without large pages: {f["UseLargePages"]}')
+    alignment = max(int(f['GCCardSizeInBytes'][0]) * os.sysconf('SC_PAGE_SIZE'), int(f['G1HeapRegionSize'][0]))
+    return -(-size // alignment) * alignment
+
+
 def vm_options(o):
     """`--vm.<option>`, as GraalVM's launchers take it: the JVM's `-<option>`, among the launcher's
     options (before the program file), and the launcher's defaults give way to it as to the JVM
@@ -163,7 +174,9 @@ def vm_options(o):
     # A collector, the heap's maximum, the compiler threads.
     f = flags(runtime, args=['--vm.XX:+UseG1GC', '--vm.Xmx300m', '--vm.XX:CICompilerCount=2'])
     check(collector(f) == ['G1'], f'--vm.XX:+UseG1GC should replace the serial collector, not {collector(f)}')
-    check(f['MaxHeapSize'] == (str(300 << 20), 'command line'), f'--vm.Xmx300m should set the maximum heap: {f["MaxHeapSize"]}')
+    heap = aligned_heap(f, 300 << 20)
+    check(f['MaxHeapSize'] == (str(heap), 'command line' if heap == 300 << 20 else 'command line, ergonomic'),
+          f'--vm.Xmx300m should set the maximum heap to {heap}: {f["MaxHeapSize"]}')
     check(f['CICompilerCount'][0] == '2', f'--vm.XX:CICompilerCount=2 should set the count: {f["CICompilerCount"]}')
     # System properties and the class path.
     tmp = os.environ.get('TEST_TMPDIR') or tempfile.gettempdir()

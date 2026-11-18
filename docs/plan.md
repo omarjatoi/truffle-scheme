@@ -1416,7 +1416,7 @@ that may change performance measures with interleaved A/B runs.
     imaginary part, `(sqrt (* 2 (expt 10 400)))` is about 1.414e200; the
     sign-of-zero audit and `expt`'s decision are in design.md D1, with the
     R7RS and IEEE 754 text they rest on.
-- [ ] **M11-02 · Local checks on macOS** *(early)*
+- [x] **M11-02 · Local checks on macOS** *(early)*
   - `//tests:launcher_vm` run here (`--config=local`) fails on
     `--vm.Xmx300m should set the maximum heap: ('318767104', 'command
     line, ergonomic')`: HotSpot on macOS rounds the maximum heap up to its

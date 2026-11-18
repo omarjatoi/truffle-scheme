@@ -2036,10 +2036,22 @@ Each entry: the decision, why, and what was rejected.
   built from source), plus a shell and a C toolchain from the executor image
   (`toolchains_buildbuddy`). Which machine runs an action is its execution
   platform's choice ("Platforms and C and C++ toolchains", below): a C or C++
-  action for a macOS target runs on this Mac. The one action that sets its
-  own requirement is the AOT cache's training for a non-Linux target
-  (`no-remote`, D17 "The AOT cache"), since the cache names the paths it
-  was made with.
+  action for a macOS target runs on this Mac. The actions that set their
+  own requirement are the AOT cache's training for a non-Linux target and
+  the copy of that target's JDK it is trained with (`no-remote`, D17 "The
+  AOT cache"), since the cache names the paths it was made with and the
+  modification times it found there.
+  - *One output directory for both platforms.* Bazel names an output
+    directory after `--cpu`, which `--platforms` doesn't change, so a
+    build or test for the executors' Linux writes to this Mac's
+    `bazel-out/darwin_arm64-fastbuild` too, at the same paths: the Linux
+    `bazel/jdk/` or `scheme-native` replaces this Mac's, and with
+    `--remote_download_toplevel` (a test's inputs stay remote) leaves
+    nothing there. So after `bazel test`, `bazel-bin/scheme` (whose JDK is
+    gone) and `bazel-bin/scheme-native` are back with `bazel build
+    //:scheme` and `bazel build //:scheme-native`, which take seconds from
+    the caches (docs/usage.md). The `bazel-bin` link isn't the cause: it
+    names that directory whichever platform the command was for.
   `bazel test //...` is the whole pre-PR check; the repository's other
   commands are `bazel run //:r7rs -- <command>` (`tests/harness/main.py`).
 - **Released GraalVM, pinned by Bazel.** The JDK that compiles, runs the
@@ -2854,7 +2866,19 @@ Each entry: the decision, why, and what was rejected.
       files first (17 `stat`s) and leaves the cache out when they differ
       (Bazel downloaded a jar again, say), as well as when the JVM options
       choose class sharing themselves (`-Xshare`, `-XX:SharedArchiveFile`,
-      `-XX:AOTCache`, ...).
+      `-XX:AOTCache`, ...). Bazel's actions are keyed on contents, not
+      modification times, so Bazel can make an input again, the same
+      bytes at a new time, while the cache's action stays up to date: it
+      did with `bazel/jdk/` (#239, M11-02), which came from the remote
+      cache at the time of each download, after a Linux build had
+      replaced it (D11, "One output directory for both platforms") or a
+      switch between `--config=local` and the remote config. So for a
+      non-Linux target the JDK is copied here too (`no-remote`), keeping
+      the release's times however often it is copied. The JVM itself
+      checks the modules image's size, not its time (a cache with a stale
+      stamp for it alone was taken, with `-XX:AOTMode=on`); the jars'
+      times it checks, but their actions are the same for either platform,
+      so a Linux build leaves them as they are (it did).
     - *Which JVM options it takes.* The JVM checks a cache against far
       more than class sharing (JDK 25's `FileMapHeader::validate`,
       `FileMapInfo::validate_aot_class_linking`,
