@@ -175,11 +175,13 @@ follow it or deviate, with the decision below that says why.
   (`map` → its loop → `reverse`) is compiled once per site, not twice. A call
   site that goes megamorphic (its own procedure, or the first tail call)
   reports polymorphism, so Truffle splits the procedure it is in per caller;
-  the cache of the tail calls after the first holds 8 (M8-05; it never
-  reports, so it causes no splits): continuation-passing code returns every
-  call of a continuation to one site's trampoline, and `cpstak`'s five
-  procedures there were all called indirectly, with Truffle's argument
-  profiling on each call, past a cache of 4;
+  the cache of the tail calls after the first holds 12 (8 from M8-05, 12
+  from M12-05; it never reports, so it causes no splits): continuation-passing
+  code returns every call of a continuation to one site's trampoline, and
+  `cpstak`'s five procedures there were all called indirectly, with
+  Truffle's argument profiling on each call, past a cache of 4, and
+  `graphs`' 9 to 12 at each of its two such sites past a cache of 8
+  (M12-05, below);
   up to the cache limit the site inlines what it has seen and doesn't report,
   since each split is another compilation (25.5's Bytecode DSL can't compile
   `@ReportPolymorphism` on an operation, so the cache initializer reports).
@@ -311,6 +313,35 @@ follow it or deviate, with the decision below that says why.
     reads the array out of each: 5% on the JVM, which goes once those loops
     call directly (plan.md M12-05: with a larger cache, the two take as
     long).
+  - *A cache of 12 for the later tail calls (M12-05).* `graphs` is
+    continuation-passing code (`fold-over-perm-tree`'s `deeper` and
+    `accross`), and two of its loops' trampolines (the `_-*-` loops at
+    lines 411 and 433) saw 9 to 12 procedures each after their first
+    tail call: past the cache of 8, they called every one indirectly, with
+    Truffle's argument profiling (D17, "The native launcher's steady
+    state"), and nothing was split, since that cache doesn't report. With
+    12 they call directly (`StableWarmupTest`: twelve procedures after the
+    first). With the cache as a system property, the steady state was
+    2.33 s at 8, 1.68 at 12, 1.67 at 16 and 1.65 at 24 (one process each).
+    16 was measured too, and rejected: compiled immediately, where each
+    entry the cache adds recompiles the root at once, Larceny's `base`
+    section took more than its 120 s (75 s with 8, 87 with 12).
+    Interleaved with `main` (`27b7dd9`) and with the
+    argument-array loop alone (above), 3 processes each, 5 iterations at
+    the report's counts, load 4.5 to 9.3; the steady state (best of the
+    later iterations, median of the processes), the first iteration in
+    parentheses:
+
+    | | `main` | the loop alone | both |
+    |---|---:|---:|---:|
+    | `graphs`, JIT | 2.15 (2.51) s | 2.30 (2.67) | **1.67** (2.06) |
+    | `graphs`, native | 3.14 (3.18) s | 3.33 (3.40) | **1.72** (1.89) |
+    | `scheme`, JIT | 0.404 (0.95) s | 0.405 (0.99) | **0.371** (0.95) |
+    | `scheme`, native | 0.509 (1.19) s | 0.519 (1.22) | **0.478** (1.02) |
+    | `compiler`, `dynamic`, `peval`, `conform`, `mazefun`, `deriv` | | | within the runs' spread of `main`'s, JIT and native |
+
+    With a cache of 16, `graphs`' compilations took 3.9 s of the
+    compiler threads' time instead of 3.1 (one traced process each).
 - **No uncached interpreter (M8-04).** *Rejected:* the Bytecode DSL's uncached
   tier (`enableUncachedInterpreter`), which runs a root without allocating the
   cached tier's nodes or quickening until it has been entered or looped 16 times.

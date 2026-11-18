@@ -55,8 +55,14 @@ public final class Trampoline extends Node {
 
     /** As many tail-called targets as the first tail call's cache holds before it calls indirectly. */
     static final int CACHE_LIMIT = 4;
-    /** As many as the cache of the tail calls after the first holds (plan.md M8-05). */
-    static final int REST_CACHE_LIMIT = 8;
+    /**
+     * As many as the cache of the tail calls after the first holds (plan.md M8-05): 12 since M12-05,
+     * where {@code graphs}' continuation-passing loops come back to two sites with 9 to 12
+     * procedures each, which 8 called indirectly. More made code that compiles each cache entry as
+     * it comes much slower to compile: a cache of 16 took Larceny's {@code base} section, compiled
+     * immediately, past its 120 s timeout (75 s with 8, 87 with 12).
+     */
+    static final int REST_CACHE_LIMIT = 12;
 
     /**
      * The key of the auxiliary frame slot that holds the next tail call's arguments while
