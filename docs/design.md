@@ -2615,7 +2615,8 @@ Each entry: the decision, why, and what was rejected.
     the flake's inputs and the shell's environment, which the image builds as
     the CLI does (the same `nix-shell-env` derivation, so the CLI finds it
     valid). The hook then installs and downloads nothing; it evaluates the
-    flake, in 1.5 s on a laptop with the network off. Built by Nix with
+    flake, in 1.1–1.5 s in the image on a laptop (x86_64 emulated), with the
+    network off too. The image is 182 MB compressed. Built by Nix with
     `dockerTools`, not from a Dockerfile, so the image is a function of
     `flake.lock`. It also has what Buildkite requires of a custom image
     (bash, git, CA certificates; the agent brings `buildkite-agent`), and

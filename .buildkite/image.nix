@@ -64,7 +64,7 @@ let
     pkgs.xz
     pkgs.which
     pkgs.curl
-    pkgs.git
+    pkgs.gitMinimal
     dockerTools.caCertificates
     dockerTools.usrBinEnv
     dockerTools.binSh
