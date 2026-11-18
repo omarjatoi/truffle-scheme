@@ -2198,9 +2198,10 @@ Each entry: the decision, why, and what was rejected.
   `ISOLATED`, below; not `scheme.SpillDepth`, for tests): everything it
   reaches of the host goes through the Env (the rules above), `exit` is
   Truffle's (D9), and Scheme reaches no host object except through
-  `(graalvm polyglot)` (D20), whose `java-type` refuses to under
-  `CONSTRAINED` and stricter, and whose other procedures reach only the
-  languages, bindings and values the embedder gives the context. Until #226 a
+  `(graalvm polyglot)` (D20), whose procedures reach only the languages,
+  bindings, classes and values the embedder gives the context (its
+  permitted languages, polyglot access, class filter and `HostAccess`, as
+  each policy restricts them). Until #226 a
   `CONSTRAINED` context couldn't use it at all. `ISOLATED` and `UNTRUSTED`
   run it in a polyglot isolate, `//:scheme_isolate` (below). Truffle's
   limits work as GraalVM documents them (statements, CPU time, output size,
@@ -4568,9 +4569,9 @@ or symbols.
 | `(polyglot-eval language source)` | `Env.parsePublic(Source)`, then its call target | Evaluates `source` (a string) in another language and returns its value (below, "Values"). |
 | `(polyglot-eval-file language path)` | `Env.getPublicTruffleFile`, `Source.newBuilder(language, file)`, `parsePublic` | The same for a file. Reading it needs the context's IO permission; failing to is a file error (`file-error?`). |
 | `(polyglot-language-available? language)` | `Env.getPublicLanguages()`, `Env.isPolyglotEvalAllowed(LanguageInfo)` | Whether `polyglot-eval` may evaluate that language here. |
-| `(polyglot-import name)` | `Env.importSymbol` | The value bound to `name` in the polyglot bindings, or `#f` if none is (as `get-environment-variable` answers). |
+| `(polyglot-import name [default])` | `Env.importSymbol` | The value bound to `name` in the polyglot bindings, or `default` if none is: `#f` if it isn't given (below, "Decided on review"). |
 | `(polyglot-export name value)` | `Env.exportSymbol` | Binds `name` there, where the embedder's `context.getPolyglotBindings()` and other languages' imports see it. |
-| `(java-type name)` | `Env.lookupHostSymbol` | A Java class (`"java.util.ArrayList"`), as a foreign value: `foreign-new` instantiates it, `foreign-ref` reads its static fields, `foreign-invoke` calls its static methods. |
+| `(java-type name)` | `Env.lookupHostSymbol` | A Java class (`"java.util.ArrayList"`), as a foreign value (below, "Permissions and the sandbox"): `foreign-new` instantiates it, `foreign-ref` reads its static fields, `foreign-invoke` calls its static methods. |
 | `(foreign? obj)` | | Whether `obj` is a foreign value: neither a Scheme value nor converted to one at the boundary. |
 | `(foreign-null? obj)` | `isNull` | Whether `obj` is a foreign null (Java's `null`, JavaScript's `null` and `undefined`). |
 | `(foreign-ref obj key)` | `readArrayElement`, `readHashValue`, `readMember` | An array element for an exact integer key on an array; else a hash value on a hash; else a member for a string or symbol key. |
@@ -4705,6 +4706,42 @@ frame on the stack"* (GraalVM's Espresso Continuations guide).
   Re-entering a callback's continuation after its foreign call has
   returned would need the foreign frames back.
 
+**Stack depth across foreign frames.** A recursion through another
+language (Scheme calls SL, which calls Scheme back, which calls SL, ...)
+keeps every level on the Java stack: a callback's own frames can spill
+(D10, "Stack-depth spill"), but the foreign frames below its prompt can't,
+and so neither can the Scheme frames below them.
+
+- *`sandbox.MaxStackFrames` counts the other language's frames already.*
+  The limit is *"the maximum number of frames a context can push onto the
+  stack"*, with *"a thread-local stack frame counter ... incremented on
+  function enter and decremented on function return"* (the sandbox guide):
+  the sandbox instrument counts the `RootTag` enters of every language in
+  the context, so SL's frames count with Scheme's (those on the stack and
+  those pending, D10). Measured: a Scheme→SL→Scheme recursion under a
+  limit of 60 stops at 61 frames, 30 levels, with the limit's cancel.
+  Java's frames (the host's, and the interop between languages) are not
+  guest frames, and Truffle counts none; nor do we. Nothing to add.
+- *Without a limit, the Java stack overflows, and that is a Scheme error.*
+  Truffle turns a `StackOverflowError` that reaches the embedder into a
+  `PolyglotException` whose `isResourceExhausted()` is true (*"if host
+  runtime throws ... StackOverflowError, then they will be translated to
+  a PolyglotException"*, its Javadoc): clean, but Scheme can't catch it.
+  GraalVM's languages turn it into an error of their own where it is
+  thrown (GraalJS's `RangeError: Maximum call stack size exceeded`,
+  GraalPy's `RecursionError`, TruffleRuby's `SystemStackError`), as the
+  Bytecode DSL's `interceptInternalException` describes: *"if a Java
+  StackOverflowError is thrown, this hook can be used to return a
+  guest-language equivalent exception that the guest code understands"*.
+  Scheme alone never overflows (it spills), so an overflow comes from
+  within a foreign operation: each one (`Foreign`) catches a
+  `StackOverflowError` that leaves it and raises a Scheme error at its
+  call site, which `guard` catches once the stack has unwound to it. An
+  overflow while raising it (the stack is still nearly full there) leaves
+  for the next foreign operation out, which does the same. Measured on the
+  test executors' default stack, uncompiled, a Scheme→SL→Scheme recursion
+  overflowed between 100 and 200 levels.
+
 **Permissions and the sandbox.** The embedder decides, through the Env.
 
 - `polyglot-eval` evaluates only languages that `Env.getPublicLanguages()`
@@ -4717,17 +4754,25 @@ frame on the stack"* (GraalVM's Espresso Continuations guide).
   `isPolyglotBindingsAccessAllowed()` (*"Guest languages should hide or
   disable all polyglot bindings builtins if this flag is set to false"*):
   without it, they raise a Scheme error.
-- `java-type` needs `isHostLookupAllowed()` (`allowHostClassLookup`), and
-  what Scheme may do with a Java object is the embedder's `HostAccess`.
-  Under `SandboxPolicy.CONSTRAINED` or stricter, `java-type` is refused
-  with a Scheme error that says so, whatever the class filter allows: the
-  policy is for applications *"whose access to host resources should be
-  regulated"*, and `Env.getSandboxPolicy()` is there so that *"a language
-  can ... make language-specific verifications that the sandbox
-  requirements are met"*. The language itself declares `UNTRUSTED` (D10,
-  M11-11): the rest of the library is gated by what the policies already
-  restrict, the context's permitted languages, its polyglot access and its
-  `HostAccess`.
+- `java-type` needs `isHostLookupAllowed()` (`allowHostClassLookup`, and
+  its class filter), under every sandbox policy, and what Scheme may do
+  with the class and its objects is the embedder's `HostAccess`. No policy
+  restricts host class *lookup*. `SandboxPolicy`'s Javadoc asks, under
+  `CONSTRAINED`, that *"host class loading must not be enabled"* and that
+  the `HostAccess` not allow *"unrestricted public access"*: the default is
+  `HostAccess.CONSTRAINED`, under which *"To expose a host class method, it
+  has to be annotated with `@HostAccess.Export`"* (the sandbox guide).
+  `ISOLATED` and `UNTRUSTED` only narrow the `HostAccess` further. GraalJS's
+  `Java` object is likewise *"only available when host class lookup is
+  allowed"*, whatever the policy (its JavaScriptCompatibility.md). So under
+  `CONSTRAINED`, `java-type` reaches a class's `@HostAccess.Export` static
+  methods, fields and constructors, and `foreign-instance?` works with any
+  class the filter allows. (Until the review below, `java-type` refused
+  under `CONSTRAINED` and stricter: a refusal of ours that the policies
+  don't ask for.) The language itself declares `UNTRUSTED` (D10, M11-11):
+  the library is gated by what the policies and the embedder restrict, the
+  context's permitted languages, its polyglot access, its class filter and
+  its `HostAccess`.
 - **Under `ISOLATED` and `UNTRUSTED`** the language runs in the polyglot
   isolate (D10, "ISOLATED and UNTRUSTED"), whose library holds Scheme alone.
   So `polyglot-eval` reaches only Scheme there (`polyglot-language-available?`
@@ -4735,8 +4780,17 @@ frame on the stack"* (GraalVM's Espresso Continuations guide).
   another language with Scheme can't be built: Truffle refuses it (*"No
   native isolate library is available for the requested language(s)"*), as
   every language it permits must be in the isolate, and declared for the
-  policy. `java-type` is refused by the policy (above). Everything else
-  works as on the JVM, through the isolate's handles: the polyglot
+  policy. That is inherent to an isolate library of one language: the
+  engine spawns one isolate for the context, from one library that holds
+  every language the context permits, and GraalVM's own isolate libraries
+  are one language each (`js-isolate`, `python-isolate`, `wasm-isolate`;
+  *"Support for more languages is planned"*, the embedding guide's
+  "Polyglot Isolates"; mx's `register_polyglot_isolate_distributions`
+  builds one per language). An isolate with other languages in it would
+  need their jars in `//:scheme_isolate`'s build: new artifacts, not
+  planned. `java-type` looks the class up in the host, through the
+  isolate (below). Everything else works as on the JVM, through the
+  isolate's handles: the polyglot
   bindings, the values the embedder hands Scheme (proxies, and Java objects
   as the policy's `HostAccess` allows: by default only members annotated
   `@HostAccess.Export`, and no list, array or map access, which `UNTRUSTED`
@@ -4745,24 +4799,61 @@ frame on the stack"* (GraalVM's Espresso Continuations guide).
   Scheme as itself, and the continuation checks (a continuation can't
   escape through the host's frames). Nothing in the library needed to
   change for the isolate.
-  - *Under `TRUSTED`, an isolate* (`engine.SpawnIsolate`, which any policy
-    may set) is a native image too, so `java-type` gives the native-image
-    error below, though the isolate's host lookups go to the host's JVM,
-    which has the classes' metadata: a Java object handed in works there.
-    The language can't tell the isolate from the native launcher (both are
-    native-image shared libraries); telling them apart needs a constant the
-    isolate's build sets. An open question (below).
-- The `scheme` launcher's context is the launcher framework's,
-  `allowAllAccess(true)` (D17), as GraalVM's own launchers' are: a script
-  can use the library, but only Scheme is on the launcher's module path, so
-  `polyglot-eval` of another language is the "not available" error. The
-  native launcher has only Scheme in the image and no reflection
-  configuration (D10, D17): `polyglot-eval` of another language is the same
-  error there. `java-type` is refused in any native image
-  (`ImageInfo.inImageRuntimeCode()`), with an error that says why: without
-  reflection metadata, the lookup can find a class whose constructors,
-  methods and fields are then all "not supported", which explains nothing.
-  An embedder's own native image with that metadata is a follow-up.
+  - *`java-type` in the isolate*, under any policy (`engine.SpawnIsolate`
+    puts a `TRUSTED` context there too), is the host's lookup:
+    `Env.lookupHostSymbol` goes through the isolate to the host's JVM,
+    which has the class and its members, and the class is a handle to it,
+    as a Java object handed in is. So it works as on the JVM, within the
+    context's `HostAccess`: under `TRUSTED` with `HostAccess.ALL`, all of
+    the class; under `ISOLATED` and `UNTRUSTED` (`HostAccess.ISOLATED` and
+    `UNTRUSTED` by default), its exported members. No constant set when the
+    isolate is built is needed to tell the isolate from the native
+    launcher: the check below, for an image without reflection metadata,
+    reads a class's members only when the class is an object of the image
+    itself (`Env.isHostObject`, `asHostObject`), never a handle to the
+    host's.
+- **The launchers.** The `scheme` launcher's context is the launcher
+  framework's, `allowAllAccess(true)` (D17), as GraalVM's own launchers'
+  are, so a script can use all of the library. What it reaches is what
+  GraalVM's language standalones reach:
+  - *The JVM launcher* (`bazel-bin/scheme`) has Java: `java-type` finds any
+    class on its JVM. Its module path has Scheme alone, and another
+    language's jars are added as GraalVM's thin launcher adds them in its
+    JVM mode: `--vm.p=<path>` (or `--vm.-module-path=<path>`) is appended
+    to the launcher's module path (launcher.cc, `VM_P_ARG_PREFIX`), where
+    the embedding guide wants *"all polyglot and language JAR files"*;
+    `--vm.cp=<path>` puts them on the class path, which Truffle searches
+    too. GraalVM's JVM standalones fetch a language into their module path
+    with `<launcher>-polyglot-get <language>` (TruffleRuby's polyglot guide,
+    GraalPy's "Installing other dynamic languages"); we have no download
+    command, and `--vm.p` takes the jars from wherever the user has them.
+  - *The native launcher* (`bazel-bin/scheme-native`) is Scheme alone, as
+    GraalVM's native standalones are: *"To use other GraalVM languages, you
+    need the JVM Standalone. The Native Standalone does not support
+    installing extra languages"* (TruffleRuby's polyglot guide), and
+    GraalPy's Java interoperability *"require[s] a JVM-based GraalPy
+    runtime"*. A native image has other languages only if they are built
+    into it (the embedding guide, "Build Native Executables from Polyglot
+    Applications"): new artifacts in the launcher's image, not planned.
+    `polyglot-eval` of another language is the "not available" error there.
+  - *Java in a native image* needs the classes' reflection metadata: *"For
+    native launchers and native executables using Java as a Target
+    Language and accessing classes other than Java arrays, it is required
+    to recompile the image and provide a reflection configuration file"*
+    (the Polyglot Programming guide), a `reachability-metadata.json` under
+    `META-INF/native-image/` (the embedding guide, "Configuring Native
+    Host Reflection"). The native launcher is built with none, so a class
+    found there has no constructors, methods or fields. In a native image
+    (`ImageInfo.inImageRuntimeCode()`), `java-type` checks for that: if the
+    class is an object of the image itself and reflection sees no public
+    constructor, method or field of it (host interop reads a class's
+    members by reflection, so it would see none either), `java-type`
+    raises an error that says the image has no reflection metadata for the
+    class, rather than answer a class whose every use is then "not
+    supported". An interface passes (one with no methods is legitimate,
+    and `foreign-instance?` needs only the class). In an embedder's image
+    built with metadata for the class, `java-type` works as on the JVM.
+    (Until the review below, it refused in every native image.)
 
 **Testing with a second language.** The tests need another Truffle language.
 `org.graalvm.truffle:truffle-sl`, GraalVM's SimpleLanguage, is on Maven
@@ -4781,27 +4872,49 @@ second language; like `SandboxTest.Isolated`, only when named
 (`//tests:unit_isolate_PolyglotTest`), since the isolate is a native-image
 build.
 
-**Open questions**, for the maintainer's review before D20 and its
-implementation merge:
+**Decided on review.** The maintainer approved D20 and #237 and asked for
+their open questions to be resolved as GraalVM recommends. Each is
+decided above, where it applies, with its source; in short:
 
-- *The names.* `polyglot-*` for languages and bindings, `foreign-*` for
-  values, `java-type` for classes; `foreign-instance?` for `instanceof`.
-  `polyglot-import` answers `#f` for an unbound name, so an exported `#f`
-  and no binding look alike.
-- *The test-only dependency*, `truffle-sl` and the ANTLR runtime (above),
-  a new Maven artifact.
-- *Continuations across foreign frames.* An error in both directions, and
-  D10's semantics at the same depth, so a generator another language drives
-  works; or confine each callback's continuations to its own activation.
-- *The native launcher.* It has only Scheme in the image and no reflection
-  metadata, so a script there gets little from the library: `polyglot-eval`
-  of another language is the "not available" error and `java-type` the
-  native-image error. Whether to support it (other languages built into the
-  image, reflection metadata for chosen classes) or call the library
-  JVM-only is open.
-- *`java-type` under `CONSTRAINED`* is refused even when the embedder's
-  class filter allows the class, and `HostAccess.CONSTRAINED` would limit
-  it to exported members; so are `ISOLATED` and `UNTRUSTED`, whose
-  `HostAccess` scopes it further.
-- *`java-type` in a `TRUSTED` isolate* is refused as in any native image,
-  though it could work there (above).
+- *The names stay.* They are the other languages' own, in Scheme's
+  spelling: GraalJS's and TruffleRuby's `Polyglot.eval`, `evalFile` /
+  `eval_file`, `import`, `export` and `Java.type`; GraalPy's
+  `polyglot.eval`, `import_value`, `export_value` and `java.type`; and
+  `foreign` for what GraalPy calls `polyglot.ForeignObject` and TruffleRuby
+  `Truffle::Interop.foreign?`. For an unbound name, each language answers
+  its "nothing": GraalJS *"If no language has exported a value identified
+  by key, undefined is returned"* (JavaScriptCompatibility.md), GraalPy
+  `None` (`PolyglotModuleBuiltins`), SL `null` (`SLImportBuiltin`), the Env
+  itself `null` (*"Reading a symbol that does not exist will return
+  null"*); TruffleRuby alone raises a `NameError`. Scheme has no null, and
+  `#f` is its "not found" (`assoc`, `member`, `get-environment-variable`),
+  so `polyglot-import` keeps answering `#f`, and takes an optional
+  default to answer instead, as SRFI 69's `hash-table-ref/default` does:
+  `(polyglot-import name unbound)`, with a fresh `unbound`, tells an
+  exported `#f` from no binding.
+- *The test-only dependency* (`truffle-sl`, the ANTLR runtime): approved
+  with #237.
+- *Continuations across foreign frames* stay as decided above. Truffle's
+  contract for unwinding through another language's frames is the guest
+  exception (`AbstractTruffleException`, which interop passes through and
+  InteropLibrary asks languages to translate); a `ControlFlowException`
+  has none (InteropLibrary's own try/catch sample runs its finally block
+  for one, but nothing obliges another language to). The Bytecode DSL's
+  continuations suspend a root's own frame, and Espresso's fail when
+  *"there is a non-java frame on the stack"*.
+- *The launchers*: the JVM launcher has Java, and other languages through
+  `--vm.p`, as GraalVM's thin launcher takes them; the native launcher is
+  Scheme alone, with Java only for classes it has reflection metadata for
+  (none), as GraalVM's native standalones (above, "The launchers").
+- *`java-type` under `CONSTRAINED`, `ISOLATED` and `UNTRUSTED`*: Truffle's
+  checks (`isHostLookupAllowed`, the class filter, the `HostAccess`), and
+  no refusal of ours (above).
+- *Scheme alone in the isolate* is inherent to a one-language isolate
+  library, as GraalVM's are (above).
+- *`java-type` in a `TRUSTED` isolate* works: the lookup is the host's, so
+  no constant set when the isolate is built is needed (above).
+- *`java-type` in an embedder's native image* works where the image has
+  the class's reflection metadata, and says so where it hasn't (above).
+- *Stack accounting*: Truffle's `sandbox.MaxStackFrames` already counts
+  the other languages' frames; a Java stack overflow through foreign
+  frames is a Scheme error (above, "Stack depth across foreign frames").
