@@ -1813,6 +1813,17 @@ Each entry: the decision, why, and what was rejected.
   every action can run on another machine. `nix develop .#bench`
   adds the other R7RS implementations for the comparative benchmark report;
   CI's steps use `nix develop .#ci`, which has only `bazel`.
+- **Other versions** (the `bazel_dep`s, `.bazelversion`, the Maven
+  artifacts other than GraalVM's, chibi-scheme's source, rules_python's
+  Python) move to a new release only once it is at least two weeks old, a
+  margin against a broken or compromised release (a release already in use
+  isn't stepped back from), and updating them is an ordinary change;
+  `bazel mod graph` prints no "root module requires" warning.
+  Bazel stays on 8 until moving to 9 is decided on its own. The lint tools
+  stay at the versions GraalVM's mx uses (Checkstyle 10.21.0, SpotBugs
+  4.9.8, ECJ 3.46.0) and the formatter at Eclipse 4.36's, since a newer one
+  reformats or re-flags code with nothing to gain; JUnit is 4.13.2, JUnit
+  4's last release.
 - **CI runs only what runs on every commit**, on Buildkite
   (`.buildkite/pipeline.yml`, hosted `linux-small` agents, the Nix
   `.#ci` shell): the lint tests and the other tests. The required check is the
