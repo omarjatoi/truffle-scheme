@@ -5,14 +5,18 @@ import static org.junit.Assert.assertTrue;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.lang.management.ManagementFactory;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.regex.Pattern;
 
 import org.graalvm.polyglot.Context;
+import org.graalvm.polyglot.Value;
 import org.junit.Assume;
 import org.junit.Test;
+
+import scheme.runtime.SchemeLanguage;
 
 /**
  * M5-10: each non-tail call site performs the tail calls that come back to it through an inline
@@ -162,6 +166,37 @@ public class TailCallCacheTest {
                         "(define (run-once) (list (ev? 400000)))" +
                         "(unless (equal? (run-once) '(odd)) (error \"wrong result\"))", "engine.TraceCompilation", "true");
         assertTrue(log, osr.matcher(log).find());
+    }
+
+    @Test
+    public void compiledTailCallLoopsAllocateOnlyTheArguments() {
+        // run's call of ev? performs 20,000,000 tail calls between ev? and od?, which come back to
+        // its trampoline's loop: run is called once, so the loop is compiled by on-stack
+        // replacement (OSR) after 100,352 of them, with ev? and od? inlined. Each tail call then
+        // makes its argument array and boxes n, which cross from one iteration to the next: 48
+        // bytes (with compressed references). Until plan.md M12-05 the loop carried the TailCall
+        // itself in the OSR frame, so each was allocated too: 72 bytes.
+        Assume.assumeTrue("torture mode", SchemeLanguage.constant(SchemeLanguage.TORTURE) == SchemeLanguage.Torture.OFF);
+        Assume.assumeTrue("no per-thread allocation counter", ManagementFactory.getThreadMXBean() instanceof com.sun.management.ThreadMXBean);
+        com.sun.management.ThreadMXBean threads = (com.sun.management.ThreadMXBean) ManagementFactory.getThreadMXBean();
+        Context.Builder builder = Context.newBuilder(SCHEME).allowExperimentalOptions(true).out(new ByteArrayOutputStream());
+        builder.option("engine.Compilation", "true").option("engine.CompileImmediately", "false").option("engine.BackgroundCompilation", "false");
+        Context context;
+        try {
+            context = builder.build();
+        } catch (IllegalArgumentException e) {
+            Assume.assumeNoException("no optimizing Truffle runtime", e);
+            throw e;
+        }
+        try (Context c = context) {
+            Value run = c.eval(SCHEME, "(define (ev? n) (if (= n 0) #t (od? (- n 1)))) (define (od? n) (if (= n 0) #f (ev? (- n 1))))" +
+                            "(lambda (n) (if (ev? n) 1 0))");
+            int n = 20_000_000;
+            long before = threads.getCurrentThreadAllocatedBytes();
+            assertEquals(1, run.execute(n).asInt());
+            double perTailCall = (threads.getCurrentThreadAllocatedBytes() - before) / (double) n;
+            assertTrue("bytes allocated per tail call: " + perTailCall, perTailCall < 60);
+        }
     }
 
     @Test

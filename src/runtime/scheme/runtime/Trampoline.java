@@ -59,9 +59,10 @@ public final class Trampoline extends Node {
     static final int REST_CACHE_LIMIT = 8;
 
     /**
-     * The key of the auxiliary frame slot that holds the next tail call while {@link #loop} runs. A
-     * root's trampolines share it: only one of them runs at a time in a frame, since each runs in a
-     * call that the frame waits for.
+     * The key of the auxiliary frame slot that holds the next tail call's arguments while
+     * {@link #loop} runs (element 0 is the procedure, as in every {@link TailCall}). A root's
+     * trampolines share it: only one of them runs at a time in a frame, since each runs in a call
+     * that the frame waits for.
      */
     private static final Object NEXT_TAIL_CALL = new Object();
 
@@ -190,7 +191,7 @@ public final class Trampoline extends Node {
         if (!(result instanceof TailCall)) {
             return result;
         }
-        frame.setAuxiliarySlot(body().slot(frame), result);
+        frame.setAuxiliarySlot(body().slot(frame), ((TailCall) result).arguments);
         // Only the frame holds it now, and the loop clears it as it makes the call: this method's
         // Java frame, which an interpreter keeps for the whole loop, mustn't keep its arguments
         // alive (design.md "Tail calls keep nothing alive").
@@ -227,6 +228,11 @@ public final class Trampoline extends Node {
      * continues while another comes back. The state is in the frame, not in this node: the same
      * site can run in several activations at once (recursion, threads), and when an OSR-compiled
      * loop deoptimizes, the interpreter goes on from the frame.
+     *
+     * <p>The slot holds the tail call's argument array, whose element 0 is its procedure, not the
+     * {@link TailCall}: the {@code TailCall} that an inlined callee returns then never reaches the
+     * loop's next iteration, and partial escape analysis removes it. Stored in the slot, it was
+     * allocated on every iteration, as the array still is (plan.md M12-05).
      */
     static final class TailCallLoop extends Node implements RepeatingNode {
 
@@ -255,14 +261,14 @@ public final class Trampoline extends Node {
         @Override
         public Object executeRepeatingWithValue(VirtualFrame frame) {
             int index = slot(frame);
-            TailCall next = (TailCall) frame.getAuxiliarySlot(index);
+            Object[] arguments = (Object[]) frame.getAuxiliarySlot(index);
             // Cleared before the call: the frame mustn't keep the tail call's arguments alive while
             // the call runs, nor after the loop, however it ends (design.md "Tail calls keep
             // nothing alive").
             frame.setAuxiliarySlot(index, null);
-            Object result = rest.execute(next.procedure, next.arguments);
-            if (result instanceof TailCall) {
-                frame.setAuxiliarySlot(index, result);
+            Object result = rest.execute(arguments[0], arguments);
+            if (result instanceof TailCall next) {
+                frame.setAuxiliarySlot(index, next.arguments);
                 return CONTINUE_LOOP_STATUS;
             }
             return result;

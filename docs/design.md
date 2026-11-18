@@ -280,6 +280,37 @@ follow it or deviate, with the decision below that says why.
     steady state's 0.997, whole processes' 1.004 (at 4: 0.980, 0.995, 0.994):
     noise. In the interpreter (7 programs, 5 rounds), 1.002 times: a root whose
     trampolines loop has an auxiliary slot, an array more in each of its frames.
+  - *The slot holds the argument array (M12-05).* It holds the next tail
+    call's argument array, whose element 0 is the procedure (as in every
+    `TailCall`), not the `TailCall`. An OSR compilation's frame is the
+    interpreter's, a real object, so what the slot holds is allocated: the
+    `TailCall` that an inlined callee returned, which partial escape analysis
+    would otherwise remove, was allocated on every iteration with its array.
+    `cpstak`'s compiled loop (its schedule, `.cfg` dump: D1, "Representations
+    chosen outside loops") allocated a `TailCall`, an argument array and a
+    closure for each of its 815 million tail calls an iteration, about 120
+    bytes each, 10 GB a second (the collector's pauses took 0.1 ms each,
+    0.1 s in all: the cost is the allocation itself); now the `TailCall`'s
+    24 bytes are gone. `TailCallCacheTest`
+    measures a chain of two procedures in an OSR-compiled loop: 48 bytes a
+    tail call, 72 before. Measured interleaved with an A/A pair of `main`
+    (`27b7dd9`), 3 processes each, 5 iterations at the report's counts,
+    load 3.3 to 9.7; the steady state (best of the later iterations,
+    median of the processes) and the first iteration:
+
+    | | JIT: `main`, A/A, this | Native: `main`, A/A, this |
+    |---|---:|---:|
+    | `cpstak` steady | 9.59, 9.69, **8.07** s | 9.86, 9.82, **8.32** s |
+    | `cpstak` first | 11.70, 11.27, **10.16** s | 11.03, 11.22, **10.51** s |
+    | `graphs` steady | 2.14, 2.14, 2.25 s | 3.20, 3.03, 3.21 s |
+    | `ctak`, `fibc`, `deriv`, `mazefun`, `browse`, `nqueens`, `tak`, `fib`, `sboyer`, `compiler` | within the A/A pairs' differences | within them |
+    | `peval`, `dynamic` steady | 0.35-0.37 and 0.26-0.27 against 0.39 and 0.29 s, in runs that spread 0.33-0.44 and 0.24-0.41 | 0.36-0.38 and 0.39-0.40 against 0.37 and 0.41 s |
+
+    `graphs`' two megamorphic loops call their procedures indirectly, so
+    the `TailCall`s are allocated by the callees either way, and the loop
+    reads the array out of each: 5% on the JVM, which goes once those loops
+    call directly (plan.md M12-05: with a larger cache, the two take as
+    long).
 - **No uncached interpreter (M8-04).** *Rejected:* the Bytecode DSL's uncached
   tier (`enableUncachedInterpreter`), which runs a root without allocating the
   cached tier's nodes or quickening until it has been entered or looped 16 times.
