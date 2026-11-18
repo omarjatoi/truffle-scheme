@@ -2,6 +2,7 @@ package scheme.runtime;
 
 import com.oracle.truffle.api.CompilerAsserts;
 import com.oracle.truffle.api.CompilerDirectives;
+import com.oracle.truffle.api.HostCompilerDirectives.InliningCutoff;
 import com.oracle.truffle.api.bytecode.ConstantOperand;
 import com.oracle.truffle.api.bytecode.OperationProxy;
 import com.oracle.truffle.api.bytecode.StoreBytecodeIndex;
@@ -102,7 +103,11 @@ public final class Intrinsics {
          * partial evaluation but not in the host compilation of the interpreter, where a call in
          * each branch was two call sites (GraalVM's Host Compilation guide, "Deduplicating calls
          * from branches that fold during partial evaluation").
+         *
+         * <p>Cut from the host's inlining of the bytecode interpreter: the operations' rare path,
+         * as {@code Call}'s call path is (M10-02).
          */
+        @InliningCutoff
         static Object generic(boolean tail, PrimitiveNode primitive, Object[] args, Node node, Trampoline trampoline) {
             try {
                 return primitive.invoke(args);
