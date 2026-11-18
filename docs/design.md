@@ -4857,6 +4857,51 @@ Each entry: the decision, why, and what was rejected.
     and the steady state 0.99; `--version` 12.5 ms against 12.8 and a
     hello-world program 13.9 against 13.8 (31 runs each); the shared
     library 384 bytes larger.
+  - **The native launcher's steady state (M12-04).** M11's report had the
+    native launcher's steady state at 2.24 ×fastest against the JVM's 1.74,
+    with the same Graal compiler and the serial collector in both. Each
+    program's gap was profiled with macOS's `sample` on an executable whose
+    library keeps its symbols (native-image's
+    `-H:+UnlockExperimentalVMOptions -H:-DeleteLocalSymbols`): code the
+    image compiled ahead of time shows by name, runtime-compiled code as
+    unknown addresses. That separates three causes: Java code behind a
+    `@TruffleBoundary`, which the image compiles ahead of time without
+    HotSpot's profiles, inlining and intrinsics; the runtime-compiled
+    Scheme code; and the collector (`--vm.XX:+PrintGC`).
+    - *A flonum compared with an exact integer, and `exact` of a flonum.*
+      90% of `ray`'s native steady state was in `BigInteger`,
+      `MutableBigInteger` and `BigDecimal`. `negative?`, `positive?` and a
+      comparison of a flonum with a fixnum went to
+      `Arithmetic.compareWithExact`, which made the flonum an exact
+      rational (`new BigDecimal(d)`, `BigInteger.TEN.pow(scale)`, a gcd)
+      and compared it by multiplying `BigInteger`s; `exact` of a flonum
+      did the same. HotSpot runs that much faster than an image does
+      (its intrinsics for `BigInteger`'s loops and its profiled
+      compilation), but it was slow on both. Now `exact` of an
+      integer-valued flonum below 2^63 is the fixnum, and any other flonum
+      is m·2^e from its bits (m odd, so a non-integer's denominator is
+      already in lowest terms: no decimal expansion and no gcd); a flonum
+      against a fixnum compares as two flonums when the fixnum is within
+      2^53 (where it is one exactly), else against the flonum truncated to
+      a `long`; and a flonum below 2^63 against a bignum by the bignum's
+      sign. `NativeSteadyStateTest` checks the values against
+      `BigDecimal`'s at the edges (2^53, 2^63, 2^64, subnormals) and on
+      random flonums. Measured interleaved, `main` (`2be9e46`) and the
+      change, 3 processes each, 5 iterations at the report's counts
+      (`--scale 0.1`), with an A/A pair of `main` as the noise floor, load
+      2.3 to 9.6; the steady state (best of the later iterations, median
+      of the processes), native and JVM:
+
+      | | Native: before, A/A, after | JVM: before, A/A, after |
+      |---|---:|---:|
+      | `ray` | 1.393, 1.402, **0.050** s | 0.822, 0.827, **0.047** s |
+      | `simplex` | 0.717, 0.717, **0.118** s | 0.497, 0.497, **0.092** s |
+      | `nucleic`, `fibfp`, `pnpoly`, `mbrotZ` | 0.115, 0.030, 0.089, 0.951 s: within 1% | 0.101, 0.072, 0.074, 0.543 s: within 3% |
+      | `fib`, `tak`, `deriv`, `browse` | within 3% | within 1% |
+
+      The first iteration: `ray` 1.50 to 0.24 s natively and 1.24 to 0.47
+      on the JVM, `simplex` 0.88 to 0.34 and 0.92 to 0.51. `ray` at
+      0.05 s is faster than the report's Chez Scheme (0.14 s).
   - **Rejected: a 1 GB minimum heap for the native launcher (#189).** The
     image was built for a while with `-R:MinHeapSize=1g`, a default for the
     executable's minimum heap that its own `-Xms` or `-XX:MinHeapSize=`
