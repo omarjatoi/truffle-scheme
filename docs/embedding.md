@@ -164,6 +164,45 @@ try (Engine engine = Engine.newBuilder("scheme").option("scheme.LibraryPath", li
 }
 ```
 
+## Sandboxing and resource limits
+
+Scheme reaches files, standard streams and environment variables only
+through what the context allows (design.md D10), and can't reach Java
+objects or other languages. So it runs under GraalVM's
+[`SandboxPolicy.CONSTRAINED`](https://www.graalvm.org/latest/security-guide/sandboxing/),
+for code you trust but whose access to the host you want to regulate:
+`Context.newBuilder("scheme").sandbox(SandboxPolicy.CONSTRAINED)` with
+`out` and `err` redirected. Under it, opening a file is a Scheme error that
+`file-error?` answers, unless you give the context a file system of your own
+(`IOAccess.newBuilder().fileSystem(...)`, such as a zip file's through
+`FileSystem.newFileSystem`), from which libraries are then read too;
+`get-environment-variable` finds none; and `exit` ends the context, not the
+JVM. `scheme.LibraryPath`, `scheme.BufferOutput` and `scheme.StackSize` can
+be set under it. The stricter `ISOLATED` and `UNTRUSTED` policies run the
+language in an isolate, which this build doesn't provide.
+
+With or without a policy, Truffle's limits stop a context that runs too long
+or writes too much, and cancel it: `ResourceLimits`' statement limit (each
+expression of a body is a statement), and the `sandbox.MaxCPUTime` and
+`sandbox.MaxOutputStreamSize` options; so do
+`Context.interrupt` and `Context.close(true)` from another thread.
+`sandbox.MaxStackFrames` counts only the frames on the Java stack, so it
+doesn't bound the depth of a recursion, which moves its frames to the heap as
+it deepens (design.md "Continuations").
+
+<!-- readme: file tests/scheme/test/EmbeddingGuideTest.java#limits -->
+```java
+ResourceLimits limits = ResourceLimits.newBuilder().statementLimit(1_000_000, null).build();
+try (Context context = Context.newBuilder("scheme").resourceLimits(limits).build()) {
+    assertEquals(55, context.eval("scheme", "(let loop ((i 0) (sum 0)) (if (> i 10) sum (loop (+ i 1) (+ sum i))))").asInt());
+    context.eval("scheme", "(let loop () (loop))");
+    fail("the loop ended");
+} catch (PolyglotException e) {
+    // The context is cancelled: it can't be used again.
+    assertTrue(e.isResourceExhausted());
+}
+```
+
 ## Scheme values in Java
 
 Scheme values answer Truffle's interop protocol as what they are. Each has the
