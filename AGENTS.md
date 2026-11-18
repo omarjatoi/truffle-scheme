@@ -107,8 +107,8 @@ bazel test //tests/fuzz:fuzz_smoke        # a fixed seed's 300 random programs, 
 bazel run //:r7rs -- format               # format Java code (GraalVM's Eclipse formatter settings)
 bazel test //tests:readme                 # docs/usage.md's and docs/embedding.md's commands as written, and their samples
 bazel build //:scheme-native              # the native launcher, bazel-bin/scheme-native (design.md D17; a minute, ~3 GB)
-bazel test //tests:readme_native //tests:conformance_native   # its docs, and both conformance suites through it
-bazel test --platforms=//bazel/platforms:macos_arm64 //tests:launcher_vm_native   # the same for this Mac, run here
+bazel test //tests:readme_native //tests:conformance_native //tests:space_native //tests:launcher_vm_native   # its docs, both conformance suites, deep recursion and --vm. options through it (Linux, on the executors)
+bazel test --platforms=//bazel/platforms:macos_arm64 //tests:launcher_vm_native   # a native test for this Mac, run here
 bazel run //:r7rs -- benchmark ecraven:fib         # one benchmark program, JIT (bench/README.md: options, failures)
 bazel run //:r7rs -- benchmark larceny:* --mode=*  # every program of a set, JIT and interpreter
 bazel run //:r7rs -- bench-check          # benchmark subset vs bench/thresholds.json, fails on a regression
@@ -128,7 +128,8 @@ you touched `src/runtime` or any Bytecode DSL operation, also run `bazel run
 `bazel run //:r7rs -- bench-check`. A PR that changes performance on purpose
 commits new thresholds and says why (bench/README.md "Thresholds"); never
 raise one by hand. If it changes the native-image configuration, run `bazel
-test //tests:readme_native //tests:conformance_native`.
+test //tests:readme_native //tests:conformance_native //tests:space_native
+//tests:launcher_vm_native`.
 
 CI runs on Buildkite (`.buildkite/pipeline.yml`), for every commit, and only
 what runs on every commit, one `bazel` command per step: `checks` (the lint
@@ -145,10 +146,10 @@ Benchmarks, the threshold check and the native image are local commands.
 ## Rules (each one is enforced by `bazel test //...`)
 
 1. **Java builtins never call Scheme directly.** A builtin that must invoke a
-   procedure (`apply`, `call/cc`, `call-with-values`, `eval`) returns a
-   `TailCall` request instead. Anything that needs a non-tail call (`map`,
-   `for-each`, `dynamic-wind`, `raise`, ...) lives in the Scheme prelude
-   (design.md D5). Check: `//tests:rules`.
+   procedure (`apply`, `call/cc`, `eval`, `load`) returns a `TailCall`
+   request instead. Anything that needs a non-tail call (`map`, `for-each`,
+   `call-with-values`, `dynamic-wind`, `raise`, ...) lives in the Scheme
+   prelude (design.md D5). Check: `//tests:rules`.
 2. **Every non-tail call site is emitted by `CallSiteEmitter`.** Never emit a
    raw call operation. Check: torture mode.
 3. **Continuation segments are immutable once shared.** A segment any
@@ -268,8 +269,9 @@ prelude and declarations files are in `src/prelude/scheme/prelude/`.
 
 ```
 MODULE.bazel               Bazel modules, TRUFFLE_VERSION, Maven artifacts (locked in maven_install.json)
-BUILD.bazel                the scheme, scheme.launcher modules (jars), the prelude image, bazel-bin/scheme
-bazel/                     the GraalVM toolchain, module jars (java_module.bzl), lint tests (lint/)
+BUILD.bazel                the scheme, scheme.launcher modules (jars), the prelude image, bazel-bin/scheme, bazel-bin/scheme-native
+bazel/                     the GraalVM toolchain (graalvm.bzl), module jars and the native library (java_module.bzl),
+                           chibi-scheme (chibi.bzl), lint tests (lint/), platforms (platforms/: Linux remote, macOS here)
 flake.nix, flake.lock      dev shell: bazel, Python, gh, chibi-scheme, GraalVM 25.5
 .buildkite/                CI: the pipeline and its pre-command hook
 src/reader/                reader + datum labels
@@ -293,5 +295,9 @@ tests/space/               programs run under small JVM limits (//tests:space)
 tests/tools/               programs the tools tests debug and profile (tests/harness/tools.py names their lines)
 tests/spec/                tail-call / continuation / depth cases; existing cases read-only
 tests/scheme/test/         JUnit unit tests; add freely
+docs/                      design.md (decisions), plan.md (milestones, status block), usage.md, embedding.md,
+                           truffle-guidance.md and graalvm-configuration.md (GraalVM's guidance, audited),
+                           upstream.md (Truffle bugs we work around), performance-research.md,
+                           benchmarks.md (the comparative report, generated)
 docs/examples/             programs and sources that docs/usage.md and docs/embedding.md run (the readme check)
 ```

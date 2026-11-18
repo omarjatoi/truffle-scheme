@@ -4,8 +4,9 @@ Milestones run in order. Detailed tasks are written only for the current
 milestone. Later milestones list just their exit criteria until they start.
 
 No milestone is human-gated. Agents merge their own PRs once the required
-`Checks` and `Tests` checks are green (AGENTS.md). Agents may change
-`docs/design.md` too, in a PR of its own that says why (AGENTS.md).
+Buildkite build, `buildkite/truffle-scheme` (its `checks` and `tests`
+steps), is green (AGENTS.md). Agents may change `docs/design.md` too, in a
+PR of its own that says why (AGENTS.md).
 
 <!-- status:begin -->
 Conformance against the vendored suites, interpreter only (except where a row
