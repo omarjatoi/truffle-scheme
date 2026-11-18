@@ -1740,6 +1740,19 @@ Each entry: the decision, why, and what was rejected.
   - Scheme code does not reach into other languages or the host in v1, so
     no host frame ever sits between two Scheme frames (D5): a call from Java
     is always the outermost prompt.
+- **Sandboxing.** The language declares `SandboxPolicy.CONSTRAINED`
+  (`Registration.sandbox`), and so do the options an embedder sets
+  (`scheme.LibraryPath`, `scheme.BufferOutput`, `scheme.StackSize`,
+  `scheme.PreludeImage`; not `scheme.SpillDepth`, for tests): everything it
+  reaches of the host goes through the Env (the rules above), `exit` is
+  Truffle's (D9), and Scheme reaches no host object. Until then a
+  `CONSTRAINED` context couldn't use it at all. `ISOLATED` and `UNTRUSTED`
+  need the language built as a polyglot isolate, which nothing builds.
+  Truffle's limits work as GraalVM documents them (statements, CPU time,
+  output size, interrupt and cancel), except `sandbox.MaxStackFrames`, which
+  counts Java frames: a recursion past the spill depth keeps few of them
+  (D12). docs/graalvm-configuration.md has the audit; `SandboxTest` the
+  checks.
 - **Out of scope:** Scheme-side access to other languages and the host,
   threads, and SRFIs. Avoid reflection and dynamic class loading: the native
   launcher (D17) is built without any reflection configuration.
