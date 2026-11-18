@@ -1205,7 +1205,7 @@ measures with interleaved A/B runs.
     `e70adbb`'s (#207's A/B), `PrimitivesInPlaceTest`'s
     `primitivesCalledThroughTheirRootsCompileWithoutPerformanceWarnings`
     (#195's test) still passes, and `bench-check` passes.
-- [ ] **M10-04 · Options the launcher drops** *(early)*
+- [x] **M10-04 · Options the launcher drops** *(early)*
   - #205 found `--engine.TraceTransferToInterpreter` silently ignored by
     `bazel-bin/scheme` (*"it was previously initialized with 'false'"*: an
     engine of the process exists before the program's); it works only as
@@ -1223,6 +1223,22 @@ measures with interleaved A/B runs.
     `TraceTransferToInterpreter`, the tools' options) on `bazel-bin/scheme`,
     and a native test on `scheme-native`, each checking that an option of
     that class takes effect or fails clearly.
+  - Done (2026-11-17): the framework's own engine, the process's first, fixed
+    `TraceTransferToInterpreter` off on HotSpot; the launcher now sets its
+    system property before that engine. libgraal fails every compilation the
+    instrumentation options instrument (docs/upstream.md): `bazel-bin/scheme`
+    runs Graal compiled for HotSpot for them, and they are errors elsewhere.
+    Also no longer ignored: `--scheme.StackSize` and the `scheme.LibraryPath`
+    property (the launcher's own), native `--vm.` options the isolate ignores
+    (`-ea`, `-Xint`, `-verbose:gc`, ...), unknown `--help:` topics; a
+    rejected `polyglot.*` property is an error, not a stack trace, and the
+    native launcher's tool options say the tools are the JVM launcher's.
+    Option errors take the framework's statuses (1, 2). A native `--vm.` collector
+    still stops in `JNI_CreateJavaVM` with SubstrateVM's message (no hook
+    before it without changing `launcher.cc`). design.md D17, "Options";
+    docs/usage.md, "Options"; `//tests:launcher_vm`,
+    `LauncherTest.processOptionsTakeEffectOrFailClearly`,
+    `//tests:launcher_vm_native`.
 - [x] **M10-05 · I/O follow-ups** *(early)*
   - *A bulk read* (#200's follow-up): `read-bytevector`, `read-bytevector!`
     and `read-string` (`IoPrimitives.ReadBytevector`, `ReadBytevectorInto`,

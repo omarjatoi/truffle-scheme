@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.PrintStream;
+import java.lang.management.ManagementFactory;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -12,6 +13,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.graalvm.launcher.AbstractLanguageLauncher;
@@ -57,7 +59,12 @@ import org.graalvm.polyglot.io.IOAccess;
  * <li>{@value #EXIT_UNCAUGHT_ERROR} (EX_SOFTWARE) for an uncaught error in a program. The message
  * goes to stderr; differential tests never compare its wording.</li>
  * <li>{@value #EXIT_NO_INPUT} (EX_NOINPUT) when the file can't be read, {@value #EXIT_USAGE}
- * (EX_USAGE) for a malformed {@code -I}, and the framework's statuses for its own options.</li>
+ * (EX_USAGE) for a malformed {@code -I}, {@code --stack-size} or {@code --end-status}.</li>
+ * <li>GraalVM's launcher framework's statuses for the options its launchers share (design.md D17,
+ * "Options"), whether the framework or this launcher rejects them:
+ * {@value #EXIT_UNRECOGNIZED} for one it doesn't recognize, {@value #EXIT_INVALID_OPTION} for one
+ * that can't be used (a bad value, an experimental option without
+ * {@code --experimental-options}, a {@code --vm.} option the VM wouldn't apply).</li>
  * </ul>
  */
 public final class SchemeMain extends AbstractLanguageLauncher {
@@ -69,6 +76,16 @@ public final class SchemeMain extends AbstractLanguageLauncher {
     public static final int EXIT_USAGE = 64;
     /** EX_NOINPUT. */
     public static final int EXIT_NO_INPUT = 66;
+    /**
+     * GraalVM's launcher framework's status for an option that can't be used: an invalid value, an
+     * experimental option without {@code --experimental-options} ({@code Launcher.abort}).
+     */
+    public static final int EXIT_INVALID_OPTION = 1;
+    /**
+     * The framework's status for an argument it doesn't recognize
+     * ({@code Launcher.abortUnrecognizedArgument}).
+     */
+    public static final int EXIT_UNRECOGNIZED = 2;
 
     private static final String LIBRARY_PATH_OPTION = "scheme.LibraryPath";
     /** The evaluation thread's stack size, for the runtime (StackBudget). */
@@ -89,6 +106,49 @@ public final class SchemeMain extends AbstractLanguageLauncher {
     /** An option that chooses a collector, which a native image has from its build. */
     private static final Pattern NATIVE_GC_CHOICE = Pattern.compile("XX:[+-]Use\\w*GC");
     /**
+     * The {@code --vm.} options the native launcher's isolate applies: the heap's and the stack's
+     * sizes, system properties, and {@code -XX:} options, which it checks as it is created (one it
+     * doesn't know stops it). The thin launcher's C part also takes an argument file
+     * ({@code --vm.@file}) and, on macOS, {@code --vm.XstartOnFirstThread}. The isolate takes any
+     * other option and ignores it ({@code -ea}, {@code -Xint}, {@code -verbose:gc},
+     * {@code -Xlog:gc}, {@code -Xfoo}, ...), so the launcher rejects those (design.md D17, "VM
+     * options").
+     */
+    private static final Pattern NATIVE_VM_OPTION = Pattern.compile("X(mx|ms|mn|ss).+|D[^=]+(=.*)?|XX:.+|@.+");
+    /** The class path and module path options, which only the thin launcher's JVM mode takes. */
+    private static final Pattern NATIVE_PATH_OPTION = Pattern.compile("(cp|classpath|p|-module-path)=.*|Djava\\.library\\.path=.*");
+    /**
+     * The tools the JVM launcher has on its module path (//bazel:tools_modules), which the native
+     * launcher is built without.
+     */
+    private static final Set<String> JVM_TOOLS = Set.of("inspect", "dap", "cpusampler", "cputracer", "memtracer", "heapmonitor");
+    /**
+     * A Truffle option that is the process's on HotSpot: the process's first engine fixes it, and
+     * a later engine's value only gets a warning (HotSpotTruffleRuntime: "it was previously
+     * initialized"). The framework's first engine is its own, which it creates without the
+     * command line's options to check them, so the launcher sets the system property that the
+     * runtime also reads, before the framework creates that engine.
+     */
+    private static final String TRACE_TRANSFER_OPTION = "engine.TraceTransferToInterpreter";
+    /**
+     * Another option the HotSpot runtime keeps for the process: the last engine created sets it. A
+     * warm-up's engine, created after the program's, would set it back.
+     */
+    private static final String PROFILING_OPTION = "engine.Profiling";
+    /**
+     * The compiler's instrumentation, which prints its profile as the process ends. On the JVM,
+     * GraalVM 25.5's compiler in libgraal fails every compilation it instruments (a
+     * ClassCastException, docs/upstream.md), and the native launcher's crashes; Graal compiled
+     * for HotSpot ({@code -XX:-UseJVMCINativeLibrary}) instruments them. 25.5 still takes them as
+     * {@code engine.} options, deprecated.
+     */
+    private static final List<String> INSTRUMENT_OPTIONS = List.of("compiler.InstrumentBoundaries", "compiler.InstrumentBranches", "engine.InstrumentBoundaries",
+                    "engine.InstrumentBranches");
+    /** The JVM option that chooses libgraal (the default) or Graal compiled for HotSpot. */
+    private static final Pattern LIBGRAAL_CHOICE = Pattern.compile("-XX:([+-])UseJVMCINativeLibrary");
+    /** The framework's help topics besides the languages' and the tools' ids. */
+    private static final Set<String> HELP_TOPICS = Set.of("", "vm", "engine", "compiler", "all", "languages", "tools", "internal", "expert");
+    /**
      * A host VM option in {@code java}'s form ({@code -Xmx2g}, {@code -XX:+PrintGC},
      * {@code -Dname=value}): the launcher takes it as {@code --vm.<option>}.
      */
@@ -103,6 +163,8 @@ public final class SchemeMain extends AbstractLanguageLauncher {
     private String[] programArguments = new String[0];
     /** The status when the program or the REPL's input ends without {@code exit}. */
     private int endStatus;
+    /** In this process, for tests ({@link #run}): the process's state isn't the launcher's. */
+    private boolean inProcess;
     /** {@code --version} or {@code --show-version}. */
     private VersionAction versionAction = VersionAction.None;
     /** The evaluation thread's stack ({@link EvaluationThread}): {@code --stack-size}, or null. */
@@ -113,6 +175,14 @@ public final class SchemeMain extends AbstractLanguageLauncher {
     private boolean compilation = true;
     /** Whether the command line sets {@value #BUFFER_OUTPUT_OPTION}. */
     private boolean bufferOutputGiven;
+    /** Whether the command line sets {@value #PROFILING_OPTION}: no warm-up then. */
+    private boolean profilingGiven;
+    /** Whether the launcher set {@value #TRACE_TRANSFER_OPTION}'s system property itself. */
+    private boolean traceTransferPropertySet;
+    /** The last {@code --help:<topic>}'s topic, or null. */
+    private String helpTopic;
+    /** The argument that gave {@link #helpTopic}. */
+    private String helpArgument;
 
     private static final String COMPILATION_OPTION = "engine.Compilation";
     /** The warm-up takes a core of its own: below this, it would take the program's. */
@@ -182,7 +252,7 @@ public final class SchemeMain extends AbstractLanguageLauncher {
                 unrecognized.add(arg);
                 i++;
             } else if (HOST_VM_OPTION.matcher(arg).matches()) {
-                throw abort(arg + ": the launcher takes the VM's options as --vm." + arg.substring(1) + ", before the program file (docs/usage.md)", EXIT_USAGE);
+                throw abort(arg + ": the launcher takes the VM's options as --vm." + arg.substring(1) + ", before the program file (docs/usage.md)", EXIT_UNRECOGNIZED);
             } else if (arg.equals("--version")) {
                 versionAction = VersionAction.PrintAndExit;
                 i++;
@@ -193,6 +263,7 @@ public final class SchemeMain extends AbstractLanguageLauncher {
                 i++;
                 break;
             } else if (arg.startsWith("-") && arg.length() > 1) {
+                polyglotOption(arg);
                 unrecognized.add(arg);
                 i++;
             } else {
@@ -207,6 +278,39 @@ public final class SchemeMain extends AbstractLanguageLauncher {
     }
 
     /**
+     * Notes what the launcher needs to know of an option the framework parses: a help topic
+     * ({@link #printHelp}), and on HotSpot {@value #TRACE_TRANSFER_OPTION}, whose system property
+     * the launcher sets now, before the framework creates the process's first engine.
+     */
+    private void polyglotOption(String arg) {
+        if (arg.startsWith("--help:")) {
+            String topic = arg.substring("--help:".length());
+            helpTopic = topic.contains(":") ? topic.substring(0, topic.indexOf(':')) : topic;
+            helpArgument = arg;
+        } else if (arg.equals("--help")) {
+            helpTopic = null;
+        } else if (!isAOT() && !inProcess && (arg.equals("--" + TRACE_TRANSFER_OPTION) || arg.equals("--" + TRACE_TRANSFER_OPTION + "=true")) &&
+                        System.getProperty("polyglot." + TRACE_TRANSFER_OPTION) == null) {
+            System.setProperty("polyglot." + TRACE_TRANSFER_OPTION, "true");
+            traceTransferPropertySet = true;
+        }
+    }
+
+    /**
+     * An option the framework doesn't know. In the native launcher, a tool's option says that the
+     * tools are the JVM launcher's.
+     */
+    @Override
+    protected AbortException abortUnrecognizedArgument(String argument) {
+        String name = argument.startsWith("--") ? argument.substring(2).split("[.=]", 2)[0] : "";
+        if (isAOT() && JVM_TOOLS.contains(name)) {
+            throw abort(argument + ": the native launcher is built without GraalVM's tools; the JVM launcher, bazel-bin/scheme, has them (docs/usage.md, \"Debugging and profiling\")",
+                            EXIT_UNRECOGNIZED);
+        }
+        return super.abortUnrecognizedArgument(argument);
+    }
+
+    /**
      * Checks a {@code --vm.<option>} among the launcher's options, as GraalVM's language launchers
      * take them (design.md D17, "VM options"). On the JVM, the script that starts it
      * ({@code bazel-bin/scheme}) has given them to the JVM as its own options and taken them out,
@@ -216,25 +320,37 @@ public final class SchemeMain extends AbstractLanguageLauncher {
      * command line: they go back to the framework, which checks that they are the ones this
      * method kept (otherwise the C part runs the process again with these) and sets none itself.
      * A class path and a collector, which a native image doesn't have at run time, are errors that
-     * say what to do instead. {@code --vm.Xss} is also the evaluation thread's stack.
+     * say what to do instead, and so is an option the isolate would have ignored
+     * ({@link #NATIVE_VM_OPTION}). {@code --vm.Xss} is also the evaluation thread's stack.
      */
     private void vmOption(String arg) {
         String option = arg.substring(VM_OPTION.length());
         if (option.equals("cp") || option.equals("classpath")) {
-            throw abort("'" + arg + "' argument must be of the form '" + arg + "=<classpath>', not two separate arguments", EXIT_USAGE);
+            throw abort("'" + arg + "' argument must be of the form '" + arg + "=<classpath>', not two separate arguments", EXIT_INVALID_OPTION);
         }
         boolean classPath = option.startsWith("cp=") || option.startsWith("classpath=");
         if (!isAOT()) {
             String java = classPath ? "-cp " + option.substring(option.indexOf('=') + 1) : "-" + option;
             throw abort(arg + " is an option of the JVM, which has already started without it: give it to java itself (" + java +
-                            ", before -m), or run the launcher with bazel-bin/scheme, which starts the JVM with its --vm. options", EXIT_USAGE);
+                            ", before -m), or run the launcher with bazel-bin/scheme, which starts the JVM with its --vm. options", EXIT_INVALID_OPTION);
         }
         if (classPath) {
-            throw abort(arg + ": the native launcher has no class path; the JVM launcher, bazel-bin/scheme, takes " + arg, EXIT_USAGE);
+            throw abort(arg + ": the native launcher has no class path; the JVM launcher, bazel-bin/scheme, takes " + arg, EXIT_INVALID_OPTION);
+        }
+        if (NATIVE_PATH_OPTION.matcher(option).matches()) {
+            throw abort(arg + ": the native launcher has no module path and loads no Java libraries; the JVM launcher, bazel-bin/scheme, takes " + arg, EXIT_INVALID_OPTION);
         }
         if (NATIVE_GC_CHOICE.matcher(option).matches()) {
+            // Seldom reached: the isolate's creation rejects an option it doesn't know, before the
+            // launcher runs, unless the command line has --jvm (then the thin launcher asks it to
+            // ignore them, and the framework rejects --jvm).
             throw abort(arg + ": the native launcher's collector is chosen when it is built (bazel build --//:native_gc=serial|epsilon|G1 //:scheme-native, " +
-                            "docs/usage.md, \"Choosing a garbage collector\"); the JVM launcher, bazel-bin/scheme, takes " + arg, EXIT_USAGE);
+                            "docs/usage.md, \"Choosing a garbage collector\"); the JVM launcher, bazel-bin/scheme, takes " + arg, EXIT_INVALID_OPTION);
+        }
+        boolean firstThread = option.equals("XstartOnFirstThread") && System.getProperty("os.name", "").startsWith("Mac");
+        if (!firstThread && !NATIVE_VM_OPTION.matcher(option).matches()) {
+            throw abort(arg + ": the native launcher's VM, a native image, would ignore it: it takes --vm.Xmx, --vm.Xms, --vm.Xmn, --vm.Xss, --vm.D<name>=<value> " +
+                            "and the --vm.XX: options --help:vm lists. The JVM launcher, bazel-bin/scheme, takes " + arg, EXIT_INVALID_OPTION);
         }
         if (arg.startsWith(VM_STACK_SIZE_OPTION)) {
             vmStackSize = EvaluationThread.parseSize(arg.substring(VM_STACK_SIZE_OPTION.length()));
@@ -280,15 +396,66 @@ public final class SchemeMain extends AbstractLanguageLauncher {
         return EvaluationThread.LARGE_STACK;
     }
 
-    /** {@code --scheme.LibraryPath=...} comes before the {@code -I} directories. */
+    /**
+     * Checks the options that the launcher sets or that can't take effect, once the framework has
+     * parsed them; an option is given on the command line or as its {@code polyglot.<name>} system
+     * property. {@code --scheme.LibraryPath=...} comes before the {@code -I} directories.
+     */
     @Override
     protected void validateArguments(Map<String, String> polyglotOptions) {
-        compilation = !"false".equals(polyglotOptions.getOrDefault(COMPILATION_OPTION, System.getProperty("polyglot." + COMPILATION_OPTION)));
-        bufferOutputGiven = polyglotOptions.containsKey(BUFFER_OUTPUT_OPTION) || System.getProperty("polyglot." + BUFFER_OUTPUT_OPTION) != null;
+        if (traceTransferPropertySet) {
+            // The framework's engine, the process's first, has fixed the option for the process
+            // (on). The program's engine has it from the command line; the warm-up's goes without.
+            System.clearProperty("polyglot." + TRACE_TRANSFER_OPTION);
+        }
+        compilation = !"false".equals(option(polyglotOptions, COMPILATION_OPTION));
+        bufferOutputGiven = option(polyglotOptions, BUFFER_OUTPUT_OPTION) != null;
+        profilingGiven = option(polyglotOptions, PROFILING_OPTION) != null;
+        if (option(polyglotOptions, STACK_SIZE_RUNTIME_OPTION) != null) {
+            throw abort("--" + STACK_SIZE_RUNTIME_OPTION + ": the launcher tells the runtime the size of the stack it evaluates on itself; " + STACK_SIZE_OPTION +
+                            "<size> chooses that stack (--help)", EXIT_INVALID_OPTION);
+        }
+        for (String instrument : INSTRUMENT_OPTIONS) {
+            if ("true".equals(option(polyglotOptions, instrument))) {
+                if (isAOT()) {
+                    throw abort("--" + instrument + ": the native launcher's compiler fails with it (GraalVM 25.5, docs/upstream.md); the JVM launcher, bazel-bin/scheme, takes it",
+                                    EXIT_INVALID_OPTION);
+                } else if (libgraal()) {
+                    throw abort("--" + instrument + ": GraalVM 25.5's compiler in libgraal fails every compilation it instruments (docs/upstream.md), so it would print nothing; " +
+                                    "run java with -XX:-UseJVMCINativeLibrary, as bazel-bin/scheme does with this option", EXIT_INVALID_OPTION);
+                }
+            }
+        }
         String given = polyglotOptions.remove(LIBRARY_PATH_OPTION);
+        if (given == null) {
+            // The launcher sets the option itself, which a system property doesn't override.
+            given = System.getProperty("polyglot." + LIBRARY_PATH_OPTION);
+        }
         if (given != null && !given.isEmpty()) {
             libraryPath.addAll(0, Arrays.asList(given.split(File.pathSeparator)));
         }
+    }
+
+    /** An option's value on the command line, else its system property's, else null. */
+    private static String option(Map<String, String> polyglotOptions, String name) {
+        String value = polyglotOptions.get(name);
+        return value != null ? value : System.getProperty("polyglot." + name);
+    }
+
+    /**
+     * Whether the JVM compiles with libgraal, its default (the last
+     * {@code -XX:±UseJVMCINativeLibrary} among its options, also through {@code JDK_JAVA_OPTIONS}
+     * or {@code JAVA_TOOL_OPTIONS}, says otherwise).
+     */
+    private static boolean libgraal() {
+        boolean libgraal = true;
+        for (String arg : ManagementFactory.getRuntimeMXBean().getInputArguments()) {
+            Matcher m = LIBGRAAL_CHOICE.matcher(arg);
+            if (m.matches()) {
+                libgraal = m.group(1).equals("+");
+            }
+        }
+        return libgraal;
     }
 
     @Override
@@ -297,6 +464,9 @@ public final class SchemeMain extends AbstractLanguageLauncher {
         if (versionAction != VersionAction.None) {
             try (Engine engine = Engine.create()) {
                 runVersionAction(versionAction, engine);
+            } catch (IllegalArgumentException e) {
+                // An option given as a polyglot.<name> system property that Truffle rejects.
+                throw abort("in the polyglot.<name> system properties (such as --vm.Dpolyglot.<name>=<value>): " + e.getMessage(), EXIT_INVALID_OPTION);
             }
         }
         // The context is created, used and closed on the evaluation thread. An exit status is
@@ -333,7 +503,7 @@ public final class SchemeMain extends AbstractLanguageLauncher {
                 closeQuietly(terminal);
             }
         } else {
-            boolean warmUp = compilation && !isAOT() && Runtime.getRuntime().availableProcessors() >= WARM_UP_MIN_PROCESSORS;
+            boolean warmUp = compilation && !profilingGiven && !isAOT() && Runtime.getRuntime().availableProcessors() >= WARM_UP_MIN_PROCESSORS;
             status = runProgram(builder, file, programArguments, System.err, endStatus, warmUp ? SchemeMain::startWarmUp : null);
         }
         System.out.flush();
@@ -379,8 +549,17 @@ public final class SchemeMain extends AbstractLanguageLauncher {
         }
     }
 
+    /**
+     * The launcher's part of {@code --help}. The framework prints it for {@code --help}, and for a
+     * {@code --help:<topic>} it has no help for, in place of an error: the launcher makes that
+     * one.
+     */
     @Override
     protected void printHelp(OptionCategory maxCategory) {
+        if (helpTopic != null && !HELP_TOPICS.contains(helpTopic)) {
+            throw abort("Unrecognized help topic: '" + helpArgument + "'. Use --help for the topics (--help:languages, --help:tools, --help:engine, --help:<id>, ...).",
+                            EXIT_UNRECOGNIZED);
+        }
         println("Usage: scheme [option...] [-I dir]... [--stack-size=<size>] [file.scm [arg...]]");
         println("");
         println("Runs file.scm as an R7RS program; (command-line) returns the file and its arguments.");
@@ -431,6 +610,7 @@ public final class SchemeMain extends AbstractLanguageLauncher {
     public static int run(String[] args, InputStream in, OutputStream out, OutputStream err) {
         PrintStream errors = new PrintStream(err, true, StandardCharsets.UTF_8);
         SchemeMain launcher = new SchemeMain();
+        launcher.inProcess = true;
         try {
             List<String> unrecognized = launcher.preprocessArguments(Arrays.asList(args), new HashMap<>());
             if (!unrecognized.isEmpty()) {
@@ -482,7 +662,19 @@ public final class SchemeMain extends AbstractLanguageLauncher {
             }
             report(e, errors);
             return EXIT_UNCAUGHT_ERROR;
+        } catch (IllegalArgumentException e) {
+            return invalidOption(e, errors);
         }
+    }
+
+    /**
+     * Creating a context failed with an option Truffle rejects: one given as a
+     * {@code polyglot.<name>} system property ({@code --vm.Dpolyglot.scheme.NoSuchOption=1}),
+     * which the framework doesn't check. Reports it and returns {@value #EXIT_INVALID_OPTION}.
+     */
+    private static int invalidOption(IllegalArgumentException e, PrintStream errors) {
+        errors.println("ERROR: in the polyglot.<name> system properties (such as --vm.Dpolyglot.<name>=<value>): " + e.getMessage());
+        return EXIT_INVALID_OPTION;
     }
 
     /**
@@ -575,6 +767,8 @@ public final class SchemeMain extends AbstractLanguageLauncher {
             }
             report(e, errors);
             return EXIT_UNCAUGHT_ERROR;
+        } catch (IllegalArgumentException e) {
+            return invalidOption(e, errors);
         }
     }
 

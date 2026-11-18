@@ -42,7 +42,7 @@ recursion (`count` 300,000 deep and a list built and `map`ped 1,000,000 deep,
   --engine.CompilationFailureAction=Print --engine.TraceSplittingSummary
 ```
 
-and, as JVM system properties (below), `engine.TraceTransferToInterpreter`
+and, as JVM system properties (below; options since M10-04), `engine.TraceTransferToInterpreter`
 and `engine.TraceAssumptions`; the interpreter's host compilation with
 `-Djdk.graal.Log=HostInliningPhase,~CanonicalizerPhase,~GraphBuilderPhase`
 (`engine.Compilation=false`, `fib`, `scheme`, `puzzle`).
@@ -224,12 +224,13 @@ the report's interpreter subset, and of `continueAt`'s host compilation time
   `--engine.TracePerformanceWarnings` but warns that it is deprecated. With
   `--compiler.TreatPerformanceWarningsAsErrors` they fail the compilation,
   as `engine.CompilationFailureAction` says.
-- `--engine.TraceTransferToInterpreter` is a VM-wide option: `bazel-bin/scheme`
-  ignores it with *"it was previously initialized with 'false'"*, since an
-  engine of the process exists before the program's. Give it, and
-  `engine.TraceAssumptions`, as system properties, through `--vm.` (#203) or
-  `JDK_JAVA_OPTIONS`:
-  `--vm.Dpolyglot.engine.AllowExperimentalOptions=true --vm.Dpolyglot.engine.TraceTransferToInterpreter=true`.
+- `--engine.TraceTransferToInterpreter` is a VM-wide option on HotSpot: the
+  process's first engine fixes it. That was the launcher framework's own, so
+  `bazel-bin/scheme` ignored it with *"it was previously initialized with
+  'false'"* until M10-04, which sets its system property first (design.md
+  D17, "Options"): `--experimental-options --engine.TraceTransferToInterpreter`
+  works in both launchers. `engine.TraceAssumptions` is the engine's own, and
+  always worked as an option.
   On HotSpot it shows only explicit `transferToInterpreter` calls
   (25.5:Optimizing.md: *"prints a stack trace only for explicit
   deoptimizations"*).
@@ -240,7 +241,10 @@ the report's interpreter subset, and of `continueAt`'s host compilation time
   in `JDK_JAVA_OPTIONS`, best with `--engine.Compilation=false`. It works
   with the pinned GraalVM's libgraal.
 - `--compiler.InstrumentBoundaries` printed nothing through the launcher
-  (to standard output or `--log.file`).
+  (to standard output or `--log.file`): libgraal fails every compilation it
+  instruments (docs/upstream.md). Since M10-04 `bazel-bin/scheme` runs Graal
+  compiled for HotSpot (`-XX:-UseJVMCINativeLibrary`) with it, and prints the
+  boundaries' profile at exit.
 
 docs/performance-research.md §5 lists the others.
 

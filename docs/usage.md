@@ -189,6 +189,37 @@ Usage: scheme [option...] [-I dir]... [--stack-size=<size>] [file.scm [arg...]]
 ...
 ```
 
+Every option takes effect or stops the launcher with an error that says why;
+none is ignored (design.md D17, "Options"). They follow GraalVM's launcher
+conventions: its
+[default launcher options](https://github.com/oracle/graal/blob/master/truffle/docs/Options.md#default-language-launcher-options)
+(*"`--vm.[option]` : Pass options to the host VM"*, *"`--log.[logger].level`"*,
+*"`--help:languages` : Print options for all installed languages"*), a
+language's options as *"`--<languageID>.<property>=<value>`"* and a tool's
+as *"`--<toolID>.<property>=<value>`"*
+([Polyglot Programming](https://www.graalvm.org/latest/reference-manual/polyglot-programming/)),
+and *"Most options also require the additional `--experimental-options` flag
+set"* ([Optimizing](https://github.com/oracle/graal/blob/master/truffle/docs/Optimizing.md#observing-compilations)).
+Options come before the program file; everything after it is the program's.
+The statuses are GraalVM's launcher framework's: 2 for an option it doesn't
+know, 1 for one that can't be used, and 64 (EX_USAGE) for a malformed `-I`,
+`--stack-size` or `--end-status`.
+
+| Options | `bazel-bin/scheme` (JVM) | `bazel-bin/scheme-native` |
+|---|---|---|
+| `--engine.<name>` (`--engine.TraceCompilation`) | Takes effect. Unknown: *"Unrecognized argument"*, status 2; a bad value, or an experimental one without `--experimental-options`: status 1. | The same. |
+| VM-wide engine options (`--engine.TraceTransferToInterpreter`) | Takes effect: HotSpot keeps it for the process, so the launcher sets it before the framework's first engine. | Takes effect. |
+| `--compiler.<name>` (`--compiler.TracePerformanceWarnings=all`) | Takes effect. `--compiler.InstrumentBoundaries` and `--compiler.InstrumentBranches` need Graal compiled for HotSpot, which `bazel-bin/scheme` then runs (`-XX:-UseJVMCINativeLibrary`); with libgraal they are an error, status 1 (docs/upstream.md). | Takes effect; the instrumentation is an error, status 1. |
+| `--scheme.<name>` (`--scheme.BufferOutput=false`; `--help:scheme`) | Takes effect; `--scheme.LibraryPath` comes before the `-I` directories. `--scheme.StackSize`, which the launcher sets: an error naming `--stack-size`, status 1. | The same. |
+| The tools (`--cpusampler`, `--inspect`, `--dap`, `--memtracer`, ...) | Take effect. | An error saying the tools are the JVM launcher's, status 2. |
+| `--log.file=<path>`, `--log.level=`, `--log.<id>.level=` | Take effect. | The same. |
+| `--experimental-options` | Allows the experimental options on the command line. | The same. |
+| `--polyglot`, `--jvm`, `--native` | `--polyglot` and `--jvm` are what it does already; `--native`: an error, status 1. | `--polyglot` and `--native` are; `--jvm`: an error, status 1. |
+| `--vm.<option>` (`--vm.Xmx2g`) | The JVM's `-<option>`; the JVM rejects one it doesn't know. The launcher run with `java` has no JVM to start: an error naming the `java` option, status 1. | The isolate takes `--vm.Xmx`, `-Xms`, `-Xmn`, `-Xss`, `-D` and `-XX:`, and refuses an `-XX:` one it doesn't know, a collector included (*"Could not find option"*, status 255). Any other (`--vm.ea`, `--vm.Xint`, `--vm.verbose:gc`), which the isolate would ignore, and a class or module path: an error, status 1. |
+| `polyglot.<name>` system properties (`--vm.Dpolyglot.engine.TraceCompilation=true`) | Take effect. One Truffle rejects: an error, status 1. | The same. |
+| `--help`, `--help:<topic>`, `--version`, `--show-version` | Print, and exit 0 (`--show-version` goes on). A topic there is none of: an error, status 2. | The same. |
+| Anything else starting with `-` | *"Unrecognized argument"*, status 2. | The same. |
+
 The launcher evaluates on a thread of its own with a 256 MB Java stack, so
 that deep non-tail recursion stays on the stack, where it is fastest,
 instead of spilling to the heap (design.md D17). Only the pages a recursion
@@ -421,8 +452,11 @@ gives the program `("prog.scm" "a" "-Xmx3g" "-Dx=y" "b")` as its
 `command-line`. A `--vm.` argument there is the program's too, and costs a
 second start (the launcher runs itself again without it). Its collector is
 chosen when it is built (below), and an option that names one
-(`--vm.XX:+UseG1GC`) stops it with `Could not find option 'UseG1GC'`;
-`--vm.cp` is an error too: it has no class path.
+(`--vm.XX:+UseG1GC`) stops it with `Could not find option 'UseG1GC'`, the
+native image's own message, before the launcher runs (design.md D17, "VM
+options"); `--vm.cp` is an error too: it has no class path. So is an option
+the native image would take and ignore, such as `--vm.ea`, `--vm.Xint` or
+`--vm.verbose:gc` (its GC log is `--vm.XX:+PrintGC` or `--vm.XX:+VerboseGC`).
 
 ### Choosing a garbage collector
 
