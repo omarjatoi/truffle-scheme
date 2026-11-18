@@ -444,9 +444,9 @@ JVM, then any engine or compiler option as `-Dpolyglot.<option>=…`:
 | Where code is still generic | `engine.TraceCompilationPolymorphism=true` |
 | Calls, `instanceof`, stores PE couldn't resolve | `compiler.TracePerformanceWarnings=all` (25.5 deprecates the `engine.` name) |
 | Who invalidated an assumption (global redefinition) | `engine.TraceAssumptions=true` |
-| Deopt loops | `engine.CompilationFailureAction=Print` (deoptimization-cycle detection, on by default since 25); `engine.TraceTransferToInterpreter=true` as a system property (`--vm.Dpolyglot.engine.TraceTransferToInterpreter=true`: the launcher ignores the option), `engine.TraceBytecodeTransition=transferToInterpreter` (25.1) |
+| Deopt loops | `engine.CompilationFailureAction=Print` (deoptimization-cycle detection, on by default since 25); `--engine.TraceTransferToInterpreter` (with `--experimental-options`; before M10-04 the launcher ignored it, design.md D17 "Options"), `engine.TraceBytecodeTransition=transferToInterpreter` (25.1) |
 | Splitting | `engine.TraceSplitting=true` |
-| Boundaries hit from compiled code | `compiler.InstrumentBoundaries=true` (printed nothing through the launcher in the Truffle guidance audit) |
+| Boundaries hit from compiled code | `--compiler.InstrumentBoundaries` (`bazel-bin/scheme` runs Graal compiled for HotSpot for it: libgraal fails the instrumented compilations, docs/upstream.md) |
 | Host inlining of the bytecode interpreter | `-Djdk.graal.Log=HostInliningPhase,~CanonicalizerPhase,~GraphBuilderPhase -Djdk.graal.LogFile=FILE`, with `engine.Compilation=false` |
 | Interpreter instruction mix | `engine.BytecodeHistogram=true` (25.1; the place to look before BE or quickening) |
 | Hot guest procedures | `--cpusampler --cpusampler.Delay=<ms> --cpusampler.ShowTiers=true` (needs the tools on the module path, D17) |

@@ -2797,6 +2797,81 @@ Each entry: the decision, why, and what was rejected.
     and the collection policy from `-XX:+VerboseGC`, a maximum that a
     program exceeds, also after a relaunch, a program's arguments in the
     VM's forms and as `--vm.` ones, the errors).
+- **Options (M10-04).** Every option either takes effect or stops the
+  launcher with an error that says why: the maintainer's rule, no option is
+  ignored. Each class follows GraalVM's launcher conventions (Truffle's
+  [Options.md, "Default Language Launcher Options"](https://github.com/oracle/graal/blob/master/truffle/docs/Options.md#default-language-launcher-options);
+  [Polyglot Programming](https://www.graalvm.org/latest/reference-manual/polyglot-programming/):
+  *"The format is: --<languageID>.<property>=<value>"*), and the framework
+  (`launcher-common` 25.5's `Launcher.parsePolyglotOption`) does the
+  checking: an option it doesn't know is *"Unrecognized argument"*, status 2
+  (`abortUnrecognizedArgument`), a bad value or an experimental option without
+  `--experimental-options` status 1 (`abort`). The launcher's own errors about
+  those options take the same statuses (they were 64 for `--vm.` ones, #203);
+  only its own options (`-I`, `--stack-size`, `--end-status`) keep EX_USAGE.
+  docs/usage.md, "Options", has the table, per launcher; what #205, #211 and
+  the audit found ignored, and what the launcher does now:
+  - *A VM-wide engine option* (`--engine.TraceTransferToInterpreter`): on
+    HotSpot the process's first engine fixes it (`HotSpotTruffleRuntime.StaticOptions`;
+    a later engine's value gets *"it was previously initialized with
+    'false'. The option has therefore no effect"*). That first engine is the
+    framework's own, which it creates without the command line's options to
+    look their descriptors up (`LanguageLauncherBase.getTempEngine`,
+    `useSystemProperties(false)`), so the option never took effect. The
+    runtime also reads the system property as that engine is created, so
+    `SchemeMain.preprocessArguments`, which runs before it, sets
+    `polyglot.engine.TraceTransferToInterpreter=true` (what the warning
+    recommends), and clears it once the framework's engine exists, so that
+    the warm-up's engine, which allows no experimental options, still
+    starts. `engine.Profiling` is the process's too, the last engine's: the
+    warm-up's would set it back, so the launcher doesn't warm up with it.
+    `engine.TraceDeoptimizeFrame` (#213) is the engine's own (`EngineData`):
+    it prints when something reads a compiled frame with
+    `FrameInstance#getFrame(READ_WRITE|MATERIALIZE)`
+    (`OptimizedFrameInstance.getFrameFrom`), which the runtime never does (it
+    walks no Truffle frames), so it has nothing to print.
+  - *The compiler's instrumentation* (`--compiler.InstrumentBoundaries`,
+    `--compiler.InstrumentBranches`): with libgraal, GraalVM 25.5's compiler
+    fails every compilation it instruments, silently (failures aren't printed
+    by default), so the profile printed at exit was empty; the native
+    image's compiler stops the process (*"Fatal error: guarantee failed"*).
+    Graal compiled for HotSpot (`-XX:-UseJVMCINativeLibrary`) instruments
+    them, so `bazel-bin/scheme` runs its JVM with that when one is on
+    (`tests/harness/harness.py`, `launcher_vm_args`); with libgraal, and in
+    the native launcher, the launcher rejects them (docs/upstream.md).
+  - *Options the launcher sets*: `scheme.StackSize` (the evaluation thread's,
+    "The evaluation thread") replaced the user's; it is an error that names
+    `--stack-size`. `scheme.LibraryPath` as a system property was replaced by
+    the `-I` directories; it now comes before them, as the option does.
+  - *System properties* (`polyglot.<name>`, `--vm.D...`): Truffle reads
+    them as the context is built, and throws `IllegalArgumentException` for
+    one it rejects, which the framework printed as a stack trace (status
+    255); the launcher reports it as an error, status 1.
+  - *The native launcher's VM options*: the isolate's creation applies
+    `-Xmx`, `-Xms`, `-Xmn`, `-Xss`, `-D` and `-XX:` options, but takes any
+    other and ignores it (`-ea`, `-Xint`, `-verbose:gc`, `-Xlog:gc`, `-Xfoo`:
+    SubstrateVM's `RuntimeOptionParser` has a list of HotSpot options it
+    ignores for compatibility, and `JNI_CreateJavaVM` passes on the rest), and
+    the thin launcher keeps `--vm.p=`, `--vm.-module-path=` and
+    `--vm.Djava.library.path=` for its JVM mode, which this executable
+    doesn't have. `SchemeMain` sees every `--vm.` option and rejects those,
+    status 1. An `-XX:` option the image doesn't know, a collector's
+    included, still stops `JNI_CreateJavaVM` with SubstrateVM's *"Could not
+    find option"* (status 255) before any Java code runs: the thin
+    launcher's C part asks the isolate to ignore unknown options only with
+    `--jvm` (`vmInitArgs.ignoreUnrecognized`), and has no other hook, so a
+    clearer message would need a change to `launcher.cc`, which this project
+    takes unmodified. The message names the option, and docs/usage.md says
+    the collector is chosen at build time.
+  - *The tools*: the native launcher is built without them; their options
+    were *"Unrecognized argument"*, and now say the JVM launcher has them
+    (`abortUnrecognizedArgument`, the framework's hook).
+  - *Help topics*: the framework prints the general help for a
+    `--help:<topic>` it has none for; the launcher makes that the error
+    *"Unrecognized help topic"*, status 2.
+  - Checked by `//tests:launcher_vm`, `LauncherTest.processOptionsTakeEffectOrFailClearly`
+    and `//tests:launcher_vm_native` (here and on the executors): an option of
+    each class, its effect or its error and status.
 - The Chrome inspector, DAP and profiler tools are optional modules
   (`//bazel:tools_modules`), which `bazel-bin/scheme` puts on the module
   path, and CI runs a smoke test of each against a Scheme program

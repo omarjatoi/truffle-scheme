@@ -50,6 +50,14 @@ _GC_CHOICE = re.compile(r'^-XX:\+Use\w+GC$')
 # 16 processors or more: it starts 3 with 4 to 7, 4 with 8 to 15, 12 with 16).
 LAUNCHER_COMPILER_VM_ARGS = ['-XX:CICompilerCount=4']
 _COMPILER_CHOICE = re.compile(r'^-XX:(CICompilerCount=|[+-]CICompilerCountPerCPU$)')
+# The compiler's instrumentation (`--compiler.InstrumentBoundaries`, `--compiler.InstrumentBranches`):
+# GraalVM 25.5's libgraal fails every compilation it instruments (docs/upstream.md), so with one of
+# them on (or their deprecated `--engine.` names), the JVM compiles with Graal compiled for HotSpot
+# (design.md D17, "Options"), unless the JVM options choose.
+LAUNCHER_INSTRUMENT_VM_ARGS = ['-XX:-UseJVMCINativeLibrary']
+_INSTRUMENT_OPTION = re.compile(r'^--(compiler|engine)\.Instrument(Boundaries|Branches)(=true)?$')
+_INSTRUMENT_PROPERTY = re.compile(r'^-Dpolyglot\.(compiler|engine)\.Instrument(Boundaries|Branches)=true$')
+_LIBGRAAL_CHOICE = re.compile(r'^-XX:[+-]UseJVMCINativeLibrary$')
 # The AOT cache ("The AOT cache", bazel/java_module.bzl: scheme_runtime): its run-time options, and
 # the logging they turn off, so that a cache the JVM refuses after all costs the start-up it saves
 # and prints nothing. Not with options that choose a cache, an archive or class sharing themselves,
@@ -59,6 +67,23 @@ _AOT_COLLECTORS = ('-XX:+UseSerialGC', '-XX:+UseParallelGC', '-XX:+UseG1GC')
 _AOT_QUIET_VM_ARGS = ['-Xlog:aot=off', '-Xlog:cds=off']
 _AOT_CHOICE = re.compile(r'^(-Xshare:|-XX:(SharedArchiveFile|AOTCache|AOTCacheOutput|AOTMode|AOTConfiguration|'
                          r'ArchiveClassesAtExit|[+-]AutoCreateSharedArchive)\b)')
+
+
+def _launcher_options(args):
+    """The launcher's options among its arguments: those before `--` or the program file, as
+    SchemeMain.preprocessArguments takes them (an `-I` directory isn't one)."""
+    options = []
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == '-I':
+            i += 2
+            continue
+        if arg == '--' or not arg.startswith('-') or len(arg) == 1:
+            break
+        options.append(arg)
+        i += 1
+    return options
 
 
 def split_vm_options(args):
@@ -101,13 +126,17 @@ def launcher_gc_vm_args(jvm_args, env=os.environ):
     return [] if any(_GC_CHOICE.match(a) for a in _given_vm_args(jvm_args, env)) else list(LAUNCHER_GC_VM_ARGS)
 
 
-def launcher_vm_args(jvm_args, env=os.environ, cpus=None):
+def launcher_vm_args(jvm_args, env=os.environ, cpus=None, options=()):
     """The launcher's default JVM options that jvm_args and the environment's leave to it: the
-    collector and the compiler threads."""
+    collector, the compiler threads, and with the compiler's instrumentation among the launcher's
+    options (or the JVM's), Graal compiled for HotSpot."""
     given = _given_vm_args(jvm_args, env)
     args = launcher_gc_vm_args(jvm_args, env)
     if (cpus or os.cpu_count() or 1) >= 16 and not any(_COMPILER_CHOICE.match(a) for a in given):
         args += LAUNCHER_COMPILER_VM_ARGS
+    if ((any(_INSTRUMENT_OPTION.match(o) for o in options) or any(_INSTRUMENT_PROPERTY.match(a) for a in given))
+            and not any(_LIBGRAAL_CHOICE.match(a) for a in given)):
+        args += LAUNCHER_INSTRUMENT_VM_ARGS
     return args
 
 
@@ -216,7 +245,7 @@ class Runtime:
         options are JVM options (split_vm_options), after jvm_args."""
         vm_options, args = split_vm_options(args)
         jvm_args = list(jvm_args) + vm_options
-        defaults = launcher_vm_args(jvm_args, env)
+        defaults = launcher_vm_args(jvm_args, env, options=_launcher_options(args))
         given = _given_vm_args(jvm_args, env)
         module_path = None
         if (not any(_AOT_CHOICE.match(a) for a in given)

@@ -8,7 +8,7 @@ status** line: what oracle/graal's issues, pull requests and `master` say
 about it, on the date given. The newest release is still 25.5.5.0.3;
 `master` is 25.6.0-dev.
 
-All six are in Truffle 25.5.5.0.3 (Maven Central), on GraalVM CE 25.5.5.0.3
+All seven are in Truffle 25.5.5.0.3 (Maven Central), on GraalVM CE 25.5.5.0.3
 (JDK 25.0.5.0.3, `nix develop`).
 
 ## The reproducers are inverted tests
@@ -39,6 +39,7 @@ instrumentation and one trivial operation (the DSL warns if a root has none).
 | [ThreadDeath in generated roots](#threaddeath-in-generated-roots) | none (a compiler warning, not behavior) | `BYTECODE_ROOT_JAVACOPTS` (`bazel/java.bzl`) |
 | [Interrupting a Bytecode DSL root as it returns](#interrupting-a-bytecode-dsl-root-as-it-returns) | `UpstreamInterruptTest` | `InterruptTest`'s static initializer (`tests/scheme/test/`) |
 | [Context pre-initialization with synchronous compilation](#context-pre-initialization-with-synchronous-compilation) | `UpstreamPreinitializationDeadlockTest` | `ContextPreinitializationTest`'s child JVMs (`tests/scheme/test/`) |
+| [Instrumented compilations fail in libgraal](#instrumented-compilations-fail-in-libgraal) | none yet (a launcher command, below) | `bazel-bin/scheme` runs Graal compiled for HotSpot for it (`launcher_vm_args`, `tests/harness/harness.py`); `SchemeMain` rejects it with libgraal and in the native launcher |
 
 ## Nested root source sections
 
@@ -722,3 +723,61 @@ runtime's initial compilation (or compile it in the calling thread) during pre-i
 have `createPolyglotThreadScope` find the polyglot implementation without going through
 `Engine.getImpl`.
 ````
+
+## Instrumented compilations fail in libgraal
+
+**Found in** M10-04 (#205 saw `--compiler.InstrumentBoundaries` print nothing). **Test:** none
+yet: the reproducer below uses the launcher, and an inverted test needs `UpstreamRoot` to call a
+`@TruffleBoundary` method (a follow-up). The bug is in the Graal compiler as built into libgraal and
+into a native image, not in Truffle's API.
+
+**Upstream status** (checked 2026-11-17): no issue or pull request found for
+`InstrumentBoundaries` with this exception.
+
+With `compiler.InstrumentBoundaries` or `compiler.InstrumentBranches` (or their deprecated
+`engine.` names) on, every Truffle compilation that instruments a boundary or a branch fails in
+libgraal, GraalVM CE 25.5.5.0.3's default compiler on HotSpot, while lowering a `LoadIndexed`
+from the instrumentation's counter table, a `SnippetObjectConstant` that libgraal's constant
+reflection can't read:
+
+```
+java.lang.ClassCastException: jdk.graal.compiler.hotspot.SnippetObjectConstant cannot be cast to jdk.vm.ci.hotspot.HotSpotObjectConstantImpl
+	at jdk.vm.ci.hotspot.HotSpotConstantReflectionProvider.readArrayLength(HotSpotConstantReflectionProvider.java:81)
+	at jdk.graal.compiler.nodes.ConstantNode.findLength(ConstantNode.java:546)
+	at jdk.graal.compiler.nodes.util.GraphUtil.arrayLength(GraphUtil.java:872)
+	at jdk.graal.compiler.nodes.java.ArrayLengthNode.readArrayLength(ArrayLengthNode.java:206)
+	at jdk.graal.compiler.replacements.DefaultJavaLoweringProvider.readOrCreateArrayLength(DefaultJavaLoweringProvider.java:1553)
+	at jdk.graal.compiler.replacements.DefaultJavaLoweringProvider.getBoundsCheck(DefaultJavaLoweringProvider.java:1544)
+	at jdk.graal.compiler.replacements.DefaultJavaLoweringProvider.lowerLoadIndexedNode(DefaultJavaLoweringProvider.java:576)
+	...
+	at jdk.graal.compiler.truffle.TruffleCompilerImpl.compilePEGraph(TruffleCompilerImpl.java:659)
+	at jdk.graal.compiler.libgraal.truffle.LibGraalTruffleEntryPoints.doCompile(LibGraalTruffleEntryPoints.java:207)
+```
+
+Compilation failures aren't printed by default (`engine.CompilationFailureAction=Silent`), so the
+program runs in the interpreter and the *"Execution profile"* printed at exit is empty: the option
+looks ignored. Reproduce in any embedding on libgraal (the launcher rejects the option there now),
+with a loop that calls a boundary (`number->string`):
+
+```java
+try (Context context = Context.newBuilder("scheme").allowExperimentalOptions(true)
+                .option("compiler.InstrumentBoundaries", "true").option("engine.BackgroundCompilation", "false")
+                .option("engine.CompilationFailureAction", "Print").build()) {
+    context.eval("scheme", """
+                    (import (scheme base))
+                    (define (h i acc) (if (= i 0) acc (h (- i 1) (+ acc (string-length (number->string i))))))
+                    (h 1000000 0)
+                    """);
+}
+```
+
+With
+`-XX:-UseJVMCINativeLibrary` (Graal compiled for HotSpot) the same compilations succeed and the
+profile lists the boundaries (`NumberPrimitives$NumberToString.invoke`, `SString.of`). The native
+launcher's runtime compiler (SubstrateVM) stops the process instead: *"Fatal error: guarantee
+failed"*, status 134.
+
+- **Expected:** the instrumented compilations succeed and the profile is printed at exit, as with
+  Graal compiled for HotSpot.
+- **Actual:** every instrumented compilation fails with the `ClassCastException` above (libgraal),
+  or the process dies (native image).

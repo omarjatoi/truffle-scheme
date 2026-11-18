@@ -550,6 +550,65 @@ public class LauncherTest {
     }
 
     /**
+     * Every option takes effect or fails with a clear error (plan.md M10-04; docs/usage.md,
+     * "Options"): one of each class the launcher itself has to handle.
+     */
+    @Test
+    public void processOptionsTakeEffectOrFailClearly() throws IOException, InterruptedException {
+        // A VM-wide engine option: the framework's own engine, the process's first, used to fix it
+        // off ("it was previously initialized with 'false'"). A loop compiled with OSR leaves its
+        // compiled code with an explicit transfer to the interpreter.
+        Path loop = file("osr.scm", """
+                        (import (scheme base) (scheme write))
+                        (define (h i acc) (if (= i 0) acc (h (- i 1) (+ acc i))))
+                        (display (h 1000000 0))
+                        """);
+        Result traced = launch("", "--experimental-options", "--engine.TraceTransferToInterpreter", "--engine.BackgroundCompilation=false", loop.toString());
+        assertEquals(traced.err(), 0, traced.status());
+        assertEquals("500000500000", traced.out());
+        assertTrue(traced.err(), traced.err().contains("transferToInterpreter at") && !traced.err().contains("previously initialized"));
+
+        // A Scheme option the launcher sets itself: an error naming the launcher's option.
+        Result stackSize = launch("", "--scheme.StackSize=1m", loop.toString());
+        assertEquals(stackSize.err(), SchemeMain.EXIT_INVALID_OPTION, stackSize.status());
+        assertTrue(stackSize.err(), stackSize.err().startsWith("ERROR: --scheme.StackSize") && stackSize.err().contains("--stack-size="));
+        // As a system property, the library path is the launcher's too, before -I's.
+        file("libs/greet/hello.sld", GREET_LIBRARY);
+        Path greet = file("greet.scm", "(import (scheme base) (scheme write) (greet hello)) (display (greet \"property\"))\n");
+        Result libraryPath = launchWith(List.of("-Dpolyglot.scheme.LibraryPath=" + folder.getRoot().toPath().resolve("libs")), "", greet.toString());
+        assertEquals(libraryPath.err(), 0, libraryPath.status());
+        assertEquals("hello, property", libraryPath.out());
+        // An option Truffle rejects as a system property, which the framework doesn't check: an
+        // error, not a stack trace.
+        Result property = launchWith(List.of("-Dpolyglot.scheme.NoSuchOption=1"), "", loop.toString());
+        assertEquals(property.err(), SchemeMain.EXIT_INVALID_OPTION, property.status());
+        assertTrue(property.err(), property.err().startsWith("ERROR: ") && property.err().contains("scheme.NoSuchOption") && !property.err().contains("\tat "));
+
+        // The compiler's instrumentation, which libgraal (this JVM's compiler) fails with: an error
+        // naming the JVM option that makes it work.
+        Result instrument = launch("", "--experimental-options", "--compiler.InstrumentBoundaries", loop.toString());
+        assertEquals(instrument.err(), SchemeMain.EXIT_INVALID_OPTION, instrument.status());
+        assertTrue(instrument.err(), instrument.err().contains("-XX:-UseJVMCINativeLibrary"));
+
+        // A help topic there is none of, which the framework answers with the general help.
+        Result help = launch("", "--help:nosuch");
+        assertEquals(help.err(), 2, help.status());
+        assertTrue(help.err(), help.err().contains("Unrecognized help topic: '--help:nosuch'"));
+        Result schemeHelp = launch("", "--help:scheme");
+        assertEquals(schemeHelp.err(), 0, schemeHelp.status());
+        assertTrue(schemeHelp.out(), schemeHelp.out().contains("--scheme.BufferOutput"));
+
+        // After the program file, every argument is the program's.
+        Path args = file("options-args.scm", """
+                        (import (scheme base) (scheme write) (scheme process-context))
+                        (write (cdr (command-line)))
+                        """);
+        Result programs = launch("", args.toString(), "--engine.TraceCompilation", "--help:nosuch", "--scheme.StackSize=1m", "--vm.Xmx1g");
+        assertEquals(programs.err(), 0, programs.status());
+        assertEquals("(\"--engine.TraceCompilation\" \"--help:nosuch\" \"--scheme.StackSize=1m\" \"--vm.Xmx1g\")", programs.out());
+    }
+
+    /**
      * A REPL session that recurses {@code depth} calls deep, then writes the spills it made (M8-01)
      * and how many times the runtime measured the thread's stack.
      */

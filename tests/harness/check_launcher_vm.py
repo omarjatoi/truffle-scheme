@@ -2,7 +2,8 @@
 compiler threads where the JVM would start more, and the AOT cache where it is valid, unless its
 JVM options (on the command line, its `--vm.` options, in JDK_JAVA_OPTIONS or in
 JAVA_TOOL_OPTIONS) set those themselves. Its `--vm.<option>`s are the JVM's `-<option>`s ("VM
-options"), and the launcher started with java rejects one the JVM wasn't started with."""
+options"), and the launcher started with java rejects one the JVM wasn't started with. Every class of
+option takes effect or fails clearly (plan.md M10-04, docs/usage.md "Options")."""
 
 import argparse
 import os
@@ -10,7 +11,8 @@ import re
 import subprocess
 import tempfile
 
-from harness import LAUNCHER_COMPILER_VM_ARGS, LAUNCHER_MAIN, Runtime, check, launcher_vm_args, log, split_vm_options
+from harness import (LAUNCHER_COMPILER_VM_ARGS, LAUNCHER_INSTRUMENT_VM_ARGS, LAUNCHER_MAIN, Runtime, check, launcher_vm_args, log,
+                     split_vm_options)
 
 _FLAG = re.compile(r'^\s*\S+\s+(\w+)\s+:?=\s+(\S*)\s+\{[^}]*\}\s+\{([^}]*)\}')
 
@@ -111,9 +113,11 @@ def vm_options(o):
     out, _ = run(runtime, ['--vm.XshowSettings:properties', '--vm.Dscheme.test.vm=given', f'--vm.cp={tmp}', '--version'])
     check(re.search(r'^\s*scheme\.test\.vm = given$', out, re.M), f'--vm.Dscheme.test.vm=given should set the property:\n{out}')
     check(re.search(rf'^\s*java\.class\.path = {re.escape(tmp)}$', out, re.M), f'--vm.cp should set the class path:\n{out}')
-    # Truffle reads polyglot.* properties as options: this one reaches the engine, which rejects it.
-    out, _ = run(runtime, ['--vm.Dpolyglot.scheme.NoSuchOption=1', '--version'], status=None)
-    check('scheme.NoSuchOption' in out, f'--vm.Dpolyglot.scheme.NoSuchOption=1 should reach the engine:\n{out}')
+    # Truffle reads polyglot.* properties as options: this one reaches the engine, which rejects it,
+    # and the launcher says so (plan.md M10-04: it was a stack trace, status 255).
+    out, _ = run(runtime, ['--vm.Dpolyglot.scheme.NoSuchOption=1', '--version'], status=1)
+    check('scheme.NoSuchOption' in out and out.startswith('ERROR: ') and '\tat ' not in out,
+          f'--vm.Dpolyglot.scheme.NoSuchOption=1 should reach the engine, and be a clear error:\n{out}')
     # A collector the AOT cache maps none with leaves it out, as among the JVM options.
     _, command = run(Runtime.from_manifest(o.aot_runtime), ['--vm.XX:+UseZGC', '--version'])
     check('-XX:+UseZGC' in command and not any('AOTCache' in a for a in command),
@@ -138,11 +142,100 @@ def vm_options(o):
 
     # The launcher started with java, not with its --vm. options: an error, not ignored.
     env = {k: v for k, v in os.environ.items() if k not in ('JDK_JAVA_OPTIONS', 'JAVA_TOOL_OPTIONS')}
-    out = execute(runtime.command([], LAUNCHER_MAIN) + ['--vm.Xmx2m', '--version'], env, status=64)
+    out = execute(runtime.command([], LAUNCHER_MAIN) + ['--vm.Xmx2m', '--version'], env, status=1)
     check('-Xmx2m' in out and 'bazel-bin/scheme' in out, f'an unapplied --vm.Xmx2m should be an error naming -Xmx2m:\n{out}')
-    out, _ = run(runtime, ['--vm.cp', tmp, '--version'], status=64)
+    out, _ = run(runtime, ['--vm.cp', tmp, '--version'], status=1)
     check('--vm.cp=<classpath>' in out, f'a bare --vm.cp should be an error:\n{out}')
     log('--vm.: the program\'s arguments left alone; one the JVM wasn\'t started with is an error')
+
+
+# A loop that Truffle compiles with OSR as it runs (a self tail call), whose compiled code transfers
+# to the interpreter when the loop ends; and a boundary (number->string) in it.
+OSR_PROGRAM = """(import (scheme base) (scheme write))
+(define (h i acc) (if (= i 0) acc (h (- i 1) (+ acc (string-length (number->string i))))))
+(display (h 1000000 0))
+"""
+
+
+def option_classes(o):
+    """plan.md M10-04, docs/usage.md "Options": every class of option through bazel-bin/scheme takes
+    effect or fails clearly, with a clear message and status."""
+    runtime = Runtime.from_manifest(o.runtime)
+    tmp = tempfile.mkdtemp(dir=os.environ.get('TEST_TMPDIR'))
+    program = os.path.join(tmp, 'osr.scm')
+    with open(program, 'w', encoding='utf-8') as f:
+        f.write(OSR_PROGRAM)
+    sync = ['--experimental-options', '--engine.BackgroundCompilation=false']
+
+    # --engine.: one that takes effect, a VM-wide one (the framework's own engine, the process's
+    # first, used to fix it off: "previously initialized"), one there is none of.
+    out, _ = run(runtime, sync + ['--engine.TraceCompilation', program])
+    check('opt done' in out and '5888896' in out, f'--engine.TraceCompilation should trace the compilations:\n{out}')
+    out, _ = run(runtime, sync + ['--engine.TraceTransferToInterpreter', program])
+    check('transferToInterpreter at' in out and 'previously initialized' not in out,
+          f'--engine.TraceTransferToInterpreter should trace the OSR loop\'s exit:\n{out}')
+    out, _ = run(runtime, ['--engine.NoSuchOption', program], status=2)
+    check("Unrecognized argument: '--engine.NoSuchOption'" in out, f'--engine.NoSuchOption should be an error:\n{out}')
+    log('--engine.: TraceCompilation, TraceTransferToInterpreter (VM-wide), an unknown one')
+
+    # --compiler.: the instrumentation, which libgraal fails every compilation with, so the launcher
+    # runs the JVM with Graal compiled for HotSpot, unless its JVM options choose.
+    check(LAUNCHER_INSTRUMENT_VM_ARGS[0] in launcher_vm_args([], {}, options=['--compiler.InstrumentBoundaries']),
+          'the instrumentation should get Graal compiled for HotSpot')
+    check(LAUNCHER_INSTRUMENT_VM_ARGS[0] in launcher_vm_args([], {}, options=['--engine.InstrumentBranches=true']),
+          'the instrumentation\'s deprecated --engine. name should get Graal compiled for HotSpot')
+    check(LAUNCHER_INSTRUMENT_VM_ARGS[0] in launcher_vm_args(['-Dpolyglot.compiler.InstrumentBranches=true'], {}),
+          'the instrumentation as a system property should get Graal compiled for HotSpot')
+    check(LAUNCHER_INSTRUMENT_VM_ARGS[0] not in launcher_vm_args(['-XX:+UseJVMCINativeLibrary'], {}, options=['--compiler.InstrumentBranches']),
+          'a choice among the JVM options should replace ours')
+    check(LAUNCHER_INSTRUMENT_VM_ARGS[0] not in launcher_vm_args([], {}, options=['--compiler.InstrumentBoundaries=false']),
+          'no instrumentation, no change')
+    out, command = run(runtime, ['--experimental-options', '--compiler.InstrumentBoundaries', program])
+    check('Execution profile' in out and 'NumberToString' in out, f'--compiler.InstrumentBoundaries should print the boundaries\' profile:\n{out}')
+    check(LAUNCHER_INSTRUMENT_VM_ARGS[0] in command, f'the instrumentation should run without libgraal: {command}')
+    env = {k: v for k, v in os.environ.items() if k not in ('JDK_JAVA_OPTIONS', 'JAVA_TOOL_OPTIONS')}
+    for option in ('--compiler.InstrumentBranches', '--engine.InstrumentBoundaries'):
+        out = execute(runtime.command([], LAUNCHER_MAIN) + ['--experimental-options', option, program], env, status=1)
+        check('-XX:-UseJVMCINativeLibrary' in out, f'with libgraal, {option} should be an error naming the JVM option:\n{out}')
+    log('--compiler.: the instrumentation, without libgraal; with it, an error')
+
+    # --scheme.: an invalid value, one there is none of, one the launcher sets itself.
+    out, _ = run(runtime, ['--scheme.BufferOutput=maybe', program], status=1)
+    check('--scheme.BufferOutput=maybe' in out, f'an invalid --scheme. value should be an error:\n{out}')
+    out, _ = run(runtime, ['--scheme.NoSuchOption=1', program], status=2)
+    check("Unrecognized argument: '--scheme.NoSuchOption=1'" in out, f'--scheme.NoSuchOption should be an error:\n{out}')
+    out, _ = run(runtime, ['--vm.Dpolyglot.scheme.StackSize=1m', program], status=1)
+    check('--stack-size=' in out, f'scheme.StackSize, which the launcher sets, should be an error naming --stack-size:\n{out}')
+    log('--scheme.: invalid, unknown, the launcher\'s own')
+
+    # The tools (bazel-bin/scheme's runtime has them; //tests:tools drives each), logging, the
+    # framework's other options.
+    tools = Runtime.from_manifest(o.aot_runtime)
+    out, _ = run(tools, ['--cpusampler', program])
+    check('Sampling Histogram' in out, f'--cpusampler should print its histogram:\n{out}')
+    out, _ = run(tools, ['--memtracer', program], status=1)
+    check("'--memtracer' is experimental" in out, f'--memtracer without --experimental-options should be an error:\n{out}')
+    log_file = os.path.join(tmp, 'engine.log')
+    out, _ = run(runtime, ['--log.level=FINE', '--log.file=' + log_file, program])
+    with open(log_file, encoding='utf-8') as f:
+        logged = f.read()
+    check('FINE' in logged and 'FINE' not in out, f'--log.file should get the log, not stderr:\n{logged}\n{out}')
+    out, _ = run(runtime, ['--polyglot', program])
+    check(out == '5888896', f'--polyglot (the default) should run the program: {out}')
+    out, _ = run(runtime, ['--native', program], status=1)
+    check('--native is not supported' in out, f'--native should be an error on the JVM:\n{out}')
+    log('--cpusampler, --memtracer, --log.file and --log.level, --polyglot, --native')
+
+    # Help, version, unknown options.
+    out, _ = run(runtime, ['--help:nosuch'], status=2)
+    check("Unrecognized help topic: '--help:nosuch'" in out, f'--help:nosuch should be an error:\n{out}')
+    out, _ = run(tools, ['--help:tools'])
+    check('--cpusampler' in out, f'--help:tools should list the tools\' options:\n{out}')
+    out, _ = run(runtime, ['--version'])
+    check(out.startswith('R7RS Scheme ('), f'--version: {out}')
+    out, _ = run(runtime, ['--no-such-option'], status=2)
+    check("Unrecognized argument: '--no-such-option'" in out, f'an unknown option should be an error:\n{out}')
+    log('--help:<topic>, --version, an unknown option')
 
 
 if __name__ == '__main__':
@@ -152,3 +245,4 @@ if __name__ == '__main__':
     options = parser.parse_args()
     launcher_vm(options)
     vm_options(options)
+    option_classes(options)
