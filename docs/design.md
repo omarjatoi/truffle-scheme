@@ -1243,13 +1243,39 @@ Each entry: the decision, why, and what was rejected.
       to a zero power is 1 (also a NaN or a negative base: `(expt -1. 0.)`
       is 1.0, not 1.0+0.0i), magnitude is abs, and max and min take 0.0
       above -0.0 (IEEE 754-2019's maximum and minimum).
+    - **`expt` and `magnitude` at infinities** (#243's follow-ups). A real
+      base to a real power is IEEE 754's pow (R7RS §6.2.3 recommends IEEE
+      754-2008's transcendental functions, "particularly with respect to
+      infinities and NaNs") whenever the result is real: a non-negative
+      base, or an integer-valued flonum power, an infinite one included
+      (every flonum beyond 2^53 is an even integer, so pow's |x|^±∞ is the
+      limit; pow(±1, ±∞) is 1 as in IEEE 754-2008, where Java's is NaN).
+      `(expt -2. 2.)` is 4.0, not 4.0-9.8e-16i from e^(2 log -2). Only a
+      negative base to a finite non-integer power is complex: §6.2.6's
+      e^(z2 log z1), with the real z2 multiplying each part of log z1 (C99
+      Annex G.5.1's real times complex), so `(expt -inf.0 0.5)` is
+      +inf.0+inf.0i, the limit of `(expt -1e308 0.5)`, not
+      +nan.0+nan.0i from 0·∞. `(* 0 +inf.0)` stays NaN and `(* 0 1.5)`
+      0.0: §6.2.2 lets an exact 0 times an inexact number be exact 0
+      ("`(* 0 +inf.0)` may return 0, or +nan.0"), and ours is the inexact
+      product, the rule of every other operation, IEEE 754's, and the
+      typed `*`'s fast path. An exact base to an exact power stays exact.
+      The magnitude of a complex number is `StrictMath.hypot`, the same as
+      `log`'s real part takes the log of: no overflow of the squares
+      (`(magnitude 1e300+1e300i)` was +inf.0), +inf.0 for an infinite part
+      even with a NaN one (IEEE 754's hypot), and closer to the nearest
+      flonum than `sqrt(x²+y²)` (not correctly rounded in 13% and 17% of a
+      sweep of 200,000 arguments). An exact one is exact if it can be,
+      `(magnitude 3+4i)` 5, and otherwise the root of its exact sum of
+      squares, unless that is beyond the flonums' range.
     - Tests: `NumbersTest` (known values, a sweep against `StrictMath`, the
       sweep interpreted and compiled, what the sign of each special value
-      gives, NaN and -0.0 against R7RS and IEEE 754, and polar literals
-      against `make-polar`), `tests/diff/numbers-transcendental.scm`
-      (values that both fdlibm and chibi-scheme round to the nearest) and
+      gives, NaN and -0.0 against R7RS and IEEE 754, `expt` of negative
+      bases and `magnitude` at infinities, and polar literals against
+      `make-polar`), `tests/diff/numbers-transcendental.scm` (values that
+      both fdlibm and chibi-scheme round to the nearest),
       `tests/diff/numbers-special-values.scm` (NaN and -0.0 where chibi-scheme
-      agrees with R7RS).
+      agrees with R7RS) and `tests/diff/numbers-expt-magnitude.scm`.
     - *Rejected:* `Math` (above); `StrictMath` for `exp` and `log` only,
       which wouldn't have fixed the case found, since fdlibm's `(exp 1)` is
       the one an ulp off, and leaves the rest platform-dependent; a correctly

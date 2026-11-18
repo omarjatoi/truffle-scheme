@@ -507,8 +507,17 @@ final class Arithmetic {
         if (!(z instanceof SComplex c)) {
             return sign(z) < 0 ? sub(0L, z) : z;
         }
-        Object squares = add(mul(c.real, c.real), mul(c.imag, c.imag));
-        return sqrt(squares);
+        if (isExact(c)) {
+            // Exact when the sum of the squares is a perfect square, (magnitude 3+4i) => 5, and
+            // otherwise the sum's flonum's root, unless the sum is beyond the flonums' range.
+            Object root = sqrt(add(mul(c.real, c.real), mul(c.imag, c.imag)));
+            if (!(root instanceof Double r) || Double.isFinite(r) && r != 0) {
+                return root;
+            }
+        }
+        // IEEE 754's hypot: no overflow or underflow of the squares, and +inf.0 for an infinite
+        // part, even with a NaN one; log's real part is the log of the same (#243's follow-up).
+        return magnitudeDouble(c);
     }
 
     @TruffleBoundary
@@ -640,14 +649,32 @@ final class Arithmetic {
             double p = flo(power);
             // IEEE 754's pow: x^0 is 1 for every x, also a NaN, an infinity or a negative x, whose
             // e^(0 log x) would be complex or NaN; a NaN power gives NaN (R7RS §6.2.4). A positive
-            // or NaN base's power is real; a negative base's goes through log below.
-            if (p == 0) {
+            // or NaN base's power is real, and so is a negative base's to an integer-valued flonum
+            // power, an infinity included: every flonum beyond 2^53 is an even integer, so pow's
+            // |x|^±inf is the limit. Only a negative base to a finite non-integer power is complex.
+            // IEEE 754-2008 made pow(±1, ±inf) 1, where Java's pow, C89's, is NaN.
+            if (p == 0 || Double.isInfinite(p) && Math.abs(b) == 1) {
                 return 1.0;
-            } else if (Double.isNaN(p) || !(b < 0)) {
+            } else if (Double.isNaN(p) || !(b < 0) || power instanceof Double && Math.rint(p) == p) {
                 return StrictMath.pow(b, p);
             }
+            return negativeToThe(b, p);
         }
         return exp(mul(power, log(base)));
+    }
+
+    /**
+     * {@code b^p} for a negative real b and a finite non-integer real p: R7RS §6.2.6's e^(p log b),
+     * with log b = log|b| + πi. The real p multiplies each part of log b, as C99 Annex G.5.1 has a
+     * real times a complex number, instead of being a complex number with an imaginary part 0 whose
+     * 0·∞ would make an infinite base's power NaN: {@code (expt -inf.0 0.5)} is +inf.0+inf.0i, the
+     * limit of {@code (expt -1e308 0.5)}. For a finite b, the same bits as {@code exp(mul(p, log
+     * b))} were.
+     */
+    private static Object negativeToThe(double b, double p) {
+        double m = StrictMath.exp(p * StrictMath.log(-b));
+        double angle = p * Math.PI;
+        return complexResult(m * StrictMath.cos(angle), m * StrictMath.sin(angle));
     }
 
     /**
