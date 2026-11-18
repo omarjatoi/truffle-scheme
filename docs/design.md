@@ -2600,6 +2600,34 @@ Each entry: the decision, why, and what was rejected.
   Benchmarks, the threshold check (`bench/thresholds.json`, measured on the
   maintainer's Mac) and the native image are local commands, by the
   maintainer's choice.
+  - *CI's agent image.* Every step runs inside the `.#ci` shell, so each job
+    needs Nix and the shell. The hosted agents are fresh containers, and on
+    Buildkite's default image the hook installed Determinate Nix (4 s), then
+    `nix print-dev-env .#ci` downloaded the shell from cache.nixos.org: the
+    nixpkgs input's source (37 MiB, 208 MiB unpacked) and the shell's closure
+    (63 MiB in all). On a good agent that took 7–30 s, but in about half of
+    the jobs of builds 349–390 it ran at about 100 KB/s and took 593–823 s.
+    So the jobs
+    run in an image of ours instead (`.buildkite/image.nix`, flake.nix's
+    `packages.x86_64-linux.ciImage`): Determinate Nix, the release the hook
+    would install (flake input `determinate`), and every store path
+    `nix print-dev-env .#ci` reads, registered in the image's Nix database:
+    the flake's inputs and the shell's environment, which the image builds as
+    the CLI does (the same `nix-shell-env` derivation, so the CLI finds it
+    valid). The hook then installs and downloads nothing; it evaluates the
+    flake, in 1.5 s on a laptop with the network off. Built by Nix with
+    `dockerTools`, not from a Dockerfile, so the image is a function of
+    `flake.lock`. It also has what Buildkite requires of a custom image
+    (bash, git, CA certificates; the agent brings `buildkite-agent`), and
+    nix-ld, through which the Bazel that bazelisk downloads finds its loader
+    and libraries. The hook still works on any image: without Nix, it
+    installs it; on a stale image (`flake.lock` or the shell changed), Nix
+    downloads what changed and the build gets a `ci-image` annotation.
+    **After changing `flake.lock` or the `.#ci` shell, rebuild and push the
+    image**: `.buildkite/push-image.sh` (a Linux builder; on a Mac,
+    Determinate's). It pushes to a public Buildkite package registry, because
+    a hosted queue's image must be public or in the cluster's internal
+    registry, and the image holds only public software.
 - **Measured** when Bazel replaced mx (same commit; Apple M3 Max, 16 cores,
   shared with other builds at load 15–25; GitHub's `ubuntu-26.04` runners,
   CI's until Buildkite replaced GitHub Actions in #113):

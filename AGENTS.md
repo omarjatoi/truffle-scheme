@@ -172,8 +172,13 @@ what runs on every commit, one `bazel` command per step: `checks` (the lint
 tests) and `tests` (every other test, the conformance tests and the docs'
 commands among them). The required check is the build,
 `buildkite/truffle-scheme`; which steps can fail it is set in
-`.buildkite/pipeline.yml`. Its hook loads `nix develop .#ci` (just `bazel`)
-and writes the agent's `~/.bazelrc` (`--config=ci`, the BuildBuddy key).
+`.buildkite/pipeline.yml`. Its jobs run in CI's agent image
+(`.buildkite/image.nix`: Determinate Nix with the `.#ci` shell already in its
+store), and its hook loads `nix develop .#ci` (just `bazel`), installing Nix
+first on any other image, and writes the agent's `~/.bazelrc`
+(`--config=ci`, the BuildBuddy key). A change to `flake.lock` or the `.#ci`
+shell makes the image stale (jobs then download the shell, and the build says
+so): rebuild and push it with `.buildkite/push-image.sh` (design.md D11).
 Actions and tests run on BuildBuddy's executors, like everyone's; the
 `buildbuddy` annotation links the commit's invocations, where each test's
 result is.
@@ -309,8 +314,8 @@ MODULE.bazel               Bazel modules, TRUFFLE_VERSION, Maven artifacts (lock
 BUILD.bazel                the scheme, scheme.launcher modules (jars), the prelude image, bazel-bin/scheme, bazel-bin/scheme-native
 bazel/                     the GraalVM toolchain (graalvm.bzl), module jars and the native library (java_module.bzl),
                            chibi-scheme (chibi.bzl), lint tests (lint/), platforms (platforms/: Linux remote, macOS here)
-flake.nix, flake.lock      dev shell: bazel, Python, gh, chibi-scheme, GraalVM 25.5
-.buildkite/                CI: the pipeline and its pre-command hook
+flake.nix, flake.lock      dev shell: bazel, Python, gh, chibi-scheme, GraalVM 25.5; CI's shell and image
+.buildkite/                CI: the pipeline, its pre-command hook, its agent image (image.nix, push-image.sh)
 src/reader/                reader + datum labels
 src/compiler/              expander + core AST -> Bytecode DSL builder calls
 src/runtime/               Bytecode DSL root + operations, continuations

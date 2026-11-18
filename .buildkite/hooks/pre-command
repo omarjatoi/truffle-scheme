@@ -20,7 +20,10 @@ fi
 # The shell's PATH and the like; the agent's own SHELL and temporary directory stay.
 shell="$SHELL" tmpdir="${TMPDIR:-/tmp}"
 env_profile="$(mktemp -d)/ci"
-eval "$(nix print-dev-env --profile "$env_profile" .#ci)"
+# Assigned first, so that the hook fails if Nix does (`eval "$(...)"` would carry on without it).
+env_script="$(nix print-dev-env --profile "$env_profile" .#ci)"
+eval "$env_script"
+unset env_script
 export SHELL="$shell" TMPDIR="$tmpdir"
 unset TMP TEMP TEMPDIR NIX_BUILD_TOP SOURCE_DATE_EPOCH
 
@@ -29,6 +32,7 @@ if [ -e /etc/ci-image/shell-env ] &&
   buildkite-agent annotate --style warning --context ci-image \
     "CI's agent image is stale: the \`.#ci\` shell changed since it was built, so each job downloads it. Rebuild and push it with \`.buildkite/push-image.sh\` (docs/design.md D11)."
 fi
+unset env_profile
 
 # Only this agent's user reads it; nothing uploads it.
 umask 077
