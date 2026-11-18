@@ -1,5 +1,7 @@
 load("@rules_python//python:defs.bzl", "py_binary")
-load("//bazel:java_module.bzl", "java_module_jar", "module_dir", "native_image", "native_setting", "prelude_image", "scheme_runtime")
+load("@graalvm//:version.bzl", GRAALVM_VERSION = "VERSION")
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//bazel:java_module.bzl", "java_module_jar", "module_dir", "native_library", "native_setting", "prelude_image", "scheme_runtime")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -122,15 +124,74 @@ filegroup(
     visibility = ["//tests:__pkg__"],
 )
 
-# `bazel-bin/scheme-native`: the launcher as a native executable (design.md D17, docs/usage.md),
-# built only when named: a minute and a few GB, with a pre-initialized context (design.md D17,
-# plan.md M8-07). The native-image build gets a large executor. On
-# x86-64 Linux the baseline CPU target keeps the JDK's libsimdsort (and its static libm) out of it.
-# Its collector is native-image's `--gc=`, from --//:native_gc, and --//:native_graalvm=oracle
-# builds it with Oracle GraalVM's native-image, which also has G1 (design.md D17, "The native
-# image's collector"; docs/usage.md, "Choosing a garbage collector").
-native_image(
+# `bazel-bin/scheme-native`: the launcher as a native executable (design.md D17, docs/usage.md), as
+# GraalVM's language standalones ship: GraalVM's thin launcher, which creates the isolate of
+# `bazel-bin/libschemevm.{so,dylib}` beside it with its --vm. options and runs SchemeMain there
+# (design.md D17, "VM options"). Built only when named: a minute and a few GB, with a
+# pre-initialized context (design.md D17, plan.md M8-07). Both are built with the target's C++
+# toolchain, on its execution platform: remotely for Linux, on this Mac for macOS (design.md D11,
+# "Platforms").
+#
+# The launcher is launcher.cc from the pinned GraalVM release, unmodified, with the defines
+# GraalVM's own build gives it (mx_sdk_vm_impl.py, NativeLibraryLauncherProject). LIBJVM_RELPATH
+# (and on macOS LIBJLI_RELPATH) are its JVM mode's, which it falls back to only when the library is
+# missing: there is no JVM, so they name the library too.
+cc_binary(
     name = "scheme-native",
+    srcs = ["@graalvm_launcher_cc//file"],
+    copts = [
+        "-std=c++17",
+        "-O3",
+        "-Werror=undef",
+    ] + select({
+        # launcher.cc uses std::unique_ptr without including <memory>, which LLVM's libc++
+        # (GraalVM's toolchain on Linux) includes for it and GCC's libstdc++ doesn't.
+        "@platforms//os:linux": [
+            "-include",
+            "memory",
+        ],
+        # Its Cocoa event loop's headers are Objective-C.
+        "//conditions:default": ["-ObjC++"],
+    }),
+    data = [":schemevm"],
+    linkopts = [
+        "-ldl",
+        "-pthread",
+    ] + select({
+        "@platforms//os:linux": ["-static-libstdc++"],
+        "//conditions:default": [
+            "-framework",
+            "Foundation",
+        ],
+    }),
+    local_defines = [
+        "CP_SEP=:",
+        "DIR_SEP=/",
+        "GRAALVM_VERSION=" + GRAALVM_VERSION,
+        "LAUNCHER_CLASS=scheme.launcher.SchemeMain",
+        "LAUNCHER_MAIN_MODULE=scheme.launcher",
+    ] + select({
+        "@platforms//os:linux": [
+            "LIBLANG_RELPATH=libschemevm.so",
+            "LIBJVM_RELPATH=libschemevm.so",
+        ],
+        "//conditions:default": [
+            "LIBLANG_RELPATH=libschemevm.dylib",
+            "LIBJVM_RELPATH=libschemevm.dylib",
+            "LIBJLI_RELPATH=libschemevm.dylib",
+        ],
+    }),
+    tags = ["manual"],
+    deps = ["@graalvm//:jni"],
+)
+
+# `bazel-bin/libschemevm.{so,dylib}`: the launcher's module as a shared library. The native-image
+# build gets a large executor. On x86-64 Linux the baseline CPU target keeps the JDK's libsimdsort
+# (and its static libm) out of it. Its collector is native-image's `--gc=`, from --//:native_gc,
+# and --//:native_graalvm=oracle builds it with Oracle GraalVM's native-image, which also has G1
+# (design.md D17, "The native image's collector"; docs/usage.md, "Choosing a garbage collector").
+native_library(
+    name = "schemevm",
     exec_properties = {
         "EstimatedCPU": "8",
         "EstimatedMemory": "12GB",

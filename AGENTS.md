@@ -65,7 +65,10 @@ from Maven Central at exactly the GraalVM version (`TRUFFLE_VERSION` in
 
 Bazel executes remotely by default, on BuildBuddy's Linux executors with
 their shared cache (`--config=remote` in `.bazelrc`): builds still produce
-this machine's binaries, and tests run on the executors. It needs a
+this machine's binaries, and tests run on the executors. C and C++ for a
+macOS target (the native launcher, chibi-scheme) build on this Mac with
+Xcode's toolchain, through the platforms in `bazel/platforms` (design.md
+D11, "Platforms and C and C++ toolchains"). It needs a
 BuildBuddy API key in `~/.bazelrc`:
 `common:buildbuddy --remote_header=x-buildbuddy-api-key=<key>`. Offline,
 `--config=local` runs everything here.
@@ -103,6 +106,7 @@ bazel run //:r7rs -- format               # format Java code (GraalVM's Eclipse 
 bazel test //tests:readme                 # docs/usage.md's and docs/embedding.md's commands as written, and their samples
 bazel build //:scheme-native              # the native launcher, bazel-bin/scheme-native (design.md D17; a minute, ~3 GB)
 bazel test //tests:readme_native //tests:conformance_native   # its docs, and both conformance suites through it
+bazel test --platforms=//bazel/platforms:macos_arm64 //tests:launcher_vm_native   # the same for this Mac, run here
 bazel run //:r7rs -- benchmark ecraven:fib         # one benchmark program, JIT (bench/README.md: options, failures)
 bazel run //:r7rs -- benchmark larceny:* --mode=*  # every program of a set, JIT and interpreter
 bazel run //:r7rs -- bench-check          # benchmark subset vs bench/thresholds.json, fails on a regression

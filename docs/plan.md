@@ -1113,7 +1113,7 @@ calls in compiled code, #205's first follow-up) is already merged. Benchmarks ar
 (bench/README.md: the load rule, `-Xmx2g`, the serial collector); each task
 measures with interleaved A/B runs.
 
-- [ ] **M10-01 · The native launcher as GraalVM's standalones ship it** *(early)*
+- [x] **M10-01 · The native launcher as GraalVM's standalones ship it** *(early)*
   - SubstrateVM parses `-X…`, `-XX:…` and `-D…` from the whole command line
     as it creates the isolate, before `main` runs, so `scheme-native prog.scm
     a -Xmx3g -Dx=y b` gives the program `("prog.scm" "a" "b")` and an unknown
@@ -1126,8 +1126,10 @@ measures with interleaved A/B runs.
     standalones do it, over building with `-H:-ParseRuntimeOptions` and
     dropping run-time heap options: GraalVM's thin C++ launcher
     (`sdk/src/org.graalvm.launcher.native/src/launcher.cc`) as the
-    executable, in front of the image built as a shared library with
-    `-H:-ParseRuntimeOptions`. The thin launcher takes the `--vm.` options
+    executable, in front of the image built as a shared library (as GraalVM
+    builds a language library: without `-H:-ParseRuntimeOptions`, which
+    would make the isolate ignore the options it is created with; design.md
+    D17, #210). The thin launcher takes the `--vm.` options
     from the command line and creates the isolate with them
     (`JNI_CreateJavaVM`); the Java side relaunches with the right ones in
     `GRAALVM_LANGUAGE_LAUNCHER_VMARGS_<n>` when the guess was wrong. It
@@ -1136,7 +1138,6 @@ measures with interleaved A/B runs.
     (`bench.py`'s `_NATIVE_VM_ARGS`, `-Xmx2g -XX:+PrintGC`; the checks of
     `//tests:launcher_vm_native`) keeps working, as `--vm.` options if need
     be.
-  - In progress on branch `M10-01-thin-launcher` (no PR yet).
   - **Done when** every argument after the file reaches the program as given
     (`scheme-native prog.scm a -Xmx3g -XX:+Foo -Dx=y b` gives it all six, a
     check in `//tests:launcher_vm_native`); `--vm.` heap and policy options

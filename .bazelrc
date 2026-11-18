@@ -12,6 +12,16 @@ common --tool_java_runtime_version=graalvm_25
 # against ijars of the full class jars instead.
 build --nojava_header_compilation
 
+# --- C and C++: Bazel's toolchains (design.md D11, "Platforms") ---
+# A Linux target compiles with toolchains_buildbuddy's GCC on the executors (--config=remote) or
+# with rules_cc's autodetected compiler (--config=local on a Linux host); a macOS target with
+# apple_support's Xcode toolchain, on this Mac, with the Xcode bazel/platforms pins. On a Mac,
+# rules_cc's autodetection is off: in `nix develop` it would find Nix's clang.
+common --xcode_version_config=//bazel/platforms:xcodes
+common --macos_minimum_os=11.0
+common --enable_platform_specific_config
+common:macos --repo_env=BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=1
+
 # Python test drivers: no implicit __init__.py files in runfiles (the future default).
 common --incompatible_default_to_explicit_init_py
 
@@ -34,7 +44,7 @@ common:ci --curses=no
 common:ci --show_progress_rate_limit=30
 # Every command targets the executors' platform on CI (Linux, like the agents), so `bazel run`
 # shares `bazel test`'s configuration and analysis.
-common:ci --platforms=@toolchains_buildbuddy//platforms:linux_x86_64
+common:ci --platforms=//bazel/platforms:linux_x86_64
 # BuildBuddy (`--config=buildbuddy`): a remote cache shared by CI and local builds, and each
 # invocation's results at app.buildbuddy.io. It needs an API key: CI passes the
 # BUILDBUDDY_API_KEY secret; locally, put `common:buildbuddy
@@ -50,10 +60,12 @@ common:buildbuddy --remote_download_toplevel
 # Remote execution (`--config=remote`, the default) on BuildBuddy's Linux x86_64 executors
 # (toolchains_buildbuddy's Ubuntu 22.04 image, MODULE.bazel), with BuildBuddy's cache. Builds still
 # target this machine, so `bazel-bin/` and `bazel run` work on a Mac; tests target the executors'
-# platform and run there.
+# platform and run there. An action runs on the first execution platform (bazel/platforms) that has
+# its toolchains: the executors, or this Mac for a C or C++ action for a macOS target, which needs
+# the Xcode toolchain (design.md D11, "Platforms and C and C++ toolchains").
 common:remote --config=buildbuddy
 common:remote --remote_executor=grpcs://remote.buildbuddy.io
-common:remote --extra_execution_platforms=@toolchains_buildbuddy//platforms:linux_x86_64
+common:remote --extra_execution_platforms=//bazel/platforms:linux_x86_64,//bazel/platforms:macos_arm64
 common:remote --extra_toolchains=@toolchains_buildbuddy//toolchains/cc:ubuntu_gcc_x86_64
 common:remote --jobs=50
 # Each test's inputs are mostly the same JDK and jars: build their Merkle trees once, and write
@@ -61,7 +73,10 @@ common:remote --jobs=50
 common:remote --experimental_remote_merkle_tree_cache
 common:remote --noexperimental_split_xml_generation
 common --config=remote
-test --platforms=@toolchains_buildbuddy//platforms:linux_x86_64
+test --platforms=//bazel/platforms:linux_x86_64
+# A test runs on its target platform, so one for this Mac (`--platforms=//bazel/platforms:macos_arm64`)
+# runs here, and one for Linux on the executors.
+test --use_target_platform_for_tests
 # Offline (`--config=local`): everything runs here, nothing is read from or written to BuildBuddy.
 common:local --remote_executor=
 common:local --remote_cache=

@@ -1,8 +1,9 @@
-"""Test: design.md D17 "VM options": the native launcher's `--vm.<option>`s take effect, as its own
-`-<option>`s do. The heap's sizes and the other `-X` and `-XX:` options, which native-image sets only
-as the process starts, through a restart with them; system properties and the stack size in the
-process. A collector (chosen when the executable is built) and a class path are errors that say
-what to do instead."""
+"""Test: design.md D17 "VM options": the native launcher is GraalVM's thin launcher, which creates
+the library's isolate with its `--vm.<option>`s: the heap's sizes, the collection policy, system
+properties and the stack size take effect. Every argument after the program file is the program's,
+`-X`, `-XX:` and `-D` ones included, and a `--vm.` one there makes the launcher run again without
+it. The executable takes VM options only as `--vm.` ones; a collector (chosen when the executable is
+built) and a class path are errors."""
 
 import argparse
 import os
@@ -46,10 +47,9 @@ def launcher_vm_native(o):
         with open(programs[name], 'w', encoding='utf-8') as f:
             f.write(text)
 
-    # The heap's sizes, as -X options and as -XX: options, and with an option of the executable's
-    # own, which the restart keeps.
+    # The heap's sizes, as -X options and as -XX: options.
     for options in (['--vm.XX:+VerboseGC', '--vm.Xmx1g', '--vm.Xms512m', '--vm.Xmn100m'],
-                    ['-XX:+VerboseGC', '--vm.XX:MaxHeapSize=1g', '--vm.XX:MinHeapSize=512m', '--vm.XX:MaxNewSize=100m']):
+                    ['--vm.XX:+VerboseGC', '--vm.XX:MaxHeapSize=1g', '--vm.XX:MinHeapSize=512m', '--vm.XX:MaxNewSize=100m']):
         out, err = run([native] + options + [programs['garbage']])
         check(out == 'done', f'{options}: the program should run: {out!r}')
         for size in ('Maximum heap size: 1024M', 'Minimum heap size: 512M', 'Maximum young generation size: 100M'):
@@ -59,27 +59,47 @@ def launcher_vm_native(o):
     check(out == '3000000', f'the program should run without a maximum heap: {out!r}')
     out, err = run([native, '--vm.Xmx64m', programs['live']], status=None)
     check('heap size exceeded' in err, f'--vm.Xmx64m should bound the heap:\n{out}\n{err}')
-    log('--vm.Xmx, -Xms, -Xmn and their -XX: options set the heap')
+    # A minimum heap and a collection policy, which only the isolate's creation can set (with a
+    # young generation small enough for the program to collect).
+    _, err = run([native, '--vm.XX:+VerboseGC', '--vm.Xms1g', '--vm.Xmn64m', '--vm.XX:InitialCollectionPolicy=BySpaceAndTime',
+                  programs['garbage']])
+    for says in ('Minimum heap size: 1024M', 'GC policy: by space and time'):
+        check(says in err, f'--vm.Xms1g --vm.XX:InitialCollectionPolicy=BySpaceAndTime should say {says!r}:\n{err}')
+    log('--vm.Xmx, -Xms, -Xmn, their -XX: options and the collection policy set the heap')
 
     # In the process: a system property (Truffle reads polyglot.* ones as options: this one
     # reaches the engine, which rejects it), the stack size.
     _, err = run([native, '--vm.Dpolyglot.scheme.NoSuchOption=1', programs['garbage']], status=None)
     check('scheme.NoSuchOption' in err, f'--vm.Dpolyglot.scheme.NoSuchOption=1 should reach the engine:\n{err}')
     out, _ = run([native, '--vm.Xss2m', '--vm.Xmx1g', programs['garbage']])
-    check(out == 'done', f'--vm.Xss2m with a restart: {out!r}')
-    # The program's --vm. arguments stay the program's. (Its -X, -XX: and -D arguments are the
-    # executable's: native-image takes them from anywhere on its command line. design.md D17,
-    # "VM options": why it isn't built with -H:-ParseRuntimeOptions.)
+    check(out == 'done', f'--vm.Xss2m --vm.Xmx1g: {out!r}')
+    log('--vm.D and --vm.Xss')
+
+    # Every argument after the file is the program's, as given: the isolate parses only the
+    # options the thin launcher gives it, never the process's command line.
+    given = ['a', '-Xmx3g', '-XX:+Foo', '-Dx=y', '-Xss1k', 'b']
+    out, _ = run([native, programs['command-line']] + given)
+    check(out == '(' + ' '.join(f'"{a}"' for a in given) + ')', f'the program should get {given}: {out!r}')
+    # A --vm. argument after the file is the program's too: the thin launcher took it, the
+    # framework finds it wasn't the launcher's, and the launcher runs again without it.
     out, _ = run([native, '--vm.Xmx1g', programs['command-line'], '--vm.Xmx2g', 'a'])
     check(out == '("--vm.Xmx2g" "a")', f'the arguments after the file should be the program\'s: {out!r}')
-    log('--vm.D and --vm.Xss in the process; the program\'s arguments left alone')
+    _, err = run([native, '--vm.Xmx64m', programs['live'], '--vm.Xmx2g'], status=None)
+    check('heap size exceeded' in err, f'after the relaunch, the launcher\'s --vm.Xmx64m should still bound the heap:\n{err}')
+    log('the program\'s arguments left alone, -X, -XX:, -D and --vm. ones included')
 
-    # What can't be: a collector, a class path.
-    for option, says in (('--vm.XX:+UseG1GC', '--//:native_gc'), ('--vm.XX:+UseSerialGC', '--//:native_gc'),
-                         ('--vm.cp=' + tmp, 'no class path')):
+    # What can't be: a class path; a collector, which the isolate's creation rejects as an option
+    # it doesn't know, before the launcher runs (design.md D17, "VM options": the costs).
+    _, err = run([native, '--vm.cp=' + tmp, programs['garbage']], status=64)
+    check('no class path' in err and 'bazel-bin/scheme' in err, f'--vm.cp should be an error saying so:\n{err}')
+    for option in ('--vm.XX:+UseG1GC', '--vm.XX:+UseSerialGC'):
+        _, err = run([native, option, programs['garbage']], status=None)
+        check("Could not find option 'Use" in err, f'{option} should be an error:\n{err}')
+    # The VM's options in java's form, before the file: an error naming the --vm. form.
+    for option in ('-Xmx2g', '-XX:+PrintGC', '-Dx=y'):
         _, err = run([native, option, programs['garbage']], status=64)
-        check(says in err and 'bazel-bin/scheme' in err, f'{option} should be an error saying {says!r}:\n{err}')
-    log('--vm. collector and class path: errors that say what to do')
+        check('--vm.' + option[1:] in err, f'{option} should be an error naming --vm.{option[1:]}:\n{err}')
+    log('--vm. class path and collector, and -X, -XX: and -D before the file: errors')
 
 
 if __name__ == '__main__':

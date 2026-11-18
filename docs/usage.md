@@ -201,7 +201,7 @@ JVM's default stack (1 or 2 MB). A stack size given to the JVM (`--vm.Xss`,
 or `-Xss` through `JDK_JAVA_OPTIONS`) is the evaluation's: the launcher's own thread
 has it. The tests that check deep recursion run the launcher with
 `-Xss256k`. The native launcher takes the same options; a stack size given
-to it as `-Xss` or `--vm.Xss` is the evaluation's too, and
+to it as `--vm.Xss` is the evaluation's too, and
 `--stack-size=default` evaluates on the process's main thread (8 MB,
 `ulimit -s`). On the launcher's own thread, whose size the launcher doesn't
 know, the runtime measures the stack the first time a recursion is more than
@@ -355,8 +355,13 @@ tests do; `--help:tools` lists every tool option.
 ## Native image
 
 `bazel build //:scheme-native` builds the launcher as a native executable,
-with the pinned GraalVM's `native-image` and the host's C compiler (design.md
-D17). It's built only when named:
+with the pinned GraalVM's `native-image` and Bazel's C++ toolchain for this
+machine: Xcode's on a Mac, where it builds locally even with remote execution
+on (design.md D11, D17). As in GraalVM's language standalones, it is two files:
+`bazel-bin/scheme-native`, GraalVM's small native launcher, and beside it
+the language as a shared library (`libschemevm.dylib`, or `.so` on Linux),
+which the launcher finds next to its real path, so the two go together.
+It's built only when named:
 
 <!-- readme: run native -->
 ```sh
@@ -387,8 +392,8 @@ the rest of 10; the JVM column is the `java` command `bazel-bin/scheme` runs):
 | ecraven's `fib`, steady iteration | 12.4 s | 13.3 s |
 | ecraven's `tak`, steady iteration | 4.7 s | 6.0 s |
 
-The build takes 50 to 90 s and about 3 GB of memory on that machine, and the
-executable is 55 MB. It has no tools (they need the JVM launcher), and it runs
+The build takes 50 to 90 s and about 3 GB of memory on that machine; the
+launcher is 0.1 MB and the library 55 MB. It has no tools (they need the JVM launcher), and it runs
 on the platform that built it. CI doesn't build it: a change to its
 configuration is checked by the tests `//tests:readme_native` (this section's
 commands) and `//tests:conformance_native` (both conformance suites through
@@ -398,31 +403,26 @@ The executable sizes its heap as native-image does by default: its young
 generation starts at 48 MB, and grows as a program allocates. A program whose
 first run is a deep recursion collects often then, and each collection scans
 its whole stack (design.md D17). For such programs, a minimum heap of 1 GB
-starts the young generation at 384 MB: pass `-Xms1g` (or `--vm.Xms1g`, or
-`-XX:MinHeapSize=1g`) on the executable's command line, before the program.
+starts the young generation at 384 MB: pass `--vm.Xms1g` (or
+`--vm.XX:MinHeapSize=1g`) on the executable's command line, before the program.
 A 1,000,000-deep recursion's first run then takes about 0.6 s instead of 1.7,
 but a program that allocates more than 384 MB peaks with them in use
 (ecraven's `divrec` at 480 MB instead of 165), and a maximum below it
-(`-Xmx512m`) needs a minimum no larger than it.
+(`--vm.Xmx512m`) needs a minimum no larger than it.
 
-The executable's `--vm.<option>`s are its own `-<option>`s, as in GraalVM's
-native launchers (design.md D17, "VM options"). A native image sets its heap's
-sizes, and its other `-X` and `-XX:` options, only as it starts, so for those
-the launcher runs itself again, at once, with them on its command line, which
-adds a few milliseconds to its start; `--vm.D<name>=<value>` and `--vm.Xss`
-it sets as it is. Its collector is chosen when it is built (below), so
-`--vm.XX:+UseG1GC` is an error that says so, and so is `--vm.cp`: it has no
-class path.
-
-Like any native-image executable, it takes `-X...`, `-XX:...` and `-D...`
-arguments from anywhere on its command line, before the program starts. After
-the program file, they are still the executable's, not the program's:
-`bazel-bin/scheme-native prog.scm a -Dx=y b` sets the property `x`, and gives
-the program `("prog.scm" "a" "b")` as its `command-line`, and one the executable
-doesn't know (`-XX:+Foo`) stops it with an error. A program that takes
-arguments of those forms needs the JVM launcher, `bazel-bin/scheme`, which
-gives a program every argument after its file as it is (design.md D17, "VM
-options").
+The executable takes the VM's options as `--vm.<option>`, before the program
+file, as GraalVM's native launchers do (design.md D17, "VM options"): it
+creates the library's VM with them as `-<option>`, so the heap's sizes, the
+collector's options and `--vm.D<name>=<value>` all take effect as it starts.
+A `-Xmx2g`, `-XX:...` or `-D...` before the program file is an error that
+names its `--vm.` form. Every argument after the program file is the
+program's, as given: `bazel-bin/scheme-native prog.scm a -Xmx3g -Dx=y b`
+gives the program `("prog.scm" "a" "-Xmx3g" "-Dx=y" "b")` as its
+`command-line`. A `--vm.` argument there is the program's too, and costs a
+second start (the launcher runs itself again without it). Its collector is
+chosen when it is built (below), and an option that names one
+(`--vm.XX:+UseG1GC`) stops it with `Could not find option 'UseG1GC'`;
+`--vm.cp` is an error too: it has no class path.
 
 ### Choosing a garbage collector
 
@@ -432,7 +432,7 @@ The executable's collector is chosen when it is built, by native-image's
 
 | `--//:native_gc=` | Built with | |
 |---|---|---|
-| `serial` (the default) | GraalVM CE or Oracle GraalVM | Generational, on one thread. The maximum heap is 80% of the machine's memory unless `-Xmx` says otherwise. |
+| `serial` (the default) | GraalVM CE or Oracle GraalVM | Generational, on one thread. The maximum heap is 80% of the machine's memory unless `--vm.Xmx` says otherwise. |
 | `epsilon` | GraalVM CE or Oracle GraalVM | Never collects. For programs that allocate little and end soon: one that allocates more than the maximum heap ends with an `OutOfMemoryError`. |
 | `G1` | Oracle GraalVM only | HotSpot's G1, with its own threads. Its default maximum heap is 25% of memory. |
 
@@ -454,16 +454,15 @@ documentation lists G1 for Linux on x86-64 and AArch64; the 25.5 builder also
 builds it for macOS on AArch64, and the native tests pass with it on Linux
 x86-64.
 
-The collector's run-time options are the executable's own `-X` and `-XX:`
-options, before the program, or the same as `--vm.` options: `-Xmx512m`
-(`--vm.Xmx512m`), `-Xms`, `-Xmn`, `-XX:+PrintGC`, and G1's
-(`-XX:MaxGCPauseMillis=`, ...) in a G1 executable. `-XX:PrintFlags=` lists the
-ones an executable takes.
+The collector's run-time options are the executable's `--vm.` options,
+before the program: `--vm.Xmx512m`, `--vm.Xms`, `--vm.Xmn`,
+`--vm.XX:+PrintGC`, and G1's (`--vm.XX:MaxGCPauseMillis=`, ...) in a G1
+executable. `--vm.XX:PrintFlags=` lists the ones an executable takes.
 
 <!-- readme: run native -->
 ```sh
-bazel-bin/scheme-native -Xmx512m docs/examples/hello.scm
 bazel-bin/scheme-native --vm.Xmx512m docs/examples/hello.scm
+bazel-bin/scheme-native --vm.Xms1g --vm.XX:InitialCollectionPolicy=BySpaceAndTime docs/examples/hello.scm
 ```
 
 <!-- readme: output -->
@@ -475,7 +474,7 @@ Hello, world! Arguments: ()
 The serial collector's default policy suits programs that keep little alive,
 and lets programs that keep hundreds of MB alive spend most of their time
 collecting (`earley`, with 1.2 GB live, three quarters). Two other policies,
-`-XX:InitialCollectionPolicy=<name>` on the executable's command line, trade
+`--vm.XX:InitialCollectionPolicy=<name>` on the executable's command line, trade
 differently (design.md D17 has the measurements):
 
 - `BySpaceAndTime` keeps a fixed young generation (a tenth of the maximum
@@ -488,7 +487,7 @@ differently (design.md D17 has the measurements):
 
 For programs with a large live heap, G1 (above) was the fastest: `earley`
 in 9.8 s instead of 22.7 (its later iterations as fast as on the JVM), but
-it grows the heap freely up to its maximum, so give it one (`-Xmx2g`: 9.8 s
+it grows the heap freely up to its maximum, so give it one (`--vm.Xmx2g`: 9.8 s
 in 2.2 GB).
 
 The JVM launcher, `bazel-bin/scheme`, runs on whatever collector its JVM is

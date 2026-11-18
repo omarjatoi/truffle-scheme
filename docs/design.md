@@ -1707,7 +1707,8 @@ Each entry: the decision, why, and what was rejected.
   `gh`, chibi-scheme and a GraalVM JDK for running and embedding outside
   Bazel. Bazel doesn't need it: it pins its own JDK and Python, and builds
   the differential tests' chibi-scheme from the pinned source of the same
-  release (`bazel/chibi.bzl`, with the host's C compiler and `make`), so
+  release (`bazel/chibi.bzl`, with `make` and the C compiler of the
+  platform the target's C toolchain runs on), so
   every action can run on another machine. `nix develop .#bench`
   adds the other R7RS implementations for the comparative benchmark report;
   CI's steps use `nix develop .#ci`, which has only `bazel`.
@@ -1746,7 +1747,9 @@ Each entry: the decision, why, and what was rejected.
     in `--extra_execution_platforms` under `--config=remote`, Linux first:
     `linux_x86_64`, BuildBuddy's executors, with the constraints and
     `exec_properties` of `toolchains_buildbuddy`'s Ubuntu 22.04 platform
-    (which it replaces, so remote cache keys stay the same); and
+    (which it replaces: actions run in the same image; a platform of another
+    name, and the new options, change the configurations' output paths, so
+    the first build after the change missed the cache); and
     `macos_arm64`, this Mac, whose `exec_properties` are
     `{"no-remote-exec": "1"}`. Bazel adds a platform's `exec_properties`
     with a true-ish value to its actions' execution requirements (katre, in
@@ -1757,7 +1760,7 @@ Each entry: the decision, why, and what was rejected.
     An action runs on the first platform that has the toolchains it needs:
     Java, Python, genrules and the Linux tests on the executors, and a C or
     C++ action for a macOS target, which needs the Xcode toolchain, on the
-    Mac. Checked on a prototype: for a macOS target, `launcher.cc`'s
+    Mac. Checked (`--subcommands`): for a macOS target, `launcher.cc`'s
     `CppCompile` and `CppLink` and the `NativeImage` action ran on
     `//bazel/platforms:macos_arm64`, locally, while `Javac` ran remotely on
     `linux_x86_64`; with `--platforms=//bazel/platforms:linux_x86_64` all
@@ -2137,15 +2140,16 @@ Each entry: the decision, why, and what was rejected.
   context, which `Context.Builder.build` takes over there.
   - *Unless a size is given.* A stack size given to the VM (`-Xss` or
     `-XX:ThreadStackSize`, also through `JDK_JAVA_OPTIONS` or
-    `JAVA_TOOL_OPTIONS`; the native executable's `-Xss` or
-    `-XX:StackSize`), read from `RuntimeMXBean.getInputArguments`, keeps
+    `JAVA_TOOL_OPTIONS`), read from `RuntimeMXBean.getInputArguments`, keeps
     evaluation on the launcher's own thread, which has that stack, as before:
     the spec and space tests run the launcher with `-Xss256k`, so that
     their deep recursions still spill (rule 4). `--stack-size=<size>` (or
-    the native launcher's `--vm.Xss<size>`) sets the evaluation thread's
+    the native launcher's `--vm.Xss<size>` or `--vm.XX:StackSize=<size>`,
+    which `SchemeMain` reads: the native launcher's isolate, a shared
+    library's, reports no input arguments) sets the evaluation thread's
     stack, and `--stack-size=default` evaluates on the launcher's thread
-    (the JVM's default stack; the native launcher's is the process's main
-    thread, 8 MB). If the system won't reserve the stack (a limit on
+    (the JVM's default stack; the native launcher's is the thread its C part
+    created the isolate on, with the main thread's 8 MB). If the system won't reserve the stack (a limit on
     address space), the launcher evaluates on its own thread. `SchemeMain.run`
     (in-process, for tests) evaluates on its caller's thread.
   - *The runtime is told the size.* On its own thread the launcher passes
@@ -2507,8 +2511,10 @@ Each entry: the decision, why, and what was rejected.
   applies none of them in a JVM, which has already started: in GraalVM, the
   launcher that starts the JVM does (its launcher scripts, and the native
   thin launchers' C part, which starts the JVM with them and restarts it if
-  the Java side finds it guessed them wrong). In a native image, it sets
-  them in the process (`RuntimeOptions`).
+  the Java side finds it guessed them wrong). In a native image, the thin
+  launcher's C part has created the isolate with them, and it sets none; in
+  a native executable without one, it sets them in the process
+  (`RuntimeOptions`).
   - *The JVM launcher.* `bazel-bin/scheme` is that script
     (`tests/harness/scheme.py`): `Runtime.launcher` takes each `--vm.` option
     before the program file out (`split_vm_options`, which parses as
@@ -2521,66 +2527,59 @@ Each entry: the decision, why, and what was rejected.
     wasn't applied (the launcher started with `java`), and is an error that
     names the JVM option to give `java` instead; before, the framework ignored
     it, so `--vm.XX:+UseG1GC` and even `--vm.Xmx2m` ran as without them.
-  - *The native launcher.* The framework's `RuntimeOptions.set` can't set
-    the heap's sizes once the process has started (`--vm.Xmx512m` failed as
-    "does not specify a valid number", `--vm.XX:MinHeapSize=1g` as
-    *immutable*), and nothing tells which options can. So `SchemeMain` runs
-    the executable again (`ProcessProperties.exec`, as the framework's own
-    native launchers re-exec themselves) with its `--vm.X...` and
-    `--vm.XX:...` options as its own `-X...` and `-XX:...` options, which
-    native-image takes as the process starts, after the ones it was given
-    there (`RuntimeMXBean.getInputArguments`) and before the rest of its
-    arguments. That costs a second start, a few milliseconds, only when such
-    an option is given. `--vm.D...` and `--vm.Xss` stay with the framework,
-    which sets them in the process (`--vm.Xss` is also the evaluation
-    thread's stack, "The evaluation thread"). A collector is chosen when the
-    image is built ("The native image's collector"), so `--vm.XX:+Use...GC`
-    is an error saying so, and so is `--vm.cp=` (there is no class path).
-  - *A program's arguments in the VM's forms (native).* SubstrateVM reads
-    `-X...`, `-XX:...` and `-D...` from the whole command line as it
-    creates the process's isolate, before `main` runs (25.5's
-    `IsolateArgumentParser.parse`, for the heap's sizes and the other options
-    it needs first, then `RuntimeOptionParser.parseAndConsumeJavaMainOptions`,
-    in `svm-guest-staging.jar`), and `main` gets what is left. So the native
-    launcher can't give them to a program: `scheme-native prog.scm a -Xmx3g
-    -Dx=y b` runs `prog.scm` with `(command-line)` = `("prog.scm" "a" "b")`,
-    a 3 GB maximum heap (`-XX:+VerboseGC`: `Maximum heap size: 3072M`) and
-    the property `x`; one it doesn't know
-    (`-XX:+Foo`) or can't read (`-Xmxfoo`) stops it before the launcher runs
-    (`Error: Could not find option 'Foo'`, status 1), and `-Xss1k` makes it
-    overflow its stack. The JVM launcher passes all of them to the program as
-    given (the JVM's options end before its main module; `//tests:launcher_vm`).
-    - *native-image's switch.* `-H:-ParseRuntimeOptions` (*"Parse and
-      consume standard options and system properties from the command line
-      arguments when the VM is created. Default: + (enabled)"*, 25.5's
-      `native-image --expert-options-all`) turns both parsers off: built with
-      it, `scheme-native prog.scm a -Xmx3g -XX:+Foo -Dx=y b` gave the program
-      `("prog.scm" "a" "-Xmx3g" "-XX:+Foo" "-Dx=y" "b")`. GraalVM builds its own launchers' native images with it
-      (`sdk/mx.sdk/mx_sdk_vm_impl.py`: `if isinstance(image_config,
-      mx_sdk.LauncherConfig): build_args += ['-H:-ParseRuntimeOptions']`), and
-      their framework then sets `--vm.` options in the process
-      (`Launcher.maybeNativeExec`, `RuntimeOptions.set`).
-    - *Why it isn't used.* With it, nothing can set the options that only
-      take effect as the process starts. The heap's sizes (`-Xmx`, `-Xms`,
-      `-Xmn` and their `-XX:` names) and `-XX:InitialCollectionPolicy=` are
-      read by `IsolateArgumentParser` (`RegisterForIsolateArgumentParser`),
-      and 25.5 refuses to change such an option once the runtime is up
-      (`RuntimeOptionKey.validateValueBeforeUpdate`: *"is immutable and can
-      only be set during startup"*); the restart above passes them on a
-      command line that the restarted process no longer reads (the
-      executable built with it: `--vm.Xmx64m` → `Unrecognized argument:
-      '-Xmx64m'`); and SubstrateVM reads no other source of options at
-      startup (no environment variable). The executable would lose `-Xmx`
-      (the comparative report's `-Xmx2g`, G1's bound), `-Xms1g` and the
-      collection policies ("The native image's collector"), which are worth
-      more to its users than arguments of those forms are to programs.
-      GraalVM's language standalones have both through a thin launcher
-      (`sdk/src/org.graalvm.launcher.native/src/launcher.cc`): a small C++
-      executable that takes the `--vm.` options from the command line and
-      creates the VM (the language's shared library, `JNI_CreateJavaVM`)
-      with them, then runs the launcher, which restarts it with the right
-      ones in `GRAALVM_LANGUAGE_LAUNCHER_VMARGS_<n>` if it guessed wrong.
-      That is the way to have both here too (below).
+  - *The native launcher (M10-01).* `bazel-bin/scheme-native` is GraalVM's
+    thin launcher, whose C part creates the isolate of the library beside it
+    with the `--vm.` options as its VM options, the way GraalVM's language
+    standalones start (the decision and how it works: below). So every
+    option, the heap's sizes and the collection policy among them, takes
+    effect as the isolate starts, and every argument after the program file
+    is the program's. `SchemeMain` hands each `--vm.` option back to the
+    framework, which checks it found the ones the C part took and sets none
+    itself; a `--vm.` argument after the file makes the C part run the
+    process again without it. `--vm.Xss` is also the evaluation thread's
+    stack ("The evaluation thread"). A class path (`--vm.cp=`) is an error
+    from the launcher; a collector (`--vm.XX:+UseG1GC`) is one from the
+    isolate's creation, as any option it doesn't know ("The native image's
+    collector": it is chosen when the image is built). The executable takes
+    no VM option in `java`'s form: `-Xmx2g` before the file is an error that
+    names `--vm.Xmx2g`.
+  - *Before M10-01 (#203, #206).* The executable was the image itself, and
+    two things went wrong with it:
+    - *Startup-only options.* The framework's `RuntimeOptions.set` can't set
+      the heap's sizes once the process has started (`--vm.Xmx512m` failed
+      as "does not specify a valid number", `--vm.XX:MinHeapSize=1g` as
+      *immutable*: `RuntimeOptionKey.validateValueBeforeUpdate`, *"is
+      immutable and can only be set during startup"*, for the
+      `RegisterForIsolateArgumentParser` options), and nothing tells which
+      options can. So #203 had `SchemeMain` run the executable again
+      (`ProcessProperties.exec`) with its `--vm.X...` and `--vm.XX:...`
+      options as its own `-X...` and `-XX:...` options, which native-image
+      took as the process started: a second start, about 5 ms, whenever
+      such an option was given.
+    - *A program's arguments in the VM's forms.* SubstrateVM reads `-X...`,
+      `-XX:...` and `-D...` from the whole command line as it creates an
+      executable's isolate, before `main` runs (25.5's
+      `IsolateArgumentParser.parse`, then
+      `RuntimeOptionParser.parseAndConsumeJavaMainOptions`), and `main` gets
+      what is left. So `scheme-native prog.scm a -Xmx3g -Dx=y b` ran
+      `prog.scm` with `(command-line)` = `("prog.scm" "a" "b")`, a 3 GB
+      maximum heap and the property `x`; one it didn't know (`-XX:+Foo`)
+      or couldn't read (`-Xmxfoo`) stopped it before the launcher ran
+      (`Error: Could not find option 'Foo'`, status 1), and `-Xss1k` made
+      it overflow its stack. The executable's `-H:-ParseRuntimeOptions`
+      (*"Parse and consume standard options and system properties from the
+      command line arguments when the VM is created. Default: + (enabled)"*,
+      `native-image --expert-options-all`), which GraalVM builds its own
+      launcher executables with (`sdk/mx.sdk/mx_sdk_vm_impl.py`: `if
+      isinstance(image_config, mx_sdk.LauncherConfig): build_args +=
+      ['-H:-ParseRuntimeOptions']`), gave the program all six, but turned
+      off every source of startup options: #203's restart then failed
+      (`--vm.Xmx64m` → `Unrecognized argument: '-Xmx64m'`), and SubstrateVM
+      reads options from nothing else at startup (no environment variable).
+      The executable would have lost `-Xmx` (the comparative report's
+      `-Xmx2g`), `-Xms1g` and the collection policies, worth more to its
+      users than arguments of those forms are to programs (#206). GraalVM's
+      standalones have both through a thin launcher, which M10-01 took.
   - **Decision (M10-01): the native launcher is GraalVM's thin launcher in
     front of the image as a shared library**, as GraalVM's language
     standalones ship (the maintainer's choice of #206's follow-up (b)). It
@@ -2588,16 +2587,21 @@ Each entry: the decision, why, and what was rejected.
     `graal-25.5.5.0.3` that the GraalVM CE release names.
     - *The executable* (`bazel-bin/scheme-native`) is
       `sdk/src/org.graalvm.launcher.native/src/launcher.cc`, unmodified,
-      fetched at that tag with a pinned sha256 and compiled with the defines
+      fetched at that tag with a pinned sha256 (`@graalvm_launcher_cc`,
+      `bazel/graalvm.bzl`, beside the GraalVM it belongs to) and compiled
+      as a `cc_binary` (`//:scheme-native`), with the defines
       `NativeLibraryLauncherProject.cflags` gives it
       (`sdk/mx.sdk/mx_sdk_vm_impl.py`): `LAUNCHER_CLASS`
       (`scheme.launcher.SchemeMain`), `LAUNCHER_MAIN_MODULE`,
       `LIBLANG_RELPATH` (the library, beside it), `GRAALVM_VERSION`,
       `DIR_SEP`, `CP_SEP`, and `LIBJVM_RELPATH` and, on macOS, `LIBJLI_RELPATH`,
       which only its JVM mode uses (there is no JVM here: it is the mode it
-      falls back to when the library is missing); with `-ObjC++` and
-      Foundation on macOS. Without `LAUNCHER_MODULE_PATH`, `LANGUAGES_DIR`
-      and the other JVM-mode defines.
+      falls back to when the library is missing, so they name the library
+      too, and its error names the missing file); with `-ObjC++` and
+      Foundation on macOS, and the C++ library linked statically on Linux,
+      as GraalVM links it (`-static-libstdc++`; GraalVM's own build uses
+      LLVM's libc++). Without `LAUNCHER_MODULE_PATH`, `LANGUAGES_DIR` and the
+      other JVM-mode defines.
     - *What it does* (`launcher.cc`, `main` and `jvm_main_thread`): it
       takes every `--vm.<option>` on the command line as the VM option
       `-<option>` (`--vm.cp=` and the other path options it keeps for JVM
@@ -2638,7 +2642,7 @@ Each entry: the decision, why, and what was rejected.
       `is_sdk_launcher` branch). The switch gates every source of runtime
       options, `JNI_CreateJavaVM`'s included (`IsolateArgumentParser.shouldParseArguments`
       → `GuestStagingDependencyBridgeImpl.shouldParseRuntimeOptions`):
-      a prototype library built with it ignored the thin launcher's options
+      a library built with it ignored the thin launcher's options
       (`--vm.Xmx64m` let a program keep 200 MB alive, and `--vm.XX:+VerboseGC`
       printed nothing), while built without it, `--vm.Xmx64m` ended that
       program with *"Garbage-collected heap size exceeded"*, and `--vm.Xms1g
@@ -2648,7 +2652,7 @@ Each entry: the decision, why, and what was rejected.
       `JavaVMOption`s it is given (`JNIInvocationInterface.JNICreateJavaVMPrologue`,
       with no program name), never the process's command line. So
       `scheme-native prog.scm a -Xmx3g -XX:+Foo -Dx=y b` gives the program
-      all six arguments (the prototype did).
+      all six arguments (`//tests:launcher_vm_native`).
     - *The executable's own options are `--vm.` ones only*, as for GraalVM's
       launchers: a `-X...`, `-XX:...` or `-D...` before the program file is
       an error that names the `--vm.` form (`-Xmx2g`: use `--vm.Xmx2g`).
@@ -2663,32 +2667,75 @@ Each entry: the decision, why, and what was rejected.
       can't be shown without changing `launcher.cc`; docs/usage.md says the
       collector is chosen when the executable is built. `--vm.cp=` still
       reaches the launcher, and its error stays.
-    - *Building it.* The executable is compiled with the C++ compiler that
-      native-image links with, in an action of its own: on the executors for
-      a Linux target, on this machine for a macOS one, as `native_image` and
-      `bazel/chibi.bzl` run theirs.
+    - *Building it.* The executable is a `cc_binary` on Bazel's C++
+      toolchains, and the library a `native_library` (`bazel/java_module.bzl`)
+      that declares the C++ toolchain type, so both build on the execution
+      platform of the target's toolchain: GCC on the executors for a Linux
+      target, Xcode's clang on this Mac for a macOS one (D11, "Platforms and
+      C and C++ toolchains"). The launcher's flags follow GraalVM's per
+      platform (`select()`); on Linux, `-include memory`, since `launcher.cc`
+      uses `std::unique_ptr` without including `<memory>`, which LLVM's
+      libc++ includes for it and GCC's libstdc++ doesn't. The JDK's JNI
+      headers are a `cc_library` (`@graalvm//:jni`). The executable and the
+      library are both in the package's output directory, so
+      `bazel-bin/scheme-native` finds `bazel-bin/libschemevm.*` beside its
+      real path, and the library is in its runfiles for the tests.
+    - *Measured.* The executable before (`main` after #210) and after, on an
+      Apple M3 Max shared with other agents (load 9 to 12), wall time and
+      peak RSS. Startup, medians of 21 interleaved runs (two rounds for the
+      first two rows):
+
+      | | Before | After |
+      |---|---:|---:|
+      | `scheme --version` | 9.6, 9.8 ms; 15.0 MB | 10.1, 9.9 ms; 15.6 MB |
+      | A hello-world program | 10.1, 11.1 ms; 20.3 MB | 10.4, 10.8 ms; 20.8 MB |
+      | The REPL, at end of input | 9.9 ms; 19.3 MB | 10.2 ms; 19.8 MB |
+      | `--vm.Xmx512m` and a hello-world program | 15.5 ms (#203's restart) | 10.6 ms |
+      | A hello-world program with a `--vm.` argument (a relaunch) | | 17.8 ms |
+
+      ecraven's programs as the comparative report's native column runs them
+      (`bench-report --implementations native`, `--vm.Xmx2g`, 3 iterations
+      in one process; medians of interleaved rounds, 2 for the first three,
+      5 for `divrec` and `primes`, where one round of the 5 ran 1.6 and 3
+      times slower with more collections, and the others overlap): the
+      first iteration, the steady state, peak RSS:
+
+      | | Before | After |
+      |---|---:|---:|
+      | `fib` | 1.82 s, 1.81 s; 72 to 106 MB | 1.82 s, 1.82 s; 72 to 76 MB |
+      | `nboyer` | 6.3 s, 4.8 s; 1.05 GB | 6.0 s, 4.7 s; 1.03 GB |
+      | `earley` | 9.2 s, 9.6 s; 1.55 GB | 9.2 s, 9.8 s; 1.53 GB |
+      | `divrec` | 3.35 s, 3.29 s; 164 MB | 3.47 s, 3.35 s; 163 MB |
+      | `primes` | 0.82 s, 0.76 s; 187 MB | 0.81 s, 0.76 s; 185 MB |
+      | `tests/space/deep-recursion-1m.scm` (7 runs) | 629 ms; 387 MB | 637 ms; 380 MB |
+      | `tests/space/deep-apply-1m.scm` (7 runs) | 967 ms; 486 MB | 978 ms; 453 MB |
+
+      The executable was 55.34 MB; the thin launcher is 0.10 MB and the
+      library 55.36 MB.
     - *Rejected.* Building the executable with `-H:-ParseRuntimeOptions`
       alone (#206's (a)): it loses the startup-only options (above). Launcher
       logic of our own (#203's restart, or parsing in C): GraalVM's mechanism
-      does the job, and is what its standalones are tested with. `cc_binary`
-      for the executable: for a macOS target under `--config=remote` its
-      compile went to a Linux executor with the autodetected
-      `@local_config_cc`, which on a Mac in `nix develop` is Nix's clang
-      wrapper (`clang: not found` there); the C++ compiler native-image
-      already uses is the one that builds on both.
+      does the job, and is what its standalones are tested with. Compiling
+      the launcher with the host's `c++` in an action of its own, with
+      `no-remote-exec` for a macOS target (the first version of #211): D11's
+      "Platforms and C and C++ toolchains" has why.
   - `//tests:launcher_vm` checks the JVM launcher's, and the local
     `//tests:launcher_vm_native` the native launcher's (the heap's sizes
-    from `-XX:+VerboseGC`, a maximum that a program exceeds, the errors).
+    and the collection policy from `-XX:+VerboseGC`, a maximum that a
+    program exceeds, also after a relaunch, a program's arguments in the
+    VM's forms and as `--vm.` ones, the errors).
 - The Chrome inspector, DAP and profiler tools are optional modules
   (`//bazel:tools_modules`), which `bazel-bin/scheme` puts on the module
   path, and CI runs a smoke test of each against a Scheme program
   (`//tests:tools`; D13's tags and source sections are what they consume).
 - **Native image (M6-06).** `bazel build //:scheme-native` builds `scheme` as
   a native executable with the pinned GraalVM CE's `native-image` and the
-  target's C toolchain (`native_image` in `bazel/java_module.bzl`: on the
+  target's C toolchain (`native_library` in `bazel/java_module.bzl`: on the
   executors for a Linux target, here for this machine), from the launcher's
-  module path without the tools. Truffle's runtime on that path
-  makes native-image add Truffle's runtime compilation, so the executable
+  module path without the tools; since M10-01, as GraalVM's thin launcher
+  and the image as a shared library beside it ("VM options"). Truffle's
+  runtime on that path makes native-image add Truffle's runtime
+  compilation, so the executable
   has the Graal JIT. The language's jar (`scheme.jar`) carries its own configuration
   (`src/runtime/META-INF/native-image/org.r7rs/scheme`), so any embedder's
   image picks it up: the prelude's resources, and build-time initialization
@@ -2777,7 +2824,8 @@ Each entry: the decision, why, and what was rejected.
     part that goes), and 3 MB of RSS; the executable grows by 1 MB.
 
     The build takes 50–90 s and about 3 GB on that machine; the
-    executable is 55 MB. The JIT compiles in the native launcher as on the
+    executable was 55 MB (since M10-01, the library is, and the thin
+    launcher 0.1 MB: "VM options"). The JIT compiles in the native launcher as on the
     JVM (`--engine.TraceCompilation` shows the tier-1 compilations), and
     the first `fib` iteration (17.8 s against the JVM's 13.6 s) is the
     only one that is slower.
@@ -2821,10 +2869,10 @@ Each entry: the decision, why, and what was rejected.
     CE the build fails at analysis, naming the flag to add. Options that
     only the serial collector takes go in the target's `serial_options`,
     which are passed with `--gc=serial` only (there are none today). The
-    collector's run-time options are the executable's `-X` and `-XX:`
-    options, which SubstrateVM reads before the launcher sees the command
-    line, so the launcher has nothing to pass on: G1's `-XX:MaxGCPauseMillis=`
-    and `-Xmx512m` run a G1 executable as they should. No collector of our
+    collector's run-time options are the executable's `--vm.` options, which
+    the thin launcher creates the isolate with ("VM options"): G1's
+    `--vm.XX:MaxGCPauseMillis=` and `--vm.Xmx512m` run a G1 executable as
+    they should. No collector of our
     own, and no change to what the runtime allocates.
     - *What GraalVM says, and what 25.5 does.* The documentation
       ([Memory Management](https://www.graalvm.org/latest/reference-manual/native-image/optimizations-and-performance/MemoryManagement/),
@@ -2957,12 +3005,12 @@ Each entry: the decision, why, and what was rejected.
       a few hundred) peaked about three times as high: `divrec` and
       `primes` at 480 MB instead of 165, and the comparative report's
       native median peak RSS was 484 MB instead of 181.
-      A user whose programs are deep recursions can pass `-Xms1g` (or
-      `--vm.Xms1g`, or `-XX:MinHeapSize=1g`) to the executable, which gives
-      the same first runs (docs/usage.md, "Native image"). The options can
-      only be set as the process starts, so the launcher could choose a
-      minimum itself only by running itself again ("VM options"), at the
-      cost of a second start for every program.
+      A user whose programs are deep recursions can pass `--vm.Xms1g` (or
+      `--vm.XX:MinHeapSize=1g`) to the executable, which gives the same first
+      runs (docs/usage.md, "Native image"). The options can only be set as
+      the isolate starts, so a minimum of the launcher's own would be a
+      default VM argument of the thin launcher (`LAUNCHER_DEFAULT_VM_ARGS`):
+      the same default as #189's, with the same costs.
     - *What it was for.* After M9-01, a deep recursion's first run is mostly
       collections ("Stack-depth spill", *After M9-01*): each one scans the
       whole Java stack, up to the spill limit's 30 MB of frames, and copies
@@ -3032,7 +3080,7 @@ Each entry: the decision, why, and what was rejected.
       `-XX:MaxNewSize` only bound the young generation, and the launcher
       can't set any of these options in the process: they are fixed when
       it starts (the framework's `--vm.XX:MinHeapSize` failed, *immutable*,
-      until the launcher ran itself again with them, "VM options").
+      until the thin launcher created the isolate with them, "VM options").
     - *Allocation per spilled frame.* Measured with `-XX:+PrintGCSummary`
       (interpreted only, `scheme.SpillDepth`): an interpreted call of
       `count` allocates 234 bytes, and one that spills 337. A spill copies

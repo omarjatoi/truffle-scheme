@@ -18,7 +18,8 @@ import java.util.function.LongConsumer;
  * <p>A stack size given to the VM ({@code -Xss}) is the launcher's own thread's, so the launcher
  * evaluates on that thread, as it did before it had a thread of its own: the spec and space tests
  * run it with {@code -Xss256k}, so that their deep recursions spill (AGENTS.md rule 4).
- * {@code --stack-size=<size>} (or the native launcher's {@code --vm.Xss<size>}) gives the
+ * {@code --stack-size=<size>} (or the native launcher's {@code --vm.Xss<size>} or
+ * {@code --vm.XX:StackSize=<size>}) gives the
  * evaluation thread that size, and {@code --stack-size=default} keeps the launcher's own thread
  * (on the JVM, its default thread stack; in the native launcher, the process's main thread).
  *
@@ -73,10 +74,10 @@ final class EvaluationThread {
     }
 
     /**
-     * Whether the VM was given a stack size: HotSpot's {@code -Xss} or {@code -XX:ThreadStackSize}
-     * (also through {@code JDK_JAVA_OPTIONS} or {@code JAVA_TOOL_OPTIONS}), or the native
-     * executable's {@code -Xss} or {@code -XX:StackSize}, which it takes from its command line
-     * before the launcher sees it. (The native launcher's {@code --vm.Xss} is the launcher's.)
+     * Whether the JVM was given a stack size: {@code -Xss} or {@code -XX:ThreadStackSize} (also
+     * through {@code JDK_JAVA_OPTIONS} or {@code JAVA_TOOL_OPTIONS}). The native launcher's
+     * isolate, a shared library's, reports no input arguments: its {@code --vm.Xss} and
+     * {@code --vm.XX:StackSize=} are the launcher's ({@code SchemeMain}).
      */
     static boolean givenToTheVM() {
         for (String arg : ManagementFactory.getRuntimeMXBean().getInputArguments()) {
