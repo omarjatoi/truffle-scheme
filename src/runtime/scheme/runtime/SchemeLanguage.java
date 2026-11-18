@@ -34,10 +34,12 @@ import scheme.runtime.value.SClosure;
 // breakpoint, and the Bytecode DSL rejects a tag the language doesn't provide. No node carries it.
 @ProvidedTags({DebuggerTags.AlwaysHalt.class, StandardTags.RootTag.class, StandardTags.RootBodyTag.class, StandardTags.StatementTag.class, StandardTags.CallTag.class,
                 StandardTags.ExpressionTag.class})
-// SandboxPolicy.CONSTRAINED: the language reaches no host resource but through the Env (design.md
-// D10), so a context under that policy can use it (docs/graalvm-configuration.md, "Sandboxing").
+// SandboxPolicy.UNTRUSTED, the strictest: the language reaches no host resource but through the Env,
+// reaches no host object and enters a context on one thread, so every policy can use it; under
+// ISOLATED and UNTRUSTED it runs in a polyglot isolate, the library //:scheme_isolate carries
+// (design.md D10, "Sandboxing" and "ISOLATED and UNTRUSTED"; docs/graalvm-configuration.md).
 @TruffleLanguage.Registration(id = SchemeLanguage.ID, name = "R7RS Scheme", defaultMimeType = SchemeLanguage.MIME_TYPE, characterMimeTypes = SchemeLanguage.MIME_TYPE, contextPolicy = TruffleLanguage.ContextPolicy.EXCLUSIVE, //
-                sandbox = SandboxPolicy.CONSTRAINED, fileTypeDetectors = SchemeFileTypeDetector.class)
+                sandbox = SandboxPolicy.UNTRUSTED, fileTypeDetectors = SchemeFileTypeDetector.class)
 public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
 
     public static final String ID = "scheme";
@@ -48,19 +50,23 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
 
     // The options follow @Option's recommendations (docs/graalvm-configuration.md, "Language
     // options"): each help text ends with the default, and each has a usage syntax. The ones an
-    // embedder sets can be set under SandboxPolicy.CONSTRAINED; SpillDepth, for tests, can't.
+    // embedder sets can be set under every sandbox policy but PreludeImage (not UNTRUSTED);
+    // SpillDepth, for tests, only under TRUSTED.
 
     /** Where user libraries are found (design.md D7): directories, separated by the path separator. */
     @Option(name = "LibraryPath", help = "Directories to search for libraries, separated by the path separator; the launcher's -I adds to them (default: none).", //
-                    category = OptionCategory.USER, stability = OptionStability.STABLE, usageSyntax = "<dir>:<dir>:...", sandbox = SandboxPolicy.CONSTRAINED) //
+                    category = OptionCategory.USER, stability = OptionStability.STABLE, usageSyntax = "<dir>:<dir>:...", sandbox = SandboxPolicy.UNTRUSTED) //
     public static final OptionKey<String> LIBRARY_PATH = new OptionKey<>("");
 
     /**
      * Whether a context may restore the standard libraries from the prelude image (design.md D13):
-     * false expands them, and the context takes no part in building a per-JVM image.
+     * false expands them, and the context takes no part in building a per-JVM image. Not under
+     * UNTRUSTED, where the compiler materializes the tags of the roots it builds (SchemeContext
+     * .materializesTags): the standard libraries' would then count towards sandbox.MaxASTDepth, as
+     * the guest's do; restored from the image, they don't.
      */
     @Option(name = "PreludeImage", help = "Restore the standard libraries from the prelude image instead of expanding them (default: true).", //
-                    category = OptionCategory.INTERNAL, stability = OptionStability.STABLE, usageSyntax = "true|false", sandbox = SandboxPolicy.CONSTRAINED) //
+                    category = OptionCategory.INTERNAL, stability = OptionStability.STABLE, usageSyntax = "true|false", sandbox = SandboxPolicy.ISOLATED) //
     public static final OptionKey<Boolean> PRELUDE_IMAGE = new OptionKey<>(true);
 
     /**
@@ -78,7 +84,7 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
      * launcher passes its evaluation thread's (design.md D17).
      */
     @Option(name = "StackSize", help = "The Java stack size of the thread the context is created on, such as 256m; 0 if unknown, when it is measured as needed (default: 0).", //
-                    category = OptionCategory.EXPERT, stability = OptionStability.STABLE, usageSyntax = "<size>", sandbox = SandboxPolicy.CONSTRAINED) //
+                    category = OptionCategory.EXPERT, stability = OptionStability.STABLE, usageSyntax = "<size>", sandbox = SandboxPolicy.UNTRUSTED) //
     public static final OptionKey<Long> STACK_SIZE = new OptionKey<>(0L, new OptionType<>("size", StackBudget::parseStackSize));
 
     /**
@@ -86,7 +92,7 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
      * off when stdin and stdout are a terminal, where each write then shows at once, as before.
      */
     @Option(name = "BufferOutput", help = "Buffer standard output; it is written when Scheme reads standard input, writes to standard error, flushes or exits, and when control returns to the caller; false writes each write at once (default: true).", //
-                    category = OptionCategory.USER, stability = OptionStability.STABLE, usageSyntax = "true|false", sandbox = SandboxPolicy.CONSTRAINED) //
+                    category = OptionCategory.USER, stability = OptionStability.STABLE, usageSyntax = "true|false", sandbox = SandboxPolicy.UNTRUSTED) //
     public static final OptionKey<Boolean> BUFFER_OUTPUT = new OptionKey<>(true);
 
     // Constant options (design.md D17, "Constant options"): fixed for the process before the

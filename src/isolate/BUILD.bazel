@@ -1,0 +1,29 @@
+load("//bazel:java.bzl", "scheme_java_library")
+
+# The polyglot isolate library as an internal resource of the engine (design.md D10, "ISOLATED and
+# UNTRUSTED"): the class that unpacks it, and one subclass per platform, which says the library is
+# for that platform. //:scheme_isolate takes the target platform's.
+scheme_java_library(
+    name = "isolate",
+    srcs = ["scheme/isolate/IsolateResource.java"],
+    visibility = ["//:__pkg__"],
+    deps = ["@jvm//:org_graalvm_truffle_truffle_api"],
+)
+
+[
+    scheme_java_library(
+        name = platform,
+        srcs = ["scheme/isolate/Isolate%s.java" % cls],
+        truffle_dsl = True,
+        visibility = ["//:__pkg__"],
+        deps = [
+            ":isolate",
+            "@jvm//:org_graalvm_truffle_truffle_api",
+        ],
+    )
+    for platform, cls in {
+        "darwin_aarch64": "DarwinAarch64",
+        "linux_aarch64": "LinuxAarch64",
+        "linux_amd64": "LinuxAmd64",
+    }.items()
+]

@@ -313,6 +313,7 @@ src/runtime/               Bytecode DSL root + operations, continuations
 src/builtins/              leaf primitives only (see rule 1)
 src/prelude/               standard libraries (.sld) and prelude Scheme code
 src/launcher/              host-side embedding: the `scheme` launcher, the conformance runner
+src/isolate/               the polyglot isolate library as an engine resource (//:scheme_isolate, ISOLATED and UNTRUSTED)
 tests/r7rs/                chibi suite, vendored, read-only (see its README)
 tests/r7rs-larceny/        Larceny's R7RS suite, vendored, read-only (see its README)
 bench/r7rs-ecraven/        ecraven's R7RS benchmarks, vendored, read-only (see its README)

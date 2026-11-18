@@ -1,10 +1,12 @@
 package scheme.test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -20,6 +22,7 @@ import org.graalvm.polyglot.PolyglotException;
 import org.graalvm.polyglot.ResourceLimits;
 import org.graalvm.polyglot.SandboxPolicy;
 import org.graalvm.polyglot.Source;
+import org.graalvm.polyglot.Value;
 import org.graalvm.polyglot.io.FileSystem;
 import org.graalvm.polyglot.io.IOAccess;
 import org.junit.After;
@@ -331,5 +334,174 @@ public class SandboxTest {
         PolyglotException e = assertThrows(PolyglotException.class, () -> context.eval(SCHEME, ENDLESS));
         assertTrue(e.getMessage(), e.isCancelled());
         closer.join();
+    }
+
+    /**
+     * The {@code ISOLATED} and {@code UNTRUSTED} policies, which run the language in a polyglot
+     * isolate, the library {@code //:scheme_isolate} carries (design.md D10, "ISOLATED and
+     * UNTRUSTED"). JUnit runs a nested class only when it is named: {@code
+     * //tests:unit_isolate_SandboxTest} runs this one, with that jar on the module path, when it is
+     * named, as the native launcher's tests are.
+     */
+    public static class Isolated {
+
+        private final ByteArrayOutputStream out = new ByteArrayOutputStream();
+        private final ByteArrayOutputStream err = new ByteArrayOutputStream();
+
+        /** A context under ISOLATED, with the limits it requires. */
+        private Context.Builder isolated() {
+            return Context.newBuilder(SCHEME).sandbox(SandboxPolicy.ISOLATED).out(out).err(err).option("engine.MaxIsolateMemory", "256MB").option("sandbox.MaxCPUTime", "20s");
+        }
+
+        /** A context under UNTRUSTED, with the limits it requires, generous enough for these programs. */
+        private Context.Builder untrusted() {
+            return Context.newBuilder(SCHEME) //
+                            .sandbox(SandboxPolicy.UNTRUSTED) //
+                            .in(new ByteArrayInputStream("a line\n".getBytes(StandardCharsets.UTF_8))) //
+                            .out(out) //
+                            .err(err) //
+                            .option("engine.MaxIsolateMemory", "512MB") //
+                            .option("sandbox.MaxHeapMemory", "128MB") //
+                            .option("sandbox.MaxCPUTime", "20s") //
+                            .option("sandbox.MaxASTDepth", "50") //
+                            .option("sandbox.MaxThreads", "1") //
+                            .option("sandbox.MaxOutputStreamSize", "1MB") //
+                            .option("sandbox.MaxErrorStreamSize", "1MB");
+        }
+
+        /** Programs both policies run: a procedure from Java, the standard libraries, continuations, a deep recursion. */
+        private void runsPrograms(Context context) {
+            assertEquals("6", eval(context, "(define (f x) (* x 2)) (f 3)"));
+            Value exclaim = context.eval(SCHEME, "(lambda (s) (string-append s \"!\"))");
+            assertEquals("hello!", exclaim.execute("hello").asString());
+            assertEquals("((1 . a) (2 . b))", eval(context, "(map cons '(1 2) '(a b))"));
+            assertEquals("\"cba\"", eval(context, "(list->string (reverse (string->list \"abc\")))"));
+            assertEquals("42", eval(context, "(call/cc (lambda (k) (dynamic-wind (lambda () #f) (lambda () (k 42)) (lambda () #f))))"));
+            // Deep enough that its frames spill to the heap (design.md "Continuations").
+            assertEquals("100000", eval(context, DEPTH + "(depth 100000)"));
+            assertEquals("1000000", eval(context, "(let loop ((i 0)) (if (< i 1000000) (loop (+ i 1)) i))"));
+            context.eval(SCHEME, "(display \"out\") (write-string \"err\" (current-error-port))");
+        }
+
+        @Test
+        public void anIsolatedContextRunsScheme() {
+            try (Context context = isolated().build()) {
+                runsPrograms(context);
+            }
+            assertEquals("out", out.toString(StandardCharsets.UTF_8));
+            assertEquals("err", err.toString(StandardCharsets.UTF_8));
+        }
+
+        @Test
+        public void anIsolatedContextReachesNoHostFileOrVariable() {
+            // ISOLATED keeps CONSTRAINED's restrictions, in the isolate. (A boolean from the
+            // isolate is a Java one: its string is "true", not Scheme's "#t".)
+            try (Context context = isolated().build()) {
+                assertTrue(context.eval(SCHEME, "(guard (e (#t (file-error? e))) (open-input-file \"/etc/hosts\"))").asBoolean());
+                assertFalse(context.eval(SCHEME, "(get-environment-variable \"PATH\")").asBoolean());
+            }
+            PolyglotException e = stopped(isolated(), "(exit 7)");
+            assertTrue(e.getMessage(), e.isExit());
+            assertEquals(7, e.getExitStatus());
+        }
+
+        @Test
+        public void theCpuTimeLimitStopsAnIsolatedContext() {
+            PolyglotException e = stopped(isolated().option("sandbox.MaxCPUTime", "500ms"), ENDLESS);
+            assertTrue(e.getMessage(), e.isResourceExhausted());
+            assertTrue(e.getMessage(), e.getMessage().contains("Maximum CPU time limit of 500ms exceeded"));
+        }
+
+        @Test
+        public void anUntrustedContextRunsSchemeUnderTheLimitsItRequires() {
+            try (Context context = untrusted().build()) {
+                runsPrograms(context);
+                // UNTRUSTED requires standard input redirected: Scheme reads the given stream.
+                assertEquals("a line", context.eval(SCHEME, "(read-line)").asString());
+            }
+            assertEquals("out", out.toString(StandardCharsets.UTF_8));
+            assertEquals("err", err.toString(StandardCharsets.UTF_8));
+        }
+
+        @Test
+        public void theAstDepthLimitStopsCodeNestedDeeperThanIt() {
+            // Each nested call is an expression of the procedure's body; the guest's roots have
+            // their tags materialized under UNTRUSTED, so the sandbox sees how deep they are
+            // (design.md D10, "sandbox.MaxASTDepth under UNTRUSTED").
+            String nested = "(+ 1 ".repeat(40) + "0" + ")".repeat(40);
+            Context.Builder builder = untrusted().option("sandbox.MaxASTDepth", "10");
+            Context context = builder.build();
+            try {
+                assertEquals("6", eval(context, "(+ 1 (+ 1 (+ 1 (+ 1 (+ 1 (+ 1 0))))))"));
+                // The limit is per procedure: each lambda's body is a root of its own, so a chain of
+                // 30 shallow procedures runs, however deep its calls go.
+                StringBuilder chain = new StringBuilder("(define (p0) 0)");
+                for (int i = 1; i <= 30; i++) {
+                    chain.append(" (define (p").append(i).append(") (+ 1 (p").append(i - 1).append(")))");
+                }
+                assertEquals("30", eval(context, chain + " (p30)"));
+                // The standard libraries are the language's code: theirs don't count (restored from
+                // the prelude image, their roots keep their tags unmaterialized).
+                assertEquals("(1 4 9)", eval(context, "(map (lambda (x) (* x x)) '(1 2 3))"));
+                assertEquals("#(2 3 4)", eval(context, "(vector-map (lambda (x) (+ x 1)) #(1 2 3))"));
+                assertEquals("(b 2)", eval(context, "(assoc 'b '((a 1) (b 2)))"));
+                assertEquals("\"cba\"", eval(context, "(list->string (reverse (string->list \"abc\")))"));
+                PolyglotException e = assertThrows(PolyglotException.class, () -> context.eval(SCHEME, nested));
+                assertTrue(e.getMessage(), e.isResourceExhausted());
+                assertTrue(e.getMessage(), e.getMessage().contains("AST depth limit of 10 nodes exceeded"));
+            } finally {
+                closeCancelled(context);
+            }
+            // So does a procedure nested that deep, when it is first called, and code that eval
+            // compiles.
+            PolyglotException procedure = stopped(builder, "(define (f) " + nested + ") (f)");
+            assertTrue(procedure.getMessage(), procedure.getMessage().contains("AST depth limit of 10 nodes exceeded"));
+            PolyglotException evaluated = stopped(builder, "(eval '" + nested + " (environment '(scheme base)))");
+            assertTrue(evaluated.getMessage(), evaluated.getMessage().contains("AST depth limit of 10 nodes exceeded"));
+        }
+
+        @Test
+        public void theHeapLimitStopsAnUntrustedContext() {
+            PolyglotException e = stopped(untrusted().option("sandbox.MaxHeapMemory", "64MB"), "(define (grow l) (grow (cons (make-vector 1000 0) l))) (grow '())");
+            assertTrue(e.getMessage(), e.isResourceExhausted());
+            assertTrue(e.getMessage(), e.getMessage().contains("Maximum heap memory limit of 67108864 bytes exceeded"));
+        }
+
+        @Test
+        public void theStreamLimitsStopAnUntrustedContext() {
+            PolyglotException output = stopped(untrusted().option("sandbox.MaxOutputStreamSize", "10KB"), "(let loop () (display \"hello\") (loop))");
+            assertTrue(output.getMessage(), output.isResourceExhausted());
+            PolyglotException error = stopped(untrusted().option("sandbox.MaxErrorStreamSize", "10KB"), "(let loop () (write-string \"hello\" (current-error-port)) (loop))");
+            assertTrue(error.getMessage(), error.isResourceExhausted());
+        }
+
+        @Test
+        public void theStatementAndFrameLimitsStopAnUntrustedContext() {
+            PolyglotException statements = stopped(untrusted().option("sandbox.MaxStatements", "10000"), ENDLESS);
+            assertTrue(statements.getMessage(), statements.isResourceExhausted());
+            // The frame limit counts Scheme's frames in the isolate too, those spilled to its heap
+            // among them.
+            Context context = untrusted().option("sandbox.MaxStackFrames", Integer.toString(LIMIT)).build();
+            try {
+                assertEquals(Integer.toString(DEEPEST), eval(context, DEPTH + "(depth " + DEEPEST + ")"));
+                PolyglotException e = assertThrows(PolyglotException.class, () -> context.eval(SCHEME, "(depth 1000000)"));
+                assertTrue(e.getMessage(), e.isResourceExhausted());
+                assertTrue(e.getMessage(), e.getMessage().contains("Maximum frame limit of " + LIMIT + " exceeded"));
+            } finally {
+                closeCancelled(context);
+            }
+        }
+
+        @Test
+        public void theOptionsAnEmbedderSetsWorkUnderUntrustedButThePreludeImages() {
+            try (Context context = untrusted().option("scheme.LibraryPath", "/lib").option("scheme.BufferOutput", "false").option("scheme.StackSize", "8m").build()) {
+                assertEquals("3", eval(context, "(+ 1 2)"));
+            }
+            // Expanded rather than restored, the standard libraries' roots would count towards
+            // sandbox.MaxASTDepth.
+            Context.Builder builder = untrusted().option("scheme.PreludeImage", "false");
+            IllegalArgumentException e = assertThrows(IllegalArgumentException.class, builder::build);
+            assertTrue(e.getMessage(), e.getMessage().contains("scheme.PreludeImage"));
+        }
     }
 }

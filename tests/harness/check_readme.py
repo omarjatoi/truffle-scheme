@@ -22,7 +22,8 @@ def readme_test(o):
     """Test: docs/usage.md's and docs/embedding.md's blocks (readme.py), the commands as written, in
     a directory laid out like the checkout: `bazel-bin/` holds the targets this test depends on,
     `bazel build` and `nix develop` do nothing (Bazel built those first), and `java` is the pinned
-    GraalVM's. With --native, only the native-image blocks, against that launcher."""
+    GraalVM's. With --native, only the native-image blocks, against that launcher (and the
+    polyglot isolate's jars, --isolate-jars)."""
     tmp = os.environ['TEST_TMPDIR']
     main_repo = os.path.dirname(os.path.dirname(rlocation(o.usage)))
     checkout, shims = join(tmp, 'checkout'), join(tmp, 'shims')
@@ -35,6 +36,8 @@ def readme_test(o):
     os.symlink(os.path.dirname(rlocation(o.jars[0])), join(checkout, 'bazel-bin', 'scheme_jars'))
     if o.native:
         os.symlink(rlocation(o.native), join(checkout, 'bazel-bin', 'scheme-native'))
+    if o.isolate_jars:
+        os.symlink(os.path.dirname(rlocation(o.isolate_jars[0])), join(checkout, 'bazel-bin', 'scheme_isolate_jars'))
     _shim(shims, 'bazel', 'build')
     _shim(shims, 'nix', 'develop')
     os.symlink(Runtime.from_manifest(o.runtime).java, join(shims, 'java'))
@@ -51,4 +54,5 @@ if __name__ == '__main__':
     parser.add_argument('--scheme', required=True)
     parser.add_argument('--jars', nargs='+', required=True, help="bazel-bin/scheme_jars' jars")
     parser.add_argument('--native', help='only the native-image blocks, against this launcher')
+    parser.add_argument('--isolate-jars', nargs='+', help="bazel-bin/scheme_isolate_jars' jars, for the native blocks")
     readme_test(parser.parse_args())

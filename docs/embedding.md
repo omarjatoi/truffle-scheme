@@ -183,8 +183,7 @@ for code you trust but whose access to the host you want to regulate:
 `FileSystem.newFileSystem`), from which libraries are then read too;
 `get-environment-variable` finds none; and `exit` ends the context, not the
 JVM. `scheme.LibraryPath`, `scheme.BufferOutput` and `scheme.StackSize` can
-be set under it. The stricter `ISOLATED` and `UNTRUSTED` policies run the
-language in an isolate, which this build doesn't provide.
+be set under it, and under the stricter policies below.
 
 With or without a policy, Truffle's limits stop a context that runs too long
 or writes too much, and cancel it: `ResourceLimits`' statement limit (each
@@ -210,6 +209,83 @@ try (Context context = Context.newBuilder("scheme").resourceLimits(limits).build
     assertTrue(e.isResourceExhausted());
 }
 ```
+
+### `ISOLATED` and `UNTRUSTED`
+
+The two stricter policies run the language in a polyglot isolate: a native
+image of the language, with its own heap, collector and JIT compiler, which
+Truffle loads into your process as a shared library. `ISOLATED` is for
+trusted code that processes untrusted input, `UNTRUSTED` for code you don't
+trust, which it also hardens against JIT spraying and speculative execution
+(design.md D10, "ISOLATED and UNTRUSTED").
+`bazel build //:scheme_isolate_jars` builds the isolate library for your
+platform (a native-image build, a minute or two and a few GB) and puts it, in
+`scheme_isolate.jar`, with Truffle's jars in `bazel-bin/scheme_isolate_jars/`,
+your module path for these policies. It has no `scheme.jar`: the language
+runs only in the isolate. Truffle unpacks the library to its resource cache
+(your user cache directory, or the `polyglot.engine.userResourceCache`
+system property's) the first time a context needs it.
+
+Each policy requires its limits: `ISOLATED` the isolate's heap
+(`engine.MaxIsolateMemory`) and `sandbox.MaxCPUTime`; `UNTRUSTED` also
+standard input redirected, `sandbox.MaxHeapMemory` (what the context keeps,
+the frames a deep recursion has moved to the heap among them),
+`sandbox.MaxASTDepth`, `sandbox.MaxThreads` (a context uses one) and the
+output and error streams' sizes. `sandbox.MaxASTDepth` bounds how deeply a
+procedure's expressions nest, each procedure on its own; the standard
+libraries don't count. Under `UNTRUSTED`, `scheme.PreludeImage` can't be set.
+
+<!-- readme: file docs/examples/Untrusted.java -->
+```java
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+
+import org.graalvm.polyglot.Context;
+import org.graalvm.polyglot.PolyglotException;
+import org.graalvm.polyglot.SandboxPolicy;
+
+public class Untrusted {
+    public static void main(String[] args) {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        try (Context context = Context.newBuilder("scheme")
+                        .sandbox(SandboxPolicy.UNTRUSTED)
+                        .in(InputStream.nullInputStream())
+                        .out(output)
+                        .err(output)
+                        .option("engine.MaxIsolateMemory", "512MB")
+                        .option("sandbox.MaxHeapMemory", "128MB")
+                        .option("sandbox.MaxCPUTime", "2s")
+                        .option("sandbox.MaxASTDepth", "50")
+                        .option("sandbox.MaxThreads", "1")
+                        .option("sandbox.MaxOutputStreamSize", "1MB")
+                        .option("sandbox.MaxErrorStreamSize", "1MB")
+                        .build()) {
+            context.eval("scheme", "(define (fact n) (if (= n 0) 1 (* n (fact (- n 1))))) (display (fact 30))");
+            System.out.println(output.toString(StandardCharsets.UTF_8));
+            context.eval("scheme", "(let loop () (loop))");
+        } catch (PolyglotException e) {
+            System.out.println(e.isResourceExhausted() + ": " + e.getMessage());
+        }
+    }
+}
+```
+
+<!-- readme: run native -->
+```sh
+bazel build //:scheme_isolate_jars
+java -p bazel-bin/scheme_isolate_jars --add-modules ALL-MODULE-PATH --enable-native-access=org.graalvm.truffle --sun-misc-unsafe-memory-access=allow docs/examples/Untrusted.java
+```
+
+<!-- readme: output -->
+```text
+265252859812191058636308480000000
+true: Maximum CPU time limit of 2000ms exceeded. Time executed ...ms.
+```
+
+Values from the isolate are handles, as with any polyglot isolate, and a
+boolean arrives as Java's: its `toString()` is `true`, not `#t`. `//tests:unit_isolate_SandboxTest` runs Scheme under both policies and
+checks each limit (`SandboxTest.Isolated`).
 
 ## Scheme values in Java
 
