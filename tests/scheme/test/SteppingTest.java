@@ -21,6 +21,8 @@ import com.oracle.truffle.api.debug.SuspendedEvent;
 import com.oracle.truffle.api.debug.SuspensionFilter;
 import com.oracle.truffle.api.source.SourceSection;
 
+import scheme.runtime.SchemeLanguage;
+
 /**
  * Truffle's debugger stepping through Scheme code at statement granularity (design.md D13, "Tools"):
  * step into, over and out, through ordinary calls, a self tail call's loop, a tail call to another
@@ -101,7 +103,7 @@ public class SteppingTest {
      * {@code located}.
      */
     private static List<String> steps(int line, String steps, boolean located) {
-        Assume.assumeFalse("torture mode", Boolean.getBoolean("scheme.torture"));
+        Assume.assumeFalse("torture mode", SchemeLanguage.constant(SchemeLanguage.TORTURE) != SchemeLanguage.Torture.OFF);
         Source source = Source.newBuilder(SCHEME, PROGRAM, "step.scm").buildLiteral();
         List<String> stops = new ArrayList<>();
         try (Context context = Context.newBuilder(SCHEME).out(new ByteArrayOutputStream()).build()) {
