@@ -57,7 +57,7 @@ the generator stays clear of the others (`gen.py` says where).
 | A flonum of one digit and an exponent | `1e+21` | §6.2.7: the result "contains a decimal point" (D9); ours writes `1.0e+21` |
 | A negative ratio whose denominator is 2^62 | `-1/-4611686018427387904` | §6.2.7, §2.1: `-1/4611686018427387904` |
 | Bytevectors | `#u8(#x28 #xA4)` | §6.9 leaves the notation of the bytes open; ours writes `#u8(40 164)` (not a bug) |
-| `/` by a negative bignum, with a ratio for quotient | negates the divisor **in place**: `(define g -9223372036854775809) (/ 5 g)` leaves `g` positive | §6.2.6: numbers are immutable values |
+| `/` of negative bignums, with a ratio for quotient | negates them **in place**: `(define g -9223372036854775809) (/ 5 g)` leaves `g` positive, and a literal dividend changes sign each time its code runs | §6.2.6: numbers are values; §3.4: literals are constants |
 | `floor/`, `floor-quotient`, `floor-remainder` with an operand of magnitude 2^62 or more; `truncate/` at ±2^62 | `(floor/ 100 -1022799909500023965235)` is `0 1022799909500023965335` | §6.2.6: `-1 -1022799909500023965135` |
 | `expt` of a non-integer ratio to a negative power | `(expt 2/3 -2)` is `1` | §6.2.6: `9/4` |
 | `rationalize` when the interval holds 0 | `(rationalize 5 10)` is `-5` | §6.2.6: the simplest rational in the interval, 0 |

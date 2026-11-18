@@ -889,7 +889,8 @@ class Gen:
         pt, rt = self.pick([INT, STR, SYM]), self.pick([INT, STR, t])
         e = self.fresh('e')
         handler = ['lambda', [e], self.expr(rt, min(d, 2), env.calm().bind((e, pt)))]
-        body = self.expr(t, d + 1, env._with(rais=False, cont=env.cont + ((pt, rt),)))
+        # Only this handler: it is the one raise-continuable calls, whatever the outer ones take.
+        body = self.expr(t, d + 1, env._with(rais=False, cont=((pt, rt),)))
         return ['with-exception-handler', handler, ['lambda', [], body]]
 
     def p_parameterize(self, t, d, env):
@@ -1019,11 +1020,11 @@ class Gen:
                 test = ['or', test, ['>=', ['abs', a], limit], ['>=', ['abs', b], limit]]
             else:
                 test = ['or', test, ['=', ['abs', a], limit], ['=', ['abs', b], limit]]
-        # (/ a b) on a copy of b: chibi-scheme's / negates a negative bignum divisor in place
-        # when the quotient is a ratio, which changes the variable it came from.
-        divisor = ['-', ['-', b]] if op == '/' else b
+        # (/ a b) on copies: chibi-scheme's / negates negative bignums in place when the
+        # quotient is a ratio, which changes the variable (or the literal) they came from.
+        operands = [['-', ['-', a]], ['-', ['-', b]]] if op == '/' else [a, b]
         return ['let', [[a, self.expr(t, d, env.calm())], [b, self.expr(t, d, env.calm())]],
-                ['if', test, a, [op, a, divisor]]]
+                ['if', test, a, [op] + operands]]
 
     def string_to_number(self, d, env):
         """string->number of a string without whitespace: chibi-scheme skips it, and reads
