@@ -153,6 +153,16 @@ scheme_java_library(
     spotbugs = False,
 )
 
+# junit_test's main (bazel/jvm_test.bzl): JUnitCore, and the results as JUnit XML in
+# $XML_OUTPUT_FILE, which Bazel 9 would otherwise generate in a second spawn (design.md D11,
+# "Bazel 9"). On the class path, beside the test's modules.
+scheme_java_library(
+    name = "junit_runner",
+    srcs = glob(["driver/scheme/driver/junit/*.java"]),
+    spotbugs = False,
+    deps = ["@jvm//:junit_junit"],
+)
+
 # tests/diff: `diff_<program>`, `diff_torture_<program>` and `diff_torture_owned_<program>`, against
 # chibi-scheme.
 diff_tests(

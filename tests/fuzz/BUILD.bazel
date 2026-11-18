@@ -14,12 +14,17 @@ py_library(
 )
 
 # A fixed seed's programs, interpreted: the generator and the driver still work, and nothing they
-# found is back. Deterministic, so cached like any test.
+# found is back. Deterministic, so cached like any test. Through tests/harness/run_test.py, which
+# writes its result as JUnit XML.
 py_test(
     name = "fuzz_smoke",
     size = "large",
-    srcs = ["smoke.py"],
+    srcs = [
+        "smoke.py",
+        "//tests/harness:run_test.py",
+    ],
     args = [
+        "smoke",
         "--runtime=$(rlocationpath //:launcher_runtime)",
         "--chibi=$(rlocationpath //bazel:chibi-scheme)",
         "--seed=1",
@@ -29,7 +34,7 @@ py_test(
         "//:launcher_runtime",
         "//bazel:chibi-scheme",
     ],
-    main = "smoke.py",
+    main = "//tests/harness:run_test.py",
     tags = ["cpu:4"],
     deps = [":fuzz"],
 )

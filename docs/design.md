@@ -2806,12 +2806,31 @@ Each entry: the decision, why, and what was rejected.
     (`--rewind_lost_inputs`, on by default), where 8 restarted the whole
     invocation (`--experimental_remote_cache_eviction_retries`). The cold build is chibi-scheme's
     critical path either way.
-  - *What it costs.* test.xml: 9 removed test-setup.sh's in-action XML,
-    so each test that doesn't write `$XML_OUTPUT_FILE` itself (ours
-    don't) has a second spawn again, the one #124 removed: twice the
-    remote spawns when tests run, and about 730 more cache lookups when
-    they're cached, which is the new worktree's 1–2 s. The spawns are
-    small (the executors' total wall time went down). And the one output
+  - *What it cost, and test.xml now.* 9 removed test-setup.sh's in-action
+    XML, so each test that doesn't write `$XML_OUTPUT_FILE` itself had a
+    second spawn again, the one #124 removed: twice the remote spawns
+    when tests run, and about 730 more cache lookups when they're cached.
+    So our tests write it themselves, and Bazel skips the spawn when the
+    file exists: `junit_test` runs JUnit through `XmlRunner`
+    (tests/driver/scheme/driver/junit, on the class path beside the
+    test's modules), a `RunListener` that writes a test case per method
+    with its failure, error or skip (JUnit 4 has no XML reporter, and the
+    JUnit Platform's console launcher would be a new library); a
+    `java_driver_test`'s script writes one test case for the target, a
+    program, spec case, conformance section or lint check, failed with
+    the driver's exit status, as Bazel's generated XML does; the Python
+    tests (`harness_test`, `fuzz_smoke`) run their script through
+    tests/harness/run_test.py, which does the same. A test that dies
+    before writing it (a timeout, a crashed JVM) still gets Bazel's.
+    Measured on `bazel test //...` (the same machine, one run each):
+
+    | | Bazel's test.xml (729 tests) | The tests' own (732 tests) |
+    |---|---:|---:|
+    | Every test executed remotely (`--nocache_test_results --noremote_accept_cached`) | 1,458 remote spawns (`TestRunner` spawns in the execution log: 1,458, 730 of them generate-xml.sh) | 732 (732, none) |
+    | All cached, a new output base | 1,868 remote cache hits | 1,144 |
+
+    BuildBuddy's test view reads the test action's test.xml, now the
+    tests' own: a `junit_test`'s lists its methods. And the one output
     directory for both platforms stays: 9's
     `--experimental_platform_in_output_dir=Auto` renamed only the exec
     configuration's directory (`linux_x86_64-opt-exec`). 9.3.1 also
