@@ -3638,8 +3638,12 @@ Each entry: the decision, why, and what was rejected.
     (`tests/harness/scheme.py`): `Runtime.launcher` takes each `--vm.` option
     before the program file out (`split_vm_options`, which parses as
     `SchemeMain.preprocessArguments` does) and starts the JVM with it as
-    `-<option>` (`--vm.cp=` and `--vm.classpath=` as `-cp`, `--vm.@<file>`
-    as `@<file>`: "Options", argument files), as GraalVM's
+    `-<option>` (`--vm.cp=` and `--vm.classpath=` as `-cp`, `--vm.p=` and
+    `--vm.-module-path=` appended to the launcher's module path, as
+    GraalVM's thin launcher appends them in its JVM mode (D20, "The
+    launchers"; the AOT cache is then left out, being for the launcher's
+    module path alone), `--vm.@<file>` as `@<file>`: "Options", argument
+    files), as GraalVM's
     launcher scripts do (the framework expects them to have taken the
     options out: `Launcher.parsePolyglotOption`). They are JVM options like the command's, so
     the launcher's own (the collector, the compiler threads, the AOT cache)

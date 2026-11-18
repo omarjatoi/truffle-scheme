@@ -13,7 +13,7 @@ import subprocess
 import tempfile
 
 from harness import (AOT_VM_ARGS, LAUNCHER_COMPILER_VM_ARGS, LAUNCHER_GC_VM_ARGS, LAUNCHER_INSTRUMENT_VM_ARGS, LAUNCHER_MAIN, Runtime,
-                     check, launcher_vm_args, log, split_vm_options)
+                     check, launcher_vm_args, log, rlocation, split_vm_options)
 
 _FLAG = re.compile(r'^\s*\S+\s+(\w+)\s+:?=\s+(\S*)\s+\{[^}]*\}\s+\{([^}]*)\}')
 
@@ -170,6 +170,8 @@ def vm_options(o):
     check(split_vm_options(['--engine.Mode=latency', '--', '--vm.Xmx1g']) == ([], ['--engine.Mode=latency', '--', '--vm.Xmx1g']),
           'a --vm. option after -- should be the program file')
     check(split_vm_options(['--vm.cp', 'x']) == ([], ['--vm.cp', 'x']), 'a bare --vm.cp should be left to the launcher')
+    check(split_vm_options(['--vm.p=a:b', '--vm.-module-path=c', 'f.scm']) == (['--module-path', 'a:b', '--module-path', 'c'], ['f.scm']),
+          '--vm.p and --vm.-module-path should be module paths')
 
     runtime = Runtime.from_manifest(o.runtime)
     # A collector, the heap's maximum, the compiler threads.
@@ -363,13 +365,37 @@ def option_classes(o):
     log('--help:<topic>, --version, an unknown option')
 
 
+def module_path(o):
+    """design.md D20, "The launchers": `--vm.p=<path>` (and `--vm.-module-path=<path>`) is appended to
+    the launcher's module path, as GraalVM's thin launcher takes it in its JVM mode, so another
+    language's jars there make it a language `polyglot-eval` reaches."""
+    runtime = Runtime.from_manifest(o.runtime)
+    tmp = tempfile.mkdtemp(dir=os.environ.get('TEST_TMPDIR'))
+    program = os.path.join(tmp, 'sl.scm')
+    with open(program, 'w', encoding='utf-8') as f:
+        f.write('(import (scheme base) (scheme write) (graalvm polyglot))\n'
+                '(write (list (polyglot-language-available? "sl")\n'
+                '             (guard (e ((error-object? e) \'not-available)) (polyglot-eval "sl" "function main() { return 6 * 7; }"))))\n')
+    jars = os.pathsep.join(rlocation(j) for j in o.language_jars)
+    out, _ = run(runtime, [program])
+    check(out.strip() == '(#f not-available)', f'without its jars, SL should not be available:\n{out}')
+    for option in ('--vm.p=', '--vm.-module-path='):
+        out, command = run(runtime, [option + jars, program])
+        check(out.strip() == '(#t 42)', f'{option}<SL\'s jars> should make SL available:\n{out}')
+        check(command.count('-p') == 1 and command[command.index('-p') + 1].endswith(os.pathsep + jars),
+              f'{option} should be appended to the launcher\'s module path: {command}')
+    log('--vm.p and --vm.-module-path: appended to the module path, another language\'s jars')
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--runtime', required=True)
     parser.add_argument('--aot-runtime', required=True)
+    parser.add_argument('--language-jars', nargs='+', required=True, help="another Truffle language's jars (SL's)")
     options = parser.parse_args()
     launcher_vm(options)
     aot_cache(options)
     vm_options(options)
     argument_files(options)
     option_classes(options)
+    module_path(options)

@@ -104,9 +104,11 @@ def _launcher_options(args):
 def split_vm_options(args):
     """The `scheme` launcher's arguments, its `--vm.<option>`s taken out as JVM options, as GraalVM's
     launcher scripts take them (the framework ignores them in a JVM, which has already started):
-    `--vm.cp=<path>` and `--vm.classpath=<path>` are the class path, `--vm.@<file>` the argument
-    file `@<file>` (java reads it: GraalVM's launcher_template.sh does the same), any other the JVM's
-    `-<option>`. Only the launcher's options are: they end where SchemeMain.preprocessArguments
+    `--vm.cp=<path>` and `--vm.classpath=<path>` are the class path, `--vm.p=<path>` and
+    `--vm.-module-path=<path>` a module path, which Runtime.launcher appends to its own as GraalVM's
+    thin launcher does in its JVM mode (launcher.cc, VM_P_ARG_PREFIX: another language's jars,
+    design.md D20, "The launchers"), `--vm.@<file>` the argument file `@<file>` (java reads it:
+    GraalVM's launcher_template.sh does the same), any other the JVM's `-<option>`. Only the launcher's options are: they end where SchemeMain.preprocessArguments
     ends them, at `--` or the program file, and the program's arguments are left alone. Returns
     (the JVM options, the other arguments)."""
     jvm_args, rest = [], []
@@ -120,17 +122,34 @@ def split_vm_options(args):
         if arg == '--' or not arg.startswith('-') or len(arg) == 1:
             break
         option = arg[len('--vm.'):] if arg.startswith('--vm.') else ''
-        # A bare --vm.cp or --vm.classpath stays, for the launcher to reject.
+        # A bare --vm.cp, --vm.classpath, --vm.p or --vm.-module-path stays, for the launcher to
+        # reject.
         if option.startswith(('cp=', 'classpath=')):
             jvm_args += ['-cp', option.split('=', 1)[1]]
+        elif option.startswith(('p=', '-module-path=')):
+            jvm_args += ['--module-path', option.split('=', 1)[1]]
         elif option.startswith('@'):
             jvm_args.append(option)
-        elif option and option not in ('cp', 'classpath'):
+        elif option and option not in ('cp', 'classpath', 'p', '-module-path'):
             jvm_args.append('-' + option)
         else:
             rest.append(arg)
         i += 1
     return jvm_args, rest + list(args[i:])
+
+
+def _module_path_options(jvm_args):
+    """jvm_args without the `--module-path <path>` pairs that split_vm_options made of `--vm.p=<path>`,
+    and those paths: the launcher appends them to its module path rather than replace it."""
+    rest, paths, i = [], [], 0
+    while i < len(jvm_args):
+        if jvm_args[i] == '--module-path' and i + 1 < len(jvm_args):
+            paths.append(jvm_args[i + 1])
+            i += 2
+        else:
+            rest.append(jvm_args[i])
+            i += 1
+    return rest, paths
 
 
 def _given_vm_args(jvm_args, env):
@@ -319,11 +338,16 @@ class Runtime:
         choose class sharing, and the JVM takes it with them (aot_cache_taken). The arguments'
         `--vm.` options are JVM options (split_vm_options), after jvm_args."""
         vm_options, args = split_vm_options(args)
+        vm_options, modules = _module_path_options(vm_options)
         jvm_args = list(jvm_args) + vm_options
         defaults = launcher_vm_args(jvm_args, env, options=_launcher_options(args))
         given = _given_vm_args(jvm_args, env)
         module_path = None
-        if not any(_AOT_CHOICE.match(a) for a in given):
+        if modules:
+            # Appended to the launcher's, as GraalVM's thin launcher does; the AOT cache is for the
+            # launcher's module path alone.
+            module_path = os.pathsep.join([self.module_path] + modules)
+        elif not any(_AOT_CHOICE.match(a) for a in given):
             module_path = self.aot_module_path()
             if module_path:
                 aot = AOT_VM_ARGS + _AOT_REQUIRED_VM_ARGS + [f'-XX:AOTCache={self.aot_cache}']
