@@ -1,18 +1,34 @@
 #!/bin/bash
-# Before every step: Determinate Nix (the agents are fresh containers, as root, without systemd),
-# the CI dev shell's environment (flake.nix .#ci: just Bazel), and Bazel's CI settings in this
-# agent's ~/.bazelrc, with the BuildBuddy key from the cluster secret. Steps then run plain `bazel`.
+# Before every step: Determinate Nix, the CI dev shell's environment (flake.nix .#ci: just Bazel),
+# and Bazel's CI settings in this agent's ~/.bazelrc, with the BuildBuddy key from the cluster
+# secret. Steps then run plain `bazel`.
+#
+# CI's agent image (.buildkite/image.nix) has Nix and every store path the shell needs, so here
+# Nix only evaluates the flake: nothing is installed or downloaded. On any other image (Buildkite's
+# default: a fresh container, as root, without systemd) this installs Determinate Nix, the release
+# the image has, and Nix downloads the shell. On a stale image (flake.lock or the shell changed
+# since it was built) Nix downloads what changed, and the build gets an annotation saying so.
 set -eo pipefail
-if [ ! -e /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh ]; then
-  curl -sSfL https://install.determinate.systems/nix | sh -s -- install linux --init none --no-confirm
+if ! command -v nix >/dev/null; then
+  if [ ! -e /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh ]; then
+    curl -sSfL https://install.determinate.systems/nix/tag/v3.24.2 |
+      sh -s -- install linux --init none --no-confirm
+  fi
+  . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
 fi
-. /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
 
 # The shell's PATH and the like; the agent's own SHELL and temporary directory stay.
 shell="$SHELL" tmpdir="${TMPDIR:-/tmp}"
-eval "$(nix print-dev-env .#ci)"
+env_profile="$(mktemp -d)/ci"
+eval "$(nix print-dev-env --profile "$env_profile" .#ci)"
 export SHELL="$shell" TMPDIR="$tmpdir"
 unset TMP TEMP TEMPDIR NIX_BUILD_TOP SOURCE_DATE_EPOCH
+
+if [ -e /etc/ci-image/shell-env ] &&
+  [ "$(readlink -f "$env_profile")" != "$(readlink -f /etc/ci-image/shell-env)" ]; then
+  buildkite-agent annotate --style warning --context ci-image \
+    "CI's agent image is stale: the \`.#ci\` shell changed since it was built, so each job downloads it. Rebuild and push it with \`.buildkite/push-image.sh\` (docs/design.md D11)."
+fi
 
 # Only this agent's user reads it; nothing uploads it.
 umask 077
