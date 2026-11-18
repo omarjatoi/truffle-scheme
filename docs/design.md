@@ -3273,11 +3273,11 @@ Each entry: the decision, why, and what was rejected.
       serial collector and the build's cache; 129 ms with compact headers
       and a cache trained the same way with them (`-XX:AOTCacheOutput`, on
       `bazel/aot-training.scm`); 341 ms with compact headers and no cache.
-      What is left of the rejection is the steady state, measured at M8-05
+      What was left of the rejection was the steady state, measured at M8-05
       without the AOT cache and with 12 host compiler threads: 5% faster
-      overall with the serial collector, slower on `nboyer` and `earley`.
-      Not re-measured since. Until the launcher asked the JVM ("The AOT
-      cache", "Which JVM options it takes"),
+      overall with the serial collector, slower on `nboyer` and `earley`
+      (re-measured at M11-10, below). Until the launcher asked the JVM
+      ("The AOT cache", "Which JVM options it takes"),
       `--vm.XX:+UseCompactObjectHeaders` on `bazel-bin/scheme` was given the
       build's cache all the same, which the JVM then refused (*"The AOT
       cache's UseCompactObjectHeaders setting (disabled) does not equal the
@@ -3287,6 +3287,49 @@ Each entry: the decision, why, and what was rejected.
       25.5's JDK has no class-sharing archive for compact headers either
       (`lib/server/` has only `classes.jsa`), so with them the JVM shares no
       classes whatever the launcher passes.
+    - *Re-measured with the AOT cache (M11-10), and still rejected.* 36 of
+      ecraven's programs (M8-03's 24, and 12 that allocate the most:
+      `paraffins`, `tak`, `mperm`, `graphs`, `conform`, `nqueens`,
+      `mazefun`, `equal`, `sboyer`, `earley`, `nboyer`, `gcbench`) at the
+      report's counts (0.1 times their own, `-Xmx2g`, 3 iterations in a
+      fresh JVM), with the launcher's options (the serial collector, 4 host
+      compiler threads) and each with an AOT cache trained its own way, as
+      the build trains it, on `bazel/aot-training.scm` (`-XX:AOTMode=on`,
+      so a run that couldn't use its cache would have stopped; each cache
+      refuses the other's flag, `--dry-run` showed). Three configurations
+      in a rotating order, 3 rounds: without the flag twice (the A/A noise
+      floor) and with it; an Apple M3 Max shared with other agents, the
+      1-minute load 3.3-9.9 at every run's start and end (3 runs that ended
+      above 10 ran again); `main` at `f87a06d`. Geometric means of the
+      medians' ratios, with the flag against without (A/A in brackets):
+
+      | Programs | First iteration | Later, best | Later, mean | Whole process | Peak RSS |
+      |---|--:|--:|--:|--:|--:|
+      | All 36 | 0.997 (1.004) | 0.954 (0.994) | 0.998 (0.997) | 0.998 (1.002) | 0.978 (1.003) |
+      | Without `paraffins`, `mperm` | 0.996 | 1.027 | 1.021 | 1.009 | 0.987 |
+
+      The steady state's gain is two programs' collections. With smaller
+      objects `mperm` collects 4 times instead of 5 (880 ms of pauses
+      against 1,660; its later iterations' mean 0.53 times), and `paraffins`
+      2 times instead of 3, which leaves its third iteration without a
+      collection (63 ms against 290) and its second with one (466 ms against
+      315: the mean 0.87). Elsewhere the flag costs 2-3%: `earley` 1.30 times
+      in every round (one run each with `-Xlog:gc*`: its full collections
+      fall where 670 MB is live instead of 200, and take 1.3 s each against
+      0.3; its young collections leave less and take longer: the fourth
+      698 MB to 202 in 164 ms, against 737 to 268 in 145), `peval` 1.15,
+      `equal` 1.10, `parsing`'s mean 1.18, `sum1` (30 ms an iteration)
+      1.39. `nboyer`, M8-05's loser, is 0.89 times, its peak
+      RSS 0.85; the median peak RSS is the same (1006 MB against 1004 and
+      1012). Start-up is the same (31 interleaved runs of the `java` command
+      `bazel-bin/scheme` runs, medians, load 4.3-4.7): `--version` 85.2 ms
+      and 139.5 MB against 84.8-84.9 ms and 139.6 MB, a hello-world program
+      126.7 ms and 167.6 MB against 125.4-126.1 ms and 167.3-167.4 MB. So it
+      wins neither the report's number (the first iteration) nor whole
+      processes, and costs most programs' steady state: the launcher leaves
+      the flag to the JVM's default (off), and
+      `--vm.XX:+UseCompactObjectHeaders` still runs without the build's
+      cache ("Which JVM options it takes").
 - **The launcher's JVM: memory and start-up.** Besides the collector, the
   JVM launcher starts its JVM with 4 host compiler threads and, for
   `bazel-bin/scheme`, an AOT cache (`tests/harness/harness.py`:
