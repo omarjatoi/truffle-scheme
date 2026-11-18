@@ -1792,7 +1792,7 @@ measures with interleaved A/B runs.
     design.md D10); and running the isolate test in CI is measured (its
     build time on the executors, cached and not) and decided in design.md
     D11, in a PR of its own (AGENTS.md), and applied if taken.
-- [ ] **M12-12 · `parsing`'s null-check deoptimizations in the native launcher**
+- [x] **M12-12 · `parsing`'s null-check deoptimizations in the native launcher**
   - M12-04's follow-up (design.md D17, "The native launcher's steady
     state"): the native launcher invalidates `parsing`'s large
     compilations (`parse-data`, `parse-datum`, `parse-list2`) about 8
@@ -1805,6 +1805,14 @@ measures with interleaved A/B runs.
     positions), and fixed with `parsing`'s native steady state and its
     count of invalidations measured before and after, or recorded in D17
     with its evidence.
+  - Done (D17, "The native launcher's steady state"; docs/upstream.md, "A
+    guard that can only fail is moved out of its loop"): the null was a
+    cast's branch for null, whose null check, which can only fail, Graal's
+    speculative guard movement moved out of a trampoline's loop. `BoxRef`,
+    `BoxSet`, `LoadCaptured` and `PatchCaptured` test their operand's type
+    instead: natively 8 or 9 invalidations a run → 3 or 4 (none a null
+    check), the first iteration 0.87×, the steady state 0.99× (noise); on
+    the JVM 7 or 8 null-check traps → 1 or 2, the first iteration 0.93×.
 
 **Exit:** every task above is done, or its note records what was measured and
 why it isn't; `docs/benchmarks.md` and `bench/thresholds.json` are regenerated

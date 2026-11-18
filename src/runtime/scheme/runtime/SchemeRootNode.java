@@ -628,13 +628,21 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
         }
     }
 
-    /** {@code captured[index]} of the running closure (frame argument 0). */
+    /**
+     * {@code captured[index]} of the running closure (frame argument 0). Its operand's type is
+     * checked, not cast, as {@link BoxRef}'s is.
+     */
     @Operation
     @ConstantOperand(type = int.class)
     public static final class LoadCaptured {
         @Specialization
         static Object doLoad(int index, SClosure closure) {
             return closure.captured[index];
+        }
+
+        @Fallback
+        static Object notAClosure(@SuppressWarnings("unused") int index, @SuppressWarnings("unused") Object closure) {
+            throw CompilerDirectives.shouldNotReachHere("LoadCaptured of a non-closure");
         }
     }
 
@@ -650,6 +658,11 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
         @Specialization
         static void doPatch(int index, SClosure closure, Object value) {
             closure.captured[index] = value;
+        }
+
+        @Fallback
+        static void notAClosure(@SuppressWarnings("unused") int index, @SuppressWarnings("unused") Object closure, @SuppressWarnings("unused") Object value) {
+            throw CompilerDirectives.shouldNotReachHere("PatchCaptured of a non-closure");
         }
     }
 
@@ -886,19 +899,41 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
         }
     }
 
+    /**
+     * An assigned variable's value (design.md D2). The operand is always a {@link Box}, but its type
+     * is checked ({@code instanceof}, with a fallback compiled code never reaches), not cast: with
+     * one specialization and no fallback, the DSL casts the operand, and Graal compiles a cast that
+     * no profile says is never null into a branch for null, on which the field read's null check
+     * can only fail. That guard's condition is a constant, which speculative guard movement takes
+     * for loop-invariant: it moved the guard out of a trampoline's loop of tail calls, to before
+     * the loop, where it failed at once and invalidated the compiled root, once per call target
+     * (M12-12, design.md D17 "The native launcher's steady state"; docs/upstream.md). The same holds
+     * for {@link BoxSet}, {@link LoadCaptured} and {@link PatchCaptured}.
+     */
     @Operation
     public static final class BoxRef {
         @Specialization
         static Object doRef(Box box) {
             return box.value;
         }
+
+        @Fallback
+        static Object notABox(@SuppressWarnings("unused") Object box) {
+            throw CompilerDirectives.shouldNotReachHere("BoxRef of a non-box");
+        }
     }
 
+    /** Assigns an assigned variable. Its operand's type is checked, not cast, as {@link BoxRef}'s is. */
     @Operation
     public static final class BoxSet {
         @Specialization
         static void doSet(Box box, Object value) {
             box.value = value;
+        }
+
+        @Fallback
+        static void notABox(@SuppressWarnings("unused") Object box, @SuppressWarnings("unused") Object value) {
+            throw CompilerDirectives.shouldNotReachHere("BoxSet of a non-box");
         }
     }
 
