@@ -9,15 +9,16 @@ load("@rules_python//python:defs.bzl", "py_test")
 load("//bazel:jvm_test.bzl", "java_driver_test")
 
 def harness_test(name, check, args, data, deps = [], size = "medium", tags = []):
-    """A py_test running tests/harness/check_<check>.py with these arguments; `deps`: the harness
-    libraries it imports besides harness.py."""
+    """A py_test running tests/harness/check_<check>.py with these arguments, through run_test.py,
+    which writes its result as JUnit XML; `deps`: the harness libraries it imports besides
+    harness.py."""
     script = "//tests/harness:check_%s.py" % check
     py_test(
         name = name,
         size = size,
-        srcs = [script],
-        main = script,
-        args = args,
+        srcs = [script, "//tests/harness:run_test.py"],
+        main = "//tests/harness:run_test.py",
+        args = ["check_" + check] + args,
         data = data,
         tags = tags,
         deps = ["//tests/harness"] + ["//tests/harness:" + d for d in deps],

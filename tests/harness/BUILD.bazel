@@ -14,6 +14,7 @@ exports_files([
     "check_status.py",
     "check_tools.py",
     "check_versions.py",
+    "run_test.py",
     "scheme.py",
 ])
 
