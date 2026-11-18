@@ -282,7 +282,23 @@ final class Arithmetic {
         return compare(who, a, b) == 0;
     }
 
+    /**
+     * -1, 0 or 1. Real numbers only. -0.0 and NaN are 0, as {@link #compare} with an exact 0 has
+     * them. A flonum or fixnum needs no exact arithmetic, so only the others cross a boundary.
+     */
     static int sign(String who, Object x) {
+        if (x instanceof Double d) {
+            double v = d;
+            return v > 0 ? 1 : v < 0 ? -1 : 0;
+        }
+        if (x instanceof Long l) {
+            return Long.signum(l);
+        }
+        return signExact(who, x);
+    }
+
+    @TruffleBoundary
+    private static int signExact(String who, Object x) {
         int c = compare(who, x, 0L);
         return c == UNORDERED ? 0 : c;
     }
@@ -582,10 +598,11 @@ final class Arithmetic {
         check("expt", base);
         check("expt", power);
         if (isExactInteger(power) && (isExact(base) || base instanceof Double)) {
-            BigInteger p = numerator(power);
             if (base instanceof Double d) {
-                return StrictMath.pow(d, p.doubleValue());
+                // A long's conversion and BigInteger.doubleValue both round to nearest, ties to even.
+                return StrictMath.pow(d, power instanceof Long l ? (double) l : numerator(power).doubleValue());
             }
+            BigInteger p = numerator(power);
             if (p.bitLength() > 31) {
                 if (isExactInteger(base) && numerator(base).abs().compareTo(BigInteger.ONE) <= 0) {
                     return numerator(base).signum() == 0 ? (p.signum() > 0 ? 0L : base) : p.testBit(0) ? base : (Object) 1L;
