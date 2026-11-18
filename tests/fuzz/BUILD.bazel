@@ -1,0 +1,35 @@
+load("@rules_python//python:defs.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# The differential fuzzer (README.md): the generator and the driver `bazel run //:r7rs -- fuzz` runs.
+py_library(
+    name = "fuzz",
+    srcs = [
+        "fuzz.py",
+        "gen.py",
+    ],
+    imports = ["."],
+    deps = ["//tests/harness"],
+)
+
+# A fixed seed's programs, interpreted: the generator and the driver still work, and nothing they
+# found is back. Deterministic, so cached like any test.
+py_test(
+    name = "fuzz_smoke",
+    size = "large",
+    srcs = ["smoke.py"],
+    args = [
+        "--runtime=$(rlocationpath //:launcher_runtime)",
+        "--chibi=$(rlocationpath //bazel:chibi-scheme)",
+        "--seed=1",
+        "--count=300",
+    ],
+    data = [
+        "//:launcher_runtime",
+        "//bazel:chibi-scheme",
+    ],
+    main = "smoke.py",
+    tags = ["cpu:4"],
+    deps = [":fuzz"],
+)

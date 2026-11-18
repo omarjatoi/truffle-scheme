@@ -102,6 +102,8 @@ bazel run //:r7rs -- test --compile       # Graal JIT, compile immediately (also
 bazel run //:r7rs -- status               # regenerate the status block in docs/plan.md
 bazel run //:r7rs -- conformance-report   # the conformance tests' last results, a table per suite
 bazel run //:r7rs -- diff path/to/file.scm   # run under chibi and under us; compare stdout + exit status
+bazel run //:r7rs -- fuzz --seed 7 --count 2000   # random programs vs chibi (--mode interp,compile,torture,...); minimises mismatches (tests/fuzz/README.md)
+bazel test //tests/fuzz:fuzz_smoke        # a fixed seed's 300 random programs, interpreted, vs chibi
 bazel run //:r7rs -- format               # format Java code (GraalVM's Eclipse formatter settings)
 bazel test //tests:readme                 # docs/usage.md's and docs/embedding.md's commands as written, and their samples
 bazel build //:scheme-native              # the native launcher, bazel-bin/scheme-native (design.md D17; a minute, ~3 GB)
@@ -286,6 +288,7 @@ tests/lib/                 test-only libraries: the (chibi test) and (tests sche
 tests/harness/             the `bazel run //:r7rs` commands (main.py), the Python checks (check_*.py), the test macros (defs.bzl)
 tests/driver/              Java test drivers: diff, spec and space programs, conformance sections, lint checks
 tests/diff/                programs that must match chibi-scheme; add freely
+tests/fuzz/                the differential fuzzer: random programs vs chibi-scheme (README.md: triage, chibi's known bugs)
 tests/space/               programs run under small JVM limits (//tests:space)
 tests/tools/               programs the tools tests debug and profile (tests/harness/tools.py names their lines)
 tests/spec/                tail-call / continuation / depth cases; existing cases read-only

@@ -3332,3 +3332,32 @@ errata (r7rs.org):
 - Why: an error at expansion costs nothing at run time and points at the
   mistake; the cases left alone would need a run-time check on every
   reference (`letrec` restriction) or a second classification pass (§5.4).
+
+### D19. Differential fuzzing against chibi-scheme
+
+`bazel run //:r7rs -- fuzz` (`tests/fuzz/`, README.md) generates random
+programs, runs them under chibi-scheme and under ours in any of the
+conformance tests' modes, and minimises and saves those whose stdout or exit
+status differ; `//tests/fuzz:fuzz_smoke` runs a fixed seed's 300 on every
+commit, so the generator and the driver keep working.
+
+- **A difference must mean a bug.** The generator is type-directed and
+  produces only programs R7RS gives one meaning: guarded indices, divisors
+  and ranges (no "it is an error", D9, D18), at most one argument of a call
+  that leaves non-locally (the order of evaluation is unspecified), no
+  side effects that order could reveal, and nothing written whose external
+  representation R7RS leaves open (procedures, records, `eof`, error
+  objects).
+- **R7RS decides, not chibi-scheme** (as for `tests/diff`). Where chibi-scheme
+  departs from R7RS, the generator stays clear of it, or, for two printing
+  differences every program would hit (`1e+21` without a decimal point, and
+  `-1/-4611686018427387904`), the driver undoes them in chibi-scheme's
+  stdout; README.md lists each with the R7RS text. Bytevectors' bytes in
+  hexadecimal are allowed notation, and undone the same way.
+- **Minimised programs** are delta-debugged over the top-level forms and the
+  tree. A smaller program counts only if it differs the same way and writes
+  nothing the original didn't among what R7RS leaves open (`#<...>`, NaNs,
+  complex numbers), so the reduction doesn't drift to another difference.
+- *Rejected:* comparing with a tolerance or normalising our output, which
+  would hide our bugs; a model interpreter in Python, which would be a third
+  implementation to keep right.

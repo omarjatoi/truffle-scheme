@@ -8,6 +8,9 @@
   diff FILE [--compile] [--torture|--torture-owned]
                      a program under chibi-scheme and under ours: same stdout and exit status?
   format             the Eclipse formatter over src/ and tests/
+  fuzz [--seed N] [--count N] [--mode interp,compile,torture,torture-owned] ...
+                     random programs under chibi-scheme and under ours; minimises and saves any that
+                     differ (tests/fuzz/README.md)
   tools NAME         one of the tools' smoke tests (tools.py), e.g. terminal
   benchmark, bench-report, bench-check, vendor-benchmarks   bench.py
   vendor-chibi, vendor-larceny                              vendor.py
@@ -29,6 +32,7 @@ from os.path import exists, join
 
 import bench
 import check_tools
+import fuzz
 import harness
 import tools
 import vendor
@@ -243,6 +247,7 @@ def main():
     p = sub.add_parser('status', help='rewrite the status block in docs/plan.md')
     p.add_argument('--check', action='store_true')
     sub.add_parser('format', help='the Eclipse formatter over src/ and tests/')
+    fuzz.main_args(sub.add_parser('fuzz', help='random programs under chibi-scheme and under ours'))
     for name in ('benchmark', 'bench-report', 'bench-check', 'vendor-benchmarks', 'vendor-chibi', 'vendor-larceny'):
         add(name, add_help=False)
 
@@ -263,6 +268,7 @@ def main():
     commands = {
         'diff': diff, 'conformance-report': conformance_report, 'tools': check_tools.tools_test, 'test': test,
         'status': status, 'format': format_sources,
+        'fuzz': lambda o: fuzz.run_command(o, rlocation(o.chibi), Runtime.from_manifest(o.tools_runtime)),
     }
     if o.command in commands:
         commands[o.command](o)

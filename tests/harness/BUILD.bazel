@@ -68,5 +68,8 @@ py_binary(
         "//bazel:chibi-scheme",
     ],
     main = "main.py",
-    deps = [":commands"],
+    deps = [
+        ":commands",
+        "//tests/fuzz",
+    ],
 )
