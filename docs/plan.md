@@ -1619,10 +1619,11 @@ JIT's and the native launcher's first runs and steady state, and none sets
 an interpreter-only target, though the interpreter must not become slow.
 Not here: the polyglot library's follow-ups (D20's open questions, cached
 interop at call sites, foreign frames' stack accounting, `java-type` in
-native images), in progress outside the milestone since #236 and #237
-(#265-#273); and, the maintainer's to decide, literal pairs (M10-07, #245),
-shipping the insight tools (#261, #271: Maven artifacts), the CI image
-(#232), Bazel 9 and GraalVM 25.6. Filing upstream issues (docs/upstream.md)
+native images), which landed outside the milestone (#265-#269, #272, #273)
+with the maintainer's approval; literal pairs (M10-07) and Bazel 9, which
+landed in #245 and #276; and, the maintainer's to decide, shipping Insight
+and the heap dump tool (#261: Maven artifacts; #271 shipped coverage), the
+CI image (#232) and GraalVM 25.6. Filing upstream issues (docs/upstream.md)
 stays a human's call. Benchmarks are local (bench/README.md: the load rule,
 `-Xmx2g`, the serial collector); each task that may change performance
 measures with interleaved A/B runs.
