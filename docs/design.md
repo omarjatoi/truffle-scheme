@@ -1433,9 +1433,9 @@ Each entry: the decision, why, and what was rejected.
   of a literal expression) using a mutation procedure like `set-car!` or
   `string-set!`"*) allow not detecting it; literal strings, vectors and
   bytevectors carry an immutable flag, and the maintainer's decision
-  (November 2026) was to catch the pair case too once it costs nothing, so
-  that `(define (g) '(constant-list))` can't return a list a `set-car!`
-  changed.
+  (November 2026) was to catch the pair case too, so that
+  `(define (g) '(constant-list))` can't return a list a `set-car!` changed,
+  at the cost recorded below, which the maintainer accepted.
   - *The representation.* A literal's pairs are `LiteralPair`s, a `final`
     subclass of `SPair` with no field of its own (the class is the mark).
     `set-car!`, `set-cdr!` and `list-set!` take their fast path only for
@@ -1516,12 +1516,17 @@ Each entry: the decision, why, and what was rejected.
     MB instead of 152.92), and `destruc` 3-4% slower in the JIT from the
     check. A weak identity set of literal pairs: a hash lookup in every
     `set-car!`.
-  - *Left for the maintainer* (plan.md M10-07): the JIT is neutral or
-    faster and memory unchanged, but the interpreter's `set-car!`
-    micro-benchmark is 5.7% slower in its later iterations, `paraffins`'
-    first interpreted run 3.6%, and the native launcher's first runs of
-    `destruc` and `mazefun` 1-2%, each beyond its A/A floor; none of the
-    designs above removes one cost without adding another.
+  - *Accepted by the maintainer* (plan.md M10-07, 2026-11-18): the JIT is
+    neutral or faster and memory unchanged, but the interpreter's
+    `set-car!` micro-benchmark is 5.7% slower in its later iterations,
+    `paraffins`' first interpreted run 3.6%, and the native launcher's first
+    runs of `destruc` and `mazefun` 1-2%, each beyond its A/A floor; none of
+    the designs above removes one cost without adding another. Under the
+    performance priorities at the top of this document (the JIT and the
+    native image first, the interpreter after), the maintainer accepted
+    them and merged this design as it is (#245): the JIT is neutral or
+    faster, memory is unchanged, and the native first runs' cost is under
+    2%.
 - **Records (M7-04)** are static objects (Truffle's Static Object Model):
   their fields are fields of the object itself, so a record is one
   allocation and a field access is a field load. A language has one
