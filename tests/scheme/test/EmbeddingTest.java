@@ -37,6 +37,7 @@ import com.oracle.truffle.api.interop.InteropLibrary;
 import scheme.compiler.ProgramCompiler;
 import scheme.runtime.GlobalCell;
 import scheme.runtime.SchemeContext;
+import scheme.runtime.SchemeLanguage;
 
 /**
  * M6-02: interop for embedders (design.md D10). Scheme values answer {@code InteropLibrary} as what
@@ -699,7 +700,7 @@ public class EmbeddingTest {
      * continuation's root as internal (docs/upstream.md, "Continuation roots are never internal"),
      * so the prelude's frames (map's) show in the trace, and {@link #guestFrames} leaves them out.
      */
-    private static final boolean TORTURE = Boolean.getBoolean("scheme.torture");
+    private static final boolean TORTURE = SchemeLanguage.constant(SchemeLanguage.TORTURE) != SchemeLanguage.Torture.OFF;
 
     /** The guest frames as {@code name line}, innermost first. */
     private static List<String> guestFrames(PolyglotException e) {
