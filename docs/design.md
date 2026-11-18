@@ -3756,7 +3756,7 @@ Each entry: the decision, why, and what was rejected.
     - *The count* is native-image's own: its build output's *"2,703
       runtime compiled methods"*, and the list
       `-H:+PrintRuntimeCompileMethods` prints, at `79b93dc` and again at
-      `093bb36`: 2,703 on
+      `1f314fe`: 2,703 on
       Linux x86-64 and 2,694 on macOS arm64 (Linux's 9 more are 7 of
       TruffleString's `TStringOps` string scans, `Math.rint` and
       `Math.copySign`). 732 of them are the language's classes (`scheme.*`,
