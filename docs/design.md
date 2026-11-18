@@ -69,6 +69,32 @@ follow it or deviate, with the decision below that says why.
     flag): `string<?` loops, so `scheme` gains nothing; `forceInlining()` on
     the trampoline's calls of primitive roots (#195): it restored the
     inlining but not the time.
+  - *Measured and not kept (M11-05).* #215's two follow-ups, each against
+    main, with main against a copy of itself as the noise floor:
+    interleaved, 8 rounds in a rotating order, fresh JVMs, 10 iterations
+    at the report's counts (load 4.7-10.0 at every run's start and end; 6
+    runs that ended above 10 were run again), medians of the per-round
+    ratios of iterations 6-10.
+    - `Call` with the trampoline's one-entry shape: `doPrimitive` folded
+      into `doDirect`, each entry a primitive's node or a call node, the
+      closure path kept behind `@InliningCutoff` in a method of its own.
+      `scheme` 1.007 (A/A 1.004), `peval` 1.012 (1.000), `conform` 1.014
+      (1.003), `compiler` 1.000 (1.024), `mazefun` 0.999 (0.996), the
+      `apply` loop above 0.992 (0.999): no gain. It also costs a site
+      that goes megamorphic its primitives in place, which `doPrimitive`,
+      not replaced by `doIndirect`, keeps.
+    - Primitives in place past a trampoline's cache: `doIndirect` runs a
+      primitive that only returns values through an inline cache of its
+      own (four entries, then its root). None of the five programs takes
+      that path: a counter in the indirect calls of the trampolines and of
+      `Call` (interpreted and compiled, at the counts above) counted no
+      primitive, in `scheme` either; its megamorphic caches see only
+      closures (its interpreter's `gen-*` closures). `scheme` 1.009,
+      `peval` 0.998, `conform` 1.018, `compiler` 1.001, `mazefun` 1.000,
+      `apply` 1.003. A loop made for it (a site whose tail calls are four
+      closures and the four primitives past `MakeTailCall`'s cache, so its
+      first cache goes megamorphic) gained 0.982 against the A/A 0.989
+      (2-3: 0.961 against 1.008), and its first iteration was 1.056.
 - **The hottest primitives are operations of their own (M7-03).** A call of
   `car`, `cdr`, `cons`, `null?`, `pair?`, `eq?`, `not`, `+`, `-`, `*`, `/`,
   `quotient`, `remainder`, `modulo`, `=`, `<`, `>`, `<=`, `>=`, `zero?`,
