@@ -70,21 +70,27 @@ public class SplitRecompilationTest {
     private static final Pattern INVALIDATED = Pattern.compile("opt deopt\\s+engine=\\d+\\s+id=\\d+\\s+(\\S+(?: <split-\\d+>)?)\\s+\\|Invalidated\\s+true\\|");
 
     /**
-     * The compilations the log says were invalidated, by name, but continuation roots
-     * ({@code name(resume_bci=n)}): under torture every non-tail call suspends and resumes its
-     * frame in one, and one that resumes into a loop deoptimizes once, in
-     * {@code LoopHead.releaseOSRParent}: another cause than this test's (M10-06's follow-ups).
+     * The compilations the log says were invalidated, by name, continuation roots
+     * ({@code name(resume_bci=n)}) included: under torture every non-tail call suspends and
+     * resumes its frame in one.
      */
     private static String invalidated(String log) {
         StringBuilder names = new StringBuilder();
         Matcher m = INVALIDATED.matcher(log);
         while (m.find()) {
-            if (!m.group(1).contains("(resume_bci=")) {
-                names.append(m.group(1)).append('\n');
-            }
+            names.append(m.group(1)).append('\n');
         }
         return names.toString();
     }
+
+    /**
+     * {@code (go 1 0)}, before the programs' {@code (go 5000 0)}: under torture {@code go}'s loop
+     * runs in a continuation root, one iteration per resume, which is compiled before the loop
+     * has ever exited, and its first exit then deoptimizes it once (a branch never taken, and the
+     * root's return type), as {@code ResumedLoopRecompilationTest} shows (M11-04). Taking the exit
+     * once first leaves this test's cause alone in the log.
+     */
+    private static final String EXIT_GO_ONCE = "(go 1 0)";
 
     private static final String WORDS = "(define words '(\"one\" \"two\" \"three\" \"four\" \"five\" \"six\" \"seven\" \"eight\"))";
 
@@ -94,7 +100,7 @@ public class SplitRecompilationTest {
             String program = WORDS + "(define (lt a b) (string<? a b))" +
                             "(define (count-ascending l k) (if (pair? (cdr l)) (count-ascending (cdr l) (if (lt (car l) (cadr l)) (+ k 1) k)) k))" +
                             "(define (go n acc) (if (= n 0) acc (go (- n 1) (count-ascending words acc))))" +
-                            "(go 5000 0)";
+                            EXIT_GO_ONCE + "(go 5000 0)";
             assertEquals(10000L, run.context.eval(SCHEME, program).asLong());
             String log = run.log();
             assertTrue(log, Pattern.compile("opt done\\s+engine=\\d+\\s+id=\\d+\\s+count-ascending\\s").matcher(log).find());
@@ -128,7 +134,7 @@ public class SplitRecompilationTest {
                         WORDS +
                         "(define (run l k) (if (pair? (cdr l)) (run (cdr l) (body (vector (car l) (cadr l) k l 'nine))) k))" +
                         "(define (go n acc) (if (= n 0) acc (go (- n 1) (run words acc))))" +
-                        "(go 5000 0)";
+                        EXIT_GO_ONCE + "(go 5000 0)";
         try (Run run = new Run("compiler.Inlining", "false")) {
             assertEquals(20000L, run.context.eval(SCHEME, program).asLong());
             String log = run.log();

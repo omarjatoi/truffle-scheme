@@ -582,6 +582,43 @@ follow it or deviate, with the decision below that says why.
   frame a second time crashed with `FrameSlotTypeException`. A frame that a
   continuation can reach is only resumed from fresh copies, and that is what
   makes multi-shot possible.
+- **A loop resumed by a continuation deoptimizes once, at its first exit
+  (M11-04).** A procedure whose loop captures on every iteration (a `call/cc`
+  in the loop, or any non-tail call under torture) runs each iteration but
+  the first in a continuation root, one per resume. That root is compiled
+  after 100 resumes, while the loop's exit is still a branch the bytecode's
+  profile has never seen taken, so its compiled code has a
+  `transferToInterpreterAndInvalidate` there (the Bytecode DSL's branch
+  profile with a zero count), and the loop's one exit takes it. The root's
+  return-type profile, which had only seen the `ContinuationResult` of a frame
+  that suspends again, changes at the same exit (`Profiled Return Type`).
+  Both are profiles that stabilize once: the branch profile is the bytecode
+  node's, which the procedure and its continuation roots share, and the
+  recompiled root keeps the exit. A root compiled before the first exit pays
+  it once if it is the one that exits; nothing cycles. It is Truffle's
+  behavior for any branch compiled before it is taken (an OSR-compiled loop's
+  exit is the same), so nothing changed in the runtime;
+  `ResumedLoopRecompilationTest` counts the invalidations, one with the exit
+  first taken after compilation and none with it taken before, in all four
+  modes.
+  - *Not `LoopHead.releaseOSRParent`.* `-Xlog:deoptimization=debug` reports
+    the trap (`transfer_to_interpreter`, action `reinterpret`, which is
+    `InvalidateReprofile`: a `transferToInterpreterAndInvalidate`) at the last
+    frame state before the branch, the loop condition's: `releaseOSRParent`
+    at its return (bci 57), which is what #213's follow-up took for the cause.
+    With `releaseOSRParent`'s body taken out, the same trap is reported at
+    `FrameWithoutBoxing.unsafeClear` (bci 43, `LoopTest` clearing its
+    operand). With `(go 3 0)` run before `(go 5000 0)` in
+    `SplitRecompilationTest`'s program, there is none, and a second
+    `(go 5000 0)` after the first has none either. `releaseOSRParent` has
+    nothing to release in a continuation root: in compiled code the Bytecode
+    DSL (25.5) runs it on a fresh virtual frame and binds operations' frames
+    to the materialized one, whose arguments are the procedure's own.
+    `--engine.TraceTransferToInterpreter` shows only the first
+    `transferToInterpreter` the interpreter runs after the trap (the generated
+    `continueAt`'s "bytecode or tier changed" path), and
+    `--engine.TraceDeoptimizeFrame` traces frames deoptimized on request, not
+    traps, so neither named it.
 - **Owned segments are resumed in place, once.** The frames a stack-depth
   spill suspends are reachable from nothing but the root prompt's pending
   list until something captures them, and the driver resumes each of them

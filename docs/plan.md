@@ -1449,7 +1449,7 @@ that may change performance measures with interleaved A/B runs.
     `//tests:launcher_vm_native` and one in `//tests:launcher_vm` (or
     `bazel-bin/scheme`'s handling of an argfile, recorded in design.md D17
     "Options" if the JVM's own is already checked).
-- [ ] **M11-04 · Resuming into a loop deoptimizes**
+- [x] **M11-04 · Resuming into a loop deoptimizes**
   - #213's follow-up: under torture, a continuation root that resumes into
     a loop (`go(resume_bci=190)` in `SplitRecompilationTest`'s program)
     deoptimizes once in `LoopHead.releaseOSRParent` (a
