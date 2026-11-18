@@ -8,14 +8,21 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.junit.Assume.assumeTrue;
 
+import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.io.UncheckedIOException;
 import java.lang.ref.WeakReference;
 import java.net.URI;
 import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
 import java.nio.channels.SeekableByteChannel;
+import java.nio.charset.CharsetDecoder;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AccessMode;
 import java.nio.file.DirectoryStream;
@@ -25,6 +32,7 @@ import java.nio.file.OpenOption;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileAttribute;
 import java.security.MessageDigest;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -33,6 +41,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
@@ -1144,7 +1156,7 @@ public class IoTest {
         String text = sb.toString();
         int[] cps = text.codePoints().toArray();
         CountingReader in = new CountingReader(text);
-        SPort port = SPort.textInput(in, false);
+        SPort port = SPort.textInput(in);
         int pos = 0;
         StringBuilder read = new StringBuilder();
         // Chunk sizes that end on either half of a pair, and a peek between some.
@@ -1215,17 +1227,17 @@ public class IoTest {
             for (int most : mosts) {
                 String what = text.length() + " units, at most " + most + " a read";
                 // Whole, then the end.
-                SPort port = SPort.textInput(new CountingReader(text, most), false);
+                SPort port = SPort.textInput(new CountingReader(text, most));
                 assertReadString(what, cps.length == 0 ? null : text, port.readString(Integer.MAX_VALUE));
                 assertReadString(what + ", at the end", null, port.readString(Integer.MAX_VALUE));
                 assertReadString(what + ", 0 at the end", "", port.readString(0));
                 // Exactly as many characters as there are: no eof yet.
-                port = SPort.textInput(new CountingReader(text, most), false);
+                port = SPort.textInput(new CountingReader(text, most));
                 assertReadString(what + ", all " + cps.length, cps.length == 0 ? null : text, port.readString(Math.max(1, cps.length)));
                 assertEquals(-1, port.peekChar());
                 assertReadString(what + ", after a peek at the end", null, port.readString(1));
                 // Chunks of random sizes, some across 8192 units, with peeks and reads between.
-                port = SPort.textInput(new CountingReader(text, most), false);
+                port = SPort.textInput(new CountingReader(text, most));
                 LineModel model = new LineModel(text);
                 while (model.pos < cps.length) {
                     int op = random.nextInt(8);
@@ -1263,8 +1275,9 @@ public class IoTest {
      * the reader's buffer, not a character at a time, and reads exactly what reading a character at
      * a time did (the {@link LineModel}): a last line without an ending, empty lines, CR LF and CR
      * split across the buffer's ends, lines longer than the buffer, surrogate pairs, and a peeked
-     * character (a CR or LF among them) before a line, over a buffered reader (files and the
-     * console), a string port and another reader that can mark.
+     * character (a CR or LF among them) before a line, over a buffered reader (files' and the
+     * console's until they decoded UTF-8 themselves), a string port and another reader that can
+     * mark.
      */
     @Test
     public void readLineFindsTheLineEndingInTheBuffer() throws IOException {
@@ -1273,14 +1286,14 @@ public class IoTest {
                         lines(random, 300, false), lines(random, 3000, true)};
         for (String text : texts) {
             for (int size : new int[]{1, 2, 3, 7, 64, 8192}) {
-                readLines(text, SPort.textInput(new java.io.BufferedReader(new CountingReader(text), size), false), random);
+                readLines(text, SPort.textInput(new BufferedReader(new CountingReader(text), size)), random);
             }
             readLines(text, SPort.inputString(text), random);
-            readLines(text, SPort.textInput(new CountingReader(text), false), random);
+            readLines(text, SPort.textInput(new CountingReader(text)), random);
             // Only read-line: the reader is read in bulk.
             CountingReader in = new CountingReader(text);
             List<String> expected = new LineModel(text).lines();
-            SPort port = SPort.textInput(in, false);
+            SPort port = SPort.textInput(in);
             for (String line : expected) {
                 assertEquals(line, port.readLine().toString());
             }
@@ -1442,13 +1455,13 @@ public class IoTest {
      * a port over the JDK's decoder, as {@code TruffleFile.newBufferedReader(UTF_8)} gave it.
      */
     private static SPort jdkDecodedPort(byte[] bytes) {
-        return SPort.textInput(new java.io.InputStreamReader(new ByteArrayInputStream(bytes), StandardCharsets.UTF_8), false);
+        return SPort.textInput(new InputStreamReader(new ByteArrayInputStream(bytes), StandardCharsets.UTF_8));
     }
 
     /** {@code bytes} decoded as the JDK's decoder decodes a stream of them, malformed input included. */
     private static String jdkDecoded(byte[] bytes) throws IOException {
         java.io.StringWriter text = new java.io.StringWriter();
-        try (java.io.Reader in = new java.io.InputStreamReader(new ByteArrayInputStream(bytes), StandardCharsets.UTF_8)) {
+        try (java.io.Reader in = new InputStreamReader(new ByteArrayInputStream(bytes), StandardCharsets.UTF_8)) {
             in.transferTo(text);
         }
         return text.toString();
@@ -1542,38 +1555,46 @@ public class IoTest {
                 }
                 assertEquals(what, -1, port.readChar());
                 // Everything mixed, against the JDK's decoder's port.
-                port = SPort.utf8Input(new ShortReadStream(bytes, most));
-                jdk = jdkDecodedPort(bytes);
-                for (int i = 0;; i++) {
-                    int op = random.nextInt(12);
-                    String at = what + ", operation " + i + " (" + op + ")";
-                    if (op == 0) {
-                        assertEquals(at, jdk.peekChar(), port.peekChar());
-                    } else if (op == 1) {
-                        assertEquals(at, jdk.readChar(), port.readChar());
-                    } else if (op == 2) {
-                        assertTrue(at, port.ready());
-                    } else if (op <= 6) {
-                        int k = switch (op) {
-                            case 3 -> random.nextInt(4);
-                            case 4 -> random.nextInt(2000);
-                            case 5 -> 8190 + random.nextInt(5);
-                            default -> random.nextInt(20) == 0 ? Integer.MAX_VALUE : random.nextInt(100);
-                        };
-                        Object expected = jdk.readString(k);
-                        assertReadString(at + ", read-string " + k, expected == SConstant.EOF ? null : expected.toString(), port.readString(k));
-                    } else {
-                        Object expected = jdk.readLine();
-                        assertReadString(at + ", read-line", expected == SConstant.EOF ? null : expected.toString(), port.readLine());
-                        if (expected == SConstant.EOF) {
-                            break;
-                        }
-                    }
-                }
-                assertEquals(what, -1, port.peekChar());
-                assertEquals(what, -1, port.readChar());
+                readMixed(what, SPort.utf8Input(new ShortReadStream(bytes, most)), null, jdkDecodedPort(bytes), random);
             }
         }
+    }
+
+    /**
+     * Reads {@code port} with a random mix of {@code peek-char}, {@code read-char},
+     * {@code char-ready?}, {@code read-string} and {@code read-line}, each result compared with the
+     * same operation on {@code jdk}, to the end. A file port is always ready; the console port, over
+     * {@code console}, is unless the stream has nothing more to give without blocking.
+     */
+    private static void readMixed(String what, SPort port, ShortReadStream console, SPort jdk, Random random) {
+        for (int i = 0;; i++) {
+            int op = random.nextInt(12);
+            String at = what + ", operation " + i + " (" + op + ")";
+            if (op == 0) {
+                assertEquals(at, jdk.peekChar(), port.peekChar());
+            } else if (op == 1) {
+                assertEquals(at, jdk.readChar(), port.readChar());
+            } else if (op == 2) {
+                assertTrue(at, port.ready() || console != null && console.available() == 0);
+            } else if (op <= 6) {
+                int k = switch (op) {
+                    case 3 -> random.nextInt(4);
+                    case 4 -> random.nextInt(2000);
+                    case 5 -> 8190 + random.nextInt(5);
+                    default -> random.nextInt(20) == 0 ? Integer.MAX_VALUE : random.nextInt(100);
+                };
+                Object expected = jdk.readString(k);
+                assertReadString(at + ", read-string " + k, expected == SConstant.EOF ? null : expected.toString(), port.readString(k));
+            } else {
+                Object expected = jdk.readLine();
+                assertReadString(at + ", read-line", expected == SConstant.EOF ? null : expected.toString(), port.readLine());
+                if (expected == SConstant.EOF) {
+                    break;
+                }
+            }
+        }
+        assertEquals(what, -1, port.peekChar());
+        assertEquals(what, -1, port.readChar());
     }
 
     /**
@@ -1702,6 +1723,317 @@ public class IoTest {
         assertEquals(text.replaceAll("\r\n|\r|\n", "").length(), read.toString().replaceAll("\r\n|\r|\n", "").length());
         assertEquals(0, in.singleReads);
         assertTrue("bulk reads: " + in.bulkReads + " of " + bytes.length + " bytes", in.bulkReads <= bytes.length / 8000 + 3);
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // The console input port decodes standard input's UTF-8 itself, as a file port does (M12-10),
+    // reading only what each character needs, so interactive input is answered as it comes.
+
+    /**
+     * The console input port reads exactly what it read through the JDK's decoder (malformed input
+     * replaced the same way, the same strings and eof objects), with the same random mix of reads as
+     * the file port ({@link #readMixed}), from a stream that returns at most 1, 2, 3, 5, 8191, 8192,
+     * 8193 or any number of bytes a read; {@code char-ready?} is true whenever the stream has more
+     * to give.
+     */
+    @Test
+    public void consoleInputReadsWhatTheJdkDecoderRead() throws IOException {
+        Random random = new Random(37);
+        int[] mosts = {1, 2, 3, 5, 8191, 8192, 8193, Integer.MAX_VALUE};
+        for (byte[] bytes : utf8Samples(random)) {
+            int[] cps = jdkDecoded(bytes).codePoints().toArray();
+            for (int most : mosts) {
+                String what = bytes.length + " bytes, at most " + most + " a read";
+                ShortReadStream in = new ShortReadStream(bytes, most);
+                readMixed(what, SPort.consoleInput(in), in, jdkDecodedPort(bytes), random);
+                SPort port = SPort.consoleInput(new ShortReadStream(bytes, most));
+                for (int c : cps) {
+                    assertEquals(what, c, port.readChar());
+                }
+                assertEquals(what, -1, port.readChar());
+            }
+        }
+    }
+
+    /**
+     * Standard input as a pipe delivers it: each write arrives on its own, a read returns at most
+     * what is left of the first write not read yet, and a read with nothing written would block,
+     * which fails the test. {@link #finish} ends the input.
+     */
+    private static final class SlowPipe extends InputStream {
+        private final ArrayDeque<byte[]> writes = new ArrayDeque<>();
+        /** How much of the first write has been read. */
+        private int pos;
+        private boolean finished;
+
+        void write(byte[] bytes, int off, int len) {
+            if (len > 0) {
+                writes.add(Arrays.copyOfRange(bytes, off, off + len));
+            }
+        }
+
+        void write(String text) {
+            byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
+            write(bytes, 0, bytes.length);
+        }
+
+        void writeBytes(int... values) {
+            byte[] bytes = new byte[values.length];
+            for (int i = 0; i < values.length; i++) {
+                bytes[i] = (byte) values[i];
+            }
+            write(bytes, 0, bytes.length);
+        }
+
+        void finish() {
+            finished = true;
+        }
+
+        @Override
+        public int read() {
+            byte[] one = new byte[1];
+            return read(one, 0, 1) < 0 ? -1 : one[0] & 0xff;
+        }
+
+        @Override
+        public int read(byte[] b, int off, int len) {
+            if (len == 0) {
+                return 0;
+            }
+            byte[] first = writes.peek();
+            if (first == null) {
+                if (finished) {
+                    return -1;
+                }
+                throw new AssertionError("the port read the pipe with nothing written: it would block");
+            }
+            int n = Math.min(len, first.length - pos);
+            System.arraycopy(first, pos, b, off, n);
+            pos += n;
+            if (pos == first.length) {
+                writes.poll();
+                pos = 0;
+            }
+            return n;
+        }
+
+        @Override
+        public int available() {
+            int n = -pos;
+            for (byte[] w : writes) {
+                n += w.length;
+            }
+            return Math.max(n, 0);
+        }
+    }
+
+    /**
+     * On the console, {@code char-ready?} is true exactly when the bytes written so far make a
+     * character not read yet, as the JDK's decoder decodes them before the input ends (a sequence
+     * still cut makes none; a malformed one, a U+FFFD), and {@code read-char} and
+     * {@code peek-char} then never block: the pipe fails the test if the port reads it with nothing
+     * written. Each sample arrives in random pieces of 1 byte to just over the port's 8 KB buffer,
+     * so sequences are cut across writes and across the buffer's end.
+     */
+    @Test
+    public void consoleCharReadyIsTrueExactlyWhenACharacterHasArrived() throws IOException {
+        Random random = new Random(41);
+        for (byte[] bytes : utf8Samples(random)) {
+            int[] expected = jdkDecoded(bytes).codePoints().toArray();
+            String what = bytes.length + " bytes";
+            SlowPipe pipe = new SlowPipe();
+            SPort port = SPort.consoleInput(pipe);
+            CharsetDecoder decoder = StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPLACE).onUnmappableCharacter(CodingErrorAction.REPLACE);
+            ByteBuffer pending = ByteBuffer.allocate(bytes.length);
+            // The characters the bytes written so far make, and how many of them have been read.
+            int arrived = 0;
+            int read = 0;
+            int written = 0;
+            while (written < bytes.length) {
+                int size = switch (random.nextInt(6)) {
+                    case 0 -> 1;
+                    case 1 -> 2;
+                    case 2 -> 3;
+                    case 3 -> 1 + random.nextInt(20);
+                    case 4 -> 8191 + random.nextInt(3);
+                    default -> 1 + random.nextInt(500);
+                };
+                size = Math.min(size, bytes.length - written);
+                pipe.write(bytes, written, size);
+                pending.put(bytes, written, size);
+                written += size;
+                pending.flip();
+                CharBuffer chars = CharBuffer.allocate(2 * pending.remaining() + 2);
+                decoder.decode(pending, chars, false);
+                pending.compact();
+                chars.flip();
+                arrived += Character.codePointCount(chars, 0, chars.length());
+                while (true) {
+                    String at = what + ", " + written + " written, " + read + " of " + arrived + " read";
+                    boolean ready = port.ready();
+                    assertEquals(at, read < arrived, ready);
+                    if (!ready) {
+                        break;
+                    }
+                    if (random.nextBoolean()) {
+                        assertEquals(at, expected[read], port.peekChar());
+                    }
+                    assertEquals(at, expected[read], port.readChar());
+                    read++;
+                }
+            }
+            pipe.finish();
+            while (read < expected.length) {
+                assertEquals(what + ", at the end", expected[read++], port.readChar());
+            }
+            assertEquals(what, -1, port.readChar());
+        }
+    }
+
+    /**
+     * The console input port reads only what it needs, so it answers a line typed at a terminal
+     * before the next one comes: {@code read-line} returns a line that a CR ends without waiting
+     * for the character after it, and skips the LF of a CR LF that arrives later, on the next read
+     * of any kind (a CR LF split across two reads); {@code read-string} returns once it has its
+     * characters; a multi-byte sequence split across two buffers (and two writes) is read whole,
+     * once it has arrived; malformed input is replaced as the JDK's decoder replaces it.
+     */
+    @Test
+    public void consoleInputReadsOnlyWhatItNeeds() {
+        SlowPipe pipe = new SlowPipe();
+        SPort port = SPort.consoleInput(pipe);
+        pipe.write("a");
+        assertEquals('a', port.readChar());
+        assertFalse(port.ready());
+        // A CR ends the line at once; the LF after it comes later, and whatever reads next skips it.
+        pipe.write("one\r");
+        assertReadString("CR", "one", port.readLine());
+        pipe.write("\n");
+        assertFalse("only the LF after a CR", port.ready());
+        pipe.write("two\r\nthree\n");
+        assertReadString("CR LF", "two", port.readLine());
+        assertReadString("LF", "three", port.readLine());
+        pipe.write("\r");
+        assertReadString("a CR alone", "", port.readLine());
+        pipe.write("\r");
+        assertReadString("a second CR", "", port.readLine());
+        pipe.write("\n");
+        pipe.write("x");
+        assertEquals("read-char after a CR LF split across writes", 'x', port.readChar());
+        pipe.write("b\r");
+        assertReadString("CR", "b", port.readLine());
+        pipe.write("\n");
+        pipe.write("cd");
+        assertEquals("peek-char after a CR LF split across writes", 'c', port.peekChar());
+        assertReadString("read-string after the peek", "cd", port.readString(2));
+        pipe.write("e\r");
+        assertReadString("CR", "e", port.readLine());
+        pipe.write("\nfg");
+        assertReadString("read-string after a CR LF split across writes", "fg", port.readString(2));
+        pipe.write("h\r");
+        assertReadString("CR", "h", port.readLine());
+        pipe.write("\ni\n");
+        assertReadString("read-line after a CR LF split across writes", "i", port.readLine());
+        // read-char of a CR doesn't skip an LF.
+        pipe.write("\r\n");
+        assertEquals('\r', port.readChar());
+        assertEquals('\n', port.readChar());
+        assertFalse(port.ready());
+        // A multi-byte sequence that the buffer's end cuts, which the next write completes.
+        pipe.write("a".repeat(8191));
+        pipe.writeBytes(0xE4);
+        assertReadString("up to the cut", "a".repeat(8191), port.readString(8191));
+        assertFalse("a third of a character", port.ready());
+        pipe.writeBytes(0xB8);
+        assertFalse("two thirds of a character", port.ready());
+        pipe.writeBytes(0xAD);
+        assertTrue(port.ready());
+        assertEquals(0x4E2D, port.readChar());
+        pipe.write("b".repeat(8190));
+        pipe.writeBytes(0xF0, 0x9F);
+        assertTrue(port.ready());
+        pipe.writeBytes(0x98, 0x80, '\n');
+        assertReadString("a line with a sequence cut by the buffer's end", "b".repeat(8190) + "😀", port.readLine());
+        pipe.write("é".repeat(5000) + "\n");
+        assertReadString("a line longer than the buffer", "é".repeat(5000), port.readLine());
+        // Malformed input, as the JDK's decoder replaced it: an encoded surrogate is one U+FFFD; a
+        // sequence that a byte can't continue is one, and so is one the input's end cuts.
+        pipe.writeBytes(0xED, 0xA0, 0x80, 'z', 0xE4, 'y', '\n');
+        assertReadString("malformed", "�z�y", port.readLine());
+        pipe.writeBytes(0xE4, 0xB8);
+        assertFalse(port.ready());
+        pipe.finish();
+        assertEquals("cut by the end", 0xFFFD, port.readChar());
+        assertEquals(-1, port.readChar());
+    }
+
+    /**
+     * Through the launcher, standard input is a pipe whose bytes arrive slowly, a few at a time: the
+     * program answers each read as soon as its bytes have come, without waiting for a buffer's
+     * worth, for a character cut across writes, a line that a CR ends, the LF after it written
+     * later, and a {@code read-string} whose first character arrives in pieces.
+     */
+    @Test
+    public void processAnswersAPipeAsItsBytesArrive() throws IOException, InterruptedException {
+        Path program = dir.resolve("answers.scm");
+        Files.writeString(program, """
+                        (import (scheme base) (scheme write))
+                        (define (answer x) (write x) (newline) (flush-output-port))
+                        (answer (read-char))
+                        (answer (read-char))
+                        (answer (read-line))
+                        (answer (read-char))
+                        (answer (read-string 2))
+                        (answer (read-line))
+                        (answer (eof-object? (read-char)))
+                        """);
+        String java = ProcessHandle.current().info().command().orElseThrow();
+        String modulePath = System.getProperty("jdk.module.path");
+        assertTrue("the tests run on the module path", modulePath != null);
+        Process process = new ProcessBuilder(java, "--module-path", modulePath, "--enable-native-access=org.graalvm.truffle", "--sun-misc-unsafe-memory-access=allow", "-m",
+                        "scheme.launcher/scheme.launcher.SchemeMain", program.toString()).redirectError(ProcessBuilder.Redirect.DISCARD).start();
+        try {
+            BufferedReader answers = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8));
+            OutputStream in = process.getOutputStream();
+            // Each step's pieces, written 100 ms apart, then the answer they make (a null piece
+            // closes the pipe).
+            Object[][] steps = {
+                            {new byte[]{'a'}, "#\\a"},
+                            {new byte[]{(byte) 0xE4}, new byte[]{(byte) 0xB8}, new byte[]{(byte) 0xAD}, "#\\中"},
+                            {"line\r".getBytes(StandardCharsets.UTF_8), "\"line\""},
+                            {new byte[]{'\n'}, new byte[]{'b'}, "#\\b"},
+                            {new byte[]{(byte) 0xC3}, new byte[]{(byte) 0xA9, 'x'}, "\"éx\""},
+                            {"last\n".getBytes(StandardCharsets.UTF_8), "\"last\""},
+                            {null, "#t"},
+            };
+            for (Object[] step : steps) {
+                for (int i = 0; i < step.length - 1; i++) {
+                    if (step[i] == null) {
+                        in.close();
+                    } else {
+                        Thread.sleep(100);
+                        in.write((byte[]) step[i]);
+                        in.flush();
+                    }
+                }
+                CompletableFuture<String> answer = CompletableFuture.supplyAsync(() -> {
+                    try {
+                        return answers.readLine();
+                    } catch (IOException e) {
+                        throw new UncheckedIOException(e);
+                    }
+                });
+                try {
+                    assertEquals(step[step.length - 1], answer.get(60, TimeUnit.SECONDS));
+                } catch (ExecutionException | TimeoutException e) {
+                    throw new AssertionError("no answer once the bytes for " + step[step.length - 1] + " were written", e);
+                }
+            }
+            assertTrue(process.waitFor(60, TimeUnit.SECONDS));
+            assertEquals(0, process.exitValue());
+        } finally {
+            process.destroyForcibly();
+        }
     }
 
     /**

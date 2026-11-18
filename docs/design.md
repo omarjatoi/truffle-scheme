@@ -2149,10 +2149,12 @@ Each entry: the decision, why, and what was rejected.
   so it never reads past them, and pairs a high surrogate that ends a read
   with the low one after it. `read-line` finds the line ending in the
   buffer too (`SPort.readLine`, #216, after M10-05), where it read a
-  character at a time: a file's port in its own buffer (M11-06, below),
-  the console's `BufferedReader` with its own `readLine`, which ends a line where we did, at LF, CR LF or a CR
-  alone, and skips the LF after a CR on its next read, so a CR typed at the
-  console ends a line without waiting for the next character; a string
+  character at a time: a file's port and the console's in their own buffer
+  (M11-06 and M12-10, below; the console's was a `BufferedReader` with its
+  own `readLine` until M12-10), each ending a line at LF, CR LF or a CR
+  alone, and skipping the LF after a CR on the stream's next read when the
+  buffer ends at the CR, so a CR typed at the console ends a line without
+  waiting for the next character; a string
   port's reader in chunks of 128 to 8192 units, marked so that it goes back
   to the line's end. Each line goes straight into an `SString` (D1: one
   pass), and so does what `read-string` reads: the reader's units go into
@@ -2208,8 +2210,9 @@ Each entry: the decision, why, and what was rejected.
     on the cleaner's thread, outside the context (D10: single-threaded), and
     would write through an embedder's file system from a thread it doesn't
     expect.
-- **Textual input file ports decode UTF-8 themselves (M11-06).** The port
-  reads the file's bytes into its own 8 KB buffer and decodes them straight
+- **Textual input ports decode UTF-8 themselves (M11-06, M12-10).** A file's
+  port, and the console's (M12-10, below),
+  reads the stream's bytes into its own 8 KB buffer and decodes them straight
   into what D1 stores: Latin-1 bytes while every character is at most 255,
   code points from the first one above. `read-char` and `peek-char` decode
   one character from the buffer, and `read-string` and `read-line` decode a
@@ -2220,9 +2223,8 @@ Each entry: the decision, why, and what was rejected.
   `TruffleFile.newBufferedReader`'s `InputStreamReader`): one U+FFFD for each
   malformed sequence, with the decoder's lengths (an encoded surrogate,
   `ED A0 80`, is one; a byte that can't start or continue a sequence is
-  one; a sequence the file's end cuts is one). The console port keeps the
-  JDK's reader, whose `ready()` is what `char-ready?` asks; a string port
-  keeps its `StringReader`. R7RS says nothing of encodings: this keeps
+  one; a sequence the file's end cuts is one). A string port keeps its
+  `StringReader`. R7RS says nothing of encodings: this keeps
   what files read as and makes it faster. The JDK's decoder took its ASCII
   fast path only at the start of each buffer, so after a buffer's first
   other byte it went a byte at a time, and decoded into UTF-16 that the
@@ -2251,6 +2253,46 @@ Each entry: the decision, why, and what was rejected.
     code, behind the port's boundary, it was also slower: 0.019 s for the
     wide file against 0.010 s, and the same 0.003 s for the ASCII one (host
     microbenchmark, an 8 KB chunk at a time).
+  - **Standard input (M12-10).** The console port decodes standard input
+    the same way (`SPort.consoleInput`), where until then it went through
+    the JDK's `InputStreamReader` and a `BufferedReader`, and replaces
+    malformed input as they did. A read of a pipe or a terminal returns
+    what has come, so the port must never wait for more than the read in
+    hand needs: both ports read their stream only when the buffer has no
+    byte left, and again only for the rest of a sequence that the buffer's
+    end cuts (a file's port first asked for 4 bytes before decoding a
+    character, which on a terminal would have waited for the next line).
+    After a CR that ends a line at the buffer's end, the LF of a CR LF is
+    skipped by the stream's next read, as `BufferedReader` skipped it, not
+    at once, which would wait for the character after a line typed at a
+    terminal. `char-ready?` is true when the buffer holds a character (a
+    malformed sequence's U+FFFD included) or once the bytes the stream has
+    without blocking (`available()`) complete one, which it reads into the
+    buffer; the JDK's reader answered true for a sequence cut in its
+    buffer too, whose `read-char` could block. With nothing buffered and
+    nothing available it is `#f`, as it was, at the end of a pipe too. The
+    console flushes standard output before each read of the stream, as
+    before. Reading 10 MB piped into the launcher (#220's files, written
+    to standard input by `cat`, 10 copies, each timed), against the JDK's
+    reader, once compiled: on the JIT, `read-string` of a whole copy 0.019 s
+    against 0.027 s (wide) and 0.011 s against 0.013 s (ASCII); `read-line`
+    to its end 0.023 s against 0.037 s and 0.016 s against 0.022 s;
+    `read-char` 0.070 s against 0.103 s and 0.068 s against 0.094 s
+    (interleaved A/B, 5 fresh JVMs each, `-XX:AOTMode=off`, the median of
+    each JVM's later copies, load 6.5-7.2). Through the native launcher:
+    0.027 s against 0.043 s and 0.013 s against 0.021 s; 0.024 s against
+    0.053 s and 0.017 s against 0.039 s; 0.089 s against 0.129 s and
+    0.084 s against 0.118 s (load 9.4-9.7, a round above 10 left out).
+  - A `read-string` of more than a buffer from a stream whose
+    `available()` says less than what is left (a pipe's, or 0 from an
+    embedder's file system that doesn't implement it) starts with room for
+    what it says, at least a buffer, doubles its array as it fills it, and
+    trims it at the end. Reading a whole 10 MB file that way takes 0.0097 s
+    against 0.0077 s when `available()` says what is left (wide), and
+    0.0037 s against 0.0030 s (ASCII) (host microbenchmark, `available()`
+    0 or at most 64 KB: the same). Recorded as is: such a stream says
+    nothing that could size the array ahead, and the copies cost 2 ms in
+    10 MB.
 - **Ports in compiled code.** The I/O primitives' compiled code sees a port
   it can't know the class of (it comes from a parameter or an argument), so
   nothing it calls on `SPort` is virtual: a port's direction and kind are

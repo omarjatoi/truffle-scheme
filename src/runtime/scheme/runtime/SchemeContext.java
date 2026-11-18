@@ -3,7 +3,6 @@ package scheme.runtime;
 import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
@@ -279,7 +278,7 @@ public final class SchemeContext {
     @TruffleBoundary
     public SPort stdinPort() {
         if (stdinPort == null) {
-            stdinPort = SPort.textInput(new InputStreamReader(stdin, StandardCharsets.UTF_8), true);
+            stdinPort = SPort.consoleInput(stdin);
         }
         return stdinPort;
     }

@@ -283,23 +283,33 @@ public abstract class SPort implements TruffleObject {
     }
 
     public static SPort inputString(String text) {
-        return new TextInput(new StringReader(text), true, false);
+        return new TextInput(new StringReader(text), false);
     }
 
     /**
-     * A textual input port over a decoded stream; {@code console} for the context's input. (A file's
-     * port decodes its bytes itself: {@link #utf8Input}.)
+     * A textual input port over a reader, which closing the port closes. (A file's port and the
+     * console's decode their bytes themselves: {@link #utf8Input}, {@link #consoleInput}.)
      */
-    public static SPort textInput(Reader in, boolean console) {
-        return new TextInput(in.markSupported() ? in : new BufferedReader(in), !console, !console);
+    public static SPort textInput(Reader in) {
+        return new TextInput(in.markSupported() ? in : new BufferedReader(in), true);
     }
 
     /**
      * A textual input port over a file's bytes, which it decodes from UTF-8 itself (design.md D10,
-     * "Textual input file ports decode UTF-8 themselves"). Closing the port closes the stream.
+     * "Textual input ports decode UTF-8 themselves"). Closing the port closes the stream.
      */
     public static SPort utf8Input(InputStream in) {
-        return new Utf8Input(in);
+        return new Utf8Input(in, false);
+    }
+
+    /**
+     * The console input port over the context's standard input, whose bytes it decodes from UTF-8
+     * itself, as a file's port does, but reading only what each read needs, so that it never waits
+     * for more input than that (design.md D10, "Textual input ports decode UTF-8 themselves").
+     * Closing the port leaves the stream open.
+     */
+    public static SPort consoleInput(InputStream in) {
+        return new Utf8Input(in, true);
     }
 
     public static SPort outputBytevector() {
@@ -425,20 +435,20 @@ public abstract class SPort implements TruffleObject {
         }
     }
 
-    /** Reads code points from a {@link Reader}, combining surrogate pairs, with one of lookahead. */
+    /**
+     * Reads code points from a {@link Reader} (a string port's), combining surrogate pairs, with one
+     * of lookahead. Its reader never blocks, so char-ready? is always true.
+     */
     private static final class TextInput extends SPort {
         private static final int NONE = -2;
 
         private final Reader in;
-        /** Whether reading never blocks (strings and files): then char-ready? is always true. */
-        private final boolean neverBlocks;
         private final boolean ownsReader;
         private int peeked = NONE;
 
-        TextInput(Reader in, boolean neverBlocks, boolean ownsReader) {
+        TextInput(Reader in, boolean ownsReader) {
             super(true, false);
             this.in = in;
-            this.neverBlocks = neverBlocks;
             this.ownsReader = ownsReader;
         }
 
@@ -544,12 +554,12 @@ public abstract class SPort implements TruffleObject {
         }
 
         /**
-         * A {@link BufferedReader} (the console's) finds the line in its buffer itself:
-         * {@link BufferedReader#readLine} ends a line exactly where a character at a time did, at
-         * LF, CR LF or a CR alone. After a CR it skips an LF on its next read of any kind, where a
-         * character at a time read the LF at once: the same characters, but it never waits for the
-         * character after a CR that ends a line typed at the console. Another reader (a string
-         * port's) is read in chunks that {@link #scanLine} searches.
+         * A {@link BufferedReader} (one that {@link #textInput} wraps a reader in) finds the line
+         * in its buffer itself: {@link BufferedReader#readLine} ends a line exactly where a
+         * character at a time did, at LF, CR LF or a CR alone. After a CR it skips an LF on its
+         * next read of any kind, where a character at a time read the LF at once: the same
+         * characters. Another reader (a string port's) is read in chunks that {@link #scanLine}
+         * searches.
          */
         @Override
         protected Object doReadLine() {
@@ -642,14 +652,7 @@ public abstract class SPort implements TruffleObject {
 
         @Override
         protected boolean doReady() {
-            if (neverBlocks || peeked != NONE) {
-                return true;
-            }
-            try {
-                return in.ready();
-            } catch (IOException e) {
-                throw ioError(e);
-            }
+            return true;
         }
 
         @Override
@@ -661,13 +664,21 @@ public abstract class SPort implements TruffleObject {
     }
 
     /**
-     * A file's text, decoded from UTF-8 by the port itself (design.md D10, "Textual input file ports
-     * decode UTF-8 themselves"): the file's bytes go into the port's buffer, and from there straight
-     * into a string's Latin-1 bytes or code points (D1), with no reader or {@code char[]} between.
-     * Malformed input is replaced as the JDK's UTF-8 decoder replaces it, which is how the port read
-     * it until it decoded it itself: one U+FFFD for each malformed sequence, of the length the
-     * decoder gives it ({@link #decode}). A sequence that the buffer's end cuts is completed from the
-     * next read of the stream; one that the stream's end cuts is malformed.
+     * A file's text or standard input's, decoded from UTF-8 by the port itself (design.md D10,
+     * "Textual input ports decode UTF-8 themselves"): the stream's bytes go into the port's buffer,
+     * and from there straight into a string's Latin-1 bytes or code points (D1), with no reader or
+     * {@code char[]} between. Malformed input is replaced as the JDK's UTF-8 decoder replaces it,
+     * which is how the port read it until it decoded it itself: one U+FFFD for each malformed
+     * sequence, of the length the decoder gives it ({@link #decode}). A sequence that the buffer's
+     * end cuts is completed from the next read of the stream; one that the stream's end cuts is
+     * malformed.
+     *
+     * <p>The port reads the stream only when its buffer is empty, and again only for the rest of a
+     * sequence that the buffer's end cuts: a read of a pipe or a terminal returns what has come, so
+     * the port never waits for more than the character, line or string it reads (the console's
+     * port; a file's is read the same way). After a CR that ends a line at the buffer's end, it
+     * skips an LF on the stream's next read, not at once, which would wait for the character after
+     * a line typed at a terminal.
      */
     private static final class Utf8Input extends SPort {
         private static final int NONE = -2;
@@ -675,48 +686,84 @@ public abstract class SPort implements TruffleObject {
         private static final int MORE = -1;
 
         private final InputStream in;
+        /** Whether this is the console's port: a read may block, and closing leaves the stream open. */
+        private final boolean console;
         private final byte[] buffer = new byte[CHUNK];
         /** The bytes not decoded yet: {@code buffer[pos, limit)}. */
         private int pos;
         private int limit;
-        /** Whether the stream ended at the last {@link #fill}: nothing comes after {@code limit}. */
+        /**
+         * Whether the stream ended at its last read: nothing comes after {@code limit} (though a
+         * terminal may give more on a later read).
+         */
         private boolean end;
+        /**
+         * Whether a CR ended a line at the buffer's end, so that the stream's next read skips an LF
+         * that it starts with. Only while the buffer is empty.
+         */
+        private boolean lineFeedPending;
         private int peeked = NONE;
 
-        Utf8Input(InputStream in) {
+        Utf8Input(InputStream in, boolean console) {
             super(true, false);
             this.in = in;
+            this.console = console;
         }
 
         /**
          * Reads the stream until the buffer holds at least {@code n} bytes (at most 4) not decoded
          * yet, or the stream ends; first moves those bytes to the buffer's start if they are fewer.
-         * Returns how many it holds.
+         * Each read returns what the stream has, at least a byte: a pipe's, what has come. Returns
+         * how many bytes the buffer holds.
          */
         private int fill(int n) {
             int left = limit - pos;
-            end = false;
             if (left >= n) {
                 return left;
             }
-            if (pos > 0) {
-                System.arraycopy(buffer, pos, buffer, 0, left);
-                pos = 0;
-                limit = left;
-            }
-            try {
-                while (limit < n) {
-                    int r = in.read(buffer, limit, buffer.length - limit);
-                    if (r < 0) {
-                        end = true;
-                        break;
-                    }
-                    limit += r;
+            compact();
+            while (limit - pos < n) {
+                if (read(buffer.length - limit) < 0) {
+                    break;
                 }
+            }
+            return limit - pos;
+        }
+
+        /** Moves the bytes not decoded yet to the buffer's start. */
+        private void compact() {
+            if (pos > 0) {
+                System.arraycopy(buffer, pos, buffer, 0, limit - pos);
+                limit -= pos;
+                pos = 0;
+            }
+        }
+
+        /**
+         * One read of the stream, of at most {@code most} bytes, into the buffer after
+         * {@code limit}, which skips an LF after a CR that ended a line ({@link #lineFeedPending}).
+         * Returns what the stream's read returned.
+         */
+        private int read(int most) {
+            int r;
+            try {
+                r = in.read(buffer, limit, most);
             } catch (IOException e) {
                 throw ioError(e);
             }
-            return limit;
+            if (r < 0) {
+                end = true;
+            } else if (r > 0) {
+                end = false;
+                limit += r;
+                if (lineFeedPending) {
+                    lineFeedPending = false;
+                    if (buffer[pos] == '\n') {
+                        pos++;
+                    }
+                }
+            }
+            return r;
         }
 
         /**
@@ -816,7 +863,10 @@ public abstract class SPort implements TruffleObject {
             return peeked;
         }
 
-        /** Decodes the next character, or returns -1 at the end. */
+        /**
+         * Decodes the next character, or returns -1 at the end. Reads the stream only if the buffer
+         * is empty, and again only while a sequence is cut.
+         */
         private int next() {
             if (pos < limit) {
                 int b = buffer[pos];
@@ -824,14 +874,18 @@ public abstract class SPort implements TruffleObject {
                     pos++;
                     return b;
                 }
-            }
-            if (fill(4) == 0) {
+            } else if (fill(1) == 0) {
                 return -1;
             }
-            // Either 4 bytes are there or nothing comes after them: never MORE.
-            int r = decode(buffer, pos, limit, end);
-            pos += r >>> 24;
-            return r & 0x1fffff;
+            while (true) {
+                int r = decode(buffer, pos, limit, end);
+                if (r != MORE) {
+                    pos += r >>> 24;
+                    return r & 0x1fffff;
+                }
+                // At the stream's end, decode makes what the end cuts malformed.
+                fill(limit - pos + 1);
+            }
         }
 
         @Override
@@ -871,10 +925,18 @@ public abstract class SPort implements TruffleObject {
             return decodeString(Integer.MAX_VALUE, true);
         }
 
-        /** Reads the LF after a CR that ended a line, if there is one. */
+        /**
+         * Skips the LF after a CR that ended a line, if there is one: at once if the buffer holds
+         * the next byte, otherwise on the stream's next read, so that a CR typed at a terminal ends
+         * a line without waiting for the character after it.
+         */
         private void skipLineFeed() {
-            if (fill(1) > 0 && buffer[pos] == '\n') {
-                pos++;
+            if (pos < limit) {
+                if (buffer[pos] == '\n') {
+                    pos++;
+                }
+            } else {
+                lineFeedPending = true;
             }
         }
 
@@ -917,8 +979,12 @@ public abstract class SPort implements TruffleObject {
                 }
             }
             boolean ended = false;
+            // Whether a sequence that the buffer's end cuts stopped the last pass: this one reads
+            // the rest of it. Otherwise the stream is read only when the buffer is empty.
+            boolean cut = false;
             while (n < k && !ended) {
-                if (limit - pos < 4 && fill(4) == 0) {
+                int need = cut ? limit - pos + 1 : 1;
+                if (limit - pos < need && fill(need) == 0) {
                     break;
                 }
                 byte[] bytes = buffer;
@@ -994,6 +1060,8 @@ public abstract class SPort implements TruffleObject {
                         skipLineFeed();
                     }
                 } else {
+                    // A pass stops at the stop, at k characters or at a sequence the buffer cuts.
+                    cut = p < stop && n < k;
                     pos = p;
                 }
             }
@@ -1031,15 +1099,37 @@ public abstract class SPort implements TruffleObject {
             }
         }
 
-        /** Files never block. */
+        /**
+         * Files never block. On the console, a character is ready if the buffer holds one (a
+         * malformed sequence's U+FFFD included), or once the bytes that the stream has without
+         * blocking ({@code available()}) make one, which this reads into the buffer.
+         */
         @Override
         protected boolean doReady() {
-            return true;
+            if (!console || peeked != NONE) {
+                return true;
+            }
+            while (true) {
+                if (pos < limit && decode(buffer, pos, limit, end) != MORE) {
+                    return true;
+                }
+                int available = available();
+                if (available <= 0) {
+                    return false;
+                }
+                compact();
+                if (read(Math.min(available, buffer.length - limit)) < 0) {
+                    // The end after all: read-char returns at once.
+                    return true;
+                }
+            }
         }
 
         @Override
         protected void closeResource() throws IOException {
-            in.close();
+            if (!console) {
+                in.close();
+            }
         }
     }
 
