@@ -2,13 +2,12 @@ package scheme.runtime;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
-import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.Closeable;
+import java.io.FilterInputStream;
 import java.io.Flushable;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.lang.ref.ReferenceQueue;
@@ -64,14 +63,14 @@ public final class OpenFiles {
     }
 
     /**
-     * A textual input port over a file's stream, decoded from UTF-8 and buffered, as
-     * {@code TruffleFile.newBufferedReader(UTF_8)} reads it.
+     * A textual input port over a file's stream, which the port buffers and decodes from UTF-8 itself
+     * (design.md D10, "Textual input file ports decode UTF-8 themselves").
      */
     @TruffleBoundary
     public SPort textInput(InputStream file) {
-        TextInputFile reader = new TextInputFile(this, file);
-        SPort port = SPort.textInput(reader, false);
-        reader.entry = track(port, reader);
+        TextInputFile stream = new TextInputFile(this, file);
+        SPort port = SPort.utf8Input(stream);
+        stream.entry = track(port, stream);
         return port;
     }
 
@@ -223,13 +222,16 @@ public final class OpenFiles {
         }
     }
 
-    /** As {@code TruffleFile.newBufferedReader(UTF_8)}, which closing stops tracking. */
-    private static final class TextInputFile extends BufferedReader implements FileStream {
+    /**
+     * A file's stream, which the port reads through a buffer of its own as it decodes UTF-8
+     * (design.md D10), and which closing stops tracking.
+     */
+    private static final class TextInputFile extends FilterInputStream implements FileStream {
         private final OpenFiles files;
         Entry entry;
 
         TextInputFile(OpenFiles files, InputStream file) {
-            super(new InputStreamReader(file, StandardCharsets.UTF_8));
+            super(file);
             this.files = files;
         }
 
