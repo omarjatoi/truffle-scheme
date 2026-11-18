@@ -280,7 +280,9 @@ public class NumbersTest {
      * angle, abs, sqrt, make-polar) return for the special flonums and a few exact numbers.
      * Recorded before flonums got their own sign path (#242), which kept every one bit for bit,
      * then corrected where a NaN or -0.0 was taken for a zero, and where a zero power gave a complex
-     * or NaN result (#242's follow-up; {@link #nanAndNegativeZeroFollowIeee754AndR7rs} says why).
+     * or NaN result (#242's follow-up; {@link #nanAndNegativeZeroFollowIeee754AndR7rs} says why),
+     * and where -inf.0 to a non-integer power was NaN (#243's follow-up; {@link
+     * #exptOfNegativeBasesAndMagnitudeFollowIeee754} says why).
      */
     @Test
     public void signDependentResultsOfSpecialValues() {
@@ -290,7 +292,7 @@ public class NumbersTest {
                         {"+nan.0", "(+nan.0 +nan.0 #f +nan.0 +nan.0 +nan.0 +nan.0 1.0 +nan.0 +nan.0 +nan.0 +nan.0 +nan.0 +nan.0 +nan.0 +nan.0+nan.0i)"},
                         {"-nan.0", "(+nan.0 +nan.0 #f +nan.0 +nan.0 +nan.0 +nan.0 1.0 +nan.0 +nan.0 +nan.0 +nan.0 +nan.0 +nan.0 +nan.0 +nan.0+nan.0i)"},
                         {"+inf.0", "(+inf.0 +inf.0 #f +inf.0 +inf.0 +inf.0 0.0 1.0 +inf.0 +inf.0 +inf.0 0.0 0.0 +inf.0 +inf.0 +nan.0+nan.0i)"},
-                        {"-inf.0", "(-inf.0 +inf.0 #f +inf.0+3.141592653589793i +nan.0+nan.0i +nan.0+nan.0i +nan.0+nan.0i 1.0 0.0 -inf.0 -inf.0 0.0 " +
+                        {"-inf.0", "(-inf.0 +inf.0 #f +inf.0+3.141592653589793i +inf.0+inf.0i +inf.0+inf.0i 0.0-0.0i 1.0 0.0 -inf.0 -inf.0 0.0 " +
                                         "3.141592653589793 +inf.0 0.0+inf.0i +nan.0+nan.0i)"},
                         {"1.", "(1.0 1.0 #f 0.0 1.0 1.0 1.0 1.0 2.0 1.0 1.0 0.0 0.0 1.0 1.0 1.0806046117362795+1.682941969615793i)"},
                         {"-1.", "(-1.0 1.0 #f 0.0+3.141592653589793i 6.123233995736766e-17+1.0i 3.061616997868383e-16+1.0i 6.123233995736766e-17-1.0i 1.0 0.5 -1.0 " +
@@ -381,6 +383,74 @@ public class NumbersTest {
                         {"(number->string -0.0)", "\"-0.0\""}, {"(number->string -nan.0)", "\"+nan.0\""}, {"(number->string -0.0 2)", "\"#i-0\""},
                         {"(number->string +nan.0 16)", "\"+nan.0\""},
         };
+        assertWrites(cases);
+    }
+
+    /**
+     * #243's follow-ups. (1) A real base to an integer-valued flonum power is real: IEEE 754's
+     * pow, as R7RS §6.2.3 recommends for transcendental functions ("particularly with respect to
+     * infinities and NaNs"), and the value of §6.2.6's e^(z2 log z1), whose imaginary part is
+     * sin(nπ)·|z1|^n = 0 for an integer n; through log in floating point it was 4.0-9.8e-16i. An
+     * infinite power counts as one: every flonum beyond 2^53 is an even integer, so the power's
+     * limit is pow's (|z1|^±∞: 0, 1 or +∞; IEEE 754-2008's pow(±1, ±∞) is 1, where Java's, C89's,
+     * is NaN). Only a negative base to a finite non-integer power is
+     * complex, and an exact base to an exact power stays exact (erratum 21). (2) A negative
+     * infinite base to a non-integer power: e^(z2 log z1), with z2 real multiplying each part of
+     * log z1 = +∞+πi, so no 0·∞ (C99 Annex G.5.1's real times complex): (expt -inf.0 0.5) is
+     * +inf.0+inf.0i, the limit of (expt -1e308 0.5) = 6.1e137+1e154i, not +nan.0+nan.0i. {@code (*
+     * 0 +inf.0)} stays NaN: §6.2.2 lets an exact 0 times an inexact number be exact 0 or the
+     * inexact product, and ours is the inexact product, as for every other operation. (3) The
+     * magnitude of a complex number is StrictMath's hypot: no overflow or underflow of the squares,
+     * and IEEE 754's hypot(±∞, NaN) = +∞; an exact one is exact when its square is a perfect square.
+     */
+    @Test
+    public void exptOfNegativeBasesAndMagnitudeFollowIeee754() {
+        String[][] cases = {
+                        // a negative real base to an integer-valued flonum power: real
+                        {"(expt -2. 2.)", "4.0"}, {"(expt -2. 3.)", "-8.0"}, {"(expt -2 2.)", "4.0"}, {"(expt -2. -2.)", "0.25"}, {"(expt -2. -3.)", "-0.125"},
+                        {"(expt -1/2 3.)", "-0.125"}, {"(expt -3 -1.)", "-0.3333333333333333"}, {"(expt -1e-200 3.)", "-0.0"}, {"(expt -1e308 2.)", "+inf.0"},
+                        {"(expt -1. 1e300)", "1.0"}, {"(expt -2. 1e300)", "+inf.0"}, {"(expt -.5 1e300)", "0.0"}, {"(expt (- (expt 10 30)) 2.)", "1.0000000000000001e+60"},
+                        // ... and to an infinite power: pow's limits
+                        {"(expt -2. +inf.0)", "+inf.0"}, {"(expt -.5 +inf.0)", "0.0"}, {"(expt -1. +inf.0)", "1.0"}, {"(expt -2. -inf.0)", "0.0"},
+                        {"(expt -.5 -inf.0)", "+inf.0"}, {"(expt -1 -inf.0)", "1.0"}, {"(expt -inf.0 +inf.0)", "+inf.0"}, {"(expt -inf.0 -inf.0)", "0.0"},
+                        // ... where IEEE 754-2008's pow(±1, ±∞) is 1, Java's NaN (C89's)
+                        {"(expt 1. +inf.0)", "1.0"}, {"(expt 1 -inf.0)", "1.0"}, {"(expt 1. +nan.0)", "+nan.0"},
+                        // a negative infinite base to an integer-valued power
+                        {"(expt -inf.0 2.)", "+inf.0"}, {"(expt -inf.0 3.)", "-inf.0"}, {"(expt -inf.0 -2.)", "0.0"}, {"(expt -inf.0 -3.)", "-0.0"},
+                        {"(expt -inf.0 3)", "-inf.0"},
+                        // ... and to a non-integer power: e^(z2 log z1), each part of log z1 times z2
+                        {"(expt -inf.0 0.5)", "+inf.0+inf.0i"}, {"(expt -inf.0 1.5)", "-inf.0-inf.0i"}, {"(expt -inf.0 0.75)", "-inf.0+inf.0i"},
+                        {"(expt -inf.0 2.5)", "+inf.0+inf.0i"}, {"(expt -inf.0 1/3)", "+inf.0+inf.0i"}, {"(expt -inf.0 -0.5)", "0.0-0.0i"},
+                        {"(expt -inf.0 -1/3)", "0.0-0.0i"},
+                        // a negative finite base to a non-integer power: complex, as before
+                        {"(expt -2. 0.5)", "8.659560562354932e-17+1.414213562373095i"}, {"(expt -8. 1/3)", "1.0+1.732050807568877i"},
+                        {"(expt -1e308 0.5)", "6.123233995736807e+137+1.0000000000000067e+154i"}, {"(expt -8 1/3)", "1.0+1.732050807568877i"},
+                        // exact stays exact
+                        {"(expt -2 3)", "-8"}, {"(expt -2 -3)", "-1/8"}, {"(expt -1/2 3)", "-1/8"}, {"(expt -2. 3)", "-8.0"},
+                        // an exact 0 times an inexact number is the inexact product (R7RS §6.2.2 allows 0 too)
+                        {"(* 0 +inf.0)", "+nan.0"}, {"(* 0 1.5)", "0.0"}, {"(* 0 -1.5)", "-0.0"}, {"(* +nan.0 0)", "+nan.0"},
+                        // magnitude: hypot, without overflow or underflow
+                        {"(magnitude 1e300+1e300i)", "1.4142135623730952e+300"}, {"(magnitude -1e300-1e300i)", "1.4142135623730952e+300"},
+                        {"(magnitude 1e-200+1e-200i)", "1.414213562373095e-200"}, {"(magnitude (make-rectangular 5e-324 5e-324))", "5.0e-324"},
+                        {"(magnitude (make-rectangular 1e308 -1e308))", "1.4142135623730951e+308"},
+                        {"(magnitude (make-rectangular (expt 10 200) (expt 10 200)))", "1.414213562373095e+200"},
+                        {"(magnitude (make-rectangular (expt 10 200) 1))", "1.0e+200"}, {"(magnitude (make-rectangular (expt 10 400) 1))", "+inf.0"},
+                        {"(magnitude (make-rectangular (/ (expt 10 200)) (/ (expt 10 200))))", "1.414213562373095e-200"},
+                        // ... IEEE 754's hypot: an infinite part makes it +inf.0, a NaN part otherwise NaN
+                        {"(magnitude (make-rectangular +inf.0 +nan.0))", "+inf.0"}, {"(magnitude (make-rectangular +nan.0 -inf.0))", "+inf.0"},
+                        {"(magnitude (make-rectangular -inf.0 1.))", "+inf.0"}, {"(magnitude (make-rectangular +nan.0 1.))", "+nan.0"},
+                        {"(magnitude (make-rectangular 0. +nan.0))", "+nan.0"},
+                        // ... exact when it can be, and log's real part is the log of the magnitude
+                        {"(magnitude 3+4i)", "5"}, {"(magnitude -3/5+4/5i)", "1"}, {"(magnitude (make-rectangular (* 3 (expt 10 200)) (* 4 (expt 10 200))))", "5" + "0".repeat(200)},
+                        {"(magnitude 1+2i)", "2.23606797749979"}, {"(magnitude 3.+4.i)", "5.0"}, {"(magnitude 1.5+2.5i)", "2.9154759474226504"},
+                        {"(magnitude (make-rectangular 0. -0.))", "0.0"},
+                        {"(let ((z 1e300+1e300i)) (= (real-part (log z)) (log (magnitude z))))", "#t"},
+        };
+        assertWrites(cases);
+    }
+
+    /** Runs each case's expression, a thunk each, and compares what it writes (or its error's message). */
+    private static void assertWrites(String[][] cases) {
         StringBuilder program = new StringBuilder("(for-each (lambda (thunk) (write (guard (e ((error-object? e) (error-object-message e))) (thunk))) (newline)) (list");
         for (String[] c : cases) {
             program.append(" (lambda () ").append(c[0]).append(')');

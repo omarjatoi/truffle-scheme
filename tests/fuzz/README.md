@@ -65,6 +65,7 @@ the generator stays clear of the others (`gen.py` says where).
 | `abs` of `-0.0` | `-0.0` | §6.2.6: the absolute value, `0.0` |
 | `log` of `-0.0` | `-inf.0` | §6.2.6: "`(log -0.0)` returns `-inf.0+πi`" |
 | `max` and `min` with a NaN after the first argument | `(max 1 +nan.0)` is `1.0` | §6.2.4: "An arithmetic operation where one operand is NaN returns NaN", unless every rational in its place gives the same result |
+| `expt` of a negative flonum to a non-integer power | `(expt -2. 0.5)` is `+nan.0` (C's `pow`) | §6.2.6: e^(z2 log z1), a complex number, `8.7e-17+1.414213562373095i` |
 | `integer?` of an infinity | `(integer? -inf.0)` is `#t` | §6.2.6: integers are rationals, and `(rational? -inf.0)` is `#f` |
 | Reading flonums with an exponent or leading zeros | `1.5e-05` reads as `1.5000000000000002e-05`, `126.5991` as `126.59909999999999` | §6.2.6: `(string->number (number->string z))` must give z back |
 | `inexact` of a bignum | `(inexact 291803963674569850706)` is `2.9180396367456987e+20` | §6.2.6: the closest inexact number, `2.9180396367456983e+20` |
@@ -76,7 +77,12 @@ the generator stays clear of the others (`gen.py` says where).
 | `write` of `(string->symbol ".5")` or `".3."` | `.5`, `.3.`, which don't read back as those symbols | §6.13.3, §2.1: `\|.5\|`, `\|.3.\|` |
 
 Not bugs, but avoided: what `(+ -0.0 0)` is (R7RS doesn't say whether an
-exact 0 is an identity there), which of `-0.0` and `0.0` `max` and `min` of
+exact 0 is an identity there), what an exact 0 times a flonum is (§6.2.2: it
+may be exact 0, chibi-scheme's, or the inexact product, ours: `(* 0 1.5)` is
+0.0 and `(* 0 +inf.0)` +nan.0; the generator multiplies flonums only by
+flonums), the magnitude of a complex number whose squares overflow
+(chibi-scheme's `(magnitude 1e300+1e300i)` is `+inf.0`, ours hypot's
+`1.4142135623730952e+300`; R7RS doesn't fix the accuracy), which of `-0.0` and `0.0` `max` and `min` of
 flonums return (chibi-scheme the first; ours `0.0` and `-0.0`, as IEEE
 754-2019's maximum and minimum), and loops of 10^5 calls through `call/cc`,
 which take chibi-scheme minutes (it copies its stack on each capture).
