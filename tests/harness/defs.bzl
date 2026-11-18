@@ -116,7 +116,7 @@ def space_test(name, src, expect, limits, module, all_modes = False):
 
 def tools_tests(name, runtime, tools_runtime, programs):
     """`<name>_<test>` per smoke test of tools.py, with and without the tools on the module path."""
-    tests = ["help", "dap", "inspect", "cpusampler", "memtracer", "terminal"]
+    tests = ["help", "dap", "inspect", "cpusampler", "cputracer", "memtracer", "terminal"]
     for test in tests:
         harness_test(
             name = "%s_%s" % (name, test),

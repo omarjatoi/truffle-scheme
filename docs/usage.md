@@ -359,8 +359,26 @@ bazel-bin/scheme --cpusampler docs/examples/fib.scm
 ...
 ```
 
-`--cpusampler=calltree` prints a call tree instead, and
-`--cpusampler.Output=json` writes JSON. The memory tracer, which is
+`--cpusampler=calltree` prints a call tree instead,
+`--cpusampler=flamegraph` writes `flamegraph.svg`, and
+`--cpusampler.Output=json` writes JSON. The CPU tracer counts how many times
+each procedure was entered (`--cputracer.TraceStatements` and
+`--cputracer.TraceCalls` count statements and calls too):
+
+<!-- readme: run -->
+```sh
+bazel-bin/scheme --cputracer docs/examples/fib.scm
+```
+
+<!-- readme: output -->
+```text
+196418
+...Tracing Histogram. Counted a total of 635622 element executions...
+ fib ...|        635621 100.0% |...| docs/examples/fib.scm~3-6:39-115
+...
+```
+
+The memory tracer, which is
 experimental, counts the Scheme objects each procedure allocates (pairs,
 vectors, strings, closures, records, bignums, ...):
 
@@ -407,6 +425,26 @@ bazel-bin/scheme --dap docs/examples/fib.scm
 
 `--inspect=PORT` and `--dap=HOST:PORT` choose another port, as CI's smoke
 tests do; `--help:tools` lists every tool option.
+
+### What each tool sees
+
+GraalVM 25.5's tools, run against programs with tail calls, `call/cc`
+escapes and re-entries, recursion deep enough to spill frames to the heap,
+macros (from the program, a library, and the standard libraries), procedures
+of the standard libraries calling back, and `eval` (design.md D13, "Tools",
+says how the language tags its code for them). The native launcher has none
+of them (#219): they run with `bazel-bin/scheme`.
+
+| Tool | Rating | What it shows, and where it falls short |
+|---|---|---|
+| Debugger: `--dap`, `--inspect`, the Truffle Debugger API | Works; wrong across spills and escapes | Line breakpoints; step into, over and out, stopping at each form of a body, a `let`'s body and each top-level form; the stack, frames spilled to the heap included (as asynchronous frames); each frame's variables; evaluation in a frame. Code from a macro stops at the macro's use; the standard libraries' procedures are internal, so stepping passes through them; `eval`'s code stops at the call of `eval`. Wrong: a step across a call during which its frame was spilled stops again at the same statement, and returns to the prompt, not the spilled caller; a step through a continuation's escape (calling `k` out of its frame) never completes, so execution runs on without stopping. |
+| CPU sampler: `--cpusampler` (histogram, call tree, JSON, flame graph) | Works | Procedures by name and location, macro-made lambdas at the macro's use, and every frame of a recursion spilled to the heap. Contified loops (a named `let` that only loops) are their procedure's time. |
+| CPU tracer: `--cputracer` | Works; counts resumptions | Exact entries of each procedure, and of each statement and call with `TraceStatements` and `TraceCalls`. A frame that is resumed (after a spill, or each time a continuation re-enters it) counts as another entry of its procedure: a recursion 301 deep, spilled past 50, counts 555. A self tail call that loops, and a contified loop, enter once. |
+| Memory tracer: `--memtracer` (experimental) | Works | Pairs, vectors, strings, closures, records, bignums and bytevectors by the procedure that allocated them. |
+| Heap monitor: `--heapmonitor` (experimental) | Works | No output of its own; it feeds the heap summary other tools read. |
+| Coverage: `--coverage` (statement, line and root coverage; histogram, detailed, JSON, LCOV) | Works, not shipped | Not among the tools `bazel-bin/scheme` has: it is `org.graalvm.tools:coverage-tool` (with `org.graalvm.shadowed:json`, which the tools already have) added to `//bazel:tools_modules`. With that jar on the module path every output is right on the programs above, the counts (`--coverage.Count`) including resumptions as the CPU tracer's do. |
+| Insight: `--insight` | Not shipped; unusable from Scheme | `org.graalvm.tools:insight-tool`. Its scripts are JavaScript, Python, Ruby, or any language that can call the `insight` object's `on` with a function: GraalVM CE has no JavaScript here, and Scheme would need two things it lacks, `insight` bound as a script's argument (Truffle passes it as a named argument of the script's parse, which the language ignores) and calling a foreign object's members (the `(graalvm polyglot)` library, #237). |
+| Heap dump: `--heap.dump` | Not shipped | `org.graalvm.tools:insight-heap-tool`, driven by an Insight script's `heap.dump(...)`: what Insight needs, then this. |
 
 ## Native image
 

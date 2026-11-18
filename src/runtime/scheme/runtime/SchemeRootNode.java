@@ -60,8 +60,11 @@ import scheme.runtime.value.SPair;
  * tail-call the next one ({@code enableTailCallHandlers}, design.md D17 "The native interpreter"):
  * the native launcher's interpreter takes 0.62 times as long. The JVM's host compiler doesn't
  * support it, and runs the usual interpreter.
+ *
+ * <p>Every root is tagged as a root by the Bytecode DSL, but its body by the compiler, after the
+ * arguments are bound ({@code enableRootBodyTagging = false}, design.md D13 "Tools").
  */
-@GenerateBytecode(languageClass = SchemeLanguage.class, storeBytecodeIndexInFrame = true, enableTagInstrumentation = true, enableSerialization = true, //
+@GenerateBytecode(languageClass = SchemeLanguage.class, storeBytecodeIndexInFrame = true, enableTagInstrumentation = true, enableRootBodyTagging = false, enableSerialization = true, //
                 enableTailCallHandlers = true, //
                 boxingEliminationTypes = {long.class, double.class, boolean.class}, tagTreeNodeLibrary = SchemeTagTreeNodeExports.class)
 @OperationProxy(value = Intrinsics.Car.class, name = "Car")

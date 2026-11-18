@@ -9,8 +9,10 @@ tests/tools/:
 - `dap`: the Debug Adapter Protocol (`--dap`): a line breakpoint, the stack, a local by name,
   step over, continue to the next hit, then run to the end.
 - `inspect`: the Chrome DevTools Protocol over a websocket (`--inspect`): the same session.
-- `cpusampler`: the CPU sampler's histogram and call tree name the program's procedures, and its
-  samples of a recursion deeper than the spill depth have every frame (M6-04).
+- `cpusampler`: the CPU sampler's histogram, call tree and flame graph name the program's
+  procedures, and its samples of a recursion deeper than the spill depth have every frame (M6-04).
+- `cputracer`: the CPU tracer counts each procedure's entries and each statement's executions,
+  exactly (design.md D13, "Tools").
 - `memtracer`: the memory tracer's histogram counts the allocations of the program's procedures
   (the language reports them, M7-07).
 - `terminal`: the REPL on a pseudo-terminal (M7-07): line editing, the history and its file (an
@@ -479,6 +481,10 @@ def _cpusampler(workdir, commands):
     _profile(workdir, command, lambda out: ['--cpusampler=calltree', '--cpusampler.Period=1ms', '--cpusampler.OutputFile=' + out],
              [r'^Sampling Call Tree\.', r'^  <program> +\|\|', r'^   run-fib +\|\|.*profileme\.scm~11-15:', r'^    fib +\|\|.*profileme\.scm~2-5:'])
     log('  cpusampler: call tree has <program> > run-fib > fib')
+    # The flame graph is an SVG of the same samples, each procedure a box with its name.
+    svg = _profile(workdir, command, lambda out: ['--cpusampler=flamegraph', '--cpusampler.Period=1ms', '--cpusampler.OutputFile=' + out],
+                   [r'^<svg', r'>fib<', r'>run-fib<'])
+    log(f'  cpusampler: the flame graph names fib and run-fib ({len(svg)} bytes)')
     # Past the spill depth, frames wait on the heap, not the Java stack; the prompt reports them as
     # its asynchronous stack, which the sampler splices in after it (design.md "Spilled frames in
     # tools"). Every sample in spin must have every frame of down (n = 500 down to 1), and no sample
@@ -506,6 +512,29 @@ def _cpusampler(workdir, commands):
             work.extend((child, path) for child in node['children'])
     _check(in_spin > 0, 'cpusampler: no sample in spin')
     log(f'  cpusampler: all {in_spin} samples at the bottom of a recursion {_SPILL_DEPTH} deep have all {_SPILL_DEPTH} frames')
+
+
+def _cputracer(workdir, commands):
+    # The CPU tracer counts the entries of each root and, with TraceStatements, the executions of
+    # each statement: what the language tags (design.md D13, "Tools"). (fib 22) calls fib
+    # 2·F(23) - 1 = 57,313 times, and run-fib calls it 10 times; fib's body, line 3, is its one
+    # statement. make-table runs 10 times, and its loop (a loop of make-table's root, plan.md M7-02)
+    # tests (= i n) 101 times a run: its body, line 8, is a statement. No recursion here goes deep
+    # enough to spill, which a root's count would include (a resumed frame counts as an entry). The
+    # top-level (define (fib n) ...) is a statement at fib's name, line 2 column 10, run once.
+    tracer = json.loads(_profile(workdir, commands.tools,
+                                 lambda out: ['--cputracer', '--cputracer.TraceStatements', '--cputracer.Output=json', '--cputracer.OutputFile=' + out],
+                                 [r'"profile"']))
+    counts = {}
+    for entry in tracer['profile']:
+        section = entry['source_section']
+        if section.get('source_name') == _PROFILE_PROGRAM:
+            key = (entry['root_name'], section['start_line'], section['start_column'])
+            counts[key] = counts.get(key, 0) + entry['count']
+    expected = {('fib', 2, 1): 573130, ('fib', 3, 3): 573130, ('make-table', 6, 1): 10, ('make-table', 8, 5): 1010, ('run-fib', 11, 1): 1, ('<program>', 2, 10): 1}
+    for key, count in expected.items():
+        _check(counts.get(key) == count, f'cputracer: {key} counted {counts.get(key)} times, not {count}: {sorted(counts.items())}')
+    log(f'  cputracer: fib entered {expected[("fib", 2, 1)]} times, make-table\'s loop test run {expected[("make-table", 8, 5)]} times')
 
 
 def _memtracer(workdir, commands):
@@ -744,7 +773,7 @@ def _terminal(workdir, commands):
 
 def _help(workdir, commands):
     command = commands.tools
-    tools = ['--inspect', '--dap', '--cpusampler', '--memtracer']
+    tools = ['--inspect', '--dap', '--cpusampler', '--cputracer', '--memtracer']
     with _Launcher(command(['--help:tools']), workdir) as launcher:
         status = launcher.wait()
         text = launcher.stdout()
@@ -754,14 +783,14 @@ def _help(workdir, commands):
     with _Launcher(command(['--help']), workdir) as launcher:
         launcher.wait()
         listed = launcher.stdout()
-    for tool in ('inspect', 'dap', 'cpusampler', 'memtracer'):
+    for tool in ('inspect', 'dap', 'cpusampler', 'cputracer', 'memtracer'):
         _check(re.search(r'^  ' + tool + r' ', listed, re.MULTILINE), f'--help\'s Tools table does not list {tool}:\n{listed[-2000:]}')
     with _Launcher(commands.bare(['--help:tools']), workdir) as launcher:
         launcher.wait()
         bare = launcher.stdout()
     present = [t for t in tools if re.search(r'^\s+' + re.escape(t) + r'\b', bare, re.MULTILINE)]
     _check(not present, f'without the tools jars, --help:tools should list no tool options, but lists {present}')
-    log('  help: the Tools table and --help:tools list inspect, dap, cpusampler and memtracer; without the tools jars, none')
+    log('  help: the Tools table and --help:tools list inspect, dap, cpusampler, cputracer and memtracer; without the tools jars, none')
 
 
 def _with_free_port(test, attempts=3):
@@ -782,7 +811,8 @@ SMOKE_TESTS = {
     'help': ('--help lists the tools only with the tools jars', _help),
     'dap': ('DAP: breakpoint, stack, locals, step over, continue', _with_free_port(_dap)),
     'inspect': ('Chrome inspector: breakpoint, call frames, scope variables, step over, resume', _with_free_port(_inspect)),
-    'cpusampler': ('CPU sampler: histogram and call tree name the procedures', _cpusampler),
+    'cpusampler': ('CPU sampler: histogram, call tree and flame graph name the procedures', _cpusampler),
+    'cputracer': ('CPU tracer counts entries and statements exactly', _cputracer),
     'memtracer': ('memory tracer counts the program\'s allocations', _memtracer),
     'terminal': ('the REPL on a terminal: line editing, history, interrupts, read-line', _terminal),
 }

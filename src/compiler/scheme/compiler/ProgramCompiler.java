@@ -10,8 +10,12 @@ import java.util.Set;
 import com.oracle.truffle.api.CallTarget;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.RootCallTarget;
+import com.oracle.truffle.api.Truffle;
 import com.oracle.truffle.api.bytecode.BytecodeConfig;
+import com.oracle.truffle.api.bytecode.BytecodeNode;
+import com.oracle.truffle.api.bytecode.BytecodeRootNodes;
 import com.oracle.truffle.api.source.Source;
+import com.oracle.truffle.api.source.SourceSection;
 
 import scheme.reader.Scope;
 import scheme.reader.ScopeSet;
@@ -172,7 +176,30 @@ public final class ProgramCompiler implements SchemeCompiler {
         } catch (SchemeError e) {
             throw raisable(e);
         }
+        thunk.source = callerLocation();
         return new SClosure(generate(language, thunk, env.topLevel()), NO_CAPTURES);
+    }
+
+    /**
+     * Where eval was called: the location of the innermost Scheme frame on the stack, the call
+     * eval runs in (a primitive runs in its caller's frame, M5-09), or null if that frame has
+     * none or eval was called from the host. The code eval compiles from a datum has no source of
+     * its own (R7RS §6.12), so tools show it there: its root, statements and calls are located at
+     * the call (design.md D13, "Tools").
+     */
+    private static SourceSection callerLocation() {
+        SourceSection[] location = new SourceSection[1];
+        Truffle.getRuntime().iterateFrames(frame -> {
+            BytecodeNode bytecode = BytecodeNode.get(frame);
+            if (bytecode == null) {
+                // A primitive's root (apply's target, say) or a prompt's: its caller called eval.
+                return null;
+            }
+            SourceSection section = bytecode.getSourceLocation(frame);
+            location[0] = section != null && section.isAvailable() ? section : null;
+            return frame;
+        });
+        return location[0];
     }
 
     @Override
@@ -295,7 +322,16 @@ public final class ProgramCompiler implements SchemeCompiler {
     private static RootCallTarget generate(SchemeLanguage language, Ast.Lambda program, Object topLevel) {
         SchemeRootNode[] root = new SchemeRootNode[1];
         // With source information, so guest stack traces and tools see file, line and column (D13).
-        SchemeRootNodeGen.create(language, BytecodeConfig.WITH_SOURCE, b -> root[0] = new CodeGenerator(b, topLevel).generate(program));
+        BytecodeRootNodes<SchemeRootNode> nodes = SchemeRootNodeGen.create(language, BytecodeConfig.WITH_SOURCE, b -> root[0] = new CodeGenerator(b, topLevel).generate(program));
+        // Every root of the unit is loaded (its call target made, which is when instruments see a
+        // root) with the outermost, not when its first closure is made: a debugger resolves a line
+        // breakpoint to the nearest statement among the roots loaded so far, so a line in a lambda
+        // would otherwise resolve first to the statement that encloses the lambda's definition, and
+        // stop there (design.md D13, "Tools"). Outermost first, so the innermost root that holds a
+        // line resolves it last.
+        for (SchemeRootNode node : nodes.getNodes()) {
+            node.getCallTarget();
+        }
         return root[0].getCallTarget();
     }
 }
