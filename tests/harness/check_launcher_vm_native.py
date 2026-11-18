@@ -4,7 +4,8 @@ properties and the stack size take effect. Every argument after the program file
 `-X`, `-XX:` and `-D` ones included, and a `--vm.` one there makes the launcher run again without
 it. The executable takes VM options only as `--vm.` ones; a collector (chosen when the executable is
 built), a class path and an option the isolate would ignore are errors. Every class of option takes
-effect or fails clearly (plan.md M10-04, docs/usage.md "Options")."""
+effect or fails clearly (plan.md M10-04, docs/usage.md "Options"), and so does every option in an
+argument file, `--vm.@file` (plan.md M11-03)."""
 
 import argparse
 import os
@@ -117,6 +118,85 @@ def launcher_vm_native(o):
     log('--vm. class path and collector, options the isolate ignores, and -X, -XX: and -D before the file: errors')
 
 
+# A REPL session that recurses 10,000 deep, then prints its spills ("Stack-depth spill"): none on
+# the evaluation thread's 256 MB stack, some on a small one.
+DEEP_SESSION = """(define (count i n) (if (= i n) 0 (+ 1 (count (+ i 1) n))))
+(count 0 10000)
+(%spills)
+"""
+
+
+def argument_files(o):
+    """plan.md M11-03, design.md D17 "Options": the options in an argument file (`--vm.@file`) take
+    effect or fail clearly, as the `--vm.` ones do. The thin launcher's C part reads the file and
+    creates the isolate with its options; the launcher reads it as the C part does
+    (scheme.launcher.ArgumentFile) and checks each one."""
+    native = rlocation(o.native)
+    tmp = tempfile.mkdtemp(dir=os.environ.get('TEST_TMPDIR'))
+    programs = {}
+    for name, text in (('garbage', GARBAGE), ('live', LIVE), ('command-line', COMMAND_LINE)):
+        programs[name] = os.path.join(tmp, name + '.scm')
+        with open(programs[name], 'w', encoding='utf-8') as f:
+            f.write(text)
+
+    def arguments(name, text):
+        path = os.path.join(tmp, name)
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(text)
+        return '--vm.@' + path
+
+    # The heap's sizes, with a comment, two options on a line, and a quoted one.
+    heap = arguments('heap.args', '# The heap.\n-XX:+VerboseGC -Xmx1g\n"-Xms512m" -Xmn100m\n')
+    out, err = run([native, heap, programs['garbage']])
+    check(out == 'done', f'{heap}: the program should run: {out!r}')
+    for size in ('Maximum heap size: 1024M', 'Minimum heap size: 512M', 'Maximum young generation size: 100M'):
+        check(size in err, f'{heap} should set the heap ({size}):\n{err}')
+    # A maximum the program exceeds, also after a relaunch (a --vm. argument after the file).
+    small = arguments('small.args', '-Xmx64m\n')
+    for command in ([native, small, programs['live']], [native, small, programs['live'], '--vm.Xmx2g']):
+        _, err = run(command, status=None)
+        check('heap size exceeded' in err, f'{command} should bound the heap:\n{err}')
+    # A system property, which reaches the engine (which rejects it, clearly): in quotes, with a
+    # space and a #, as the C part reads it.
+    prop = arguments('property.args', '"-Dpolyglot.scheme.No Such#1=1" # a comment\n')
+    _, err = run([native, prop, programs['garbage']], status=1)
+    check('scheme.No Such#1.' in err and err.startswith('ERROR: ') and '\tat ' not in err,
+          f'{prop}: the property should reach the engine, and be a clear error:\n{err}')
+    # The stack size, which is the evaluation thread's too, as --vm.Xss is.
+    for text in ('-Xss256k', '-XX:StackSize=256k'):
+        stack = arguments('stack.args', text + '\n')
+        p = subprocess.run([native, stack], input=DEEP_SESSION, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                           encoding='utf-8', errors='replace', timeout=300)
+        lines = p.stdout.split()
+        check(p.returncode == 0 and len(lines) == 2 and lines[0] == '10000' and int(lines[1]) > 0,
+              f'{text} in an argument file should be the evaluation thread\'s stack, where 10,000 calls spill:\n{p.stdout}\n{p.stderr}')
+    log('--vm.@file: the heap\'s sizes, a system property, the stack size')
+
+    # Options the isolate would ignore: the launcher's errors, as for their --vm. forms; also as
+    # the C part reads them (a comment inside an option joins the next line to it: -ea).
+    for option, text in (('-ea', '-ea'), ('-Xint', '-Xint'), ('-verbose:gc', '-verbose:gc'), ('-Xlog:gc', '-Xlog:gc'), ('-Xfoo', '-Xfoo'),
+                         ('-ea', '-Xmx1g -e#comment\na\n')):
+        given = arguments('ignored.args', text)
+        _, err = run([native, given, programs['garbage']], status=1)
+        check('would ignore it' in err and f"'{option}' in {given}" in err, f'{option} in {given} should be an error saying the native image would ignore it:\n{err}')
+    for text, says in (('--class-path=' + tmp, 'no class or module path'), ('-Djava.library.path=' + tmp, 'no class or module path'),
+                       ('-p=' + tmp, 'no module path'), ('Xmx1g', 'not a VM option'), ('@' + small[len('--vm.@'):], 'not a VM option')):
+        given = arguments('wrong.args', text + '\n')
+        _, err = run([native, given, programs['garbage']], status=1)
+        check(says in err and f"'{text}' in {given}" in err, f'{text} in {given} should be an error saying {says!r}:\n{err}')
+    # A collector: the isolate's creation rejects it, as --vm.XX:+UseG1GC; a file there is none
+    # of: the C part's error.
+    _, err = run([native, arguments('gc.args', '-XX:+UseG1GC\n'), programs['garbage']], status=None)
+    check("Could not find option 'UseG1GC'" in err, f'-XX:+UseG1GC in an argument file should be an error:\n{err}')
+    missing = os.path.join(tmp, 'missing.args')
+    _, err = run([native, '--vm.@' + missing, programs['garbage']], status=1)
+    check(f'could not open `{missing}\'' in err, f'a missing argument file should be an error:\n{err}')
+    # After the program file, it is the program's argument.
+    out, _ = run([native, programs['command-line'], small])
+    check(out == f'("{small}")', f'--vm.@file after the program file should be the program\'s argument: {out!r}')
+    log('--vm.@file: options the isolate ignores, paths and a collector: errors; after the file, the program\'s')
+
+
 def option_classes(o):
     """plan.md M10-04, docs/usage.md "Options": every class of option through the native launcher
     takes effect or fails clearly."""
@@ -179,4 +259,5 @@ if __name__ == '__main__':
     parser.add_argument('--native', required=True)
     options = parser.parse_args()
     launcher_vm_native(options)
+    argument_files(options)
     option_classes(options)

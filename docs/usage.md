@@ -220,6 +220,7 @@ know, 1 for one that can't be used, and 64 (EX_USAGE) for a malformed `-I`,
 | `--experimental-options` | Allows the experimental options on the command line. | The same. |
 | `--polyglot`, `--jvm`, `--native` | `--polyglot` and `--jvm` are what it does already; `--native`: an error, status 1. | `--polyglot` and `--native` are; `--jvm`: an error, status 1. |
 | `--vm.<option>` (`--vm.Xmx2g`) | The JVM's `-<option>`; the JVM rejects one it doesn't know. The launcher run with `java` has no JVM to start: an error naming the `java` option, status 1. | The isolate takes `--vm.Xmx`, `-Xms`, `-Xmn`, `-Xss`, `-D` and `-XX:`, and refuses an `-XX:` one it doesn't know, a collector included (*"Could not find option"*, status 255). Any other (`--vm.ea`, `--vm.Xint`, `--vm.verbose:gc`), which the isolate would ignore, and a class or module path: an error, status 1. |
+| `--vm.@<file>`, a file of VM options in `java`'s form (`-Xmx2g`) | `java`'s argument file, `@<file>`: its options take effect or are `java`'s errors, as on the command line, and the launcher's defaults give way to them. | Each option in it takes effect or is an error, as its `--vm.` form is. A file there is none of: *"could not open"*, status 1. |
 | `polyglot.<name>` system properties (`--vm.Dpolyglot.engine.TraceCompilation=true`) | Take effect. One Truffle rejects: an error, status 1. | The same. |
 | `--help`, `--help:<topic>`, `--version`, `--show-version` | Print, and exit 0 (`--show-version` goes on). A topic there is none of: an error, status 2. | The same. |
 | Anything else starting with `-` | *"Unrecognized argument"*, status 2. | The same. |
@@ -263,7 +264,11 @@ As GraalVM's language launchers do, the launcher takes the JVM's own options
 as `--vm.<option>`, among its options (before the program file): `--vm.Xmx2g`,
 `--vm.XX:+UseG1GC`, `--vm.Dname=value`, and `--vm.cp=<path>` (or
 `--vm.classpath=<path>`) for the class path. `bazel-bin/scheme` starts the
-JVM with each one as `-<option>` (design.md D17, "VM options"). After the
+JVM with each one as `-<option>` (design.md D17, "VM options"). An argument
+file, `--vm.@<file>`, holds VM options as `java` takes them (`-Xmx2g
+-XX:+UseG1GC`, with `#` comments), and is `java`'s `@<file>`; the native
+launcher takes one too, and checks each option in it as it checks its
+`--vm.` form (design.md D17, "Options"). After the
 program file, `--vm.` arguments are the program's. The launcher run with
 `java` (below) has no JVM to start: it rejects a `--vm.` option, saying to
 give it to `java` itself. `JDK_JAVA_OPTIONS` works too.
