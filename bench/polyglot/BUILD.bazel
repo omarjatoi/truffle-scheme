@@ -1,0 +1,11 @@
+load("//bazel:java_module.bzl", "module_dir")
+
+# The foreign-call benchmark (bench/README.md "Polyglot", design.md D20):
+# `bazel-bin/bench/polyglot/jars/`, the language, the launcher and Truffle's jars with GraalVM's
+# SimpleLanguage, for `java -p`. Test only, as the second language is (//bazel:test_languages).
+module_dir(
+    name = "jars",
+    testonly = True,
+    extra = ["//bazel:test_languages"],
+    module = "//:launcher_module",
+)

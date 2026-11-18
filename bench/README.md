@@ -345,6 +345,32 @@ bazel run //:r7rs -- bench-check --update --from /tmp/runs/*.json --note "how lo
 `bench-check --update` without `--from` measures and updates in one go (`--runs`, default 3).
 Separate `--measure` runs let you note the load around each.
 
+## Polyglot
+
+`polyglot/foreign.scm` (ours) times foreign access, `(graalvm polyglot)`
+(design.md D20): Scheme calling a function of GraalVM's SimpleLanguage (SL)
+in a loop, at a call site (`calls`) and as a tail call that a trampoline
+makes (`tail-calls`); reading a Java `int[]`'s elements (`elements`) and a
+Java object's field (`members`) with `foreign-ref`; and SL calling a Scheme
+procedure back (`callbacks`, in SL loops of 1,000). SL is a test-only
+dependency (design.md D20), so the program runs on a module path of its own,
+`//bench/polyglot:jars` (the launcher's modules and SL), not through
+`benchmark`:
+
+```
+bazel build //bench/polyglot:jars //bazel:jdk
+bazel-bin/bazel/jdk/bin/java -XX:+UseSerialGC -Xmx2g \
+  --enable-native-access=org.graalvm.truffle,org.graalvm.shadowed.jline --sun-misc-unsafe-memory-access=allow \
+  -p bazel-bin/bench/polyglot/jars --add-modules ALL-MODULE-PATH -m scheme.launcher/scheme.launcher.SchemeMain \
+  bench/polyglot/foreign.scm 30 1000000        # ITERATIONS COUNT [CASE ...]
+```
+
+It prints a line per case and iteration, `<case> <iteration> <milliseconds>`,
+and checks each case's result. For the interpreter, add
+`-Dpolyglot.engine.AllowExperimentalOptions=true -Dpolyglot.engine.Compilation=false`
+(and a smaller count). design.md D20 ("Foreign access in compiled code") has
+the A/B numbers. Neither `bench-check` nor the report runs it.
+
 ## Failures
 
 Programs that don't run or don't pass their own check. A row is either out of

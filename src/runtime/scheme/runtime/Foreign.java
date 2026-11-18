@@ -32,9 +32,10 @@ import scheme.runtime.value.SString;
 import scheme.runtime.value.SSymbol;
 
 /**
- * Scheme's side of foreign calls (design.md D20): calls of foreign executables, the count of
- * foreign calls on the stack that continuations are checked against, and how foreign exceptions and
- * interop errors become Scheme errors.
+ * Scheme's side of foreign calls (design.md D20): the count of foreign calls on the stack that
+ * continuations are checked against, how foreign exceptions and interop errors become Scheme
+ * errors, and the operations of {@code (graalvm polyglot)}. Calls of foreign executables, and
+ * values coming in, are {@link ForeignNodes}'.
  *
  * <p>Every operation that enters another language or Java (a foreign call, a member read, an
  * {@code eval}) runs between {@link #enter} and {@link #exit}, which count it in
@@ -108,30 +109,6 @@ public final class Foreign {
     public static void exit(SchemeContext context, int use) {
         context.foreignDepth--;
         context.stackUse = use;
-    }
-
-    /**
-     * The call of a call site (or a prompt) whose callee isn't a Scheme closure: a foreign
-     * executable is called through interop with the arguments after index 0, and its result comes
-     * back as a Scheme value; anything else is the "not a procedure" error.
-     */
-    @TruffleBoundary
-    public static Object call(Object procedure, Object[] arguments) {
-        if (!isProcedure(procedure)) {
-            throw SchemeRootNode.notAProcedure(procedure);
-        }
-        Object[] foreignArguments = Arrays.copyOfRange(arguments, 1, arguments.length);
-        SchemeContext context = SchemeContext.get(null);
-        int use = enter(context);
-        try {
-            return incoming(InteropLibrary.getUncached().execute(procedure, foreignArguments));
-        } catch (InteropException e) {
-            throw interopError("call", procedure, e);
-        } catch (AbstractTruffleException e) {
-            throw raised(e);
-        } finally {
-            exit(context, use);
-        }
     }
 
     // ------------------------------------------------------------------------------------------

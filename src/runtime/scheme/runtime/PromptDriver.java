@@ -597,7 +597,7 @@ final class PromptDriver extends Node {
 
     /** Index 0 of {@code arguments} is (or is set to) the procedure. */
     Object callWithProcedure(Object procedure, Object[] arguments) {
-        // Not a closure: a foreign executable, or the "not a procedure" error (Foreign.call).
+        // Not a closure: a foreign executable, or the "not a procedure" error (ForeignNodes.CallNode).
         arguments[0] = procedure;
         return calls.executeCall(procedure, arguments);
     }
