@@ -23,6 +23,11 @@ two implementations is a bug in one of them. In particular:
 - Flonums only meet the operations whose results IEEE 754 fixes (+, -, *, /, sqrt, rounding,
   conversions); `exp`, `sin`, `expt` of flonums and friends are left out: R7RS doesn't say how
   accurate they are.
+- Numbers are real: nothing makes a complex number (no `make-rectangular`, `make-polar` or complex
+  literal; `sqrt` only of a non-negative flonum, `expt` of a ratio only to an integer power,
+  `string->number` kept only when it reads a real), so chibi-scheme's `-` with a complex operand,
+  which crashes after a ratio and negates the complex number's flonums in place (README.md), never
+  runs.
 """
 
 import random

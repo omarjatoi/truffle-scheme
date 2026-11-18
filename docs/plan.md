@@ -1647,7 +1647,7 @@ measures with interleaved A/B runs.
     function's cut follows the sign of a zero imaginary part as C99's
     conjugate symmetry says; design.md D1 records the algorithm and the
     sign-of-zero rule with the text they rest on; `bench-check` passes.
-- [ ] **M12-02 · chibi-scheme's departures from #249** *(early)*
+- [x] **M12-02 · chibi-scheme's departures from #249** *(early)*
   - #249 found that chibi-scheme crashes (SIGSEGV) on `(- 1/2 1+2i)`, and
     that its `-` of a real and a complex number negates the complex
     number's real part in place, so a literal flonum inside
