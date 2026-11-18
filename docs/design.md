@@ -2623,7 +2623,7 @@ Each entry: the decision, why, and what was rejected.
     `buildkite-agent`), and nix-ld, through which the Bazel that bazelisk
     downloads finds its loader and libraries.
     The hook doesn't install Nix: without it, the queue isn't running the
-    image, and the hook fails saying so. It still loads the shell with
+    image, and the hook fails at its first `nix` command. It loads the shell with
     `nix print-dev-env`, since Buildkite sources hooks into the step's shell
     and `nix develop` would start a shell of its own. On a stale image
     (`flake.lock` or the shell changed since it was built), Nix downloads
