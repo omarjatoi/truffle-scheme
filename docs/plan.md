@@ -1380,3 +1380,171 @@ Max) passes the same both interpreted and with `--compile`; and
 `//tests:space_native` and `//tests:launcher_vm_native` pass, as does
 `//tests:launcher_vm_native` for this Mac
 (`--platforms=//bazel/platforms:macos_arm64`). M11 is not drafted here.
+
+## M11 · Edges and hardening
+
+What M10's exit (#246, `docs/benchmarks.md` at `2f2af35640fc`) and the
+follow-ups of the PRs since M10 was drafted left: complex arithmetic's edges
+(#244), local checks that fail only on macOS (#239), options the native
+launcher still takes unchecked (#219), a deoptimization on resuming into a
+loop (#213), the call sites' inline caches (#215), UTF-8 decoding (#212,
+#216, #220), and the embedding audit's follow-ups (#226, #228,
+docs/graalvm-configuration.md "Follow-ups"). Not here, and the maintainer's
+to decide: literal pairs (M10-07, #245), the polyglot library (#236, #237),
+the CI image (#232), Bazel 9 and GraalVM 25.6. Benchmarks are local
+(bench/README.md: the load rule, `-Xmx2g`, the serial collector); each task
+that may change performance measures with interleaved A/B runs.
+
+- [ ] **M11-01 · Complex arithmetic's edges** *(early)*
+  - #244's follow-ups, against R7RS §6.2 (with its errata), C99 Annex G.5.1
+    and IEEE 754. Numbers area only (AGENTS.md "Areas").
+  - `*` and `/` of a real and a complex number promote the real to a
+    complex number with an exact 0 imaginary part, so `(* 2.
+    (make-rectangular +inf.0 1.))` is +inf.0+nan.0i, where Annex G.5.1
+    (and chibi-scheme), multiplying each part, give +inf.0+2.0i; and `+` of
+    a real and a complex number with a -0.0 imaginary part makes it 0.0.
+    A change to `Arithmetic.apply`'s mixed real and complex paths, with an
+    audit of their signs of zero.
+  - `sqrt` of an exact non-square beyond the flonums' range is
+    `Math.sqrt(flo(z))`: `(sqrt (* 2 (expt 10 400)))` is +inf.0, and a tiny
+    one's 0.0, where `magnitude` (#244) already falls back to hypot.
+  - `(expt 1. +nan.0)` is +nan.0 (#243): IEEE 754's pow(+1, NaN) is 1, and
+    §6.2.4 allows either. Decide, and record why.
+  - **Done when** each has a test in `NumbersTest` and,
+    where chibi-scheme agrees with R7RS, a `tests/diff/numbers-*.scm` case:
+    a real times a complex number multiplies each part, `+` keeps a -0.0
+    imaginary part, `(sqrt (* 2 (expt 10 400)))` is about 1.414e200; the
+    sign-of-zero audit and `expt`'s decision are in design.md D1, with the
+    R7RS and IEEE 754 text they rest on.
+- [ ] **M11-02 · Local checks on macOS** *(early)*
+  - `//tests:launcher_vm` run here (`--config=local`) fails on
+    `--vm.Xmx300m should set the maximum heap: ('318767104', 'command
+    line, ergonomic')`: HotSpot on macOS rounds the maximum heap up to its
+    alignment and reports it as ergonomic. CI runs it on Linux, where it
+    passes (#239's follow-up). The native launcher's check for this Mac
+    (`--platforms=//bazel/platforms:macos_arm64
+    //tests:launcher_vm_native`) passed at M10's exit.
+  - Switching between `--config=local` and the remote config
+    re-materialises the JDK tree with the same digest, so the AOT cache
+    isn't rebuilt, the launcher's stamp check finds it stale, and
+    `bazel-bin/scheme` starts without it until the `.aot` output is removed
+    (#239's follow-up). Likewise, after the Linux-platform native tests ran,
+    this Mac's `bazel-bin/scheme-native` was missing from the output base
+    until `bazel build //:scheme-native` restored it (#246).
+  - **Done when** `bazel test --config=local //tests:launcher_vm` and
+    `bazel test --platforms=//bazel/platforms:macos_arm64
+    //tests:launcher_vm_native` pass on this Mac, with the check still
+    showing that `--vm.Xmx300m` sets the maximum heap (the given size, or
+    the platform's rounding of it, which the check computes rather than
+    accepts), and `bazel-bin/scheme` uses its AOT cache after a switch of
+    configuration (a check, or a stamp Bazel re-creates with the tree).
+- [ ] **M11-03 · `--vm.@argfile` on the native launcher** *(early)*
+  - #219's follow-up: the thin launcher expands an `@argfile` and passes
+    its options to the isolate unchecked, so an option inside the file that
+    the isolate ignores (`-ea`, `-Xint`, `-verbose:gc`: M10-04's list)
+    stays silently ignored, against the usability rule M10-04 enforces on
+    the command line.
+  - **Done when** an argfile's options take effect or fail clearly, as on
+    the command line, on both launchers: a check in
+    `//tests:launcher_vm_native` and one in `//tests:launcher_vm` (or
+    `bazel-bin/scheme`'s handling of an argfile, recorded in design.md D17
+    "Options" if the JVM's own is already checked).
+- [ ] **M11-04 · Resuming into a loop deoptimizes**
+  - #213's follow-up: under torture, a continuation root that resumes into
+    a loop (`go(resume_bci=190)` in `SplitRecompilationTest`'s program)
+    deoptimizes once in `LoopHead.releaseOSRParent` (a
+    `transfer_to_interpreter` trap), so a program that resumes continuations
+    pays it once per continuation root; `SplitRecompilationTest` leaves
+    continuation roots out for that reason. `--engine.TraceDeoptimizeFrame`
+    printed nothing for it.
+  - **Done when** the cause is found, and fixed with a test (continuation
+    roots back in `SplitRecompilationTest`, or a test of their own that
+    counts invalidations) or recorded in design.md with its evidence;
+    `fibc`, `ctak` and the torture modes' times unchanged or faster;
+    `bench-check` passes.
+- [ ] **M11-05 · The call sites' inline caches**
+  - #215's follow-ups: `Call`'s `doPrimitive` is a specialization of its own
+    in front of `doDirect` (a limit of 4 each); the one-entry shape #215
+    gave the trampoline's caches may suit it too. A trampoline past its
+    cache calls primitive roots through `IndirectCallNode`, never inlined,
+    as `scheme`'s megamorphic `first` cache does for every primitive past
+    its first four targets.
+  - **Done when** each is measured with interleaved A/B runs (`scheme`,
+    `peval`, `conform`, `compiler`, `mazefun` and M10-03's set) and kept
+    with a test, or recorded in design.md ("Primitives run in place") with
+    its numbers; `PrimitivesInPlaceTest` and `bench-check` pass.
+- [ ] **M11-06 · UTF-8 text input without the JDK's decoder**
+  - #220's follow-up: most of what is left of wide `read-string` and
+    `read-line` is the JDK's UTF-8 decoder, which takes its ASCII fast path
+    only at the start of each buffer (0.0115 s of a 10 MB wide file's
+    0.017 s, against 0.002 s for the ASCII file). A file port that decodes
+    UTF-8 itself, straight into Latin-1 bytes or code points, removes that
+    and the `char[]` in between (#216: `read-string` builds an `SString`
+    from a `String`; #212: `read-line` reads a character at a time).
+    I/O area; `SString` is the strings area's, so a constructor it needs
+    goes in a PR of that area first.
+  - **Done when** #220's 10 MB wide `read-string` and `read-line` are
+    faster, ASCII ones no slower, malformed input is handled as today, and
+    `IoTest`'s buffer tests pass, with a new one for a multi-byte sequence
+    split across two buffers.
+- [ ] **M11-07 · Constant options for the test and build switches**
+  - docs/graalvm-configuration.md, "Follow-ups": `scheme.torture`,
+    `scheme.torture.owned` and `scheme.preludeImage` (`.write`, `.file`)
+    are system properties the runtime reads. 25.1's `@Option(constant =
+    true)` with `ConstantOptionKey` makes them INTERNAL options,
+    `polyglot.scheme.*`, that `--help:internal` lists and that are
+    validated.
+  - **Done when** the runtime reads none of them as a plain system property
+    (a check), they are listed and validated as options, the test macros,
+    the harness and the native build use them, every torture mode still
+    runs (`//tests:unit_torture`, `//tests:unit_torture_owned`, the
+    conformance tests), and a check shows the native image bakes them in at
+    build time.
+- [ ] **M11-08 · A module that exports nothing to embedders**
+  - docs/graalvm-configuration.md: the language's module exports five
+    packages, where GraalVM advises keeping a language's module as
+    encapsulated as possible (ModuleMigration step 9). Qualified exports to
+    `scheme.test`, and whatever the Static Object Model needs of
+    `scheme.runtime.value`.
+  - **Done when** `module-info.java` has only qualified exports, a check
+    reads the module's descriptor and fails on an unqualified export, and
+    the embedding tests and docs/embedding.md's samples pass.
+- [ ] **M11-09 · A bound on runtime-compiled methods**
+  - GraalVM's language jars set `-H:MaxRuntimeCompileMethods=<n>` in their
+    `native-image.properties` (SimpleLanguage 250, TRegex 900, Sulong
+    10000), so an image whose partial evaluation reaches more methods fails
+    its build; ours sets none (docs/graalvm-configuration.md).
+  - **Done when** the image builds with a bound set from its current count
+    plus a margin (both recorded in design.md D17), a build past the bound
+    fails, and `//tests:conformance_native` passes.
+- [ ] **M11-10 · Compact object headers, re-measured**
+  - design.md "The launcher's JVM: memory and start-up": rejected at M8-05,
+    measured without the AOT cache and with 12 host compiler threads (with
+    the serial collector 5% faster overall, slower on `nboyer` and
+    `earley`; start-up 682 against 476 ms without a class-sharing archive).
+    Since #188 a cache trained with the flag gives the same start-up
+    (129 against 128 ms), and the launcher runs 4 host compiler threads.
+  - **Done when** the report's subset is measured with and without the
+    flag, interleaved, on the serial collector with a cache trained each
+    way (first runs, steady state, peak RSS, start-up), and design.md
+    records the result; the launcher's default changes only if it wins
+    without costing memory or start-up.
+- [ ] **M11-11 · `ISOLATED` and `UNTRUSTED` sandbox policies**
+  - #226 declared `SandboxPolicy.CONSTRAINED`. The stricter policies run the
+    guest in a polyglot isolate, which on Community Edition needs the
+    language built as an isolate library (`-isolate-community`), and need
+    every limit they require: `sandbox.MaxHeapMemory`, `MaxThreads`, and
+    `MaxASTDepth`, which isn't enforced on Bytecode DSL roots (upstream,
+    docs/upstream.md "MaxASTDepth on Bytecode DSL roots").
+  - The way the isolate library is built and shipped goes into design.md
+    D10 first, in a PR of its own (AGENTS.md); a Maven artifact or version
+    it needs is the maintainer's to approve.
+  - **Done when** an embedder can create a context with
+    `SandboxPolicy.ISOLATED` (and `UNTRUSTED`, or design.md says why not)
+    on the isolate library, `SandboxTest` runs programs under it, and
+    docs/embedding.md says how.
+
+**Exit:** every task above is done, or its note records what was measured and
+why it isn't; `docs/benchmarks.md` and `bench/thresholds.json` are regenerated
+on the final M11 code; both suites pass in every mode, including through the
+native launcher.
