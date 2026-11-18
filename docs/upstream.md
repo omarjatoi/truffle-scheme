@@ -8,7 +8,7 @@ status** line: what oracle/graal's issues, pull requests and `master` say
 about it, on the date given. The newest release is still 25.5.5.0.3;
 `master` is 25.6.0-dev.
 
-All seven are in Truffle 25.5.5.0.3 (Maven Central), on GraalVM CE 25.5.5.0.3
+All eight are in Truffle 25.5.5.0.3 (Maven Central), on GraalVM CE 25.5.5.0.3
 (JDK 25.0.5.0.3, `nix develop`).
 
 ## The reproducers are inverted tests
@@ -19,7 +19,7 @@ the bug is there**. It runs with every other unit test in `bazel test //...`, an
 alone with:
 
 ```
-bazel test //tests:unit_jit_UpstreamAsyncStacksTest //tests:unit_jit_UpstreamNestedRootSourceTest //tests:unit_jit_UpstreamReportPolymorphismTest //tests:unit_jit_UpstreamInterruptTest //tests:unit_jit_UpstreamPreinitializationDeadlockTest
+bazel test //tests:unit_jit_UpstreamAsyncStacksTest //tests:unit_jit_UpstreamAstDepthTest //tests:unit_jit_UpstreamNestedRootSourceTest //tests:unit_jit_UpstreamReportPolymorphismTest //tests:unit_jit_UpstreamInterruptTest //tests:unit_jit_UpstreamPreinitializationDeadlockTest
 ```
 
 When a Truffle upgrade fixes a bug, its test fails. Then remove the
@@ -28,7 +28,7 @@ expect the bug again.
 
 The tests share a tiny language that has nothing to do with Scheme,
 `UpstreamLanguage` (id `upstream-repro`): every program is one statement that
-returns 42. Its roots are `UpstreamRoot`, a `@GenerateBytecode` root with tag
+returns 42, in as many nested expressions as the program starts with `(`. Its roots are `UpstreamRoot`, a `@GenerateBytecode` root with tag
 instrumentation and one trivial operation (the DSL warns if a root has none).
 
 | Bug | Test | Our workaround |
@@ -40,6 +40,7 @@ instrumentation and one trivial operation (the DSL warns if a root has none).
 | [Interrupting a Bytecode DSL root as it returns](#interrupting-a-bytecode-dsl-root-as-it-returns) | `UpstreamInterruptTest` | `InterruptTest`'s static initializer (`tests/scheme/test/`) |
 | [Context pre-initialization with synchronous compilation](#context-pre-initialization-with-synchronous-compilation) | `UpstreamPreinitializationDeadlockTest` | `ContextPreinitializationTest`'s child JVMs (`tests/scheme/test/`) |
 | [Instrumented compilations fail in libgraal](#instrumented-compilations-fail-in-libgraal) | none yet (a launcher command, below) | `bazel-bin/scheme` runs Graal compiled for HotSpot for it (`launcher_vm_args`, `tests/harness/harness.py`); `SchemeMain` rejects it with libgraal and in the native launcher |
+| [MaxASTDepth on Bytecode DSL roots](#maxastdepth-on-bytecode-dsl-roots) | `UpstreamAstDepthTest` | None: docs/graalvm-configuration.md lists the limit as not enforced, and docs/embedding.md doesn't offer it |
 
 ## Nested root source sections
 
@@ -781,3 +782,141 @@ failed"*, status 134.
   Graal compiled for HotSpot.
 - **Actual:** every instrumented compilation fails with the `ClassCastException` above (libgraal),
   or the process dies (native image).
+
+## MaxASTDepth on Bytecode DSL roots
+
+**Found in** #228 (docs/graalvm-configuration.md: `sandbox.MaxASTDepth=2` let
+nested Scheme arithmetic 6 deep run). **Test:** `UpstreamAstDepthTest`.
+
+**Upstream status** (checked 2026-11-17): still present on `master`, and
+unreported (no issue or pull request found for `MaxASTDepth`,
+`checkAstDepth` or "AST depth"). `SandboxInstrument.java` is the same on
+[`master`](https://github.com/oracle/graal/blob/f1cbf78f60d3552f70e88369d635cdf515a074be/truffle/src/com.oracle.truffle.sandbox/src/com/oracle/truffle/sandbox/SandboxInstrument.java#L652-L702)
+as at the 25.5.5.0.3 tag; its last change (278f99d, April 2026) is in 25.5.
+The issue text is ready to file.
+
+`sandbox.MaxASTDepth` (*"A limit on the maximum expression depth of a guest
+language function. Only instrumentable nodes count towards the limit."*)
+isn't enforced on a Bytecode DSL root: a program nested deeper than the limit
+runs.
+
+- **Expected:** a root deeper than the limit is refused: the context is
+  cancelled, *"AST depth limit of 3 nodes exceeded. AST depth: 12."*
+- **Actual:** it runs (`42`). The limit is enforced only when another
+  instrument has asked for the nested nodes' tags first: with a debugger
+  session that steps into expressions (`SourceElement.EXPRESSION`), the same
+  program is refused with the message above (the test's control case).
+- **Cause** (25.5's
+  [`SandboxInstrument`](https://github.com/oracle/graal/blob/e3cb74fceaf6ee4f50366d5ab2bbf602e464475d/truffle/src/com.oracle.truffle.sandbox/src/com/oracle/truffle/sandbox/SandboxInstrument.java#L558-L570)):
+  the limit is checked when an execution event node is created for a root's
+  `RootTag`. `checkAstDepth` walks the root's children
+  ([L682-L702](https://github.com/oracle/graal/blob/e3cb74fceaf6ee4f50366d5ab2bbf602e464475d/truffle/src/com.oracle.truffle.sandbox/src/com/oracle/truffle/sandbox/SandboxInstrument.java#L682-L702))
+  and counts the nested `InstrumentableNode`s whose `isInstrumentable()` is
+  true (`DepthVisitor`,
+  [L652-L680](https://github.com/oracle/graal/blob/e3cb74fceaf6ee4f50366d5ab2bbf602e464475d/truffle/src/com.oracle.truffle.sandbox/src/com/oracle/truffle/sandbox/SandboxInstrument.java#L652-L680)).
+  In an AST interpreter those are the expression nodes themselves. A Bytecode
+  DSL root's only children are its bytecode node and that node's tag tree
+  (`AbstractBytecodeNode.tagRoot`, of generated `TagNode`s), and the tag tree
+  holds only the tags that some binding has asked for. The sandbox's binding
+  asks for `RootTag` alone, so the walk sees the root's tag and nothing it
+  contains.
+- **Our workaround:** none. Scheme's roots are Bytecode DSL roots with
+  `StatementTag`s and `ExpressionTag`s (D13), so the limit isn't enforced on
+  Scheme programs either; docs/graalvm-configuration.md says so, and
+  docs/embedding.md doesn't offer the limit. It matters for `ISOLATED` and
+  `UNTRUSTED`, which require `sandbox.MaxASTDepth` to be set.
+
+### Issue text
+
+````markdown
+**Title:** Sandbox: `sandbox.MaxASTDepth` isn't enforced on Bytecode DSL roots unless another instrument has materialized their tags
+
+**Version:** Truffle 25.5.5.0.3 (GraalVM CE 25.5.5.0.3, JDK 25.0.5.0.3); `SandboxInstrument.java` is unchanged on `master`
+
+`sandbox.MaxASTDepth` measures a root's depth when the root's `RootTag` is first instrumented:
+`SandboxInstrument.checkAstDepth` walks the root's children with `NodeUtil.forEachChild` and counts
+nested instrumentable nodes. A Bytecode DSL root's children are its bytecode node and that node's
+tag tree, and the tag tree holds only the tags some binding has asked for. The sandbox's binding asks
+for `RootTag` only, so a Bytecode DSL root of any depth passes the check. Once another instrument
+(the debugger stepping into expressions) has materialized the root's `ExpressionTag`s, the same root
+is refused, as an AST interpreter's would be.
+
+Reproducer: a Bytecode DSL language with tag instrumentation whose program `((((((((((x))))))))))`
+is ten nested `ExpressionTag`s (each around a trivial operation) inside a `StatementTag`:
+
+```java
+@GenerateBytecode(languageClass = UpstreamLanguage.class, enableTagInstrumentation = true)
+public abstract class UpstreamRoot extends RootNode implements BytecodeRootNode {
+    protected UpstreamRoot(UpstreamLanguage language, FrameDescriptor frameDescriptor) {
+        super(language, frameDescriptor);
+    }
+
+    @Operation
+    public static final class Identity {
+        @Specialization
+        static Object doObject(Object value) {
+            return value;
+        }
+    }
+}
+```
+
+```java
+// UpstreamLanguage provides RootTag, RootBodyTag, StatementTag and ExpressionTag. Its parse:
+Source source = request.getSource();
+return UpstreamRootGen.create(this, BytecodeConfig.WITH_SOURCE, b -> {
+    b.beginRoot();
+    b.beginSource(source);
+    b.beginSourceSection(0, source.getLength());
+    b.beginTag(StandardTags.StatementTag.class);
+    b.beginReturn();
+    int depth = 0;
+    while (depth < source.getLength() && source.getCharacters().charAt(depth) == '(') {
+        depth++;
+    }
+    for (int i = 0; i < depth; i++) {
+        b.beginSourceSection(i, source.getLength() - 2 * i);
+        b.beginTag(StandardTags.ExpressionTag.class);
+        b.beginIdentity();
+    }
+    b.emitLoadConstant(42);
+    for (int i = 0; i < depth; i++) {
+        b.endIdentity();
+        b.endTag(StandardTags.ExpressionTag.class);
+        b.endSourceSection();
+    }
+    b.endReturn();
+    b.endTag(StandardTags.StatementTag.class);
+    b.endSourceSection();
+    b.endSource();
+    b.endRoot();
+}).getNode(0).getCallTarget();
+```
+
+```java
+static final String DEEP = "((((((((((x))))))))))";
+
+static Context context() {
+    return Context.newBuilder("upstream-repro").option("sandbox.MaxASTDepth", "3").build();
+}
+
+// Runs and returns 42. Expected: cancelled, as below.
+try (Context context = context()) {
+    context.eval("upstream-repro", DEEP);
+}
+
+// With a debugger session stepping into expressions, the same program is refused:
+// PolyglotException (isResourceExhausted): "AST depth limit of 3 nodes exceeded. AST depth: 12."
+Context context = context();
+DebuggerSession session = Debugger.find(context.getEngine()).startSession(event -> {
+}, SourceElement.EXPRESSION);
+session.suspendNextExecution();
+context.eval("upstream-repro", DEEP);
+```
+
+The limit depends on which other instruments are attached, and a Bytecode DSL language is never
+limited on its own. `checkAstDepth` could materialize the root's tags before the walk (for a
+`BytecodeRootNode`, update its `BytecodeRootNodes` with a `BytecodeConfig` that includes the
+language's provided tags), or measure the depth of the bytecode node's full tag tree instead of the
+node tree.
+````

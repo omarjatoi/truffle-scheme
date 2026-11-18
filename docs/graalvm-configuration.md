@@ -117,7 +117,7 @@ Sources: 25.5's `SandboxPolicy` Javadoc and the
 | `ISOLATED`, `UNTRUSTED` | *"In this mode, guest and host application execute on separate virtual machine instances."*; CE needs the language's `-isolate-community` artifact | Not declared: running in a polyglot isolate needs the language built into an isolate library (packaging, below), which nothing builds. | Follow-up |
 | Resource limits | *"The ISOLATED and UNTRUSTED sandbox policies require setting certain resource limits for a context."*; statements, CPU time, output, stack frames, AST depth, heap, threads | Statement limits (`ResourceLimits` and `sandbox.MaxStatements`), CPU time, output size, interrupts and cancelling work (above; `SandboxTest` checks the first three and `close(true)`). | Follow |
 | `sandbox.MaxStackFrames` | *"Specifies the maximum number of frames a context can push onto the stack."*; counted at `RootTag` enters and returns (`SandboxInstrument.FrameCounterNode`) | Counts Java frames: deep recursion spills to the heap (D12), so past the spill depth it never trips (with `scheme.SpillDepth=20`, a limit of 40 let a recursion 50 deep run), and frames resumed from the heap return without having entered, so the count drifts up by one per resumed frame. | Deviation by design (D12): the heap limit (`sandbox.MaxHeapMemory`) bounds deep recursion instead. A follow-up: decrement on resume, or document it as Java frames. |
-| `sandbox.MaxASTDepth` | *"A limit on the maximum expression depth of a guest language function. Only instrumentable nodes count towards the limit."* | Not enforced: the instrument measures a root's depth by walking its child nodes (`SandboxInstrument.checkAstDepth`, `NodeUtil.forEachChild`), and a Bytecode DSL root's code is bytecode, not a tree of nodes. | Upstream: it affects every Bytecode DSL language. A follow-up (docs/upstream.md, with a minimal Bytecode DSL language) |
+| `sandbox.MaxASTDepth` | *"A limit on the maximum expression depth of a guest language function. Only instrumentable nodes count towards the limit."* | Not enforced: the instrument measures a root's depth by walking its child nodes (`SandboxInstrument.checkAstDepth`, `NodeUtil.forEachChild`), and a Bytecode DSL root's only nested nodes are the tags some instrument has asked for; the sandbox asks only for `RootTag`. | Upstream: it affects every Bytecode DSL language. docs/upstream.md, ["MaxASTDepth on Bytecode DSL roots"](upstream.md#maxastdepth-on-bytecode-dsl-roots): `UpstreamAstDepthTest` and the issue text, not filed |
 
 ## Embedding
 
@@ -190,8 +190,11 @@ SimpleLanguage's, TRegex's, Sulong's `native-image.properties`).
   a resumed continuation: decrement the count when a frame is resumed from the
   heap, or say so in docs/embedding.md.
 - **`sandbox.MaxASTDepth`** isn't enforced on Bytecode DSL roots (its
-  instrument walks a root's child nodes): show it with a minimal Bytecode DSL
-  language in docs/upstream.md, and report it upstream.
+  instrument walks a root's child nodes, which hold only the tags some
+  instrument asked for): reproduced without Scheme in docs/upstream.md,
+  ["MaxASTDepth on Bytecode DSL roots"](upstream.md#maxastdepth-on-bytecode-dsl-roots)
+  (`UpstreamAstDepthTest`), with the issue text ready; filing it is a
+  human's call.
 - **Exports**: qualified exports to `scheme.test` (and whatever the Static
   Object Model needs of `scheme.runtime.value`), so the language's module
   exports nothing to embedders (ModuleMigration step 9).
