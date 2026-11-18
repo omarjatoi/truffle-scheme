@@ -150,12 +150,12 @@ public abstract class SPort implements TruffleObject {
     }
 
     /**
-     * Textual input ({@code read-string}): the next {@code k} characters (code points), or as many
-     * as are left before the end; null if {@code k > 0} and the port is at the end. Copies from the
-     * port's reader in bulk.
+     * Textual input ({@code read-string}): a new string of the next {@code k} characters (code
+     * points), or of as many as are left before the end; the eof object if {@code k > 0} and the
+     * port is at the end. Copies from the port's reader in bulk, into the string's array.
      */
     @TruffleBoundary
-    public final String readString(int k) {
+    public final Object readString(int k) {
         return doReadString(k);
     }
 
@@ -231,7 +231,7 @@ public abstract class SPort implements TruffleObject {
         throw unsupported();
     }
 
-    protected String doReadString(int k) {
+    protected Object doReadString(int k) {
         throw unsupported();
     }
 
@@ -464,45 +464,63 @@ public abstract class SPort implements TruffleObject {
         }
 
         /**
-         * Asks the reader for at most as many UTF-16 units as characters are still wanted, so never
-         * reads too many (a character is one unit or two). A high surrogate that ends a read is
-         * paired with the low one after it, as {@link #decode} pairs them, so a pair is never split.
-         * Reads until {@code k} characters are read or the reader ends, as {@link #doReadChar} would.
+         * Asks the reader for at most as many UTF-16 units as characters may still be wanted, so
+         * never reads too many (a character is one unit or two). A high surrogate that ends a read
+         * is paired with the low one after it, as {@link #decode} pairs them, so a pair is never
+         * split. Reads until {@code k} characters are read or the reader ends, as
+         * {@link #doReadChar} would. The reads go into one array, which
+         * {@link SString#of(char[], int, int)} makes the string in one pass (Latin-1 bytes, or code
+         * points from the first unit above 255), with no {@code String} between.
+         *
+         * <p>The units read are counted as characters only when that could make {@code k}: until
+         * then each is taken for a character, which never asks for too many, so reading a whole
+         * file counts nothing.
          */
         @Override
-        protected String doReadString(int k) {
+        protected Object doReadString(int k) {
             if (k == 0) {
-                return "";
+                return SString.of("");
             }
-            StringBuilder sb = new StringBuilder(Math.min(k, CHUNK));
+            // Room for a peeked pair, and for the low surrogate after a read.
+            char[] text = new char[Math.min(k, CHUNK) + 1];
+            int units = 0;
+            // The characters in text[0, counted).
             int n = 0;
+            int counted = 0;
             if (peeked != NONE) {
                 int c = peeked;
                 peeked = NONE;
                 if (c < 0) {
-                    return null;
+                    return SConstant.EOF;
                 }
-                sb.appendCodePoint(c);
-                n = 1;
+                units = Character.toChars(c, text, 0);
             }
             try {
-                char[] buffer = null;
-                while (n < k) {
-                    int want = Math.min(k - n, CHUNK);
-                    if (buffer == null) {
-                        buffer = new char[want];
+                while (true) {
+                    // At most n + (units - counted) characters are read.
+                    int left = k - n - (units - counted);
+                    if (left <= 0) {
+                        if (counted == units) {
+                            break;
+                        }
+                        n += Character.codePointCount(text, counted, units - counted);
+                        counted = units;
+                        continue;
                     }
-                    int r = in.read(buffer, 0, want);
+                    int want = Math.min(left, CHUNK);
+                    if (text.length - units <= want) {
+                        text = Arrays.copyOf(text, Math.max(2 * text.length, units + want + 1));
+                    }
+                    int r = in.read(text, units, want);
                     if (r < 0) {
                         break;
                     }
-                    sb.append(buffer, 0, r);
-                    n += Character.codePointCount(buffer, 0, r);
-                    if (r > 0 && Character.isHighSurrogate(buffer[r - 1])) {
+                    units += r;
+                    if (r > 0 && Character.isHighSurrogate(text[units - 1])) {
                         in.mark(1);
                         int low = in.read();
                         if (low >= 0 && Character.isLowSurrogate((char) low)) {
-                            sb.append((char) low);
+                            text[units++] = (char) low;
                         } else {
                             in.reset();
                         }
@@ -511,7 +529,7 @@ public abstract class SPort implements TruffleObject {
             } catch (IOException e) {
                 throw ioError(e);
             }
-            return n == 0 ? null : sb.toString();
+            return units == 0 ? SConstant.EOF : SString.of(text, 0, units);
         }
 
         /**

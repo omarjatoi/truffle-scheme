@@ -48,6 +48,7 @@ import org.junit.Test;
 import scheme.runtime.SchemeContext;
 import scheme.runtime.value.SConstant;
 import scheme.runtime.value.SPort;
+import scheme.runtime.value.SString;
 
 /**
  * M4-06: input and output (R7RS §6.13): string, bytevector and file ports, textual and binary
@@ -1035,16 +1036,25 @@ public class IoTest {
         }
     }
 
-    /** A reader of {@code text} that counts its one-character and its bulk reads. */
+    /**
+     * A reader of {@code text} that counts its one-character and its bulk reads, and returns at most
+     * {@code most} units from a bulk read (a file's decoder or a pipe returns fewer than asked for).
+     */
     private static final class CountingReader extends java.io.Reader {
         private final String text;
+        private final int most;
         private int pos;
         private int mark;
         int singleReads;
         int bulkReads;
 
         CountingReader(String text) {
+            this(text, Integer.MAX_VALUE);
+        }
+
+        CountingReader(String text, int most) {
             this.text = text;
+            this.most = most;
         }
 
         @Override
@@ -1059,7 +1069,7 @@ public class IoTest {
             if (pos == text.length()) {
                 return -1;
             }
-            int n = Math.min(len, text.length() - pos);
+            int n = Math.min(Math.min(len, most), text.length() - pos);
             text.getChars(pos, pos + n, cbuf, off);
             pos += n;
             return n;
@@ -1139,28 +1149,113 @@ public class IoTest {
         StringBuilder read = new StringBuilder();
         // Chunk sizes that end on either half of a pair, and a peek between some.
         for (int k : new int[]{1, 2, 3, 4, 5, 7, 8191, 8192, 8193, 1, 2}) {
-            String s = port.readString(k);
+            String s = assertReadString("read-string " + k, new String(cps, pos, k), port.readString(k));
             assertEquals("characters read for " + k, k, s.codePointCount(0, s.length()));
-            assertEquals(new String(cps, pos, k), s);
             pos += k;
             read.append(s);
             if (k > 4) {
                 assertEquals(cps[pos], port.peekChar());
             }
         }
-        assertEquals("", port.readString(0));
-        String rest = port.readString(Integer.MAX_VALUE);
+        assertReadString("read-string 0", "", port.readString(0));
+        String rest = assertReadString("the rest", new String(cps, pos, cps.length - pos), port.readString(Integer.MAX_VALUE));
         assertEquals(cps.length - pos, rest.codePointCount(0, rest.length()));
         read.append(rest);
         assertEquals(text, read.toString());
-        assertNull(port.readString(1));
-        assertEquals("", port.readString(0));
+        assertReadString("at the end", null, port.readString(1));
+        assertReadString("0 at the end", "", port.readString(0));
         assertEquals(-1, port.peekChar());
-        assertNull(port.readString(5));
+        assertReadString("after a peek at the end", null, port.readString(5));
         assertTrue("one-character reads: " + in.singleReads, in.singleReads <= 20);
         // 36,000 UTF-16 units. A read-string asks for as many units as characters are still wanted,
         // so when pairs make a read come up short it asks again for the rest: a few reads each.
         assertTrue("bulk reads: " + in.bulkReads, in.bulkReads <= 100);
+    }
+
+    /**
+     * What a textual input port's {@code read-string} returns: the eof object if {@code expected}
+     * is null, else a new mutable {@link SString} of {@code expected}'s characters (code points),
+     * Latin-1 exactly when every one of them is at most 255 (design.md D1). Returns its text.
+     */
+    private static String assertReadString(String what, String expected, Object read) {
+        if (expected == null) {
+            assertEquals(what, SConstant.EOF, read);
+            return null;
+        }
+        assertTrue(what + ": " + read, read instanceof SString);
+        SString s = (SString) read;
+        assertEquals(what, expected, s.toString());
+        assertEquals(what + ": characters", expected.codePointCount(0, expected.length()), s.length());
+        for (int i = 0, j = 0; i < s.length(); i++) {
+            int c = expected.codePointAt(j);
+            assertEquals(what + ": character " + i, c, s.codePointAt(i));
+            j += Character.charCount(c);
+        }
+        assertEquals(what + ": Latin-1", expected.chars().allMatch(c -> c <= 0xff), s.isLatin1());
+        assertFalse(what + ": mutable", s.isImmutable());
+        return s.toString();
+    }
+
+    /**
+     * A textual input port's {@code read-string} builds the string from what its reader reads, with
+     * no Java {@code String} between, and reads what reading a character at a time did (the
+     * {@link LineModel}): Latin-1 and wide text, {@code k} counting characters (code points), a
+     * surrogate pair split by the end of a reader's read or of a chunk (8192 units) read whole, a
+     * lone surrogate kept as it is, a peeked character first, and the eof object at the end.
+     */
+    @Test
+    public void readStringBuildsTheStringFromTheReadersText() {
+        Random random = new Random(23);
+        String latin1 = "aé\u00ff\u0000\u007f\u0080".repeat(3000);
+        String[] texts = {"", "a", "é", "\u00ff\u0100", "😀", "\uD83D", "\uDE00", "a\uD83Dé", "\uDE00\uD83D", "😀\uD83D", latin1, latin1 + "中",
+                        latin1 + "😀", "中" + latin1, "a" + "😀".repeat(9000), "😀".repeat(9000), mixed(random, 30_000), mixed(random, 30_000)};
+        int[] mosts = {1, 2, 3, 7, 4095, 8191, 8192, 8193, Integer.MAX_VALUE};
+        for (String text : texts) {
+            int[] cps = text.codePoints().toArray();
+            for (int most : mosts) {
+                String what = text.length() + " units, at most " + most + " a read";
+                // Whole, then the end.
+                SPort port = SPort.textInput(new CountingReader(text, most), false);
+                assertReadString(what, cps.length == 0 ? null : text, port.readString(Integer.MAX_VALUE));
+                assertReadString(what + ", at the end", null, port.readString(Integer.MAX_VALUE));
+                assertReadString(what + ", 0 at the end", "", port.readString(0));
+                // Exactly as many characters as there are: no eof yet.
+                port = SPort.textInput(new CountingReader(text, most), false);
+                assertReadString(what + ", all " + cps.length, cps.length == 0 ? null : text, port.readString(Math.max(1, cps.length)));
+                assertEquals(-1, port.peekChar());
+                assertReadString(what + ", after a peek at the end", null, port.readString(1));
+                // Chunks of random sizes, some across 8192 units, with peeks and reads between.
+                port = SPort.textInput(new CountingReader(text, most), false);
+                LineModel model = new LineModel(text);
+                while (model.pos < cps.length) {
+                    int op = random.nextInt(8);
+                    if (op == 0) {
+                        assertEquals(what, model.peek(), port.peekChar());
+                    } else if (op == 1) {
+                        assertEquals(what, model.read(), port.readChar());
+                    } else {
+                        int k = op == 2 ? 8190 + random.nextInt(5) : random.nextInt(op == 3 ? 4 : 2000);
+                        assertReadString(what + ", " + k + " at " + model.pos, model.readString(k), port.readString(k));
+                    }
+                }
+                assertReadString(what + ", at the end", null, port.readString(3));
+            }
+        }
+    }
+
+    /**
+     * {@code n} random characters: ASCII, Latin-1, a line ending, CJK, a pair and both halves of
+     * one alone (which pair up when a lone high one comes right before a lone low one).
+     */
+    private static String mixed(Random random, int n) {
+        int[] chars = {'a', 'z', 0xe9, 0xff, '\n', 0x4e2d, 0x1F600, 0xD83D, 0xDE00};
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < n; i++) {
+            // Mostly Latin-1, so a wide one comes after a long Latin-1 run.
+            int c = chars[random.nextInt(10) < 8 ? random.nextInt(5) : 5 + random.nextInt(4)];
+            sb.append(Character.toChars(c));
+        }
+        return sb.toString();
     }
 
     /**
@@ -1229,7 +1324,7 @@ public class IoTest {
                 assertEquals(what, model.read(), port.readChar());
             } else if (op == 2) {
                 int k = random.nextInt(5);
-                assertEquals(what, model.readString(k), port.readString(k));
+                assertReadString(what, model.readString(k), port.readString(k));
             } else {
                 String line = model.readLine();
                 Object read = port.readLine();
