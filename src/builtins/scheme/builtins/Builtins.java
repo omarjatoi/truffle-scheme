@@ -24,6 +24,8 @@ public final class Builtins implements BuiltinLibrary {
         all.addAll(IoPrimitives.primitives());
         all.addAll(EvalPrimitives.primitives());
         all.addAll(ProcessTimePrimitives.primitives());
+        // Not an area: (graalvm polyglot)'s %-names (design.md D20).
+        all.addAll(PolyglotPrimitives.primitives());
         return all;
     }
 }

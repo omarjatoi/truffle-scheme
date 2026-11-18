@@ -88,6 +88,7 @@ java_module_jar(
 unit_tests(
     name = "unit",
     kinds = {
+        "PolyglotTest": "polyglot",
         "PrinterTest": "core",
         "ReaderTest": "core",
         "SuiteReadSyntaxTest": "core",

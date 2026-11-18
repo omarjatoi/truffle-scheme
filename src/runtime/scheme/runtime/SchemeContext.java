@@ -129,6 +129,11 @@ public final class SchemeContext {
      * after it (SchemeRootNode): set and cleared with no Scheme code in between.
      */
     Capture suspending;
+    /**
+     * How many foreign operations (calls into another language or Java) are on the stack, for the
+     * continuations captured and invoked on either side of them (design.md D20, {@link Foreign}).
+     */
+    int foreignDepth;
     /** One Scheme object per Java object that crosses in (design.md D10). */
     final HostObjects hostObjects = new HostObjects();
     /** Torture-mode captures completed (M2-06), for tests. */

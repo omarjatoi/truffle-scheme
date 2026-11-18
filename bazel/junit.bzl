@@ -28,6 +28,7 @@ def unit_tests(name, tests, support, kinds, resources = {}, extra_srcs = {}):
     reruns only its tests. `kinds[Class]` is what it needs, "full" by default:
 
       full      the language and the launcher (//:launcher_module), and `support` (in its module)
+      polyglot  full, and a second Truffle language, test-only (//bazel:test_languages, design.md D20)
       core      only the runtime and the reader (:core_module)
       upstream  only Truffle (tests/scheme/test/upstream)
 
@@ -37,6 +38,8 @@ def unit_tests(name, tests, support, kinds, resources = {}, extra_srcs = {}):
         "core": (["//src/reader", "//src/runtime"], [":core_module"], ["org.graalvm.polyglot", "org.graalvm.truffle", "scheme"]),
         "full": ([":" + support, "//src/compiler", "//src/launcher", "//src/reader", "//src/runtime"], ["//:launcher_module"],
                  ["org.graalvm.polyglot", "org.graalvm.truffle", "scheme", "scheme.launcher"]),
+        "polyglot": ([":" + support, "//src/compiler", "//src/launcher", "//src/reader", "//src/runtime"], ["//:launcher_module", "//bazel:test_languages"],
+                     ["org.graalvm.polyglot", "org.graalvm.truffle", "scheme", "scheme.launcher"]),
         "upstream": ([], ["//bazel:truffle_modules"], ["org.graalvm.polyglot", "org.graalvm.truffle"]),
     }
     by_mode = {mode: [] for mode in _UNIT_MODES}
@@ -64,8 +67,9 @@ def unit_tests(name, tests, support, kinds, resources = {}, extra_srcs = {}):
             name = "%s_module_%s" % (name, cls),
             exports = [package + " to junit"],
             jar_name = "%s_module_%s" % (name, cls),
-            libs = [":%s_lib_%s" % (name, cls)] + ([":" + support] if kind == "full" else []),
+            libs = [":%s_lib_%s" % (name, cls)] + ([":" + support] if kind in ("full", "polyglot") else []),
             module_name = "scheme.test",
+            testonly = kind == "polyglot",
             opens = [package + " to junit"],
             requires = ["junit"] + requires,
             deps = module_deps + ["@jvm//:junit_junit"],

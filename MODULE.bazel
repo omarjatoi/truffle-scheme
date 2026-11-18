@@ -63,6 +63,10 @@ maven.install(
         "org.graalvm.tools:chromeinspector-tool:" + TRUFFLE_VERSION,
         "org.graalvm.tools:dap-tool:" + TRUFFLE_VERSION,
         "org.graalvm.tools:profiler-tool:" + TRUFFLE_VERSION,
+        # TEST ONLY: GraalVM's SimpleLanguage (and the ANTLR runtime it requires), the second
+        # language PolyglotTest crosses into (design.md D20). Only //bazel:test_languages uses it:
+        # never the language's module, the launcher or the native image.
+        "org.graalvm.truffle:truffle-sl:" + TRUFFLE_VERSION,
         "junit:junit:4.13.2",
         "org.hamcrest:hamcrest-core:1.3",
     ],
