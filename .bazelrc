@@ -26,9 +26,9 @@ common:macos --repo_env=BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=1
 common --incompatible_default_to_explicit_init_py
 
 # --- Hermeticity, so results are cacheable across machines ---
-# Actions and tests see a fixed PATH, not the shell's: tools come from Bazel (or @chibi).
-common --incompatible_strict_action_env
-build --nolegacy_external_runfiles
+# Actions and tests see a fixed PATH, not the shell's: tools come from Bazel (or @chibi). That is
+# Bazel 9's default (--incompatible_strict_action_env), as runfiles without the legacy external
+# links are.
 # Tests start from a clean environment, write only to their sandbox, and use no network.
 test --test_output=errors
 test --sandbox_default_allow_network=false
@@ -68,15 +68,11 @@ common:remote --remote_executor=grpcs://remote.buildbuddy.io
 common:remote --extra_execution_platforms=//bazel/platforms:linux_x86_64,//bazel/platforms:macos_arm64
 common:remote --extra_toolchains=@toolchains_buildbuddy//toolchains/cc:ubuntu_gcc_x86_64
 common:remote --jobs=50
-# Each test's inputs are mostly the same JDK and jars: build their Merkle trees once, and write
-# test.xml in the test's own action rather than in a second remote one.
-common:remote --experimental_remote_merkle_tree_cache
-common:remote --noexperimental_split_xml_generation
 common --config=remote
+# A test runs on an execution platform with its target platform's constraints (Bazel 9's default
+# test toolchain), so one for this Mac (`--platforms=//bazel/platforms:macos_arm64`) runs here, and
+# one for Linux on the executors.
 test --platforms=//bazel/platforms:linux_x86_64
-# A test runs on its target platform, so one for this Mac (`--platforms=//bazel/platforms:macos_arm64`)
-# runs here, and one for Linux on the executors.
-test --use_target_platform_for_tests
 # Offline (`--config=local`): everything runs here, nothing is read from or written to BuildBuddy.
 common:local --remote_executor=
 common:local --remote_cache=

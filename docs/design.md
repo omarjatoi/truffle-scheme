@@ -2524,8 +2524,8 @@ Each entry: the decision, why, and what was rejected.
 
 ### D11. Build and tooling
 
-- **Bazel builds and tests everything** (`MODULE.bazel`, Bazel 8 with
-  bzlmod, `.bazelversion`). Each build step and test is cached on its
+- **Bazel builds and tests everything** (`MODULE.bazel`, Bazel 9 with
+  bzlmod, `.bazelversion`; "Bazel 9", below). Each build step and test is cached on its
   inputs, so a change reruns only what depends on it.
 - **Remote-first.** Actions and tests execute on BuildBuddy's Linux x86_64
   executors, with their shared cache, from CI and from a laptop alike
@@ -2632,7 +2632,7 @@ Each entry: the decision, why, and what was rejected.
   margin against a broken or compromised release (a release already in use
   isn't stepped back from), and updating them is an ordinary change;
   `bazel mod graph` prints no "root module requires" warning.
-  Bazel stays on 8 until moving to 9 is decided on its own. The lint tools
+  Bazel is on 9 ("Bazel 9", below). The lint tools
   stay at the versions GraalVM's mx uses (Checkstyle 10.21.0, SpotBugs
   4.9.8, ECJ 3.46.0) and the formatter at Eclipse 4.36's, since a newer one
   reformats or re-flags code with nothing to gain; JUnit is 4.13.2, JUnit
@@ -2661,6 +2661,63 @@ Each entry: the decision, why, and what was rejected.
   | Local, after editing `docs/plan.md` or one `tests/diff` program | 6.7 min | 1 s (1 or 3 tests rerun) |
   | CI, no cache | 4.9 min on 7 runners (17 runner-min) | 10.3 min on 2 runners (13.7 runner-min) |
   | CI, cache from an earlier run of the same change | same | 1.7 min (all cached) |
+
+- **Bazel 9** (9.3.1, from 8.8.2; the maintainer: *"any gains from
+  upgrading to bazel 9? if so, lets go ahead and do that"*). 9.3.1 was the
+  newest 9.x at least two weeks old (9.3.2, 2026-11-05, wasn't yet).
+  - *What it took.* No Starlark: the repository already loaded every rule
+    from `rules_cc`, `rules_java` and `rules_python`, which 9 requires (its
+    native rules are gone and nothing is autoloaded), and had no
+    `WORKSPACE`. Every `bazel_dep` resolves at the version it pins, with
+    no newer one needing 9 (none declares a `bazel_compatibility` above
+    7.4), and protobuf was already at 33.4, 9's minimum; the lock file
+    moves only with 9's own built-in dependencies. `.bazelrc` lost five
+    flags: `--experimental_remote_merkle_tree_cache` and
+    `--noexperimental_split_xml_generation`, which 9 removed;
+    `--incompatible_strict_action_env` and `--nolegacy_external_runfiles`,
+    its defaults; and `--use_target_platform_for_tests`, which it
+    deprecates for its default test toolchain ("Platforms and C and C++
+    toolchains", below).
+  - *Measured* (the commit before the change, `2645a43`, in fresh output
+    bases; the M3 Max, shared with other agents' builds, every run started
+    at a 1-minute load under 10, interleaved where there are several; remote
+    execution on BuildBuddy):
+
+    | | Bazel 8.8.2 | Bazel 9.3.1 |
+    |---|---:|---:|
+    | Loading and analysis, new server (`build --nobuild //...`, 3 runs) | 7.0–7.2 s, 23–28 s CPU, 404–455 MB peak heap | 4.5–5.7 s, 14–16 s CPU, 287–329 MB |
+    | `bazel test //...` in a new output base (a new worktree), all cached | 21.6–23.1 s (2 runs) | 23.6–24.3 s (2 runs) |
+    | Repositories fetched in it (summed over parallel fetches) | 14–15 s | 1–2 s |
+    | Heap after GC, after it | 138–153 MB | 97–98 MB |
+    | `bazel build //...`, cold, every action executed remotely (1 run) | 152 s, 631 MB peak | 143 s, 570 MB |
+    | Then `bazel test //...`, all 725 tests executed remotely (1 run) | 141 s, 728 spawns, executors' wall 3,077 s, 1,058 MB peak | 127 s, 1,453 spawns, 2,714 s, 995 MB |
+    | `bazel test //...` all cached, new server / no change | 5.4 s / 1.7 s | 6.3 s / 1.7 s |
+
+    The gains: analysis a third faster on half the CPU and a quarter less
+    heap; the reworked Merkle trees (subtrees of runfiles and tree
+    artifacts cached across builds, bazelbuild/bazel#25650), which ran
+    the tests faster with twice the spawns; and the repository contents
+    cache, which shares the fetched repositories (four GraalVM JDKs, the
+    Maven jars) among all output bases on a machine, so a new worktree
+    extracts nothing. With `--remote_download_toplevel`, 9.3 also reruns
+    just the action that made an input BuildBuddy evicted
+    (`--rewind_lost_inputs`, on by default), where 8 restarted the whole
+    invocation (`--experimental_remote_cache_eviction_retries`). The cold build is chibi-scheme's
+    critical path either way.
+  - *What it costs.* test.xml: 9 removed test-setup.sh's in-action XML,
+    so each test that doesn't write `$XML_OUTPUT_FILE` itself (ours
+    don't) has a second spawn again, the one #124 removed: twice the
+    remote spawns when tests run, and about 730 more cache lookups when
+    they're cached, which is the new worktree's 1–2 s. The spawns are
+    small (the executors' total wall time went down). And the one output
+    directory for both platforms stays: 9's
+    `--experimental_platform_in_output_dir=Auto` renamed only the exec
+    configuration's directory (`linux_x86_64-opt-exec`). 9.3.1 also
+    discards its record of executed actions when the remote endpoints
+    change between commands (9.3.0's bazelbuild/bazel#30986), so a
+    `--config=local` command and the next remote one check their actions
+    against the cache again; 9.3.2 reverts it as over-eager
+    (bazelbuild/bazel#32254), and is the next version once two weeks old.
 
 - **Platforms and C and C++ toolchains (decided in M10-01).** C and C++ are
   built with Bazel's own rules and toolchains, and which machine runs an
@@ -2705,13 +2762,17 @@ Each entry: the decision, why, and what was rejected.
     the native launcher's library; chibi-scheme's `make`) declare the C++
     toolchain type, so they land on the platform that has the target's
     toolchain, as the C++ rules do; their `no-remote-exec` tags go.
-  - *Tests for a macOS target* run on it: `--platforms=//bazel/platforms:macos_arm64`
-    with `--use_target_platform_for_tests`, so the test action's execution
-    platform is the target platform, the Mac. Without it a test runs on the
-    first execution platform, the executors. (bazelbuild/bazel#22777
+  - *Tests for a macOS target* run on it: with `--platforms=//bazel/platforms:macos_arm64`,
+    Bazel 9's default test toolchain gives the test action an execution
+    platform with all the target platform's constraints, the Mac (bazelbuild/bazel#25823;
+    Bazel 8 needed `--use_target_platform_for_tests`, which 9 deprecates:
+    *"make sure that all test target platform are registered as execution
+    platforms"*, as both are). Before either, a test ran on the first
+    execution platform, the executors. (bazelbuild/bazel#22777
     reports test actions reaching remote executors in spite of a
-    platform's `no-remote-exec`; with `--use_target_platform_for_tests`,
-    the prototype's test ran on the Mac.)
+    platform's `no-remote-exec`; with the target platform's, the
+    prototype's test ran on the Mac, and under Bazel 9 `launcher_vm_native`
+    for the Mac ran in the Darwin sandbox.)
   - *Remote Macs later* are a change to `macos_arm64` alone: its
     `exec_properties` become the executors' (`"OSFamily": "Darwin"`,
     `"Arch": "arm64"`, and a `"Pool"` if they are in one) instead of
