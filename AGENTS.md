@@ -23,6 +23,11 @@ What the repository has decided, and where:
   (design.md D11).
 - **CI runs what runs on every commit**; benchmarks, the threshold check
   and the native image are local (design.md D11, the maintainer's choice).
+- **The JIT and the native image come first for performance**: they are how
+  most people run the implementation. The interpreter must not be slow or
+  badly designed, but a trade that makes the JIT or the native image faster
+  at the interpreter's expense is acceptable (design.md's preamble, the
+  maintainer's priority).
 - **Performance claims are measured**: interleaved A/B runs on one machine,
   stating its load, and leaving out runs whose 1-minute load was above 10
   (bench/README.md "Thresholds"; plan.md M8-M10).

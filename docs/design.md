@@ -9,6 +9,14 @@ Agents may change this document, decisions included, in a PR of its own that
 says why (AGENTS.md). Use what GraalVM and Truffle provide wherever it fits;
 full R7RS-small conformance comes first.
 
+Performance priorities (the maintainer, 2026-11-18): the JIT and the native
+image are how most people will run this implementation, so their
+performance is the primary goal, first runs and steady state both. The
+interpreter must not be slow or rest on poor design decisions, but a change
+that makes the JIT or the native image faster at some cost to the
+interpreter is an acceptable trade. Weigh measurements in that order: JIT
+and native first, interpreter after.
+
 docs/truffle-guidance.md checks the runtime against GraalVM's own guidance
 (the Partial Evaluation page, its further reading, and the Bytecode DSL,
 inlining, splitting and OSR guides): what each recommends, and whether we
