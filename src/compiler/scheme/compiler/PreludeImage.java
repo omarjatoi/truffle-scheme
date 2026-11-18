@@ -74,7 +74,7 @@ import scheme.runtime.value.SVector;
  * image from the bundled resources and shared by the contexts that restore from it.
  *
  * <p>The image comes from the build (M7-05): the build runs a context that writes it
- * ({@code -Dscheme.preludeImage.write}) into scheme.jar, beside the prelude, as
+ * ({@code scheme.PreludeImageWrite}, a constant option) into scheme.jar, beside the prelude, as
  * {@value #RESOURCE}. It records the text of every prelude file the standard libraries read, and
  * the primitives and core forms they were expanded with; an image whose files, primitives or core
  * forms differ from the running implementation's is stale and isn't used, nor is one whose checksum
@@ -83,16 +83,17 @@ import scheme.runtime.value.SVector;
  *
  * <p>Without a usable build-time image, the image is built per JVM: the first context initializes
  * the normal way and builds nothing, so a program run once pays nothing for it; the second builds
- * it, and the ones after restore from it. {@code -Dscheme.preludeImage=false} turns both off, and
- * the option {@code scheme.PreludeImage=false} turns them off for one context.
+ * it, and the ones after restore from it. The option {@code scheme.PreludeImage=false} turns both
+ * off for a context (for every context of the process as {@code -Dpolyglot.scheme.PreludeImage=false}),
+ * and the constant option {@code scheme.PreludeImageFile} names an image file to use instead of the
+ * bundled one (tests).
  */
 final class PreludeImage {
 
-    private static final boolean ENABLED = !"false".equals(System.getProperty("scheme.preludeImage"));
     /** Where a context writes the image it builds (the build step), or null. */
-    private static final String WRITE = System.getProperty("scheme.preludeImage.write");
+    private static final String WRITE = orNull(SchemeLanguage.constant(SchemeLanguage.PRELUDE_IMAGE_WRITE));
     /** A file to use as the build-time image instead of the bundled one (tests), or null. */
-    private static final String FILE = System.getProperty("scheme.preludeImage.file");
+    private static final String FILE = orNull(SchemeLanguage.constant(SchemeLanguage.PRELUDE_IMAGE_FILE));
     /** The build-time image's name among the prelude's resources (SourceDir.Resources). */
     static final String RESOURCE = "prelude.image";
 
@@ -110,11 +111,16 @@ final class PreludeImage {
      * The bundled build-time image, read and checked when this class is initialized: when the
      * language is built into a native image, at image build time.
      */
-    private static final Loaded BUNDLED = ENABLED && WRITE == null && FILE == null ? Loaded.read(SourceDir.Resources.bytes(RESOURCE)) : null;
+    private static final Loaded BUNDLED = WRITE == null && FILE == null ? Loaded.read(SourceDir.Resources.bytes(RESOURCE)) : null;
     /** The image of {@link #FILE}, once read. */
     private static volatile Loaded fromFile;
     /** Whether the build-time image's state has been logged. */
     private static final AtomicBoolean REPORTED = new AtomicBoolean();
+
+    /** A file option's value: null for none (its default, ""). */
+    private static String orNull(String file) {
+        return file.isEmpty() ? null : file;
+    }
 
     /** What every library body root is named (CodeGenerator); no procedure of the prelude is. */
     private static final String PROGRAM = "<program>";
@@ -206,7 +212,7 @@ final class PreludeImage {
      */
     @TruffleBoundary
     static PreludeImage get(SchemeContext context) {
-        if (!ENABLED || WRITE != null || !context.getEnv().getOptions().get(SchemeLanguage.PRELUDE_IMAGE)) {
+        if (WRITE != null || !context.getEnv().getOptions().get(SchemeLanguage.PRELUDE_IMAGE)) {
             return null;
         }
         PreludeImage built = image;
@@ -257,7 +263,7 @@ final class PreludeImage {
         if (WRITE != null) {
             return true;
         }
-        return ENABLED && context.getEnv().getOptions().get(SchemeLanguage.PRELUDE_IMAGE) && image == null && NORMAL_INITIALIZATIONS.incrementAndGet() >= 2;
+        return context.getEnv().getOptions().get(SchemeLanguage.PRELUDE_IMAGE) && image == null && NORMAL_INITIALIZATIONS.incrementAndGet() >= 2;
     }
 
     /**

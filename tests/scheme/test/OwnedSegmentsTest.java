@@ -11,6 +11,9 @@ import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.Value;
 import org.junit.Test;
 
+import scheme.runtime.SchemeLanguage;
+import scheme.runtime.SchemeLanguage.Torture;
+
 /**
  * Owned segments (design.md "Owned segments", AGENTS.md rule 3): the frames a stack-depth spill
  * suspends are reachable only from the root prompt's pending list, so the driver resumes each of
@@ -24,15 +27,15 @@ import org.junit.Test;
  * counts of in-place and copied resumes ({@code (%in-place-resumes)}, {@code (%copied-resumes)})
  * are checked outside torture mode only: under torture, every non-tail call captures, so every
  * segment is shared and copied, as before, and only the results are checked. Under owned torture
- * ({@code -Dscheme.torture.owned=true}, {@code //tests:unit_torture_owned}) the torture captures'
+ * ({@code -Dpolyglot.scheme.Torture=owned}, {@code //tests:unit_torture_owned}) the torture captures'
  * frames are owned too, so every non-tail call resumes frames in place: a recursion that captures
  * no continuation still copies none.
  */
 public class OwnedSegmentsTest {
 
     private static final String SCHEME = "scheme";
-    private static final boolean TORTURE = Boolean.getBoolean("scheme.torture");
-    private static final boolean OWNED_TORTURE = TORTURE && Boolean.getBoolean("scheme.torture.owned");
+    private static final boolean TORTURE = SchemeLanguage.constant(SchemeLanguage.TORTURE) != Torture.OFF;
+    private static final boolean OWNED_TORTURE = SchemeLanguage.constant(SchemeLanguage.TORTURE) == Torture.OWNED;
 
     /** The recursions' depth and what {@link #RECURSIONS}' {@code down} and {@code up} return for it. */
     private static final int N = 3000;

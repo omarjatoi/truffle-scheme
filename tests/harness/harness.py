@@ -28,11 +28,12 @@ INTERPRETER_VM_ARGS = [
     '-Dpolyglot.engine.AllowExperimentalOptions=true',  # engine.Compilation is experimental
     '-Dpolyglot.engine.Compilation=false',
 ]
-# Torture: capture + resume at every non-tail call.
-TORTURE_VM_ARGS = ['-Dscheme.torture=true']
+# Torture: capture + resume at every non-tail call (the constant option scheme.Torture, design.md
+# D17 "Constant options").
+TORTURE_VM_ARGS = ['-Dpolyglot.scheme.Torture=shared']
 # Owned torture: the same, but the captured frames stay owned, so they are resumed in place
 # (design.md "Owned segments").
-TORTURE_OWNED_VM_ARGS = TORTURE_VM_ARGS + ['-Dscheme.torture.owned=true']
+TORTURE_OWNED_VM_ARGS = ['-Dpolyglot.scheme.Torture=owned']
 # Truffle on JDK 25 uses restricted native access and sun.misc.Unsafe; so does JLine, for the
 # REPL's terminal (M7-07).
 TRUFFLE_VM_ARGS = [
@@ -546,7 +547,7 @@ def run_conformance(runtime, sections, compile=False, torture=False, jobs=1, nat
 
     Returns {(suite name, section id): {'pass', 'fail', 'error', 'complete', 'message', 'output'}}."""
     if native:
-        check(not torture, '--torture needs the JVM: a native image fixes scheme.torture at build time (design.md D17)')
+        check(not torture, '--torture needs the JVM: a native image fixes scheme.Torture, a constant option, at build time (design.md D17)')
         with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count() or 1) as pool:
             counts = list(pool.map(lambda s: _run_native(native, s, compile), sections))
         return {(s.suite.name, s.id): c for s, c in zip(sections, counts)}

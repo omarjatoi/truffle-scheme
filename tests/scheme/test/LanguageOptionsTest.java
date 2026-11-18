@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
 
+import org.graalvm.options.OptionCategory;
 import org.graalvm.options.OptionDescriptor;
 import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.Engine;
@@ -22,6 +23,9 @@ import org.junit.Assume;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
+
+import scheme.runtime.SchemeLanguage;
+import scheme.runtime.SchemeLanguage.Torture;
 
 /**
  * The language's options as GraalVM recommends declaring them (docs/graalvm-configuration.md,
@@ -47,7 +51,45 @@ public class LanguageOptionsTest {
                 assertFalse(descriptor.getName(), descriptor.getUsageSyntax() == null || descriptor.getUsageSyntax().isEmpty());
             }
         }
-        assertTrue(names.toString(), names.containsAll(List.of("scheme.LibraryPath", "scheme.BufferOutput", "scheme.StackSize", "scheme.PreludeImage", "scheme.SpillDepth")));
+        assertTrue(names.toString(), names.containsAll(List.of("scheme.LibraryPath", "scheme.BufferOutput", "scheme.StackSize", "scheme.PreludeImage", "scheme.SpillDepth",
+                        "scheme.Torture", "scheme.PreludeImageFile", "scheme.PreludeImageWrite")));
+    }
+
+    @Test
+    public void theTestAndBuildSwitchesAreInternalConstantOptions() {
+        // design.md D17, "Constant options": fixed for the process from -Dpolyglot.<name> (in a
+        // native image, when it is built), which no engine or context can change.
+        List<String> constant = new ArrayList<>();
+        try (Engine engine = Engine.create(SCHEME)) {
+            for (OptionDescriptor descriptor : engine.getLanguages().get(SCHEME).getOptions()) {
+                if (descriptor.isConstant()) {
+                    constant.add(descriptor.getName());
+                    assertEquals(descriptor.getName(), OptionCategory.INTERNAL, descriptor.getCategory());
+                }
+            }
+        }
+        constant.sort(null);
+        assertEquals(List.of("scheme.PreludeImageFile", "scheme.PreludeImageWrite", "scheme.Torture"), constant);
+    }
+
+    @Test
+    public void aConstantOptionCanBeRepeatedButNotChanged() {
+        // This JVM's value: off, or shared or owned in the torture modes (-Dpolyglot.scheme.Torture).
+        Torture fixed = SchemeLanguage.constant(SchemeLanguage.TORTURE);
+        try (Context context = Context.newBuilder(SCHEME).option("scheme.Torture", fixed.toString()).build()) {
+            assertEquals(3, context.eval(SCHEME, "(+ 1 2)").asInt());
+        }
+        for (Torture other : Torture.values()) {
+            if (other != fixed) {
+                Context.Builder builder = Context.newBuilder(SCHEME).option("scheme.Torture", other.toString());
+                IllegalArgumentException e = assertThrows(other.toString(), IllegalArgumentException.class, builder::build);
+                assertTrue(e.getMessage(), e.getMessage().contains("Option 'scheme.Torture' is constant and is already fixed to '" + fixed + "'"));
+                assertTrue(e.getMessage(), e.getMessage().contains("-Dpolyglot.scheme.Torture=<value>"));
+            }
+        }
+        String file = SchemeLanguage.constant(SchemeLanguage.PRELUDE_IMAGE_FILE);
+        Context.Builder builder = Context.newBuilder(SCHEME).option("scheme.PreludeImageFile", file + "other.image");
+        assertThrows(IllegalArgumentException.class, builder::build);
     }
 
     @Test
@@ -59,6 +101,7 @@ public class LanguageOptionsTest {
                         {"scheme.SpillDepth", "deep"},
                         {"scheme.BufferOutput", "maybe"},
                         {"scheme.PreludeImage", "nope"},
+                        {"scheme.Torture", "true"},
                         {"scheme.NoSuchOption", "1"},
         };
         for (String[] option : bad) {

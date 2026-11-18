@@ -7,21 +7,24 @@ import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.Value;
 import org.junit.Test;
 
+import scheme.runtime.SchemeLanguage;
+import scheme.runtime.SchemeLanguage.Torture;
+
 /**
- * M2-06: torture mode ({@code -Dscheme.torture=true}, {@code //tests:unit_torture}) captures
+ * M2-06: torture mode ({@code -Dpolyglot.scheme.Torture=shared}, {@code //tests:unit_torture}) captures
  * and resumes at every non-tail call of a Scheme procedure. Every other test in this suite also runs
  * under torture in the torture tests; this one checks that torture really happens.
  *
  * <p>Plain torture shares every capture, so every resume copies the frame and checks that the
- * original didn't change (AGENTS.md rule 3). Owned torture ({@code -Dscheme.torture.owned=true}
- * too, {@code //tests:unit_torture_owned}) keeps its captures' frames owned, as a stack-depth
+ * original didn't change (AGENTS.md rule 3). Owned torture ({@code -Dpolyglot.scheme.Torture=owned},
+ * {@code //tests:unit_torture_owned}) keeps its captures' frames owned, as a stack-depth
  * spill's are (design.md "Owned segments"), so the driver resumes them in place, once each, until a
  * continuation shares them; then they are copied and checked.
  */
 public class TortureTest {
 
-    private static final boolean TORTURE = Boolean.getBoolean("scheme.torture");
-    private static final boolean OWNED = TORTURE && Boolean.getBoolean("scheme.torture.owned");
+    private static final boolean TORTURE = SchemeLanguage.constant(SchemeLanguage.TORTURE) != Torture.OFF;
+    private static final boolean OWNED = SchemeLanguage.constant(SchemeLanguage.TORTURE) == Torture.OWNED;
 
     @Test
     public void capturesAtEveryNonTailCallOnlyUnderTorture() {

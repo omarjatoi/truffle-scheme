@@ -273,19 +273,20 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
     /**
      * Torture mode (M2-06, AGENTS.md rules 2 and 3): after every non-tail call of a Scheme procedure
      * returns, capture up to the root prompt and resume from copies. A constant, so it costs nothing
-     * when off. Primitive calls are not tortured: they can't capture anything.
+     * when off ({@code scheme.Torture}, a constant option: {@link SchemeLanguage#TORTURE}). Primitive
+     * calls are not tortured: they can't capture anything.
      */
-    static final boolean TORTURE = Boolean.getBoolean("scheme.torture");
+    static final boolean TORTURE = SchemeLanguage.constant(SchemeLanguage.TORTURE) != SchemeLanguage.Torture.OFF;
 
     /**
-     * Owned torture ({@code -Dscheme.torture.owned=true} with {@link #TORTURE}): the frames a
+     * Owned torture ({@code scheme.Torture=owned}): the frames a
      * torture capture suspends are owned by the root prompt's driver, as a spill's are, so it
      * resumes them in place, once, until something shares them (design.md "Owned segments"). Every
      * non-tail call then exercises the in-place resume, and every continuation the copy (with its
      * check) of the segments it shares. Plain torture shares every capture, so that every resume
      * is checked from copies.
      */
-    static final boolean TORTURE_OWNED = TORTURE && Boolean.getBoolean("scheme.torture.owned");
+    static final boolean TORTURE_OWNED = SchemeLanguage.constant(SchemeLanguage.TORTURE) == SchemeLanguage.Torture.OWNED;
 
     static Object tortured(Object result, RootCallTarget callee, SchemeContext context) {
         if (TORTURE && !(result instanceof Capture) && !(callee.getRootNode() instanceof PrimitiveRootNode)) {

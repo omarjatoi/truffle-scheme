@@ -154,7 +154,7 @@ public class BuildTimePreludeImageTest {
     public void aStaleImageIsNotUsed() throws IOException, InterruptedException {
         Path stale = folder.getRoot().toPath().resolve("stale.image");
         Files.write(stale, staleImage());
-        Result r = launch(List.of("-Dscheme.preludeImage.file=" + stale), program().toString());
+        Result r = launch(List.of("-Dpolyglot.scheme.PreludeImageFile=" + stale), program().toString());
         assertEquals(r.err(), 0, r.status());
         assertEquals(PROGRAM_OUTPUT, r.out());
         assertTrue(r.err(), r.err().contains("the build-time prelude image isn't used: prelude/numbers.scm changed; the standard libraries are expanded"));
@@ -167,7 +167,7 @@ public class BuildTimePreludeImageTest {
         byte[] image = bundled().clone();
         image[image.length / 2] ^= 1;
         Files.write(damaged, image);
-        Result r = launch(List.of("-Dscheme.preludeImage.file=" + damaged), program().toString());
+        Result r = launch(List.of("-Dpolyglot.scheme.PreludeImageFile=" + damaged), program().toString());
         assertEquals(r.err(), 0, r.status());
         assertEquals(PROGRAM_OUTPUT, r.out());
         assertTrue(r.err(), r.err().contains("the build-time prelude image isn't used: its checksum doesn't match"));

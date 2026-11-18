@@ -136,7 +136,10 @@ launcher's `--help:languages`):
 | `scheme.BufferOutput` | `true` | Buffer standard output; it is written when Scheme reads standard input, writes to standard error, flushes or exits, and when control returns to Java (design.md D10). |
 | `scheme.StackSize` (expert) | `0` | The Java stack size of the thread the context is created on, when you know it (below). |
 
-(`scheme.PreludeImage` and `scheme.SpillDepth` are internal, for tests.) Give
+(`scheme.PreludeImage` and `scheme.SpillDepth` are internal, for tests, and so
+are `scheme.Torture`, `scheme.PreludeImageFile` and `scheme.PreludeImageWrite`,
+constant options that only `-Dpolyglot.scheme.<name>` on the JVM's command
+line sets, for the process: design.md D17.) Give
 an option to a context's builder (`Context.Builder.option`), to an explicit
 engine's (`Engine.Builder.option`: each context of the engine takes it, unless
 its own builder gives another), or as a system property,

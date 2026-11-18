@@ -420,6 +420,17 @@ java_driver_test(
     tags = ["lint"],
 )
 
+# design.md D17 "Constant options": the language reads no system property but through constant
+# options, whose generated descriptors read -Dpolyglot.<name> (plan.md M11-07).
+java_driver_test(
+    name = "system_properties",
+    args = ["--modules=scheme"],
+    main = "SystemProperties",
+    module = "//:launcher_module",
+    size = "small",
+    tags = ["lint"],
+)
+
 # design.md D11: the test JDK is the GraalVM release of the Truffle libraries.
 harness_test(
     name = "versions",

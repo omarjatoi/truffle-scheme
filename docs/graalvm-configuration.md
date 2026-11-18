@@ -75,7 +75,7 @@ Sources: `Option.java`'s Javadoc (25.5), `OptionType.java`, and
 
 | Recommendation | GraalVM says | What we do | Status |
 |---|---|---|---|
-| Declare options with `@Option`, a category and a stability | `category()`: USER, EXPERT or INTERNAL; *"`stability()` ... The default value is `OptionStability#EXPERIMENTAL`."* | `scheme.LibraryPath` and `scheme.BufferOutput` USER and STABLE, `scheme.StackSize` EXPERT and STABLE, `scheme.PreludeImage` INTERNAL and STABLE, `scheme.SpillDepth` INTERNAL and EXPERIMENTAL (tests only: it needs `allowExperimentalOptions`). | Follow |
+| Declare options with `@Option`, a category and a stability | `category()`: USER, EXPERT or INTERNAL; *"`stability()` ... The default value is `OptionStability#EXPERIMENTAL`."* | `scheme.LibraryPath` and `scheme.BufferOutput` USER and STABLE, `scheme.StackSize` EXPERT and STABLE, `scheme.PreludeImage` INTERNAL and STABLE, `scheme.SpillDepth` INTERNAL and EXPERIMENTAL (tests only: it needs `allowExperimentalOptions`); the constant options `scheme.Torture`, `scheme.PreludeImageFile` and `scheme.PreludeImageWrite` INTERNAL and STABLE (below). | Follow |
 | The default at the end of the help | *"Include the default value for the option and the end of the text, e.g. `"Enable or disable the option (default: true)."`"* | None did: `scheme.StackSize` said *"(0: unknown, measured when needed)"*, `scheme.BufferOutput` *"(false: each write at once)"*. | Mistake, fixed in #218: each ends with `(default: ...)`. |
 | A usage syntax | `usageSyntax()`: *"This value is used when generating help messages"*: `true\|false`, `<unit>`, ranges such as `[0, inf)`, lists as `<a>,<a>,...` | Only `scheme.StackSize` had one (`<size>`): `--help:languages` showed `--scheme.LibraryPath=` and `--scheme.SpillDepth=` with nothing after them. | Mistake, fixed in #218: `<dir>:<dir>:...`, `true\|false`, `[0, inf)`. |
 | Validate values: an option type with a converter and a validator | `OptionType(String, Function<String,T>, Consumer<T>)`: the converter and the validator *"Throws `IllegalArgumentException` if the value is invalid"* | `scheme.StackSize` has its own type (`StackBudget.parseStackSize`), whose error names the option. `scheme.SpillDepth` used the default `Integer` type: a negative depth was accepted, and *"For input string"* named nothing. | Mistake, fixed in #218: `scheme.SpillDepth` has a type that takes 0 or more and names itself. |
@@ -83,7 +83,7 @@ Sources: `Option.java`'s Javadoc (25.5), `OptionType.java`, and
 | Deprecation | `deprecated()`, `deprecationMessage()` | No option has been renamed or dropped. | Follow (not needed) |
 | `areOptionsCompatible` | *"If the context policy of a language is set to exclusive (default behavior) then `areOptionsCompatible` will never be invoked as `TruffleLanguage` instances will not be shared for multiple contexts."* | Not overridden; the policy is `EXCLUSIVE` (Registration, below). The pre-initialized context's `patchContext` declines a context whose `scheme.PreludeImage` is false (D17). | Follow |
 | Options reach a context from its builder, its engine, system properties and the launcher | `Context.Builder.option`, `Engine.Builder.option`; `Engine.Builder.useSystemProperties` (*"polyglot."* properties, on by default); `--<id>.<option>` in a launcher | All four. `LanguageOptionsTest` checks the first three: an option of the engine is each of its contexts' default, a context's own comes first, `-Dpolyglot.scheme.LibraryPath` is read as an engine is created. The launcher's `--scheme.*` is M10-04's. | Follow (tests added in #218) |
-| Constant options for values fixed before the runtime starts | 25.1's `@Option(constant = true)` and `ConstantOptionKey`: *"The value is read from the system property `-Dpolyglot.<option-name>=<value>` during class initialization ... eligible for constant folding"*, and *"In a GraalVM native image, the property is read during image building"* | Five host system properties of our own, read into `static final` fields: `scheme.torture` and `scheme.torture.owned` (`SchemeRootNode`), `scheme.preludeImage`, `.write` and `.file` (`PreludeImage`); none is listed by `--help`. | Deliberate for now: they predate 25.1's mechanism, which gives the same build-time semantics in a native image (D17). A follow-up: make them INTERNAL constant options. |
+| Constant options for values fixed before the runtime starts | 25.1's `@Option(constant = true)` and `ConstantOptionKey`: *"The value is read from the system property `-Dpolyglot.<option-name>=<value>` during class initialization ... eligible for constant folding"*, and *"In a GraalVM native image, the property is read during image building"* | Were five host system properties of our own, read into `static final` fields: `scheme.torture` and `scheme.torture.owned` (`SchemeRootNode`), `scheme.preludeImage`, `.write` and `.file` (`PreludeImage`); none was listed by `--help`. Now three INTERNAL constant options, `scheme.Torture=off\|shared\|owned`, `scheme.PreludeImageFile` and `scheme.PreludeImageWrite`, set as `-Dpolyglot.scheme.<name>`, listed by `--help:scheme:internal`, validated, and fixed when a native image is built; the process-wide `scheme.preludeImage=false` is the option `scheme.PreludeImage` as a system property (design.md D17, "Constant options"). | Mistake (a later mechanism), fixed in M11-07 |
 | Options safe under a sandbox | `Option.sandbox()`: *"Specifies the most strict sandbox policy in which the option can be used."* (default TRUSTED) | All TRUSTED (the default). | Mistake (with the language's own policy), fixed in #226: the options an embedder sets are CONSTRAINED; `scheme.SpillDepth` stays TRUSTED. |
 
 ## The language's registration
@@ -166,7 +166,7 @@ SimpleLanguage's, TRegex's, Sulong's `native-image.properties`).
 | Pre-initialized contexts | `--engine.PreinitializeContexts` (25.5:Options.md); 25.5's name at image build time, `polyglot.image-build-time.PreinitializeContexts` | `-Dpolyglot.image-build-time.PreinitializeContexts=scheme`, an option of `//:scheme-native`, not of the jar (D17, M8-07). | Follow |
 | The library's build options | `mx_sdk_vm_impl.py`'s options for a language library | `--shared`, `-H:-InitializeVM`, `-R:+EnableSignalHandling`, `-R:+InstallSegfaultHandler`, `-H:+InstallExitHandlers`, as mx builds GraalVM's; without `-H:-ParseRuntimeOptions` (D17, "VM options", measured). | Follow (D17) |
 | JVM options of the JVM launcher | (JVM options, not GraalVM's) | The serial collector, 4 host compiler threads, the AOT cache, each given way to a user's choice (D17, measured). | Deliberate (D17) |
-| System properties we read | (above, "Constant options") | The runtime: `scheme.torture*`, `scheme.preludeImage*` (tests and the build). The launcher resolves an option given on its command line or as a `polyglot.<name>` system property, for the warm-up (`engine.Compilation`), the terminal's buffering (`scheme.BufferOutput`) and the library path, and sets `polyglot.engine.TraceTransferToInterpreter` for the framework's first engine (M10-04, #219: design.md D17, "Options"). | Follow-up (constant options); the launcher's: follow (#219) |
+| System properties we read | (above, "Constant options") | The runtime: none of its own; the generated descriptors read the constant options' `polyglot.scheme.*` (`//tests:system_properties` checks every class of `scheme.jar`). The launcher resolves an option given on its command line or as a `polyglot.<name>` system property, for the warm-up (`engine.Compilation`), the terminal's buffering (`scheme.BufferOutput`) and the library path, and sets `polyglot.engine.TraceTransferToInterpreter` for the framework's first engine (M10-04, #219: design.md D17, "Options"). | Follow (M11-07); the launcher's: follow (#219) |
 
 ## Fixes
 
@@ -180,12 +180,12 @@ SimpleLanguage's, TRegex's, Sulong's `native-image.properties`).
 
 ## Follow-ups
 
-- **Constant options** for the test and build switches (`scheme.torture`,
-  `scheme.torture.owned`, `scheme.preludeImage`, `.write`, `.file`): 25.1's
-  `@Option(constant = true)` with `ConstantOptionKey`, as INTERNAL options
-  `polyglot.scheme.*` that `--help:internal` lists and that are validated.
-  Needs the test macros, the harness and the native build changed together,
-  and a check that a native image still bakes them in at build time.
+- **A constant option's bad value in `-Dpolyglot.<name>`** (`scheme.Torture=maybe`)
+  throws in the static initializer Truffle's option processor generates, so
+  the first engine fails with an internal error (`ExceptionInInitializerError`,
+  status 70) whose printed cause names the value; the launcher can't report
+  it as an option error, as an internal error's `PolyglotException` has no
+  cause (design.md D17, "Constant options"). Upstream's to improve.
 - **`ISOLATED` and `UNTRUSTED`**: building the language as a polyglot isolate
   library (`-isolate-community`), and checking every limit those policies
   require (`sandbox.MaxASTDepth`, `MaxHeapMemory`, `MaxThreads`).

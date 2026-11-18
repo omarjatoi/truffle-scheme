@@ -4,7 +4,7 @@ takes it, unless its JVM options (on the command line, its `--vm.` options, in J
 in JAVA_TOOL_OPTIONS) set those themselves. Its `--vm.<option>`s are the JVM's `-<option>`s ("VM
 options"), and the launcher started with java rejects one the JVM wasn't started with. Every class of
 option takes effect or fails clearly (plan.md M10-04, docs/usage.md "Options"), and so does every
-option in an argument file, `--vm.@file` (plan.md M11-03)."""
+option in an argument file, `--vm.@file` (plan.md M11-03), and every constant option (plan.md M11-07)."""
 
 import argparse
 import os
@@ -316,6 +316,22 @@ def option_classes(o):
     out, _ = run(runtime, ['--vm.Dpolyglot.scheme.StackSize=1m', program], status=1)
     check('--stack-size=' in out, f'scheme.StackSize, which the launcher sets, should be an error naming --stack-size:\n{out}')
     log('--scheme.: invalid, unknown, the launcher\'s own')
+
+    # Constant options (design.md D17, "Constant options"): --help:scheme:internal lists them, and
+    # the process fixes them with -Dpolyglot.<name>, which the command line may repeat but not
+    # change.
+    out, _ = run(runtime, ['--help:scheme:internal'])
+    for option in ('--scheme.Torture=off|shared|owned', '--scheme.PreludeImageFile=<file>', '--scheme.PreludeImageWrite=<file>'):
+        check(option in out, f'--help:scheme:internal should list {option}:\n{out}')
+    out, _ = run(runtime, ['--scheme.Torture=shared', program], status=1)
+    check(out.startswith("ERROR: Option 'scheme.Torture' is constant and is already fixed to 'off'") and
+          '-Dpolyglot.scheme.Torture=<value>' in out and '\tat ' not in out,
+          f'--scheme.Torture=shared without the system property should be an error naming it:\n{out}')
+    out, _ = run(runtime, ['--vm.Dpolyglot.scheme.Torture=shared', '--scheme.Torture=shared', program])
+    check(out == '5888896', f'--vm.Dpolyglot.scheme.Torture=shared should torture the program, and --scheme. may repeat it: {out}')
+    out, _ = run(runtime, ['--scheme.Torture=maybe', program], status=1)
+    check("'maybe'" in out and "'owned'" in out, f'an invalid --scheme.Torture value should be an error listing the valid ones:\n{out}')
+    log('constant options: listed, fixed by -Dpolyglot.<name>, repeated but not changed')
 
     # The tools (bazel-bin/scheme's runtime has them; //tests:tools drives each), logging, the
     # framework's other options.

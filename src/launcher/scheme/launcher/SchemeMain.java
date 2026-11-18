@@ -783,10 +783,13 @@ public final class SchemeMain extends AbstractLanguageLauncher {
     /**
      * Creating a context failed with an option Truffle rejects: one given as a
      * {@code polyglot.<name>} system property ({@code --vm.Dpolyglot.scheme.NoSuchOption=1}),
-     * which the framework doesn't check. Reports it and returns {@value #EXIT_INVALID_OPTION}.
+     * which the framework doesn't check, or a constant option given a value other than the one
+     * the process fixed (design.md D17, "Constant options"), which Truffle's message explains.
+     * Reports it and returns {@value #EXIT_INVALID_OPTION}.
      */
     private static int invalidOption(IllegalArgumentException e, PrintStream errors) {
-        errors.println("ERROR: in the polyglot.<name> system properties (such as --vm.Dpolyglot.<name>=<value>): " + e.getMessage());
+        boolean constant = e.getMessage().contains(" is constant and is already fixed");
+        errors.println("ERROR: " + (constant ? "" : "in the polyglot.<name> system properties (such as --vm.Dpolyglot.<name>=<value>): ") + e.getMessage());
         return EXIT_INVALID_OPTION;
     }
 

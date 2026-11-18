@@ -97,7 +97,7 @@ def _prelude_image_impl(ctx):
         "--sun-misc-unsafe-memory-access=allow",
         "-Dpolyglot.engine.AllowExperimentalOptions=true",
         "-Dpolyglot.engine.Compilation=false",
-        "-Dscheme.preludeImage.write=" + out.path,
+        "-Dpolyglot.scheme.PreludeImageWrite=" + out.path,
     ])
     args.add_joined("-cp", classpath, join_with = ctx.configuration.host_path_separator)
     args.add_all(["scheme.launcher.SchemeMain", empty])
@@ -113,7 +113,7 @@ def _prelude_image_impl(ctx):
 
 prelude_image = rule(
     implementation = _prelude_image_impl,
-    doc = "`<name>.image`: what a context of `libs` (on the class path) writes with -Dscheme.preludeImage.write.",
+    doc = "`<name>.image`: what a context of `libs` (on the class path) writes with the constant option scheme.PreludeImageWrite.",
     attrs = {"libs": attr.label_list(providers = [JavaInfo]), "_jdk": EXEC_JDK},
 )
 
