@@ -123,6 +123,47 @@ try (Context context = builder.build()) {
 assertEquals("Hello from a library, Ada!\n", out.toString(StandardCharsets.UTF_8));
 ```
 
+## Options and engines
+
+The language's options, which `Language.getOptions()` describes (and the
+launcher's `--help:languages`):
+
+| Option | Default | |
+|---|---|---|
+| `scheme.LibraryPath` | none | Directories to search for libraries, separated by the path separator. |
+| `scheme.BufferOutput` | `true` | Buffer standard output; it is written when Scheme reads standard input, writes to standard error, flushes or exits, and when control returns to Java (design.md D10). |
+| `scheme.StackSize` (expert) | `0` | The Java stack size of the thread the context is created on, when you know it (below). |
+
+(`scheme.PreludeImage` and `scheme.SpillDepth` are internal, for tests.) Give
+an option to a context's builder (`Context.Builder.option`), to an explicit
+engine's (`Engine.Builder.option`: each context of the engine takes it, unless
+its own builder gives another), or as a system property,
+`-Dpolyglot.scheme.LibraryPath=...`, which an engine reads when it is created;
+the launcher takes them as `--scheme.LibraryPath=...`. A value the option
+can't take fails `build()` with an `IllegalArgumentException` that names it.
+
+An explicit engine shares its options, instruments and compiler threads
+between its contexts, but not the code: each context parses and compiles
+Scheme code itself, a `Source` evaluated in two contexts included. Compiled
+code holds the context's global variables as constants, so a context's code
+is its own (`ContextPolicy.EXCLUSIVE`, design.md D13), where GraalVM's own
+languages share code between the contexts of an engine. Each context starts
+with the standard libraries restored from the prebuilt image (D13), not
+expanded.
+
+<!-- readme: file tests/scheme/test/EmbeddingGuideTest.java#engine -->
+```java
+Source program = Source.create("scheme", "(import (scheme base) (examples greet)) (greet \"Ada\")");
+// Every context of this engine takes its options, unless the context's builder gives others.
+try (Engine engine = Engine.newBuilder("scheme").option("scheme.LibraryPath", libraries.toString()).build()) {
+    for (int i = 0; i < 2; i++) {
+        try (Context context = Context.newBuilder("scheme").engine(engine).allowIO(IOAccess.ALL).build()) {
+            assertEquals("Hello from a library, Ada!", context.eval(program).asString());
+        }
+    }
+}
+```
+
 ## Scheme values in Java
 
 Scheme values answer Truffle's interop protocol as what they are. Each has the

@@ -39,23 +39,29 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
     private static final Object[] NO_CAPTURES = new Object[0];
     private static final LanguageReference<SchemeLanguage> REFERENCE = LanguageReference.create(SchemeLanguage.class);
 
+    // The options follow @Option's recommendations (docs/graalvm-configuration.md, "Language
+    // options"): each help text ends with the default, and each has a usage syntax.
+
     /** Where user libraries are found (design.md D7): directories, separated by the path separator. */
-    @Option(name = "LibraryPath", help = "Directories to search for libraries, separated by the path separator (-I).", category = OptionCategory.USER, stability = OptionStability.STABLE) //
+    @Option(name = "LibraryPath", help = "Directories to search for libraries, separated by the path separator; the launcher's -I adds to them (default: none).", //
+                    category = OptionCategory.USER, stability = OptionStability.STABLE, usageSyntax = "<dir>:<dir>:...") //
     public static final OptionKey<String> LIBRARY_PATH = new OptionKey<>("");
 
     /**
      * Whether a context may restore the standard libraries from the prelude image (design.md D13):
      * false expands them, and the context takes no part in building a per-JVM image.
      */
-    @Option(name = "PreludeImage", help = "Restore the standard libraries from the prelude image instead of expanding them.", category = OptionCategory.INTERNAL, stability = OptionStability.STABLE) //
+    @Option(name = "PreludeImage", help = "Restore the standard libraries from the prelude image instead of expanding them (default: true).", //
+                    category = OptionCategory.INTERNAL, stability = OptionStability.STABLE, usageSyntax = "true|false") //
     public static final OptionKey<Boolean> PRELUDE_IMAGE = new OptionKey<>(true);
 
     /**
      * Spill past this many nested non-tail calls, however much Java stack there is (0, the default:
      * from the stack the thread has, StackBudget). For tests that need frames on the heap.
      */
-    @Option(name = "SpillDepth", help = "Spill deep recursion to the heap past this many nested calls (0: from the Java stack available).", category = OptionCategory.INTERNAL, stability = OptionStability.EXPERIMENTAL) //
-    public static final OptionKey<Integer> SPILL_DEPTH = new OptionKey<>(0);
+    @Option(name = "SpillDepth", help = "Spill deep recursion to the heap past this many nested calls; 0 spills when the Java stack runs low (default: 0).", //
+                    category = OptionCategory.INTERNAL, stability = OptionStability.EXPERIMENTAL, usageSyntax = "[0, inf)") //
+    public static final OptionKey<Integer> SPILL_DEPTH = new OptionKey<>(0, new OptionType<>("depth", SchemeLanguage::parseSpillDepth));
 
     /**
      * The Java stack size of the thread the context is created on, when the embedder knows it (it
@@ -63,16 +69,25 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
      * a measurement of the stack (StackBudget). 0, the default: measured. The {@code scheme}
      * launcher passes its evaluation thread's (design.md D17).
      */
-    @Option(name = "StackSize", help = "The Java stack size of the thread the context is created on, such as 256m (0: unknown, measured when needed).", category = OptionCategory.EXPERT, stability = OptionStability.STABLE, usageSyntax = "<size>") //
+    @Option(name = "StackSize", help = "The Java stack size of the thread the context is created on, such as 256m; 0 if unknown, when it is measured as needed (default: 0).", //
+                    category = OptionCategory.EXPERT, stability = OptionStability.STABLE, usageSyntax = "<size>") //
     public static final OptionKey<Long> STACK_SIZE = new OptionKey<>(0L, new OptionType<>("size", StackBudget::parseStackSize));
 
     /**
      * Whether standard output is buffered (design.md D10, "Standard output"). The launcher turns it
      * off when stdin and stdout are a terminal, where each write then shows at once, as before.
      */
-    @Option(name = "BufferOutput", help = "Buffer standard output; it is written when Scheme reads standard input, writes to standard error, flushes or exits, and when control returns to the caller (false: each write at once).", //
-                    category = OptionCategory.USER, stability = OptionStability.STABLE) //
+    @Option(name = "BufferOutput", help = "Buffer standard output; it is written when Scheme reads standard input, writes to standard error, flushes or exits, and when control returns to the caller; false writes each write at once (default: true).", //
+                    category = OptionCategory.USER, stability = OptionStability.STABLE, usageSyntax = "true|false") //
     public static final OptionKey<Boolean> BUFFER_OUTPUT = new OptionKey<>(true);
+
+    /** A {@code scheme.SpillDepth}: a number of nested calls, 0 or more. */
+    private static Integer parseSpillDepth(String value) {
+        if (value.isEmpty() || value.length() > 9 || !value.chars().allMatch(c -> c >= '0' && c <= '9')) {
+            throw new IllegalArgumentException("scheme.SpillDepth needs a number of nested calls, 0 or more: " + value);
+        }
+        return Integer.parseInt(value);
+    }
 
     private SchemeCompiler compiler;
     /** What runs a procedure called through interop (design.md D10): see {@link #interopCallTarget}. */
