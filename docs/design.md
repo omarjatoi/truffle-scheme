@@ -2175,8 +2175,9 @@ Each entry: the decision, why, and what was rejected.
     **foreign value**: Scheme can store it, return it (Java gets the same
     object back) and compare it with `eq?`, `eqv?` and `equal?` (identity),
     `write` shows it as `#<foreign ...>`, and every type predicate is false,
-    so a primitive given one raises a Scheme error (D8) and calling one is a
-    "not a procedure" error. Truffle wraps a Java object afresh at each
+    so a primitive given one raises a Scheme error (D8); calling one is a
+    "not a procedure" error unless it is executable, and then a call of it
+    (D20). Truffle wraps a Java object afresh at each
     crossing, so the context keeps one wrapper per Java object, weakly, and
     the same object is `eq?` to itself across calls.
   - `context.getBindings("scheme")` (`getScope`) is the interaction
@@ -2185,16 +2186,21 @@ Each entry: the decision, why, and what was rejected.
     `putMember` is `(define name value)` there: it defines, redefines, or
     shadows an import as the REPL would; a keyword can't be redefined that
     way. Programs (D15) keep their own top level and don't appear in it.
-  - Scheme code does not reach into other languages or the host in v1, so
-    no host frame ever sits between two Scheme frames (D5): a call from Java
-    is always the outermost prompt.
+  - Without `(graalvm polyglot)` (D20), Scheme code does not reach into
+    other languages or the host, so no host frame sits between two Scheme
+    frames (D5): a call from Java is the outermost prompt. With it, a call
+    from foreign code is a callback, whose prompt delimits what it captures
+    (D20, "Continuations across foreign frames").
 - **Sandboxing.** The language declares `SandboxPolicy.UNTRUSTED`, the
   strictest (`Registration.sandbox`; `CONSTRAINED` from #226 until M11-11),
   and so do the options an embedder sets (`scheme.LibraryPath`,
   `scheme.BufferOutput`, `scheme.StackSize`; `scheme.PreludeImage` up to
   `ISOLATED`, below; not `scheme.SpillDepth`, for tests): everything it
   reaches of the host goes through the Env (the rules above), `exit` is
-  Truffle's (D9), and Scheme reaches no host object. Until #226 a
+  Truffle's (D9), and Scheme reaches no host object except through
+  `(graalvm polyglot)` (D20), whose `java-type` refuses to under
+  `CONSTRAINED` and stricter, and whose other procedures reach only the
+  languages, bindings and values the embedder gives the context. Until #226 a
   `CONSTRAINED` context couldn't use it at all. `ISOLATED` and `UNTRUSTED`
   run it in a polyglot isolate, `//:scheme_isolate` (below). Truffle's
   limits work as GraalVM documents them (statements, CPU time, output size,
@@ -2398,7 +2404,9 @@ Each entry: the decision, why, and what was rejected.
     but `scheme.PreludeImage`, `ISOLATED` (below): the stricter policies take
     away nothing the language uses. It reaches the host only through the Env (its streams,
     which the host redirects, and its file system, which the embedder
-    gives), reaches no host object, and enters the context on one thread
+    gives), reaches no host object but through `(graalvm polyglot)`,
+    within the policy's `HostAccess` (D20, "Permissions and the sandbox"),
+    and enters the context on one thread
     only; the stack probe (`StackBudget`) is a thread that never enters it,
     and `MaxThreads=1` let a recursion that spills run (measured above).
     The constant options for tests and the build (`scheme.Torture`,
@@ -2448,9 +2456,10 @@ Each entry: the decision, why, and what was rejected.
       took 12 ms against 5 (21 against 15 in the first context).
     - When `UpstreamAstDepthTest` fails after a Truffle upgrade, the bug is
       fixed and this goes.
-- **Out of scope:** Scheme-side access to other languages and the host,
-  threads, and SRFIs. Avoid reflection and dynamic class loading: the native
-  launcher (D17) is built without any reflection configuration.
+- **Out of scope:** threads, and SRFIs. (Scheme-side access to other
+  languages and the host was, until D20.) Avoid reflection and dynamic
+  class loading: the native launcher (D17) is built without any reflection
+  configuration.
 - **Deferred from v1, and since done:** escape-only `call/cc` (M5-04),
   Fixing Letrec (M5-05, D2), vector storage strategies (M5-06, D1), and the
   Static Object Model for records (M7-04, D1).
@@ -4539,3 +4548,205 @@ commit, so the generator and the driver keep working.
 - *Rejected:* comparing with a tolerance or normalising our output, which
   would hide our bugs; a model interpreter in Python, which would be a third
   implementation to keep right.
+
+### D20. Polyglot: the `(graalvm polyglot)` library
+
+Scheme code reaches other GraalVM languages and Java through one library,
+`(graalvm polyglot)`, as GraalVM intends a Truffle language to; until now D10
+kept Scheme out of both. It is opt-in: a program sees none of it unless it
+imports it, so R7RS programs, the conformance suites and the interaction
+environment are unchanged (the primitives behind it are `%`-names of
+`(r7rs %primitives)`, renamed on export). Everything goes through
+`TruffleLanguage.Env` and `InteropLibrary`, under the permissions the
+embedder gives the context; nothing reads Java by reflection (D10, D17).
+
+**The procedures.** Language ids, binding names and member names are strings
+or symbols.
+
+| Procedure | Truffle API | |
+|---|---|---|
+| `(polyglot-eval language source)` | `Env.parsePublic(Source)`, then its call target | Evaluates `source` (a string) in another language and returns its value (below, "Values"). |
+| `(polyglot-eval-file language path)` | `Env.getPublicTruffleFile`, `Source.newBuilder(language, file)`, `parsePublic` | The same for a file. Reading it needs the context's IO permission; failing to is a file error (`file-error?`). |
+| `(polyglot-language-available? language)` | `Env.getPublicLanguages()`, `Env.isPolyglotEvalAllowed(LanguageInfo)` | Whether `polyglot-eval` may evaluate that language here. |
+| `(polyglot-import name)` | `Env.importSymbol` | The value bound to `name` in the polyglot bindings, or `#f` if none is (as `get-environment-variable` answers). |
+| `(polyglot-export name value)` | `Env.exportSymbol` | Binds `name` there, where the embedder's `context.getPolyglotBindings()` and other languages' imports see it. |
+| `(java-type name)` | `Env.lookupHostSymbol` | A Java class (`"java.util.ArrayList"`), as a foreign value: `foreign-new` instantiates it, `foreign-ref` reads its static fields, `foreign-invoke` calls its static methods. |
+| `(foreign? obj)` | | Whether `obj` is a foreign value: neither a Scheme value nor converted to one at the boundary. |
+| `(foreign-null? obj)` | `isNull` | Whether `obj` is a foreign null (Java's `null`, JavaScript's `null` and `undefined`). |
+| `(foreign-ref obj key)` | `readArrayElement`, `readHashValue`, `readMember` | An array element for an exact integer key on an array; else a hash value on a hash; else a member for a string or symbol key. |
+| `(foreign-set! obj key value)` | `writeArrayElement`, `writeHashEntry`, `writeMember` | The same, written. |
+| `(foreign-length obj)` | `getArraySize`, `getHashSize` | An array's length, or a hash's number of entries. |
+| `(foreign-keys obj)` | `getHashKeysIterator`, `getMembers` | A hash's keys, else an object's member names (strings), as a list. |
+| `(foreign->list obj)`, `(foreign->vector obj)` | `readArrayElement`, `getIterator` | An array's elements, or an iterable's, as a new list or vector. |
+| `(foreign-invoke obj member arg ...)` | `invokeMember` | Calls a method. |
+| `(foreign-new constructor arg ...)` | `instantiate` | `new`, for a Java class or another language's constructor. |
+| `(foreign-instance? obj type)` | `isMetaObject`, `isMetaInstance` | `instanceof`: whether `obj` is an instance of the meta object `type` (a Java class, another language's type). |
+
+**Values.** D10's boundary applies in both directions, unchanged. What comes
+in (a result, an element, a binding, a callback's argument) becomes the one
+Scheme representation of it when there is one: interop's integers and big
+integers are exact integers, floats flonums, strings fresh strings, booleans
+booleans. So `string?` and `number?` are true of what another language
+returns as a string or a number, and every string and arithmetic procedure
+takes it. Everything else stays a foreign value, compared by identity. What
+goes out is not converted: Scheme values are interop values (D10), so a
+vector is an array to another language, a list an iterable, a procedure an
+executable.
+
+- **Foreign arrays, objects and hashes are not Scheme data.** R7RS §3.2's
+  types are disjoint, and `pair?`, `vector?` and the other type predicates
+  stay false for a foreign value. A Java array is not a vector, so
+  `vector-ref` raises an error on it; its elements are read with
+  `foreign-ref` or copied with `foreign->vector`. InteropLibrary's class
+  documentation asks a target language to *"embed the interop protocol
+  semantics as part of their existing language semantics"*, so that its
+  array operations work on foreign arrays (GraalJS indexes a Java list with
+  `[]`). Scheme has no member-access syntax to embed it in, and making
+  `vector-ref` dispatch on foreign values would answer `vector?` in a way
+  that `vector-fill!`, `vector-copy!` and the rest of §6.8 would then all
+  have to keep. *Rejected* for now: the explicit accessors are what the
+  Lisps on hosted runtimes (Clojure's interop forms) do.
+- **Foreign executables are procedures.** `procedure?` is true of a foreign
+  value that `isExecutable` answers, and every way Scheme calls a procedure
+  calls it: a call, a tail call, `apply`, `map`, a `dynamic-wind` thunk, a
+  handler. It is the one type predicate that answers for foreign values,
+  because calling is the one operation R7RS's procedures have, and it is
+  what GraalVM's languages do with each other's functions. A call whose
+  callee is not a Scheme closure (the call's fallback, until now the "not a
+  procedure" error) makes the call through `InteropLibrary.execute`, with
+  an uncached library behind a boundary (a follow-up can cache it per
+  site). The arguments go out unconverted and the result comes back
+  converted; an `ArityException` or an `UnsupportedTypeException` is a
+  Scheme error (D8).
+- **Rule 1 (D5).** Foreign code may call Scheme back, so the interop calls
+  are the runtime's (`Foreign`), not the builtins': the library's
+  primitives check their arguments and call it, and rule 1's check
+  (`//tests:rules`) still keeps `InteropLibrary` and call targets out of
+  every builtin. Scheme that foreign code calls runs as a callback, under a
+  root prompt of its own (below), so no capture ever includes a Java frame.
+
+**Errors.**
+
+- *"Interop messages throw checked exceptions to indicate error states. The
+  target language is supposed to always catch those exceptions and
+  translate them into guest language errors of the target language"*
+  (InteropLibrary). Every `InteropException` of the procedures above (no
+  such member, an index out of range, wrong argument types, not executable)
+  is a Scheme error, which `guard` catches.
+- **A foreign exception is raised in Scheme as itself.** An
+  `AbstractTruffleException` that another language (or Java, through host
+  interop) throws out of a foreign call is raised at the call site, as a
+  primitive's error is (D8), with the exception object as the raised
+  object: `guard` and `with-exception-handler` get the foreign exception, a
+  foreign value. `error-object?` is true of it (R7RS §6.11: *"an
+  implementation-defined set of objects"*), with its interop exception
+  message (`getExceptionMessage`, else its display string) as
+  `error-object-message` and no irritants; its members (a Java exception's
+  methods) are reached with `foreign-invoke`. One that no handler takes
+  leaves the Scheme root as that same exception, after the after-thunks it
+  skips (D8), so the language or embedder that called Scheme gets its own
+  exception back.
+- **A Scheme error in another language** is D10's: a `SchemeError`, an
+  `AbstractTruffleException` whose interop delegates to the raised object,
+  which the other language can catch. If it comes back into Scheme through
+  the foreign frames uncaught, it is raised again at the foreign call's site
+  as the object Scheme raised (`eq?` to it), so a `guard` around the
+  foreign call catches what a callback inside it raised.
+- Internal Java exceptions are still never converted (D8), and Truffle's
+  exit and cancel exceptions pass through every frame untouched.
+
+**Callbacks.** A Scheme procedure that foreign code calls (a callback) runs
+as D10's embedder calls do, under a root prompt of its own
+(`InteropCallRootNode`), so its tail calls, captures and stack spills stay
+inside it. It runs in the dynamic environment of the foreign call (its
+parameters and current ports, inside its `dynamic-wind` extents), but with
+**no exception handlers**: a raise that nothing inside the callback handles
+leaves it as a `SchemeError` (after the callback's own after-thunks), passes
+through the foreign frames as an exception they can catch, and is raised
+again at the foreign call's site, where the handlers outside are. Handing
+the outer handlers to the callback would let `guard`'s handler try to abort
+to a prompt beyond the foreign frames (D4), which no capture can reach. So a
+`raise-continuable` whose only handler is outside can't continue the
+callback: crossing a foreign frame unwinds it, as an exception crossing
+another language does.
+
+**Continuations across foreign frames.** No capture includes a foreign
+frame: Java frames can't be captured (D5), and the callback's root prompt
+delimits every capture inside it, so a continuation captured in a callback
+ends at the foreign call. R7RS's `call/cc` would give one that includes the
+foreign frames and the Scheme frames beyond them; we can't, so each case
+that would need it is a Scheme error, raised where the continuation is
+invoked (before any `dynamic-wind` thunk runs), that `guard` catches.
+Espresso, GraalVM's Java, does the same for its continuations: `suspend`
+fails with `IllegalContinuationStateException` when *"there is a non-java
+frame on the stack"* (GraalVM's Espresso Continuations guide).
+
+- The context counts the foreign calls on the stack (each of the procedures
+  above that enters another language or Java, and each foreign call of a
+  call site), and a continuation records the count when it is captured. It
+  can be invoked only where the count is the same:
+  - in a callback, a continuation captured outside the foreign call would
+    **escape through the foreign frames**: an error;
+  - after the foreign call has returned, a continuation captured in its
+    callback would **resume frames that are gone**: an error.
+  - With the same count, D10's rule holds: a continuation captured in one
+    callback and invoked in a later one (of the same or another foreign
+    call) runs the rest of the first, and the later callback returns what
+    that rest returns, as continuations do between an embedder's calls (so
+    a generator works when another language calls it).
+- Escape-only continuations (`%call/ec`, M5-04) need no check: the escape
+  analysis makes one only when `k` never reaches a procedure it can't see,
+  so no foreign frame can sit between `k`'s call and its prompt.
+- *Rejected:* unwinding through the foreign frames with a
+  `ControlFlowException`, as a language unwinds its own frames. Truffle
+  gives no contract for one crossing another language's frames (which may
+  or may not run their `finally` blocks), and only escapes would work.
+  Re-entering a callback's continuation after its foreign call has
+  returned would need the foreign frames back.
+
+**Permissions and the sandbox.** The embedder decides, through the Env.
+
+- `polyglot-eval` evaluates only languages that `Env.getPublicLanguages()`
+  lists and `isPolyglotEvalAllowed` allows (`Context.Builder.allowPolyglotAccess`
+  and the context's permitted languages); any other is a Scheme error that
+  names it and the ones available. `parsePublic`'s Javadoc asks languages
+  to *"check for eval permissions for each public language prior to calling
+  this method"*.
+- `polyglot-import` and `polyglot-export` need
+  `isPolyglotBindingsAccessAllowed()` (*"Guest languages should hide or
+  disable all polyglot bindings builtins if this flag is set to false"*):
+  without it, they raise a Scheme error.
+- `java-type` needs `isHostLookupAllowed()` (`allowHostClassLookup`), and
+  what Scheme may do with a Java object is the embedder's `HostAccess`.
+  Under `SandboxPolicy.CONSTRAINED` or stricter, `java-type` is refused
+  with a Scheme error that says so, whatever the class filter allows: the
+  policy is for applications *"whose access to host resources should be
+  regulated"*, and `Env.getSandboxPolicy()` is there so that *"a language
+  can ... make language-specific verifications that the sandbox
+  requirements are met"*. The language's own policy stays `CONSTRAINED`
+  (D10): the rest of the library is gated by permissions that the sandbox
+  already restricts.
+- The `scheme` launcher's context is the launcher framework's,
+  `allowAllAccess(true)` (D17), as GraalVM's own launchers' are: a script
+  can use the library, but only Scheme is on the launcher's module path, so
+  `polyglot-eval` of another language is the "not available" error. The
+  native launcher has only Scheme in the image and no reflection
+  configuration (D10, D17): `polyglot-eval` of another language is the same
+  error there. `java-type` is refused in any native image
+  (`ImageInfo.inImageRuntimeCode()`), with an error that says why: without
+  reflection metadata, the lookup can find a class whose constructors,
+  methods and fields are then all "not supported", which explains nothing.
+  An embedder's own native image with that metadata is a follow-up.
+
+**Testing with a second language.** The tests need another Truffle language.
+`org.graalvm.truffle:truffle-sl`, GraalVM's SimpleLanguage, is on Maven
+Central at the Truffle version: one jar and ANTLR's runtime, where GraalJS
+(`js-language`) brings its regex engine and ICU, tens of megabytes. SL has
+functions that call foreign executables, objects with members, `eval` of
+other languages and `import` of polyglot bindings, and its errors are
+`AbstractTruffleException`s: enough to cross every boundary above. Java
+objects (arrays, lists, maps, exceptions) cover the rest through host
+interop. It is a **test-only** dependency (D11): pinned in
+`maven_install.json` at `TRUFFLE_VERSION`, on the module path of
+`PolyglotTest` alone, never in the language's module, the launcher or the
+native image.
