@@ -1485,7 +1485,7 @@ public final class Expander {
     private final class ProgramFrame extends Frame {
         final Lambda program;
         final List<Expr> body = new ArrayList<>();
-        /** Each a form to expand, or a {cell, value, name} definition. */
+        /** Each a form to expand, or a {cell, value, name, source, name's source} definition. */
         final List<Object> items = new ArrayList<>();
         /**
          * With {@link #writeValues}: the indexes of the items whose values to write, the last of
@@ -1494,6 +1494,9 @@ public final class Expander {
         final Set<Integer> written = new HashSet<>();
         int index;
         GlobalCell pendingDefine;
+        /** The definition's form and its name, for its statement's source section (design.md D13). */
+        SourceSection pendingSource;
+        SourceSection pendingName;
 
         ProgramFrame(List<Object> forms, Lambda program) {
             this.program = program;
@@ -1545,7 +1548,7 @@ public final class Expander {
                         }
                     }
                     defined.add(cell);
-                    items.add(new Object[]{cell, def.value(), name.toString()});
+                    items.add(new Object[]{cell, def.value(), name.toString(), sourceOf(form), sourceOf(def.id())});
                 } else if (binding == CoreForm.DEFINE_SYNTAX) {
                     Object[] def = parseDefineSyntax(form);
                     top.bind(symbol(def[0]), scopes(def[0]), transformer(def[1]));
@@ -1571,6 +1574,8 @@ public final class Expander {
             Object item = items.get(index++);
             if (item instanceof Object[] def) {
                 pendingDefine = (GlobalCell) def[0];
+                pendingSource = (SourceSection) def[3];
+                pendingName = (SourceSection) def[4];
                 return new Expand(def[1], program, (String) def[2]);
             }
             return new Expand(item, program, null);
@@ -1579,7 +1584,12 @@ public final class Expander {
         @Override
         void accept(Expr e) {
             if (pendingDefine != null) {
-                body.add(new Ast.GlobalSet(pendingDefine, e, true));
+                Ast.GlobalSet set = new Ast.GlobalSet(pendingDefine, e, true);
+                // A definition is a statement at its form; a procedure's, whose lambda is located at
+                // the form (its root's section), at its name, so the two stay apart: tools that key
+                // what they count by source section (the CPU tracer) would add them up.
+                set.source = e.source != null && e.source.equals(pendingSource) && pendingName != null ? pendingName : pendingSource;
+                body.add(set);
                 pendingDefine = null;
             } else if (written.contains(index - 1)) {
                 // No source section of its own: the form's statement is the one tools see.

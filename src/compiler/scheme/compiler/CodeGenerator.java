@@ -168,11 +168,14 @@ final class CodeGenerator {
 
     /**
      * Truffle's standard instrumentation tags for an expression (design.md D13): every call is a
-     * call; each expression of a body sequence and each root's body is a statement; an expression
-     * in value position is an expression (in tail position its operation is a void return). Tags
-     * cost nothing until a tool attaches.
+     * call; each expression of a body sequence, a let's body and each root's body is a statement; an
+     * expression in value position is an expression (in tail position its operation is a void
+     * return). Tags cost nothing until a tool attaches.
      */
     private Class<?>[] tags(Expr e, Ctx ctx) {
+        if (!located()) {
+            return new Class<?>[0];
+        }
         List<Class<?>> tags = new ArrayList<>(3);
         if (statements.contains(e)) {
             tags.add(StandardTags.StatementTag.class);
@@ -188,6 +191,32 @@ final class CodeGenerator {
 
     private State state() {
         return states.peek();
+    }
+
+    /**
+     * A let's or letrec*'s body of one expression is a statement, as a lambda's is (a body of
+     * several is a sequence, whose expressions are), so a debugger steps from the bindings to it.
+     */
+    private void bodyStatement(Expr body) {
+        if (!(body instanceof Ast.Seq)) {
+            statements.add(body);
+        }
+    }
+
+    /**
+     * Whether the code being built has a source location, its own or its unit's: else (code that
+     * eval compiles from a datum when the host calls it) it gets no tags. A tool shows a tagged
+     * node by its source section, and Truffle's debugger warns of one without ("Nodes tagged with
+     * standard tags should have a source section attached", {@code SuspendedContext}), so code
+     * with nothing to show is not instrumented (design.md D13).
+     */
+    private boolean located() {
+        for (State s : states) {
+            if (s.source != null) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -229,15 +258,31 @@ final class CodeGenerator {
         boolean loops = !fn.program && fn.rest == null && selfTailCalls(fn);
         List<Runnable> seq = new ArrayList<>();
         SourceSection[] sections = new SourceSection[1];
+        boolean[] outermost = new boolean[1];
+        boolean[] body = new boolean[1];
         seq.add(() -> {
+            // A root's own source section is the section that encloses its Root operation (the
+            // Bytecode DSL user guide, "Source information": "enclose the Root operation in
+            // appropriate Source and SourceSection operations"): for a lambda, its expression's,
+            // which the enclosing root opened; for the outermost root (a program, a library body,
+            // load's file), its own, opened here. Without it the root reports none, and tools that
+            // group a root's statements by it (the coverage tool) fail on the program's.
+            outermost[0] = states.isEmpty();
+            SourceSection enclosing = outermost[0] ? usable(fn.source) : null;
+            if (enclosing != null) {
+                b.beginSource(enclosing.getSource());
+                b.beginSourceSection(enclosing.getCharIndex(), enclosing.getCharLength());
+            }
             b.beginRoot();
             State st = new State(fn);
             states.push(st);
-            SourceSection section = usable(fn.source);
+            SourceSection section = outermost[0] ? enclosing : usable(fn.source);
             sections[0] = section;
             if (section != null) {
-                b.beginSource(section.getSource());
-                b.beginSourceSection(section.getCharIndex(), section.getCharLength());
+                if (!outermost[0]) {
+                    b.beginSource(section.getSource());
+                    b.beginSourceSection(section.getCharIndex(), section.getCharLength());
+                }
                 st.source = section.getSource();
             }
             // The parameters' locals are the root's; a let's or letrec*'s are its block's.
@@ -276,6 +321,15 @@ final class CodeGenerator {
                     }
                 }
             }
+            // The root body starts once the arguments are in their variables: Truffle's RootBodyTag
+            // ("when the implementation copies Frame#getArguments() into frame slots, it should do it
+            // before this node"), so a tool that enters it sees them. The Bytecode DSL's automatic
+            // root body tag would enclose the binding too (enableRootBodyTagging = false).
+            body[0] = located();
+            if (body[0]) {
+                b.beginTag(StandardTags.RootBodyTag.class);
+                b.beginBlock();
+            }
             if (fn.program) {
                 b.beginReturn();
             }
@@ -299,11 +353,19 @@ final class CodeGenerator {
             if (fn.program) {
                 b.endReturn();
             }
-            if (sections[0] != null) {
+            if (body[0]) {
+                b.endBlock();
+                b.endTag(StandardTags.RootBodyTag.class);
+            }
+            if (sections[0] != null && !outermost[0]) {
                 b.endSourceSection();
                 b.endSource();
             }
             SchemeRootNode root = b.endRoot();
+            if (sections[0] != null && outermost[0]) {
+                b.endSourceSection();
+                b.endSource();
+            }
             root.setName(fn.program ? "<program>" : fn.name);
             root.setVariableNames(capturedNames(fn), fn.self != null && fn.self.visible() ? fn.self.name.toString() : null);
             root.setTopLevel(topLevel);
@@ -652,10 +714,12 @@ final class CodeGenerator {
             seq.add(b::endBlock);
             return seq;
         } else if (e instanceof Ast.Let l) {
+            bodyStatement(l.body);
             return let(l, ctx, dying);
         } else if (e instanceof Ast.Letrec l && contified(l) instanceof Lambda loop) {
             return contifiedLoop(loop, (Ast.Call) l.body, ctx, dying);
         } else if (e instanceof Ast.Letrec l) {
+            bodyStatement(l.body);
             List<Runnable> seq = new ArrayList<>();
             seq.add(() -> {
                 b.beginBlock();
