@@ -137,8 +137,38 @@ final class Arithmetic {
         if (!Double.isFinite(d)) {
             throw notA(who, "finite number", x);
         }
-        BigDecimal b = new BigDecimal(d);
-        return b.scale() <= 0 ? SBigInteger.normalize(b.toBigIntegerExact()) : SRational.make(b.unscaledValue(), BigInteger.TEN.pow(b.scale()));
+        return exactOfFinite(d);
+    }
+
+    /**
+     * The exact number a finite flonum denotes, from its binary parts: an integer below 2^63 is a
+     * fixnum at once, and anything else is {@code m * 2^e} with {@code m} odd, so a non-integer's
+     * denominator is a power of two already in lowest terms. No decimal expansion and no gcd: the
+     * {@code BigInteger} arithmetic that SubstrateVM, unlike HotSpot, doesn't intrinsify (design.md
+     * D17, "The native launcher's steady state").
+     */
+    static Object exactOfFinite(double d) {
+        if (d == Math.rint(d) && Math.abs(d) < 0x1p63) {
+            return (long) d;
+        }
+        long bits = Double.doubleToRawLongBits(d);
+        int biased = (int) ((bits >>> 52) & 0x7ff);
+        long mantissa = bits & 0xfffffffffffffL;
+        int exponent;
+        if (biased == 0) {
+            exponent = -1074;
+        } else {
+            mantissa |= 1L << 52;
+            exponent = biased - 1075;
+        }
+        int zeros = Long.numberOfTrailingZeros(mantissa);
+        mantissa >>= zeros;
+        exponent += zeros;
+        BigInteger m = BigInteger.valueOf(d < 0 ? -mantissa : mantissa);
+        if (exponent >= 0) {
+            return SBigInteger.normalize(m.shiftLeft(exponent));
+        }
+        return SRational.make(m, BigInteger.ONE.shiftLeft(-exponent));
     }
 
     /** The inexact number nearest to {@code x}. */
@@ -365,8 +395,34 @@ final class Arithmetic {
         if (Double.isInfinite(x)) {
             return x > 0 ? 1 : -1;
         }
-        Object e = exact("compare", x);
+        if (exact instanceof Long l) {
+            return compareWithFixnum(x, l);
+        }
+        if (exact instanceof SBigInteger b && Math.abs(x) < 0x1p63) {
+            // A bignum is outside the fixnums' range, so beyond any flonum below 2^63.
+            return -b.value.signum();
+        }
+        Object e = exactOfFinite(x);
         return numerator(e).multiply(denominator(exact)).compareTo(numerator(exact).multiply(denominator(e)));
+    }
+
+    /**
+     * A finite flonum against a fixnum, exactly, without converting either to a big number. A
+     * fixnum within 2^53 is a flonum exactly. One beyond it is compared with the flonum truncated
+     * to a {@code long}: a flonum that small truncates to a different fixnum, whose order is the
+     * flonum's, and one that large is an integer, which truncates to itself.
+     */
+    static int compareWithFixnum(double x, long l) {
+        if (Math.abs(l) <= 1L << 53) {
+            return compareDoubles(x, l);
+        }
+        if (x >= 0x1p63) {
+            return 1;
+        }
+        if (x < -0x1p63) {
+            return -1;
+        }
+        return Long.compare((long) x, l);
     }
 
     /** {@code =} on any numbers: complex numbers are equal when both parts are. */
