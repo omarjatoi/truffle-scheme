@@ -1748,7 +1748,7 @@ measures with interleaved A/B runs.
     `//tests:tools` or the launcher's tests; and design.md D11 records the
     platform-directory decision with what it measured (rebuilds after a
     switch, where `bazel-bin` points), applied if taken.
-- [ ] **M12-10 · The console port decodes UTF-8 itself**
+- [x] **M12-10 · The console port decodes UTF-8 itself**
   - #257's follow-ups: file ports decode UTF-8 themselves (M11-06); the
     console port still goes through the JDK's `InputStreamReader`, for a
     `ready()` that asks the stream. Decoding standard input the same way

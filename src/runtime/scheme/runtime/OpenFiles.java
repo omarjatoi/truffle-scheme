@@ -64,7 +64,7 @@ public final class OpenFiles {
 
     /**
      * A textual input port over a file's stream, which the port buffers and decodes from UTF-8 itself
-     * (design.md D10, "Textual input file ports decode UTF-8 themselves").
+     * (design.md D10, "Textual input ports decode UTF-8 themselves").
      */
     @TruffleBoundary
     public SPort textInput(InputStream file) {
