@@ -2902,6 +2902,8 @@ Each entry: the decision, why, and what was rejected.
   image picks it up: the prelude's resources, and build-time initialization
   of the language's packages, as GraalVM's own languages have (the language
   provider and the DSL-generated library exports live in the image heap).
+  docs/graalvm-configuration.md audits this configuration, the language's
+  registration and options, and its embedding against GraalVM's guidance.
   Static state then keeps its build-time value: `-Dscheme.torture` (and
   `.owned`) and
   `-Dscheme.preludeImage` (and its `.file`) have no effect in a native image,
