@@ -212,6 +212,38 @@ public class CharStringTest {
         check("", SString.of(pairs, 4, 0), false);
     }
 
+    /**
+     * {@code SString}'s factories from arrays a decoder filled (M11-06): the first {@code length}
+     * Latin-1 bytes or code points, an array of exactly that length or a longer one, whose tail is
+     * not part of the string. A string from code points has a character above 255 (its caller found
+     * one), so it is stored wide (design.md D1).
+     */
+    @Test
+    public void stringsFromFilledArrays() {
+        String[] latin1 = {"", "a", "\u0000", "\u007f\u0080ÿ", "x".repeat(9999) + "ÿ"};
+        for (String s : latin1) {
+            byte[] bytes = s.getBytes(StandardCharsets.ISO_8859_1);
+            byte[] longer = Arrays.copyOf(bytes, 2 * bytes.length + 3);
+            // check stores into the string, so into the array it took.
+            check(s, SString.ofLatin1(bytes, bytes.length), false);
+            Arrays.fill(longer, bytes.length, longer.length, (byte) 'z');
+            SString t = SString.ofLatin1(longer, bytes.length);
+            Arrays.fill(longer, (byte) 'q');
+            check(s, t, false);
+        }
+        String[] wide = {"Ā", "ab中", "中abÿ\u0080", "😀", "a😀béÿ", "�\u0000􏿿",
+                        "x".repeat(9999) + "ā", "😀".repeat(5000)};
+        for (String s : wide) {
+            int[] cps = s.codePoints().toArray();
+            int[] longer = Arrays.copyOf(cps, 2 * cps.length + 3);
+            check(s, SString.ofCodePoints(cps, cps.length), false);
+            Arrays.fill(longer, cps.length, longer.length, 'z');
+            SString t = SString.ofCodePoints(longer, cps.length);
+            Arrays.fill(longer, 'q');
+            check(s, t, false);
+        }
+    }
+
     private static void check(String expected, SString s, boolean immutable) {
         int[] cps = expected.codePoints().toArray();
         assertEquals(expected, cps.length, s.length());

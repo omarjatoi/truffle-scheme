@@ -60,6 +60,29 @@ public final class SString implements TruffleObject {
         return new SString(bytes, null, length, false);
     }
 
+    /**
+     * A new mutable string of the first {@code length} Latin-1 characters in {@code bytes}, which a
+     * decoder filled (M11-06): the string takes the array, which the caller must not use again, and
+     * copies it only to leave out what is past {@code length}.
+     */
+    @TruffleBoundary
+    public static SString ofLatin1(byte[] bytes, int length) {
+        java.util.Objects.checkFromIndexSize(0, length, bytes.length);
+        return new SString(length == bytes.length ? bytes : java.util.Arrays.copyOf(bytes, length), null, length, false);
+    }
+
+    /**
+     * A new mutable string of the first {@code length} code points in {@code codePoints}, which a
+     * decoder filled and found a character above 255 in (M11-06), so it is stored wide (D1): the
+     * string takes the array, which the caller must not use again, and copies it only to leave out
+     * what is past {@code length}.
+     */
+    @TruffleBoundary
+    public static SString ofCodePoints(int[] codePoints, int length) {
+        java.util.Objects.checkFromIndexSize(0, length, codePoints.length);
+        return new SString(null, length == codePoints.length ? codePoints : java.util.Arrays.copyOf(codePoints, length), length, false);
+    }
+
     /** A new mutable string of {@code length} copies of {@code codePoint}. */
     public static SString make(int length, int codePoint) {
         if (codePoint <= 0xff) {
