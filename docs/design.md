@@ -4946,6 +4946,19 @@ over, behind a boundary.
     the nodes don't have. Calls and callbacks 1.00-1.01. In
     the interpreter, array reads 0.93 times (against `main` 0.89, A/A
     1.02) and field reads 0.32 (against `main` 0.56, A/A 0.89).
+  - First iterations (JIT, the same runs, both changes against `main`):
+    calls 0.91 times (A/A 1.10), tail calls 0.69 (1.05), array reads 0.92
+    (1.04), field reads 0.71 (0.97), callbacks 1.00 (1.00).
+  - Native: the native launcher has neither SL nor Java classes (above),
+    so foreign values reach native code through an embedder, here a JVM
+    that runs Scheme in the polyglot isolate (`ISOLATED`, the native
+    `//:scheme_isolate`) and hands it a `ProxyExecutable`, a `ProxyArray`
+    and a `ProxyObject` through the bindings. Each access crosses to the
+    host's JVM, about 1 µs, so caching is a smaller share: 15 iterations of
+    100,000 a run, the median of the last 5, 8 interleaved rounds against
+    `main`'s isolate and a copy of it (load 3.7-9.8): calls 0.95 times (A/A
+    0.99), tail calls 0.95 (1.00), array reads 0.93 (0.99), member reads
+    0.94 (1.01); first iterations 0.94-0.97 (A/A 0.99-1.00).
   - Scheme alone, with both: `bench-check` all 25 within their thresholds
     (machine factor 1.03, adjusted ratios 0.97-1.07, load 4.7-5.7); and
     its measures interleaved with `main` (4 rounds, load 3.5-9.6), medians
