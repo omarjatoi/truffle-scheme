@@ -1734,7 +1734,7 @@ measures with interleaved A/B runs.
     with an `EmbeddingTest` assertion (and the same through `emergency-exit`
     and a primitive run through the trampoline), and design.md D8's "Not
     done" note goes.
-- [ ] **M12-09 · The launcher without its JDK, and output directories per platform**
+- [x] **M12-09 · The launcher without its JDK, and output directories per platform**
   - #248's follow-ups: `bazel-bin/scheme` with its JDK missing (after a
     `bazel clean`, or the output base pruned) ends in a Python traceback,
     against the usability rule; it should say to run `bazel build
