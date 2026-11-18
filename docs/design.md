@@ -2644,17 +2644,87 @@ Each entry: the decision, why, and what was rejected.
   the copy of that target's JDK it is trained with (`no-remote`, D17 "The
   AOT cache"), since the cache names the paths it was made with and the
   modification times it found there.
-  - *One output directory for both platforms.* Bazel names an output
-    directory after `--cpu`, which `--platforms` doesn't change, so a
-    build or test for the executors' Linux writes to this Mac's
-    `bazel-out/darwin_arm64-fastbuild` too, at the same paths: the Linux
-    `bazel/jdk/` or `scheme-native` replaces this Mac's, and with
-    `--remote_download_toplevel` (a test's inputs stay remote) leaves
-    nothing there. So after `bazel test`, `bazel-bin/scheme` (whose JDK is
-    gone) and `bazel-bin/scheme-native` are back with `bazel build
-    //:scheme` and `bazel build //:scheme-native`, which take seconds from
-    the caches (docs/usage.md). The `bazel-bin` link isn't the cause: it
-    names that directory whichever platform the command was for.
+  - *An output directory per platform (M12-09).* Bazel names an output
+    directory after `--cpu`, the host's unless given, which `--platforms`
+    doesn't change. So until M12-09 a build or test for the executors'
+    Linux wrote to this Mac's `bazel-out/darwin_arm64-fastbuild`, at the
+    same paths as this Mac's own: the Linux `bazel/jdk/` or `scheme-native`
+    replaced this Mac's, and with `--remote_download_toplevel` (a test's
+    inputs stay remote) left nothing there; after `bazel test //...`,
+    `bazel-bin/scheme` was the Linux launcher (the tests build `//...`) and
+    ended in a Python traceback, `Exec format error`, and after a test of
+    less, its JDK was gone and it ended in another, `No such file or
+    directory`. Now `--experimental_platform_in_output_dir=yes` names the
+    directory after the target platform (9's default, `auto`, does that for
+    the exec configuration alone, "Bazel 9", below), and
+    `--experimental_override_platform_cpu_name` names our two platforms
+    after their CPUs, `k8` and `darwin_arm64`, as a host of each names its
+    own (`.bazelrc`): a build for this Mac, for its host platform or for
+    `//bazel/platforms:macos_arm64` (the Mac's native tests), stays in
+    `darwin_arm64-fastbuild`, and a build or test for the executors' Linux
+    goes to `k8-fastbuild`, from this Mac as from CI or a Linux host. The
+    exec configurations' directories follow, `k8-opt-exec` and
+    `darwin_arm64-opt-exec`.
+    - *Measured* (this Mac, the M3 Max at a 1-minute load of 4–7, remote
+      execution; `bazel build //:scheme` and `bazel test
+      //tests:launcher_vm //:scheme` alternated, 3 rounds each way, then a
+      change to one Java source, a method added to the reader's `Syntax`,
+      followed by the build, the test and the build again, 2–3 runs each way):
+
+      | | One directory | One per platform |
+      |---|---:|---:|
+      | `bazel build //:scheme` after the test | 5.6–6.0 s: the JDK copied and the AOT cache trained again, here | 1.2–1.3 s, nothing run |
+      | The test after the build | 6.0–8.0 s, 2 actions from the remote cache | 1.3–1.4 s, nothing run |
+      | After the change: the build | 16–20 s, 7 actions remotely | 17–19 s, the same |
+      | Then the test | 36–50 s, 3 actions remotely | 63–74 s, 10: the changed modules compiled again for Linux |
+      | Then the build again | 5.4–5.8 s | 1.3 s |
+      | `bazel-bin` after the test | `darwin_arm64-fastbuild/bin`, the Linux launcher in it | `k8-fastbuild/bin` |
+
+    - *What it gains.* Neither platform's files replace the other's, so a
+      switch reruns nothing (this Mac's JDK copy and AOT cache, which
+      can't come from the remote cache, and `scheme-native` stay); and
+      this Mac's Linux builds and tests share their cache keys with CI's.
+      Every action built for Linux names its output directory in its
+      command line, which was `darwin_arm64-fastbuild` from this Mac and
+      `k8-fastbuild` from CI, so neither reused the other's results: here,
+      `bazel test --cpu=k8` of three tests at a `main` this Mac had already
+      tested gave CI's results instead of its own (`launcher_vm` passed in
+      31.1 s, where it had in 19.4 s). Now a PR's CI build reuses the
+      tests its author ran before pushing, and a test here after a pull
+      reuses CI's.
+    - *What it costs.* A change is compiled twice when this Mac both builds
+      and tests it, for its own directory and for the tests' (the test's
+      extra 25 s above), on the executors, where the two shared one
+      compile. Path mapping (`--experimental_output_paths=strip`) would let
+      the Java actions of both share a key; it isn't tried here. Both flags
+      are experimental. And the first build with them reran what the exec
+      configuration builds, its directories renamed: `bazel build
+      //:scheme` ran 40 actions remotely. The tests, keyed on their
+      inputs' contents, found CI's results: the first `bazel test //...`
+      with them (M12-09's change) executed 8 of its 733 tests, those the
+      change touched, and 332 actions, in 132 s.
+    - *Where `bazel-bin` points.* At the last command's directory, as it
+      always did: after `bazel test`, at `k8-fastbuild/bin`, whose
+      `scheme` is the Linux launcher. So `bazel-bin/scheme` (a shell
+      script in front of the Python launcher) first checks that it runs on
+      the platform it was built for (`uname`) and that its JDK is there,
+      and otherwise exits with one line, the command to run (`bazel build
+      //:scheme`) and a status of 1, before any Python starts
+      (`//tests:launcher`); `bazel build //:scheme` is then the 1.2 s
+      above. `bazel-bin/scheme-native` isn't in the Linux directory after a
+      test (nothing in `//...` builds it), and `bazel build
+      //:scheme-native` brings this Mac's back, rerunning nothing
+      (docs/usage.md).
+    - *Rejected:* one directory with that check alone: the check is needed
+      either way, and switching costs the reruns above and CI's cache.
+      Each platform's own name (the flag without the overrides,
+      `linux_x86_64-fastbuild` and `macos_arm64-fastbuild`): a Linux host's
+      build (its host platform, `k8`) and its tests would be compiled into
+      two directories, and so would this Mac's build and its native tests.
+      `--experimental_convenience_symlinks=ignore` for `bazel test`, so
+      that `bazel-bin` stays this Mac's: `bazel-testlogs` would stay too,
+      at the last build's. A `--symlink_prefix` for tests: it renames
+      `bazel-testlogs`, which the docs name.
   `bazel test //...` is the whole pre-PR check; the repository's other
   commands are `bazel run //:r7rs -- <command>` (`tests/harness/main.py`).
 - **Released GraalVM, pinned by Bazel.** The JDK that compiles, runs the
@@ -2831,9 +2901,10 @@ Each entry: the decision, why, and what was rejected.
 
     BuildBuddy's test view reads the test action's test.xml, now the
     tests' own: a `junit_test`'s lists its methods. And the one output
-    directory for both platforms stays: 9's
+    directory for both platforms stayed: 9's
     `--experimental_platform_in_output_dir=Auto` renamed only the exec
-    configuration's directory (`linux_x86_64-opt-exec`). 9.3.1 also
+    configuration's directory (`linux_x86_64-opt-exec`); `=yes` renames
+    the target's too ("An output directory per platform", above). 9.3.1 also
     discards its record of executed actions when the remote endpoints
     change between commands (9.3.0's bazelbuild/bazel#30986), so a
     `--config=local` command and the next remote one check their actions
@@ -3755,7 +3826,7 @@ Each entry: the decision, why, and what was rejected.
       bytes at a new time, while the cache's action stays up to date: it
       did with `bazel/jdk/` (#239, M11-02), which came from the remote
       cache at the time of each download, after a Linux build had
-      replaced it (D11, "One output directory for both platforms") or a
+      replaced it (D11, "An output directory per platform": before M12-09) or a
       switch between `--config=local` and the remote config. So for a
       non-Linux target the JDK is copied here too (`no-remote`), keeping
       the release's times however often it is copied. The JVM itself
