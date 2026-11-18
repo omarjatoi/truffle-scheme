@@ -1556,3 +1556,44 @@ that may change performance measures with interleaved A/B runs.
 why it isn't; `docs/benchmarks.md` and `bench/thresholds.json` are regenerated
 on the final M11 code; both suites pass in every mode, including through the
 native launcher.
+
+**Exit met** (2026-11-18, at `a7d6f2328ba5`, the M11-11 merge and the last
+M11 code before the polyglot library's PRs, locally): every task is ticked.
+The JIT and the native launcher first (design.md's preamble), against M10's
+report (`docs/benchmarks.md` at `64d4b8a`, measured at `2f2af35640fc`):
+`docs/benchmarks.md` was regenerated on that code plus the new thresholds
+(its commit, `459e380bf32b`; `--scale 0.1 --interpreter-timeout 60` with the
+native column, 86 minutes, 1-minute load 6.74 at the start, 12.37 at most,
+9.29 at the end, against M10's 4.19, 5.99 and 3.54). Geometric mean
+×fastest: JIT first run 4.17 → 4.24, steady state 1.76 → 1.74, native first
+run 3.19 → 3.35, native steady 2.21 → 2.24, native with startup 3.60 → 3.75;
+Chez 1.20 → 1.22. The load shows in the other implementations' raw times,
+1.07 times M10's; ours over M10's were JIT first run 1.06, steady 1.03,
+native first run 1.09, native steady 1.06, native with startup 1.09. Most of
+the native column's change is two programs the load hit: `bv2string`'s
+native first run took 12.4 times M10's (1.360 s) and `peval`'s 4.4 (3.814
+s), but the same binary, run again three times after the report, gave
+0.109-0.150 s and 0.864-0.897 s (M10: 0.110 and 0.865), steady 0.075-0.079
+and 0.447-0.465 s (0.076 and 0.452); without those two, native first run
+1.02, steady 1.02 and with startup 1.00 times M10's. Median peak RSS: JIT
+955 → 954 MB, native 192 → 187. The interpreter, kept from being slow but
+no longer a target: 44.40 → 45.35 ×fastest, 53 of 57 within its 60 s limit
+(`ack`, 52.1 s at M10, timed out), peak RSS 707 → 710 MB.
+`bench/thresholds.json` was re-measured on `a7d6f2328ba5` (12 runs, 1-minute
+load 3.7-9.2 at their starts and ends, at most 9.8 during them, so none left
+out): the geometric mean of the 25 baselines is 1.03 times M10's, the 20
+JIT benchmarks' 1.00-1.04 (`ctak` 94.8 → 94.9 ms, `equal` 274.2 → 285.2),
+`startup` 1.06 (267.6 → 283.6), which the load explains: a first set of 12 runs just before,
+at a load of 2.6-7.3, gave 1.006, but in three of its runs one to three
+benchmarks took 1.3-2.4 times their median (`quicksort`, `string`, `peval`),
+which would have widened their thresholds up to 2.9 times, so it was not
+used (the file's note says so). Suites: `bazel test //...` passes (721
+tests, every conformance section interpreted, compiled and under both
+tortures); `bazel run //:r7rs -- test --compile` passes chibi 1225/1225 and
+Larceny 2160/2166 (the six listed exceptions); the native launcher
+(`bazel-bin/scheme-native`, built on the M3 Max) passes the same both
+interpreted and with `--compile`; `//tests:readme_native`,
+`//tests:conformance_native`, `//tests:space_native`,
+`//tests:launcher_vm_native` and `//tests:compile_bound_native` pass, as
+does `//tests:launcher_vm_native` for this Mac
+(`--platforms=//bazel/platforms:macos_arm64`). M12 is not drafted here.
