@@ -179,7 +179,7 @@ shell (just `bazel`) and writes the agent's `~/.bazelrc` (`--config=ci`, the
 BuildBuddy key). On `main`, a commit that changes `flake.nix`, `flake.lock` or
 `nix/image.nix` also runs the `image` step, which builds the image and
 pushes it (`.buildkite/push-image.sh`, design.md D11); until then, jobs
-download what changed and the build says the image is stale.
+download what changed.
 Actions and tests run on BuildBuddy's executors, like everyone's; the
 `buildbuddy` annotation links the commit's invocations, where each test's
 result is.

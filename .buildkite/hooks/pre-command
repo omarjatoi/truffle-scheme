@@ -7,26 +7,17 @@
 # Nix and every store path the shell needs, so here Nix only evaluates the flake: nothing is
 # installed or downloaded. Any other image is a misconfigured queue: it has no `nix`, so the hook
 # stops at its first use. When flake.lock or the shell changed since the image was built, Nix
-# downloads what changed and the build gets an annotation saying so, until the pipeline's `image`
-# step on main pushes a new one.
+# downloads what changed, until the pipeline's `image` step on main pushes a new one.
 set -eo pipefail
 
 # The shell's PATH and the like; the agent's own SHELL and temporary directory stay.
 shell="$SHELL" tmpdir="${TMPDIR:-/tmp}"
-env_profile="$(mktemp -d)/ci"
 # Assigned first, so that the hook fails if Nix does (`eval "$(...)"` would carry on without it).
-env_script="$(nix print-dev-env --profile "$env_profile" .#ci)"
+env_script="$(nix print-dev-env .#ci)"
 eval "$env_script"
 unset env_script
 export SHELL="$shell" TMPDIR="$tmpdir"
 unset TMP TEMP TEMPDIR NIX_BUILD_TOP SOURCE_DATE_EPOCH
-
-if [ -e /etc/ci-image/shell-env ] &&
-  [ "$(readlink -f "$env_profile")" != "$(readlink -f /etc/ci-image/shell-env)" ]; then
-  buildkite-agent annotate --style warning --context ci-image \
-    "CI's agent image is stale: the \`.#ci\` shell changed since it was built, so each job downloads it. On \`main\`, the pipeline's \`image\` step pushes a new one; if it didn't run, push it with \`.buildkite/push-image.sh\` (docs/design.md D11)."
-fi
-unset env_profile
 
 # Only this agent's user reads it; nothing uploads it.
 umask 077

@@ -2627,7 +2627,7 @@ Each entry: the decision, why, and what was rejected.
     `nix print-dev-env`, since Buildkite sources hooks into the step's shell
     and `nix develop` would start a shell of its own. On a stale image
     (`flake.lock` or the shell changed since it was built), Nix downloads
-    what changed and the build gets a `ci-image` annotation.
+    what changed, until main's `image` step pushes a new image.
     **The pipeline's `image` step keeps it fresh**: on `main` only (never
     for pull requests), when the commit changed `flake.nix`, `flake.lock` or
     `image.nix` (`if_changed`, which the agent applies at upload; on `main`

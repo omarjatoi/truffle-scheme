@@ -6,7 +6,7 @@
 # among them, and the shell's environment), registered in the image's Nix database. So the hook
 # (.buildkite/hooks/pre-command) installs nothing and downloads nothing: it evaluates the flake
 # and finds everything valid. When flake.lock or the shell changes, Nix fetches what the store
-# lacks, and the hook says the image is stale until main's `image` step pushes a new one.
+# lacks, until main's `image` step pushes a new one.
 #
 # Buildkite's requirements for a custom image (docs/design.md D11): bash, git and CA certificates;
 # the agent brings `buildkite-agent` and `docker`, and jobs run as root.
@@ -46,7 +46,6 @@ let
     echo 'nobody:x:65534:65534:nobody:/var/empty:/bin/false' >> $out/etc/passwd
     printf 'root:x:0:\nnobody:x:65534:\n' > $out/etc/group
     echo 'hosts: files dns' > $out/etc/nsswitch.conf
-    ln -s ${shellEnv} $out/etc/ci-image/shell-env
     cp ${flakeLock} $out/etc/ci-image/flake.lock
     ${lib.concatMapStringsSep "\n" (i: "ln -s ${i} $out/etc/ci-image/inputs/") flakeInputs}
   '';
