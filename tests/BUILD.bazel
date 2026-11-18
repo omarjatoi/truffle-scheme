@@ -1,6 +1,7 @@
 load("@rules_java//java:defs.bzl", "java_library")
 load("//bazel:java.bzl", "SCHEME_JAVACOPTS", "scheme_java_library")
 load("//bazel:java_module.bzl", "java_module_jar")
+load("//bazel:jvm_test.bzl", "java_driver_test")
 load("//bazel:junit.bzl", "unit_tests")
 load("//tests/harness:defs.bzl", "conformance_tests", "diff_tests", "harness_test", "space_test", "spec_tests", "tools_tests")
 
@@ -54,10 +55,11 @@ java_library(
 java_module_jar(
     name = "core_module",
     exports = [
-        "scheme.reader",
-        "scheme.runtime",
-        "scheme.runtime.printer",
-        "scheme.runtime.value",
+        "scheme.reader to scheme.test",
+        "scheme.runtime to scheme.test",
+        "scheme.runtime.printer to scheme.test",
+        "scheme.runtime.staticobject",
+        "scheme.runtime.value to scheme.test",
     ],
     jar_name = "scheme-core",
     libs = [
@@ -385,6 +387,22 @@ harness_test(
     check = "rules",
     args = ["$(rlocationpaths //src/builtins:srcs)"],
     data = ["//src/builtins:srcs"],
+    size = "small",
+    tags = ["lint"],
+)
+
+# design.md D11 "Modules": the language's modules export nothing to embedders (GraalVM's
+# ModuleMigration, step 9): every export is qualified, to the unit tests' modules (scheme.test) or
+# the launcher framework, but the records' superclass's package, SRecord alone in it, which the
+# classes the Static Object Model generates in an unnamed module extend.
+java_driver_test(
+    name = "module_exports",
+    args = [
+        "--modules=scheme,scheme.launcher",
+        "--unqualified=scheme/scheme.runtime.staticobject.SRecord",
+    ],
+    main = "Modules",
+    module = "//:launcher_module",
     size = "small",
     tags = ["lint"],
 )

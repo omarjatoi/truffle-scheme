@@ -12,7 +12,7 @@ import scheme.runtime.value.SChar;
 import scheme.runtime.value.SClosure;
 import scheme.runtime.value.SConstant;
 import scheme.runtime.value.SPair;
-import scheme.runtime.value.SRecord;
+import scheme.runtime.staticobject.SRecord;
 import scheme.runtime.value.SString;
 import scheme.runtime.value.SSymbol;
 import scheme.runtime.value.SVector;

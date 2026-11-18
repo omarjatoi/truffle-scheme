@@ -56,7 +56,9 @@ Hello, Java!
 ```
 
 `--add-modules ALL-MODULE-PATH` resolves the language's module (`scheme`),
-which nothing `requires`: the polyglot API finds it as a service. The two other
+which nothing `requires`: the polyglot API finds it as a service. It exports no
+API: a program talks to Scheme through the polyglot API alone (design.md D11,
+"Modules"). The two other
 flags are the ones the launcher's JVM runs with (tests/harness/harness.py): Truffle uses
 restricted native access and `sun.misc.Unsafe` on JDK 25.
 

@@ -1500,7 +1500,7 @@ that may change performance measures with interleaved A/B runs.
     runs (`//tests:unit_torture`, `//tests:unit_torture_owned`, the
     conformance tests), and a check shows the native image bakes them in at
     build time.
-- [ ] **M11-08 · A module that exports nothing to embedders**
+- [x] **M11-08 · A module that exports nothing to embedders**
   - docs/graalvm-configuration.md: the language's module exports five
     packages, where GraalVM advises keeping a language's module as
     encapsulated as possible (ModuleMigration step 9). Qualified exports to

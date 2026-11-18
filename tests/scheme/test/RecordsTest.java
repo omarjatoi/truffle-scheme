@@ -21,7 +21,7 @@ import org.junit.Test;
 import scheme.runtime.PrimitiveRootNode;
 import scheme.runtime.value.SClosure;
 import scheme.runtime.value.SConstant;
-import scheme.runtime.value.SRecord;
+import scheme.runtime.staticobject.SRecord;
 
 /**
  * M7-04: records (R7RS §5.5) on Truffle's Static Object Model (design.md D1). Each evaluation of a

@@ -36,14 +36,18 @@ prelude_image(
 
 # scheme.jar: the language as one module. The front end and the primitives are services, so the
 # runtime (which holds the language class) needn't depend on them (scheme.runtime.SchemeCompiler).
+# It exports nothing to embedders (design.md D11, "Modules"; //tests:module_exports): its packages
+# only to the unit tests' modules, but for the records' superclass, which the classes the Static
+# Object Model generates in a class loader's unnamed module extend.
 java_module_jar(
     name = "scheme_module",
     exports = [
-        "scheme.compiler",
-        "scheme.reader",
-        "scheme.runtime",
-        "scheme.runtime.printer",
-        "scheme.runtime.value",
+        "scheme.compiler to scheme.test",
+        "scheme.reader to scheme.test",
+        "scheme.runtime to scheme.test",
+        "scheme.runtime.printer to scheme.test",
+        "scheme.runtime.staticobject",
+        "scheme.runtime.value to scheme.test",
     ],
     libs = [
         "//src/builtins",
@@ -63,10 +67,12 @@ java_module_jar(
 )
 
 # scheme.launcher.jar: the `scheme` launcher (on GraalVM's launcher framework) and the conformance
-# runner, with the optimizing runtime.
+# runner, with the optimizing runtime. GraalVM's launcher framework makes SchemeMain by reflection
+# in the native launcher (AbstractLanguageLauncher.runLauncher), as GraalJS's launcher exports its
+# package to it.
 java_module_jar(
     name = "launcher_module",
-    exports = ["scheme.launcher"],
+    exports = ["scheme.launcher to org.graalvm.launcher, scheme.test"],
     libs = ["//src/launcher"],
     module_name = "scheme.launcher",
     requires = _SDK_MODULES + [
