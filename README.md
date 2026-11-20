@@ -5,7 +5,7 @@
 ## Docs
 
 - [`docs/usage.md`](docs/usage.md): using the implementation with GraalVM
-- [`docs/benchmark.md`](docs/benchmark.md): benchmarks against other Schemes
+- [`docs/benchmarks.md`](docs/benchmarks.md): benchmarks against other Schemes
 - [`docs/design.md`](docs/design.md): architecture and decisions
 - [`docs/plan.md`](docs/plan.md): milestones, current tasks, conformance status
 - [`AGENTS.md`](AGENTS.md): instructions for coding agents
