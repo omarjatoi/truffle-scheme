@@ -1473,16 +1473,27 @@ Each entry: the decision, why, and what was rejected.
       no such term spreads a NaN from one part to the other, a NaN in
       either part is recomputed (in `_Cdivd`, both). R7RS §6.2.6 fixes
       neither this accuracy nor these values; Annex G does.
-      - *Limits.* `_Cdivd` scales the divisor only: products of the
-        dividend with it that overflow, or are subnormal, still lose range
-        or bits (`(/ (make-rectangular 1e308 1e308) 1.+1.i)` is
+      - *The dividend is scaled too* (M13-02, #280's follow-up). `_Cdivd`
+        scales the divisor only, so the dividend's products with it could
+        overflow, or be subnormal and lose bits that the scaling by 2^-k
+        then shows: `(/ (make-rectangular 1e308 1e308) 1.+1.i)` was
         +inf.0+0.0i, and `(/ (make-rectangular 1e-310 1e-310)
-        (make-rectangular 3e-310 4e-310))` 0.28000000000000114-0.04000000000000625i
-        where 0.28-0.04i is the nearest), and the textbook formula's
-        roundings and cancellation stay: `(/ (make-rectangular 1e-300
-        1e-300) (make-rectangular 3e-300 4e-300))` is
-        0.28-0.03999999999999997i, the nearest being
-        0.27999999999999997-0.039999999999999994i.
+        (make-rectangular 3e-310 4e-310))`
+        0.28000000000000114-0.04000000000000625i. When the dividend's
+        larger part is outside [2^-969, 2^1021), where its products with
+        the scaled divisor (parts below 2) could be subnormal or overflow,
+        its parts are scaled by 2^-j and the quotient's by 2^j after: below,
+        to [1, 2), exactly; above, only down to 2^1020, so that its smaller
+        part loses bits only if it is below 2^-1019. Inside the range nothing
+        changes, so `(/ (make-rectangular 1e308 0.3) (make-rectangular 1.
+        0.))` keeps its 0.3 (scaling the 1e308 to 1 would make the 0.3 a
+        subnormal), and an ordinary quotient keeps the textbook formula's
+        bits. Those two are now 1.0e+308+0.0i and 0.27999999999999997-0.04i.
+      - *Limits.* The textbook formula's roundings and cancellation stay,
+        now on full-precision products: the second is an ulp from the
+        nearest, 0.28-0.04i, and `(/ (make-rectangular 1e-300 1e-300)
+        (make-rectangular 3e-300 4e-300))` is 0.28-0.03999999999999997i, the
+        nearest being 0.27999999999999997-0.039999999999999994i.
       - *Rejected:* Smith's algorithm (1962) and Baudin and Smith's (2012),
         which divide by the larger part first and so round differently: they
         change the bits of ordinary quotients (Smith's, of 83% of 100,000
@@ -1529,23 +1540,95 @@ Each entry: the decision, why, and what was rejected.
         follows CLtL there), where C99 gives π/2+1.317i above.
       - Off those cuts, `asin` and `atan` are computed where the real part's
         sign is + and the imaginary part's − (a real argument counts as
-        there), and elsewhere by the symmetries (`Arithmetic.bySymmetry`),
-        so conjugate symmetry and oddness hold bit for bit, the signs of
-        zeros included (`(atan (make-rectangular 1. -0.))` is π/4−0.0i, was
-        π/4+0.0i); `acos` is π/2 − asin z, so its symmetry follows. In that
-        quadrant asin's sums iz + sqrt(1 − z²) add parts of one sign;
-        elsewhere they cancelled, an ulp off: `(asin -2.)`'s imaginary part
-        was 1.3169578969248164, now 1.3169578969248166 (the nearest to
-        acosh 2), and `(asin 2.+1.i)`'s 1.4693517443681854, now
-        1.4693517443681852 (Python's `cmath`, which follows Annex G, has
-        the same).
-      - *Not here:* the infinities of G.6's tables (`(sqrt
-        (make-rectangular -inf.0 1.))` is +nan.0+inf.0i, where csqrt gives
-        +0+∞i), and the formulas' accuracy near the cuts (`sqrt`'s
-        (r − x)/2, `atan`'s difference of logs, and acos's π/2 − asin z
-        round or cancel: `(acos 2.-1.i)`'s real part is
-        0.5073563032171444, the nearest ...445), which Kahan's algorithms
-        (1987) would fix at the cost of every value's bits.
+        there), and elsewhere by the symmetries
+        (`ArithmeticComplex.bySymmetry`), so conjugate symmetry and oddness
+        hold bit for bit, the signs of zeros included (`(atan
+        (make-rectangular 1. -0.))` is π/4−0.0i, was π/4+0.0i); `acos`'s
+        formula (Kahan's, below) is conjugate-symmetric by itself. On the
+        real axis off the cuts, a complex number's value is the real
+        number's (fdlibm's `asin`, `acos` and `atan`) with the zero's sign,
+        as C99's is: `(asin (make-rectangular .5 0.))` is
+        0.5235987755982989+0.0i (was ...989−1.1102230246251565e-16i).
+    - **Special values of the complex elementary functions** (M13-02,
+      #280's follow-up). R7RS §6.2.6 defines `sqrt`, `exp`, `log`, `asin`,
+      `acos` and `atan` of complex numbers by formulas and says nothing of
+      infinities and NaNs there, and §6.2.3 recommends IEEE 754's
+      functions "particularly with respect to infinities and NaNs", so they
+      give C99 Annex G.6's special values: csqrt (G.6.4.2), cexp
+      (G.6.3.1), clog (G.6.3.2), cacos (G.6.1.1), and casin(z) =
+      −i casinh(iz) (G.6.2.2) and catan(z) = −i catanh(iz) (G.6.2.3)
+      (`ArithmeticComplex`). The formulas gave NaNs from ∞ − ∞ and 0·∞:
+      `(sqrt (make-rectangular -inf.0 1.))` was +nan.0+inf.0i and is
+      0.0+inf.0i, `(exp (make-rectangular +inf.0 0.))` was +inf.0+nan.0i
+      and is +inf.0+0.0i, `(asin (make-rectangular 1. +inf.0))` was
+      +nan.0+nan.0i and is 0.0+inf.0i, and `(atan +i)` is C99's
+      −i catanh(−1), 0.0+inf.0i, which R7RS's formula gives too, with
+      log 0 = −∞. `log`'s already were G.6's (`hypot` and fdlibm's `atan2`
+      have the infinities). A real NaN's `asin` and `acos` are NaN (were
+      +nan.0+nan.0i; R7RS §6.2.4). Where G.6 leaves a sign unspecified
+      (cexp(−∞+i∞) is ±0±i0, csqrt(−∞+iNaN) NaN±i∞), ours is +. What
+      R7RS's text overrides:
+      - `sqrt`'s cut, to −∞: "a zero real part and a non-negative imaginary
+        part", so `(sqrt (make-rectangular -inf.0 -0.))` is 0.0+inf.0i,
+        where csqrt gives 0.0−inf.0i (as for finite numbers, above). The
+        sentence is read of the exact root, whose real part is zero only on
+        the cut: off it the root's real part is positive, even where it
+        rounds to 0.0, as at −∞−1i (0.0−inf.0i, csqrt's) or −1e300−1e-300i.
+      - `asin`'s and `acos`'s cuts, to ±∞: the real number's value, from
+        either zero (above, CLtL's quadrants), so `(asin +inf.0)` is
+        π/2−inf.0i and `(acos +inf.0)` 0.0+inf.0i, where casin and cacos
+        give π/2+inf.0i and 0.0−inf.0i above the cut.
+    - **Kahan's formulas** (M13-02, #280's follow-up) for the finite
+      values of `sqrt`, `asin`, `acos` and `atan` ("Branch Cuts for Complex
+      Elementary Functions, or Much Ado About Nothing's Sign Bit", 1987),
+      where R7RS's formulas round or cancel. `sqrt` is t = √((|x| + |z|)/2)
+      and the other part y/2t, not √((|z| − x)/2), which cancels where
+      |y| ≪ x (`(sqrt 1.+1e-10i)` was 1.0+0.0i, now 1.0+5.0e-11i). `asin`
+      is arctan(x / Re(√(1−z)·√(1+z))) + i arcsinh(Im(conj(√(1−z))·√(1+z)))
+      and `acos` 2 arctan(Re √(1−z) / Re √(1+z)) +
+      i arcsinh(Im(conj(√(1+z))·√(1−z))), not the log of a sum and
+      π/2 − asin z (`(acos 2.-1.i)`'s real part was 0.5073563032171444, now
+      the nearest, ...445; `(asin 1e-10+1e-10i)` was
+      9.999999999e-11+1.000000082690371e-10i). `atan` is −i catanh(iz),
+      with catanh(z) = ¼ log1p(4x / ((1−x)² + y²)) +
+      i ½ arg((1−x)(1+x) − y² + 2iy), not a difference of logs (`(atan
+      1.+1e-10i)`'s imaginary part was 5.000000413701855e-11, now 5.0e-11).
+      Beyond 2^28, asin's and acos's arcsinh is log 2z (to 2^-58), with
+      the log of |z|/2, so the products of roots don't overflow; beyond
+      2^500, catanh is 1/z + iπ/2 (Kahan's θ); at x = 1, catanh's real part
+      is ¼ log(4 + y²) − ½ log y, where y² could underflow. arcsinh is
+      fdlibm's `s_asinh.c` on `StrictMath`'s log and log1p (`StrictMath`
+      has none). Measured on a seeded sweep of 80,000 arguments, 4,000 per
+      function and set (parts uniform in [−10, 10]; of magnitude 10^±20;
+      near 0, 10^-20 to 10^-3; near the cut, an imaginary part of 10^-20
+      to 10^-2 beyond it; near the branch points ±1 or ±i), each part
+      against the correctly rounded value (mpmath, at 600 bits, or more
+      until two precisions agree):
+      - *Values changed:* 29% to 93% of the parts, by set and function
+        (31% to 59% of the ordinary set's).
+      - *Accuracy:* the share not correctly rounded fell in every set, from
+        28%–93% to 12%–40% (the ordinary set's: sqrt 34% → 23%, asin
+        30% → 24%, acos 29% → 25%, atan 59% → 21%), and the largest error
+        from 1.4 ulps (atan near ±i) to 7×10^19 (asin near 0: no digit
+        right) before, to 1.5 to 3.4 ulps after. A part got worse in up to
+        14% of a set's (acos's ordinary one), by an ulp or two:
+        `(asin 2.+1.i)`'s real part was the nearest, 1.0634400235777521,
+        and is 1.063440023577752.
+      - *Speed* (Apple M3 Max, the JVM launcher with the JIT, 5
+        interleaved runs at a 1-minute load of 6.6 to 7.6, nanoseconds per
+        call in a loop of a million over 8 complex arguments, the loop
+        alone 4): `asin` 106 → 45, `acos` 117 → 49, `atan` 113 → 29, since
+        they no longer go through the generic complex arithmetic of R7RS's
+        formulas; `sqrt` 17 → 20; `exp` 26 and `log` 24, unchanged.
+      - chibi-scheme's are R7RS's formulas, so the share of the sweep's
+        values that are the same as its fell (sqrt 88% → 26%, asin
+        37% → 8%, acos 44% → 7%, atan 67% → 13%); on atan's cut they now
+        agree (`(atan (make-rectangular 0. 2.))`'s imaginary part,
+        0.5493061443340549, is the nearest; ours was an ulp below).
+      - *Rejected:* keeping R7RS's formulas, whose cancellation loses every
+        digit near zero and near the cuts; Hull, Fairgrieve and Tang's
+        algorithms (1997; FreeBSD's casin and cacos), more accurate still,
+        for a few times the code and an ulp or two.
     - **`sqrt` of an exact non-square** is the flonum nearest to its root,
       one rounding of the exact value, as `inexact` of an exact number is
       (above) and as IEEE 754-2019's squareRoot is of its operand (§5.4.1).
@@ -1578,15 +1661,18 @@ Each entry: the decision, why, and what was rejected.
       sweep interpreted and compiled, what the sign of each special value
       gives, NaN and -0.0 against R7RS and IEEE 754, `expt` of negative
       bases and `magnitude` at infinities, a real and a complex number,
-      `sqrt` of exact numbers, a division by a complex number, the branch
-      cuts' signs of zero with their symmetries on a grid, and polar
-      literals against `make-polar`),
+      `sqrt` of exact numbers, a division by a complex number and its
+      dividend's scaling, the branch cuts' signs of zero with their
+      symmetries on a grid, the complex functions' special values (a
+      table) and Kahan's formulas, and polar literals against
+      `make-polar`),
       `tests/diff/numbers-transcendental.scm` (values that
       both fdlibm and chibi-scheme round to the nearest),
       `tests/diff/numbers-special-values.scm` (NaN and -0.0 where chibi-scheme
       agrees with R7RS), `tests/diff/numbers-expt-magnitude.scm`,
-      `tests/diff/numbers-complex-edges.scm` and
-      `tests/diff/numbers-division-branch-cuts.scm`.
+      `tests/diff/numbers-complex-edges.scm`,
+      `tests/diff/numbers-division-branch-cuts.scm` and
+      `tests/diff/numbers-complex-special-values.scm`.
     - *Rejected:* `Math` (above); `StrictMath` for `exp` and `log` only,
       which wouldn't have fixed the case found, since fdlibm's `(exp 1)` is
       the one an ulp off, and leaves the rest platform-dependent; a correctly
