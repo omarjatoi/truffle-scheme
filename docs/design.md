@@ -2162,7 +2162,9 @@ Each entry: the decision, why, and what was rejected.
 - **Single-threaded contexts.** `isThreadAccessAllowed` returns
   `singleThreaded`.
 - **All I/O goes through `TruffleLanguage.Env`**: `TruffleFile` and the Env's
-  streams, never `java.io` or `java.nio` directly.
+  streams, never `java.io` or `java.nio` directly. The one exception is
+  SRFI 106's sockets, which the Env has no API for: JDK socket channels,
+  only when `Env.isSocketIOAllowed()` (D21, "The maintainer's calls").
 - **Standard output is buffered.** The console output port writes to a
   `BufferedOutputStream` (8 KB) over the Env's `out()`, not straight through:
   through, every `display` was a write to the stream, which the launcher's
@@ -5932,12 +5934,11 @@ this decision is what they follow.
 
 | Class | | SRFIs |
 |---|---:|---|
-| Implement | 170 | docs/srfi.md |
+| Implement | 172 | docs/srfi.md (106 and 254 by the maintainer's calls below) |
 | Implement, after the threads decision | 5 | 18, 21, 120, 216, 230, and 226's thread libraries |
-| In R7RS-small: a re-exporting library (13), or syntax with no library (3) | 16 | 0, 6, 9, 11, 16, 23, 30, 34, 38, 39, 45, 46, 62, 87, 98, 244 |
+| In R7RS-small: a re-exporting library (14), or syntax with no library (3) | 17 | 0, 6, 9, 11, 16, 23, 30, 34, 38, 39, 45, 46, 62, 87, 98, 211 (only `(srfi 211 syntax-rules)`), 244 |
 | Superseded by one we implement, provided anyway | 8 | 4, 25, 28, 47, 60, 69 re-export the later SRFI; 43 and 179 are incompatible with theirs (133, 231), so their own |
-| Not applicable | 12 | 7, 10, 22, 70, 72, 88, 89, 90, 96, 97, 213, 261 |
-| Needs the maintainer | 5 | 106, 138, 203, 211's low-level sublibraries, 254 |
+| Not applicable | 14 | 7, 10, 22, 70, 72, 88, 89, 90, 96, 97, 138, 203, 213, 261 |
 
 **Scope.**
 
@@ -6076,23 +6077,35 @@ threads, thread locals, interrupts, mutexes and condition variables are in
 scope, as a group of their own that waits for a threads decision a later
 milestone takes first (D10, "Out of scope").
 
-**Needs the maintainer.**
+**The maintainer's calls** (2026-11-21, on the five this decision first
+left open):
 
-- *106, sockets.* The Env has no socket API, so this means JDK sockets
-  gated by `Env.isSocketIOAllowed()`: an exception to D10's "all I/O goes
-  through the Env".
-- *138, `compile-r7rs`.* Tooling for standalone executables, which is
-  deferred until it is designed with the maintainer.
-- *203, the SICP picture language.* It needs somewhere to draw; a terminal
-  language has no canvas, and writing SVG to a port is a product choice.
-- *211's low-level sublibraries* (`er-macro-transformer`, `ir-`, `sc-`,
-  `rsc-`, `identifier-syntax`, `variable-transformer`): a macro system
-  beyond `syntax-rules` that isn't `syntax-case`. `(srfi 211 syntax-rules)`
-  is a re-export either way.
-- *254, ephemerons and guardians.* Ephemerons fit Java's weak references,
-  but a JVM can't resurrect an object, so guardians would never return
-  one, which the SRFI's "when it proves" permits and makes useless: the
-  library with inert guardians, or none.
+- *106, sockets: implemented.* Truffle has no socket API of its own (no
+  `TruffleFile` for sockets), only the embedder's permission: a context
+  built with `IOAccess.newBuilder().allowHostSocketAccess(true)` (or
+  `allowAllAccess`) has `Env.isSocketIOAllowed()`, and every SRFI 106
+  procedure checks it first and raises a Scheme error that says so when it
+  is false. The sockets are JDK `java.nio` socket channels behind
+  `@TruffleBoundary`, the one exception to D10's "all I/O goes through the
+  Env" (the Env has nothing for sockets). Blocking calls (`connect`,
+  `accept`, `recv`) wait through `TruffleSafepoint.setBlockedThreadInterruptible`,
+  so cancelling, a time limit or closing the context ends a program stuck
+  on the network rather than hanging it. `socket-input-port` and
+  `socket-output-port` are binary ports over the channel's streams. Until
+  the threads milestone, a server serves one connection at a time.
+- *138, `compile-r7rs`: not provided* (the maintainer: "skip"). It is
+  standalone-executable tooling, deferred until it is designed with the
+  maintainer.
+- *203, the SICP picture language: not provided* (the maintainer: "skip").
+- *211's low-level sublibraries: not provided* (`er-macro-transformer`,
+  `ir-`, `sc-`, `rsc-`, `identifier-syntax`, `variable-transformer`): a
+  second macro system. `(srfi 211 syntax-rules)`, a re-export of R7RS's, is
+  the only 211 library, as class b.
+- *254, ephemerons and guardians: implemented, with inert guardians.*
+  Ephemerons are Java weak references (sound: never broken while the value
+  reaches the key). A JVM can't resurrect a collected object, so a guardian
+  never returns one, which the SRFI's "when it proves" permits; the
+  library's documentation says so.
 
 **Order.** docs/srfi.md's "Groups and order": the infrastructure (names,
 `src/srfi/`, `vendor-srfi`, the test targets, the docs' list of SRFIs, the
