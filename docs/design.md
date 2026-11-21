@@ -1852,7 +1852,8 @@ Each entry: the decision, why, and what was rejected.
 - Why: the §7.3 reference `guard` captures a full continuation on every
   entry, which is too slow. A prompt gives exact R7RS semantics at a cost
   proportional to the distance between `raise` and `guard`.
-- Prompts are not exposed to Scheme code in v1. SRFI-226 can be added later.
+- Prompts are not exposed to Scheme code in v1. SRFI 226 exposes them
+  (D21), after a decision of its own.
 
 ### D5. Java builtins never call Scheme
 
@@ -2790,9 +2791,13 @@ Each entry: the decision, why, and what was rejected.
       took 12 ms against 5 (21 against 15 in the first context).
     - When `UpstreamAstDepthTest` fails after a Truffle upgrade, the bug is
       fixed and this goes.
-- **Out of scope:** threads, and SRFIs. (Scheme-side access to other
-  languages and the host was, until D20.) Avoid reflection and dynamic
-  class loading: the native launcher (D17) is built without any reflection
+- **Threads** come in through a threads decision that a later milestone
+  takes first; until then contexts stay single-threaded (above), and D21's
+  threads group (SRFI 18, 21, 120, 216, 230, and 226's thread libraries)
+  waits for it. **SRFIs** are in scope since D21: every final SRFI, as
+  `(srfi N)` libraries. (Scheme-side access to other languages and the
+  host was out of scope until D20.) Avoid reflection and dynamic class
+  loading: the native launcher (D17) is built without any reflection
   configuration.
 - **Deferred from v1, and since done:** escape-only `call/cc` (M5-04),
   Fixing Letrec (M5-05, D2), vector storage strategies (M5-06, D1), and the
@@ -5912,3 +5917,188 @@ decided above, where it applies, with its source; in short:
 - *Stack accounting*: Truffle's `sandbox.MaxStackFrames` already counts
   the other languages' frames; a Java stack overflow through foreign
   frames is a Scheme error (above, "Stack depth across foreign frames").
+
+### D21. SRFIs: every final SRFI, as `(srfi N)` libraries
+
+The maintainer (2026-11-21): *"all the SRFIs that are confirmed (not the
+draft ones)"* are in scope; *"it would be nice if we re-export or whatever
+so e.g. `srfi-1` is also called `srfi lists` and stuff like that, your
+call"*; and R7RS-large is not supported, only R7RS-small: no `(scheme
+list)`-style library names, no `syntax-case`. Until now D10 kept SRFIs out.
+docs/srfi.md surveys the 216 final SRFIs (the SRFI editors' srfi-data.scm
+of 2026-11-17: 290 SRFIs, 216 final, 61 withdrawn, 13 draft) with each
+one's class, names, group, sample implementation, tests and interactions;
+this decision is what they follow.
+
+| Class | | SRFIs |
+|---|---:|---|
+| Implement | 170 | docs/srfi.md |
+| Implement, after the threads decision | 5 | 18, 21, 120, 216, 230, and 226's thread libraries |
+| In R7RS-small: a re-exporting library (13), or syntax with no library (3) | 16 | 0, 6, 9, 11, 16, 23, 30, 34, 38, 39, 45, 46, 62, 87, 98, 244 |
+| Superseded by one we implement, provided anyway | 8 | 4, 25, 28, 47, 60, 69 re-export the later SRFI; 43 and 179 are incompatible with theirs (133, 231), so their own |
+| Not applicable | 12 | 7, 10, 22, 70, 72, 88, 89, 90, 96, 97, 213, 261 |
+| Needs the maintainer | 5 | 106, 138, 203, 211's low-level sublibraries, 254 |
+
+**Scope.**
+
+- *Final SRFIs only.* Withdrawn ones are out; a draft is surveyed when it
+  is finalized, added to docs/srfi.md's table and classified as these were.
+- *Opt-in, as D20's library is.* A program sees a SRFI only if it imports
+  it: R7RS programs, the conformance suites and the interaction
+  environment (which imports none, and takes `(import (srfi 1))`) are
+  unchanged.
+- *Names R7RS also has.* Where a SRFI's binding means what R7RS's does
+  (SRFI 1's `map`, `member`, `assoc`; SRFI 133's `vector-map`), the library
+  re-exports the standard binding, so importing both is one binding twice
+  (D7). Where it means something else (SRFI 13's `string-map`, 5's `let`,
+  17's `set!`, 61's `cond`, 219's `define`), the library has its own, and
+  importing it with `(scheme base)` is R7RS §5.2's error unless the
+  program uses `except` or `rename`, as the SRFI expects.
+- *"It is an error"* in a SRFI is treated as in R7RS (D8, D9, D18): an
+  error is raised where that is cheap, and a vendored test that expects a
+  result there gets a row in its suite's Exceptions table, with the SRFI's
+  text.
+- *R7RS-large stays out*: no `(scheme list)`, `(scheme comparator)`,
+  `(scheme generator)`; a sample implementation that imports one is
+  rewritten to import `(srfi 1)`, `(srfi 128)`, `(srfi 158)`. No
+  `syntax-case`: SRFI 72 and 213, and 211's `syntax-case` sublibrary, are
+  not applicable, and the sample implementations written with it (201,
+  202, 226, 237, 239, 240, 241, 255, 265) are ported to `syntax-rules` or
+  the expander, not vendored.
+
+**Library names.** The canonical name is `(srfi N)`, as R7RS
+implementations name them (chibi's `lib/srfi/1.sld`, Gauche's
+`lib/srfi/1.scm`, STklos, Cyclone, Larceny's R7RS libraries). Each SRFI
+library is one file and one instance; every other name below is rewritten
+to the canonical one before the library is looked up (`Libraries`), so
+`(srfi 1)` and `(srfi lists)` import the same cells, `cond-expand`'s
+`(library ...)` sees every name, and an alias costs a table lookup:
+
+- `(srfi N name)`, with N's mnemonic name: SRFI 97's names in R7RS's
+  spelling, as Larceny's R7RS libraries have them (its
+  `lib/SRFI/srfi/1.sld` defines `(srfi 1 lists)` and `(srfi 1)`).
+- `(srfi :N)` and `(srfi :N name)`: SRFI 97's own form, which R6RS
+  implementations use (Sagittarius's `sitelib/srfi/%3a1.scm` and
+  `%3a1/lists.scm`, chez-srfi's `%3a1.sls`, Larceny's R6RS libraries); `:1`
+  is an R7RS identifier. For N below 261 only, as SRFI 261 reserves it.
+- `(srfi srfi-N)` and `(srfi name-N)`: SRFI 261's portable forms (the
+  first is Guile's `(srfi srfi-1)`).
+- `(srfi name)`: the maintainer's readable form, for a name exactly one
+  final SRFI has. Nine names are shared (`records` by six SRFIs, `strings`
+  by 13, 140 and 152, ...; docs/srfi.md lists them): those have no bare
+  alias, and importing one is a syntax error that names the candidates
+  (`(srfi 13 strings)`, ...), not "library not found".
+
+The mnemonic names are the union of SRFI 97's table, SRFI 261's (which
+renames two: 60's `integer-bits` is also `integers-bits`, 95's
+`sorting-and-merging` also `sort-and-merging`) and srfi-data.scm's
+`library-name` (for 207, 219, 265, 278), less SRFI 261's erratum that
+gives 237 the name `combinators`, which is 235's. A SRFI's sublibraries
+keep the names it gives them (`(srfi 160 u8)`, `(srfi 146 hash)`, `(srfi
+166 base)`, `(srfi 41 primitive)`, 226's R7RS names `(srfi 226 prompt)`,
+...); none is also its SRFI's mnemonic name, which the infrastructure's
+test checks.
+
+- *Feature identifiers.* `features` gains no `srfi-N` for a library: R7RS's
+  `(library (srfi N))` requirement is the test for one, and a feature
+  identifier would claim its bindings without an import. A reader-syntax
+  SRFI we adopt, which has no library to test for, adds its `srfi-N`.
+- *Rejected:* an `.sld` file per alias. R7RS has no "export everything
+  imported", so each would repeat the SRFI's export list (SRFI 1's is about
+  150 names), and be a library of its own to expand and instantiate (D7).
+  *Rejected:* giving a shared bare name to one SRFI (`(srfi strings)` as
+  152): the choice would be ours, not the SRFIs', and could not be taken
+  back. *Rejected:* `(srfi N)` alone, as chibi has it: the maintainer asked
+  for readable names, and the rewrite makes them free.
+
+**Where they live, and when they load.**
+
+- *A project of their own*, `src/srfi/`: the libraries as resources of the
+  `scheme` module, named as `Libraries` names the prelude's (`(srfi 1)` is
+  `srfi.1.sld`, `(srfi 160 u8)` is `srfi.160.u8.sld`), each SRFI's included
+  code in a directory of its own. Not in `src/prelude/`: the prelude image
+  is built from that project (D13), so every edit to a SRFI would rebuild
+  the image and everything after it. `Libraries.locate` looks there after
+  the prelude's resources and before the library path.
+- *Ported code* keeps its upstream file header and licence notice and says
+  what changed; the SRFI process's MIT-style licence allows it (the SRFI
+  FAQ). Java primitives are `%`-names of `(r7rs %primitives)`, renamed on
+  export as D20's are, so the interaction environment lists none of them,
+  in a builtins file per group; AGENTS.md's areas gain a row per group,
+  each owning its files.
+- *Lazily, on first import*, expanded from source as `(graalvm polyglot)`
+  is: a context pays nothing for a SRFI it doesn't import. Not in the
+  prelude image: a context restores and runs every library body the image
+  holds when it starts (D13), so 200 libraries there would cost every
+  context. The infrastructure task measures the import of a large one
+  (SRFI 1's sample implementation) on the JVM and native; if it matters, the
+  image holds SRFI libraries dormant (expanded and serialized, restored on
+  first import, a new `PreludeImage.FORMAT`), decided then with the
+  numbers. The native launcher's image includes the resources.
+
+**Testing.**
+
+- *Each SRFI's own tests, vendored read-only* under `tests/srfi/<N>/`, as
+  `tests/r7rs/` is (AGENTS.md "Never"): from the SRFI's repository at a
+  pinned commit, or chibi-scheme 0.12's `lib/srfi/<N>/test.sld` (BSD-3)
+  where the repository has none, with a provenance header and the licence,
+  by a `bazel run //:r7rs -- vendor-srfi <N>` that also runs them under
+  chibi where chibi has the SRFI, to check the copy. They use `(srfi 64)`,
+  `(srfi 78)`, `(chibi test)` (whose shim exists) or their own checks, so
+  64 and 78 come first. Each runs in the four modes the conformance
+  sections run in (interpreted, compiled, both tortures), and the
+  conformance report gains a line per SRFI.
+- *Differential tests* (`tests/diff/srfi-<N>-*.scm`) for the SRFIs chibi
+  0.12 has (docs/srfi.md's column), and the fuzzer where a SRFI's
+  procedures fit its generators; chibi's behaviour is a reference, not the
+  spec (D19).
+- *Unit tests* (`tests/scheme/test/`) for the names' resolution and each
+  Java primitive; rule 1's check (`//tests:rules`) covers the new builtins;
+  space cases (`tests/space/`) for the SRFIs that promise constant space
+  (41, 127, 158, 171); deep-structure cases (rule 4) for any Java walker.
+
+**Decisions a task needs first**, each in a design PR of its own
+(AGENTS.md "Read first"):
+
+- *Control (SRFI 226).* D4's prompts become Scheme's: continuation marks on
+  frames (and on tail calls, which 226 makes observable), `call/cc`
+  delimited by the default prompt, and R7RS's `parameterize`,
+  `dynamic-wind`, `guard` and promises the same objects as 226's. 248
+  follows it.
+- *Custom ports (SRFI 181).* Its ports call Scheme procedures, so how
+  `read-char` and the rest reach them under rule 1.
+- *Bodies (SRFI 251).* D14 scopes a body's definitions over the whole
+  body, 251 each group over what follows: `(srfi 251)`'s own body forms,
+  or D14 changed.
+
+**Threads.** SRFI 18, 21, 120, 216 (`parallel-execute`), 230, and 226's
+threads, thread locals, interrupts, mutexes and condition variables are in
+scope, as a group of their own that waits for a threads decision a later
+milestone takes first (D10, "Out of scope").
+
+**Needs the maintainer.**
+
+- *106, sockets.* The Env has no socket API, so this means JDK sockets
+  gated by `Env.isSocketIOAllowed()`: an exception to D10's "all I/O goes
+  through the Env".
+- *138, `compile-r7rs`.* Tooling for standalone executables, which is
+  deferred until it is designed with the maintainer.
+- *203, the SICP picture language.* It needs somewhere to draw; a terminal
+  language has no canvas, and writing SVG to a port is a product choice.
+- *211's low-level sublibraries* (`er-macro-transformer`, `ir-`, `sc-`,
+  `rsc-`, `identifier-syntax`, `variable-transformer`): a macro system
+  beyond `syntax-rules` that isn't `syntax-case`. `(srfi 211 syntax-rules)`
+  is a re-export either way.
+- *254, ephemerons and guardians.* Ephemerons fit Java's weak references,
+  but a JVM can't resurrect an object, so guardians would never return
+  one, which the SRFI's "when it proves" permits and makes useless: the
+  library with inert guardians, or none.
+
+**Order.** docs/srfi.md's "Groups and order": the infrastructure (names,
+`src/srfi/`, `vendor-srfi`, the test targets, the docs' list of SRFIs, the
+13 R7RS re-exports), then testing (64, 78); then lists, syntax,
+comparators and hash tables, generators, numbers, vectors, strings,
+formatting, records, the expander, I/O, arrays and the rest in parallel,
+each with its stated dependencies; reader syntax after the libraries it
+reads into; control after its decision; threads after theirs. A milestone
+task takes a few SRFIs of one group.
