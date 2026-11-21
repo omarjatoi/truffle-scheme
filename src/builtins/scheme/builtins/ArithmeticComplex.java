@@ -1,5 +1,7 @@
 package scheme.builtins;
 
+import scheme.runtime.value.SComplex;
+
 /**
  * The elementary functions of a complex flonum x+iy (R7RS §6.2.6), each a pair {re, im}: C99 Annex
  * G.6's special values at infinities and NaNs, which R7RS leaves open, with Kahan's formulas
@@ -87,14 +89,14 @@ final class ArithmeticComplex {
      * finite y; an infinite or NaN y gives NaN+iNaN, but ±0±i0 for x = -∞ and ±∞+iNaN for x = +∞
      * (G.6 leaves those signs open; ours are +).
      */
-    static double[] exp(double x, double y) {
+    static Object exp(double x, double y) {
         if (y == 0) {
-            return new double[]{StrictMath.exp(x), y};
+            return SComplex.make(StrictMath.exp(x), y);
         } else if (!Double.isFinite(y)) {
-            return x == -INF ? new double[]{0.0, 0.0} : x == INF ? new double[]{INF, NAN} : new double[]{NAN, NAN};
+            return x == -INF ? SComplex.make(0.0, 0.0) : x == INF ? SComplex.make(INF, NAN) : SComplex.make(NAN, NAN);
         }
         double m = StrictMath.exp(x);
-        return new double[]{m * StrictMath.cos(y), m * StrictMath.sin(y)};
+        return SComplex.make(m * StrictMath.cos(y), m * StrictMath.sin(y));
     }
 
     /** An odd function with conjugate symmetry, of a pair. */

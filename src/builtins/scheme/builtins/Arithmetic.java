@@ -639,7 +639,7 @@ final class Arithmetic {
         if (!(z instanceof SComplex)) {
             return StrictMath.exp(flo(z));
         }
-        return complexResult(ArithmeticComplex.exp(flo(realPart(z)), flo(imagPart(z))));
+        return ArithmeticComplex.exp(flo(realPart(z)), flo(imagPart(z)));
     }
 
     @TruffleBoundary

@@ -1614,7 +1614,12 @@ Each entry: the decision, why, and what was rejected.
         14% of a set's (acos's ordinary one), by an ulp or two:
         `(asin 2.+1.i)`'s real part was the nearest, 1.0634400235777521,
         and is 1.063440023577752.
-      - *Speed:* SPEED_PLACEHOLDER
+      - *Speed* (Apple M3 Max, the JVM launcher with the JIT, 5
+        interleaved runs at a 1-minute load of 6.6 to 7.6, nanoseconds per
+        call in a loop of a million over 8 complex arguments, the loop
+        alone 4): `asin` 106 → 45, `acos` 117 → 49, `atan` 113 → 29, since
+        they no longer go through the generic complex arithmetic of R7RS's
+        formulas; `sqrt` 17 → 20; `exp` 26 and `log` 24, unchanged.
       - chibi-scheme's are R7RS's formulas, so the share of the sweep's
         values that are the same as its fell (sqrt 88% → 26%, asin
         37% → 8%, acos 44% → 7%, atan 67% → 13%); on atan's cut they now
