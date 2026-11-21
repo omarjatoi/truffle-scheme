@@ -599,14 +599,14 @@ public class NumbersTest {
                         {"(asin 2.)", "1.5707963267948966-1.3169578969248166i"}, {"(asin -2.)", "-1.5707963267948966+1.3169578969248166i"},
                         {"(acos (make-rectangular 2. 0.))", "0.0+1.3169578969248166i"}, {"(acos (make-rectangular -2. -0.))", "3.141592653589793-1.3169578969248166i"},
                         {"(acos 2.)", "0.0+1.3169578969248166i"}, {"(acos -2.)", "3.141592653589793-1.3169578969248166i"},
-                        // ... and off it, conjugate symmetry and oddness (asin's sums no longer cancel: (asin 2.+1.i) was ...854i)
-                        {"(asin 2.+1.i)", "1.0634400235777521+1.4693517443681852i"}, {"(asin 2.-1.i)", "1.0634400235777521-1.4693517443681852i"},
-                        {"(asin -2.+1.i)", "-1.0634400235777521+1.4693517443681852i"}, {"(acos 2.-1.i)", "0.5073563032171444+1.4693517443681852i"}, // π/2 - asin z: the nearest is ...445
+                        // ... and off it, conjugate symmetry and oddness (Kahan's asin: the nearest real part is ...521)
+                        {"(asin 2.+1.i)", "1.063440023577752+1.4693517443681852i"}, {"(asin 2.-1.i)", "1.063440023577752-1.4693517443681852i"},
+                        {"(asin -2.+1.i)", "-1.063440023577752+1.4693517443681852i"}, {"(acos 2.-1.i)", "0.5073563032171445+1.4693517443681852i"},
 
                         // atan: the imaginary axis beyond ±i, where the real part's zero tells the side
-                        {"(atan (make-rectangular 0. 2.))", "1.5707963267948966+0.5493061443340548i"}, {"(atan (make-rectangular -0. 2.))", "-1.5707963267948966+0.5493061443340548i"},
-                        {"(atan (make-rectangular 0. -2.))", "1.5707963267948966-0.5493061443340548i"}, {"(atan (make-rectangular -0. -2.))", "-1.5707963267948966-0.5493061443340548i"},
-                        {"(atan +2.i)", "1.5707963267948966+0.5493061443340548i"},
+                        {"(atan (make-rectangular 0. 2.))", "1.5707963267948966+0.5493061443340549i"}, {"(atan (make-rectangular -0. 2.))", "-1.5707963267948966+0.5493061443340549i"},
+                        {"(atan (make-rectangular 0. -2.))", "1.5707963267948966-0.5493061443340549i"}, {"(atan (make-rectangular -0. -2.))", "-1.5707963267948966-0.5493061443340549i"},
+                        {"(atan +2.i)", "1.5707963267948966+0.5493061443340549i"},
                         // ... and off it, conjugate symmetry with the signs of zeros
                         {"(atan (make-rectangular 1. 0.))", "0.7853981633974483+0.0i"}, {"(atan (make-rectangular 1. -0.))", "0.7853981633974483-0.0i"},
         };
@@ -635,6 +635,127 @@ public class NumbersTest {
                                                 parts))
                                     parts)
                           bad)"""));
+    }
+
+    /**
+     * M13-02 (#280's follow-up). {@code _Cdivd} scales the divisor only, so the dividend's products
+     * with it could still overflow, or be subnormal and lose bits that the scaling back then shows.
+     * The dividend is scaled too, by a power of 2 (exactly), when its larger part is outside
+     * [2^-969, 2^1021): a quotient whose parts are finite comes out finite, and from full-precision
+     * products. Inside that range nothing changes, so a part much smaller than the other keeps its
+     * bits. The quotients are then the textbook formula's on full-precision products, an ulp from
+     * the correctly rounded ones (mpmath), which the comments give, where its roundings make them so.
+     */
+    @Test
+    public void complexDivisionScalesTheDividendToo() {
+        String[][] cases = {
+                        // products that overflowed: were +inf.0+0.0i, 0.0+inf.0i and +inf.0-inf.0i
+                        {"(/ (make-rectangular 1e308 1e308) 1.+1.i)", "1.0e+308+0.0i"}, {"(/ (make-rectangular -1e308 1e308) 1.+1.i)", "0.0+1.0e+308i"},
+                        {"(/ 1.7e308 (make-rectangular 0.75 0.75))", "1.1333333333333332e+308-1.1333333333333332e+308i"}, // the nearest: ...334e+308
+                        // subnormal products: were 0.28000000000000114-0.04000000000000625i and 0.12000000000000455-0.1599999999999966i
+                        {"(/ (make-rectangular 1e-310 1e-310) (make-rectangular 3e-310 4e-310))", "0.27999999999999997-0.04i"}, // the nearest: 0.28-0.04i
+                        {"(/ 1e-310 (make-rectangular 3e-310 4e-310))", "0.11999999999999998-0.15999999999999998i"}, // the nearest: 0.12-0.16i
+                        // a part much smaller than the other keeps its bits, and a quotient beyond the range is an infinity
+                        {"(/ (make-rectangular 1e308 0.3) (make-rectangular 1. 0.))", "1.0e+308+0.3i"},
+                        {"(/ (make-rectangular 1e308 1e308) (make-rectangular 0.5 0.))", "+inf.0+inf.0i"},
+        };
+        assertWrites(cases);
+    }
+
+    /**
+     * M13-02 (#280's follow-up). R7RS §6.2.6 defines the complex sqrt, exp, log, asin, acos and atan
+     * through formulas and is silent on infinities and NaNs (§6.2.3 recommends IEEE 754's
+     * functions, "particularly with respect to infinities and NaNs"), so they give C99 Annex G.6's
+     * special values: csqrt (G.6.4.2), cexp (G.6.3.1), clog (G.6.3.2), cacos (G.6.1.1), and
+     * casin(z) = -i casinh(iz) (G.6.2.2) and catan(z) = -i catanh(iz) (G.6.2.3), with G.6's
+     * conjugate symmetry and oddness. Where G.6 leaves a sign unspecified, ours is +. Where R7RS
+     * speaks, it wins: on sqrt's cut either zero gives "a zero real part and a non-negative
+     * imaginary part", and on asin's and acos's cuts, the real axis beyond ±1, either zero gives the
+     * real number's value (M12-01), infinities included.
+     */
+    @Test
+    public void specialValuesOfTheElementaryFunctions() {
+        String[][] cases = {
+                        // csqrt: was +nan.0+inf.0i, +inf.0+nan.0i, +inf.0+nan.0i, +nan.0+inf.0i
+                        {"(sqrt (make-rectangular -inf.0 1.))", "0.0+inf.0i"}, {"(sqrt (make-rectangular -inf.0 -1.))", "0.0-inf.0i"},
+                        {"(sqrt (make-rectangular +inf.0 1.))", "+inf.0+0.0i"}, {"(sqrt (make-rectangular +inf.0 -1.))", "+inf.0-0.0i"},
+                        {"(sqrt (make-rectangular 1. +inf.0))", "+inf.0+inf.0i"}, {"(sqrt (make-rectangular +inf.0 +inf.0))", "+inf.0+inf.0i"},
+                        {"(sqrt (make-rectangular -inf.0 -inf.0))", "+inf.0-inf.0i"}, {"(sqrt (make-rectangular +nan.0 +inf.0))", "+inf.0+inf.0i"},
+                        {"(sqrt (make-rectangular -inf.0 +nan.0))", "+nan.0+inf.0i"}, {"(sqrt (make-rectangular +inf.0 +nan.0))", "+inf.0+nan.0i"},
+                        {"(sqrt (make-rectangular 1. +nan.0))", "+nan.0+nan.0i"}, {"(sqrt (make-rectangular +nan.0 1.))", "+nan.0+nan.0i"},
+                        {"(sqrt (make-rectangular 0. 0.))", "0.0+0.0i"}, {"(sqrt (make-rectangular -0. -0.))", "0.0-0.0i"},
+                        // ... and R7RS's cut: C99 gives 0.0-inf.0i below it
+                        {"(sqrt (make-rectangular -inf.0 -0.))", "0.0+inf.0i"}, {"(sqrt (make-rectangular -inf.0 0.))", "0.0+inf.0i"}, {"(sqrt -inf.0)", "0.0+inf.0i"},
+                        // cexp
+                        {"(exp (make-rectangular +inf.0 0.))", "+inf.0+0.0i"}, {"(exp (make-rectangular +inf.0 -0.))", "+inf.0-0.0i"},
+                        {"(exp (make-rectangular +nan.0 0.))", "+nan.0+0.0i"}, {"(exp (make-rectangular -inf.0 1.))", "0.0+0.0i"},
+                        {"(exp (make-rectangular -inf.0 2.))", "-0.0+0.0i"}, {"(exp (make-rectangular +inf.0 2.))", "-inf.0+inf.0i"},
+                        {"(exp (make-rectangular -inf.0 +inf.0))", "0.0+0.0i"}, {"(exp (make-rectangular +inf.0 +inf.0))", "+inf.0+nan.0i"},
+                        {"(exp (make-rectangular -inf.0 +nan.0))", "0.0+0.0i"}, {"(exp (make-rectangular +inf.0 +nan.0))", "+inf.0+nan.0i"},
+                        {"(exp (make-rectangular 1. +inf.0))", "+nan.0+nan.0i"}, {"(exp (make-rectangular +nan.0 1.))", "+nan.0+nan.0i"},
+                        {"(exp (make-rectangular -0. -0.))", "1.0-0.0i"},
+                        // clog (unchanged)
+                        {"(log (make-rectangular -0. 0.))", "-inf.0+3.141592653589793i"}, {"(log (make-rectangular 0. -0.))", "-inf.0-0.0i"},
+                        {"(log (make-rectangular 1. +inf.0))", "+inf.0+1.5707963267948966i"}, {"(log (make-rectangular -inf.0 1.))", "+inf.0+3.141592653589793i"},
+                        {"(log (make-rectangular +inf.0 -1.))", "+inf.0-0.0i"}, {"(log (make-rectangular -inf.0 +inf.0))", "+inf.0+2.356194490192345i"},
+                        {"(log (make-rectangular +inf.0 +inf.0))", "+inf.0+0.7853981633974483i"}, {"(log (make-rectangular -inf.0 +nan.0))", "+inf.0+nan.0i"},
+                        {"(log (make-rectangular +nan.0 +inf.0))", "+inf.0+nan.0i"}, {"(log (make-rectangular +nan.0 1.))", "+nan.0+nan.0i"},
+                        {"(log (make-rectangular 1. +nan.0))", "+nan.0+nan.0i"},
+                        // casin(z) = -i casinh(iz)
+                        {"(asin (make-rectangular 1. +inf.0))", "0.0+inf.0i"}, {"(asin (make-rectangular -1. -inf.0))", "-0.0-inf.0i"},
+                        {"(asin (make-rectangular +inf.0 1.))", "1.5707963267948966+inf.0i"}, {"(asin (make-rectangular -inf.0 1.))", "-1.5707963267948966+inf.0i"},
+                        {"(asin (make-rectangular +inf.0 +inf.0))", "0.7853981633974483+inf.0i"}, {"(asin (make-rectangular +nan.0 +inf.0))", "+nan.0+inf.0i"},
+                        {"(asin (make-rectangular 0. +nan.0))", "0.0+nan.0i"}, {"(asin (make-rectangular 1. +nan.0))", "+nan.0+nan.0i"},
+                        {"(asin (make-rectangular +nan.0 1.))", "+nan.0+nan.0i"}, {"(asin (make-rectangular +nan.0 0.))", "+nan.0+nan.0i"},
+                        {"(asin (make-rectangular -0. -0.))", "-0.0-0.0i"}, {"(asin +nan.0)", "+nan.0"}, {"(acos +nan.0)", "+nan.0"}, // were +nan.0+nan.0i
+                        // ... and R7RS's cut, the real number's value: C99 gives π/2+inf.0i above it
+                        {"(asin (make-rectangular +inf.0 0.))", "1.5707963267948966-inf.0i"}, {"(asin +inf.0)", "1.5707963267948966-inf.0i"},
+                        {"(asin (make-rectangular -inf.0 -0.))", "-1.5707963267948966+inf.0i"}, {"(asin -inf.0)", "-1.5707963267948966+inf.0i"},
+                        // cacos
+                        {"(acos (make-rectangular 0. 0.))", "1.5707963267948966-0.0i"}, {"(acos (make-rectangular -0. -0.))", "1.5707963267948966+0.0i"},
+                        {"(acos (make-rectangular 0. +nan.0))", "1.5707963267948966+nan.0i"}, {"(acos (make-rectangular 1. +inf.0))", "1.5707963267948966-inf.0i"},
+                        {"(acos (make-rectangular 1. -inf.0))", "1.5707963267948966+inf.0i"}, {"(acos (make-rectangular -inf.0 1.))", "3.141592653589793-inf.0i"},
+                        {"(acos (make-rectangular +inf.0 1.))", "0.0-inf.0i"}, {"(acos (make-rectangular -inf.0 +inf.0))", "2.356194490192345-inf.0i"},
+                        {"(acos (make-rectangular +inf.0 +inf.0))", "0.7853981633974483-inf.0i"}, {"(acos (make-rectangular +inf.0 +nan.0))", "+nan.0+inf.0i"},
+                        {"(acos (make-rectangular +nan.0 +inf.0))", "+nan.0-inf.0i"}, {"(acos (make-rectangular 1. +nan.0))", "+nan.0+nan.0i"},
+                        {"(acos (make-rectangular +nan.0 1.))", "+nan.0+nan.0i"},
+                        // ... and R7RS's cut, the real number's value: C99 gives 0.0-inf.0i above it
+                        {"(acos (make-rectangular +inf.0 0.))", "0.0+inf.0i"}, {"(acos +inf.0)", "0.0+inf.0i"}, {"(acos -inf.0)", "3.141592653589793-inf.0i"},
+                        // catan(z) = -i catanh(iz); at ±i, R7RS's formula's log 0 is C99's catanh(1)
+                        {"(atan (make-rectangular 1. +inf.0))", "1.5707963267948966+0.0i"}, {"(atan (make-rectangular +inf.0 1.))", "1.5707963267948966+0.0i"},
+                        {"(atan (make-rectangular -inf.0 1.))", "-1.5707963267948966+0.0i"}, {"(atan (make-rectangular +inf.0 -inf.0))", "1.5707963267948966-0.0i"},
+                        {"(atan (make-rectangular +nan.0 +inf.0))", "+nan.0+0.0i"}, {"(atan (make-rectangular +nan.0 0.))", "+nan.0+0.0i"},
+                        {"(atan (make-rectangular 0. +nan.0))", "+nan.0+nan.0i"}, {"(atan (make-rectangular 1. +nan.0))", "+nan.0+nan.0i"},
+                        {"(atan (make-rectangular 0. 1.))", "0.0+inf.0i"}, {"(atan (make-rectangular -0. -1.))", "-0.0-inf.0i"}, {"(atan +i)", "0.0+inf.0i"},
+                        {"(atan (make-rectangular -0. -0.))", "-0.0-0.0i"},
+        };
+        assertWrites(cases);
+    }
+
+    /**
+     * M13-02 (#280's follow-up). Kahan's formulas ("Branch Cuts for Complex Elementary Functions",
+     * 1987) for sqrt, asin, acos and atan: sqrt's other part is y/2t, not a difference r - x that
+     * cancels; asin's and acos's are arctangents and arcsinhs of products of the roots of 1 - z
+     * and 1 + z, not π/2 - asin z and the log of a sum that cancel; atan's real part is a log1p, not
+     * a difference of logs. The expected values are the correctly rounded ones (mpmath at 400
+     * bits); before, a few ulps to most of the digits off.
+     */
+    @Test
+    public void kahansFormulasDoNotCancel() {
+        String[][] cases = {
+                        // were 1.0+0.0i, 0.0+1.0i, 0.7853981633974483+5.000000413701855e-11i
+                        {"(sqrt 1.+1e-10i)", "1.0+5.0e-11i"}, {"(sqrt -1.+1e-10i)", "5.0e-11+1.0i"}, {"(atan 1.+1e-10i)", "0.7853981633974483+5.0e-11i"},
+                        // were 9.999999999e-11+1.000000082690371e-10i and 1.5707963266948965-1.000000082690371e-10i
+                        {"(asin 1e-10+1e-10i)", "1.0e-10+1.0e-10i"}, {"(acos 1e-10+1e-10i)", "1.5707963266948965-1.0e-10i"},
+                        // was 0.5073563032171444+1.4693517443681852i (π/2 - asin z)
+                        {"(acos 2.-1.i)", "0.5073563032171445+1.4693517443681852i"}, {"(atan +2.i)", "1.5707963267948966+0.5493061443340549i"}, // was ...548i
+                        {"(atan .5+.5i)", "0.5535743588970452+0.40235947810852507i"}, // was ...251i
+                        // a complex number on the real axis, off the cuts, is the real number's value with the zero's sign:
+                        // were 0.5235987755982989-1.1102230246251565e-16i and 1.0471975511965976-1.1102230246251565e-16i
+                        {"(asin (make-rectangular .5 0.))", "0.5235987755982989+0.0i"}, {"(acos (make-rectangular .5 -0.))", "1.0471975511965979+0.0i"},
+                        {"(atan (make-rectangular 3. -0.))", "1.2490457723982544-0.0i"},
+        };
+        assertWrites(cases);
     }
 
     /** Runs each case's expression, a thunk each, and compares what it writes (or its error's message). */

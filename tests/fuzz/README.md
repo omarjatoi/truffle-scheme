@@ -51,9 +51,11 @@ or unspecified: make the generator stay clear of it, and list it below.
 
 The driver undoes the first three in chibi-scheme's stdout before comparing;
 the generator stays clear of the others (`gen.py` says where). It makes no
-complex numbers at all, so the two rows of `-` with a complex operand can't
-arise (#249 found them; `tests/diff/numbers-complex-edges.scm` works around
-them).
+complex numbers at all, so the rows with a complex operand can't arise (#249
+found the two of `-`, which `tests/diff/numbers-complex-edges.scm` works
+around; M13-02 those of `atan` and of writing a NaN imaginary part, which
+`tests/diff/numbers-division-branch-cuts.scm` and
+`tests/diff/numbers-complex-special-values.scm` stay clear of).
 
 | What | chibi-scheme | R7RS |
 |---|---|---|
@@ -63,6 +65,8 @@ them).
 | `/` of negative bignums, with a ratio for quotient | negates them **in place**: `(define g -9223372036854775809) (/ 5 g)` leaves `g` positive, and a literal dividend changes sign each time its code runs | §6.2.6: numbers are values; §3.4: literals are constants |
 | `-` of a ratio and a complex number | crashes (SIGSEGV, exit status 139): `(- 1/2 1+2i)`, `(- 1/2 3.+4.i)`; its `sexp_sub` turns the ratio into a flonum and passes that on as a complex number | §6.2.6: the difference, `-1/2-2i` and `-2.5-4.0i` |
 | `-` with a complex operand (the second, if both are) | negates **in place** the flonums the complex number was made from: `(define x 7.5) (- 1 (make-rectangular x 1.))` leaves `x` -7.5, and the literal `1.` of `(make-rectangular 1. -0.)` changes sign each time `(- 2. ...)` of it runs (`sexp_complex_copy` gives the original its fresh parts and the copy, which `-` negates, the old ones) | §6.2.6: numbers are values; §3.4: literals are constants |
+| `atan` of a complex number whose real part is an exact 0, as `+2.i` reads | crashes (SIGSEGV, exit status 139): `(atan +2.i)`, `(atan +0.5i)`, `(atan (make-rectangular 0 2.))`; `(atan 0.+2.i)` works | §6.2.6: (log(1+iz) − log(1−iz))/2i, `1.5707963267948966+0.5493061443340549i` for `+2.i` |
+| `write` of a complex number with a NaN imaginary part | `1.0++nan.0i`, which reads as `#f` | §6.2.7, §7.1.1: `1.0+nan.0i` |
 | `floor/`, `floor-quotient`, `floor-remainder` with an operand of magnitude 2^62 or more; `truncate/` at ±2^62 | `(floor/ 100 -1022799909500023965235)` is `0 1022799909500023965335` | §6.2.6: `-1 -1022799909500023965135` |
 | `expt` of a non-integer ratio to a negative power | `(expt 2/3 -2)` is `1` | §6.2.6: `9/4` |
 | `rationalize` when the interval holds 0 | `(rationalize 5 10)` is `-5` | §6.2.6: the simplest rational in the interval, 0 |

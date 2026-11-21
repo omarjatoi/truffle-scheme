@@ -1920,7 +1920,7 @@ interleaved A/B runs.
     report records the load around each program's runs next to its
     result, with tests of the harness (`//tests:tools` or a Python test of
     `bench.py`) and bench/README.md "Thresholds" saying what is checked.
-- [ ] **M13-02 · Complex division's dividend, and `sqrt`'s infinities** *(early)*
+- [x] **M13-02 · Complex division's dividend, and `sqrt`'s infinities** *(early)*
   - #280's follow-ups, against R7RS §6.2 (with its errata), C99 Annex G
     and IEEE 754. Numbers area only (AGENTS.md "Areas").
   - `_Cdivd` scales only the divisor, so the dividend's products can still
@@ -1944,6 +1944,13 @@ interleaved A/B runs.
     what R7RS's text overrides; Kahan's formulas near the cuts are
     measured (values changed, speed) and taken or recorded in D1;
     `bench-check` passes.
+  - Done (2026-11-21): division scales a dividend outside [2^-969,
+    2^1021) too; sqrt, exp, log, asin, acos and atan give G.6's special
+    values, but on sqrt's, asin's and acos's cuts, where R7RS's text wins;
+    Kahan's formulas are taken for sqrt, asin, acos and atan: on a sweep
+    of 80,000 arguments they change 29% to 93% of the parts, and their
+    largest error is 3.4 ulps, where R7RS's formulas lost every digit near
+    zero and near the cuts (design.md D1).
 - [x] **M13-03 · `char-ready?` at the console's end of file** *(early)*
   - #284's follow-up: at the end of piped input, `char-ready?` on the
     console is `#f`, since `available()` is 0 and the port can't tell the
