@@ -243,7 +243,9 @@ Benchmarks, the threshold check and the native image are local commands.
   slot (design.md D2). A shared segment's frame is copied on every resume
   (rule 3).
 - All I/O goes through `TruffleLanguage.Env` (`TruffleFile`, Env streams),
-  never `java.io` or `java.nio` directly. Text operations use `Locale.ROOT`.
+  never `java.io` or `java.nio` directly; the one exception is SRFI 106's
+  sockets, only when `Env.isSocketIOAllowed()` (design.md D10, D21). Text
+  operations use `Locale.ROOT`.
 - Primitive errors throw `SchemeError`, never a raw Java exception
   (design.md D8).
 - Format Java with `bazel run //:r7rs -- format` before committing. The lint

@@ -45,17 +45,14 @@ the per-SRFI detail.
   as a re-exporting library where the later one covers it (4, 25, 28, 47,
   60, 69) or as its own where they are incompatible (43, 179).
 - **d**: not applicable, with the reason.
-- **maintainer**: a scope call that is the maintainer's (D21, "Needs the
-  maintainer").
 
 | Class | Count | SRFIs |
 |---|---:|---|
-| a | 170 | below |
+| a | 172 | below |
 | a, after threads | 5 | 18, 21, 120, 216, 230 (and 226's thread libraries) |
-| b | 16 | 0, 6, 9, 11, 16, 23, 30, 34, 38, 39, 45, 46, 62, 87, 98, 244 |
+| b | 17 | 0, 6, 9, 11, 16, 23, 30, 34, 38, 39, 45, 46, 62, 87, 98, 211 (`syntax-rules` only), 244 |
 | c | 8 | 4, 25, 28, 43, 47, 60, 69, 179 |
-| d | 12 | 7, 10, 22, 70, 72, 88, 89, 90, 96, 97, 213, 261 |
-| maintainer | 5 | 106, 138, 203, 211 (its low-level sublibraries), 254 |
+| d | 14 | 7, 10, 22, 70, 72, 88, 89, 90, 96, 97, 138, 203, 213, 261 |
 | Total | 216 | |
 
 **Kind** (what an implementation needs): S Scheme only (a sample
@@ -108,10 +105,10 @@ library of a superseded SRFI.
 | REC: records, conditions, boxes | 99 (runtime), 131, 136, 137, 150, 237, 240, 57, 100, 35, 36, 255, 222, 111 with 195, 161, 189, 229, 259 | INF, TEST |
 | EXP: expander | 139, 188, 212, 206, 147, 148, 149, 251, 211's `syntax-rules` re-export | INF, TEST; 251 after its D14 decision |
 | CTL: control | 226 (but its thread libraries), 248 | A design decision for 226 first (D21, "Control") |
-| IO: ports, OS, time | 193, 112, 176, 174, 19, 170, 238 (MISC), 29, 59, 180, 233, 275, then 181 with 192, 271, 277 | INF, TEST; 181 after its rule-1 decision |
+| IO: ports, OS, time | 193, 112, 176, 174, 19, 170, 238 (MISC), 29, 59, 180, 233, 275, 106, then 181 with 192, 271, 277 | INF, TEST; 181 after its rule-1 decision |
 | ARR: arrays | 231, 179 (c), 63, 47 (c), 164, 25 (c) | VEC's 160 |
 | RDR: reader syntax | 169, 267, 270, 207's `#u8"..."`, 160's `#s8(...)`, 58, 163, 105, 108, 107, 109, 49, 110, 119 | The libraries they read into (58 after 63, 163 after 164, 107 and 109 after 108) |
-| MISC | 37, 172, 173, 215, 234, 235, 253, 273, 263, 279, 258, 260, 44, 55, 167, 168 | INF, TEST; 167, 168 after 128, 146, 158, 173 |
+| MISC | 37, 172, 173, 215, 234, 235, 253, 273, 263, 279, 258, 260, 44, 55, 167, 168, 254 | INF, TEST; 167, 168 after 128, 146, 158, 173 |
 | THR: threads | 18, 21, 226's threads, thread locals, interrupts, mutexes and condition variables, 230, 120, 216 | The threads decision of a later milestone |
 
 ## Library-name collisions
@@ -202,7 +199,7 @@ which is 235's: an erratum (237 is R6RS records), so 237 has no name.
 | 100 | define-lambda-object | a | REC | S | `define-lambda-object` |  |  | `define-lambda-object`: a large `syntax-rules` sample implementation. |
 | 101 | Purely Functional Random-Access Pairs and Lists | a | LIST | S | `random-access-lists` | yes | yes | Random-access lists; exports its own `pair?`, `cons`, `car`, ... Sample implementation (R6RS) and tests. |
 | 105 | Curly-infix-expressions | a | RDR | R | — |  |  | Curly-infix: `{` is reserved by R7RS, so reading `{a + b}` changes no valid program; on with `#!curly-infix`. |
-| 106 | Basic socket interface | maintainer | — | J | — |  |  | Sockets: Truffle's Env has no socket API, so this is JDK sockets gated by `Env.isSocketIOAllowed()`, an exception to D10's "all I/O through the Env". |
+| 106 | Basic socket interface | a | IO | J | — |  |  | JDK socket channels, only when `Env.isSocketIOAllowed()` (the embedder's `IOAccess`), the one exception to D10's "all I/O through the Env"; blocking calls interruptible (D21, "The maintainer's calls"). |
 | 107 | XML reader syntax | a | RDR | R | — |  |  | XML literals `#<tag>...</tag>`: `#<` is an error in R7RS; expands into 108's constructors. |
 | 108 | Named quasi-literal constructors | a | RDR | R | — |  |  | `&name{...}`: `{` and `[` are reserved by R7RS, so no valid program reads differently. |
 | 109 | Extended string quasi-literals | a | RDR | R | — |  |  | `&{...}` string quasi-literals, after 108. |
@@ -230,7 +227,7 @@ which is 235's: an erratum (237 is R6RS records), so 237 has no name.
 | 135 | Immutable Texts | a | STR | S | — | yes | yes | Immutable texts: the sample implementation (Clinger, portable R7RS); a `TruffleString`-backed kernel later if a profile asks. Upstream tests. |
 | 136 | Extensible record types | a | REC | T | `records`² |  | yes | Extensible record types over 99's runtime. |
 | 137 | Minimal Unique Types | a | REC | S | `types` |  | yes | `make-type`: unique types over a record. |
-| 138 | Compiling Scheme programs to executables | maintainer | — | L | `compiling` |  |  | A `compile-r7rs` command that builds executables: standalone-executable tooling is deferred until it is designed with the maintainer. |
+| 138 | Compiling Scheme programs to executables | d | — | L | `compiling` |  |  | A `compile-r7rs` command that builds executables: not provided (the maintainer, 2026-11-21): standalone-executable tooling is deferred until it is designed with the maintainer. |
 | 139 | Syntax parameters | a | EXP | X | `syntax-parameters` | yes |  | Syntax parameters: `define-syntax-parameter` and `syntax-parameterize` as expander core forms (rebinding a keyword's transformer for the extent of an expansion). |
 | 140 | Immutable Strings | a | STR | J | `strings`² |  | yes | Immutable strings: `SString`'s immutable flag (literals already have it) as `istring?`; the library's own string procedures return immutable strings. |
 | 141 | Integer division | a | NUM | S | `integer-division` | yes |  | Integer division: R7RS's `floor/` and `truncate/` families re-exported, `ceiling/`, `round/`, `euclidean/`, `balanced/` added. |
@@ -280,13 +277,13 @@ which is 235's: an erratum (237 is R6RS records), so 237 has no name.
 | 197 | Pipeline Operators | a | SYN | S | `pipeline-operators` |  | yes | Pipeline operators: the sample's `syntax-rules` version. |
 | 201 | Syntactic Extensions to the Core Scheme Bindings | a | SYN | S | `syntactic-extensions` |  |  | Pattern-matching `lambda`, `let`, `let*`, `or`, `define`: the sample implementations (Guile, Racket) use `syntax-case`, so a `syntax-rules` port. |
 | 202 | Pattern-matching Variant of the and-let* Form that Supports Multiple Values | a | SYN | S | `and-let*`² |  |  | Pattern-matching `and-let*`, with 201's matcher; the same port. |
-| 203 | A Simple Picture Language in the Style of SICP | maintainer | — | J | `picture-language` |  | yes | The SICP picture language needs somewhere to draw: a terminal language has no canvas, and writing SVG to a port or file is a product choice. |
+| 203 | A Simple Picture Language in the Style of SICP | d | — | J | `picture-language` |  | yes | The SICP picture language needs somewhere to draw: a terminal language has no canvas, and writing SVG to a port or file is a product choice; not provided (the maintainer, 2026-11-21). |
 | 206 | Auxiliary Syntax Keywords | a | EXP | X | `auxiliary-syntax-keywords` |  | yes | `define-auxiliary-syntax`: auxiliary keywords are already bindings (D7); the sample implementation's `syntax-case` part is not needed. |
 | 207 | String-notated bytevectors | a | VEC | S | `bytestrings` |  | yes | Bytestring procedures (sample implementation, MIT); the `#u8"..."` syntax is in the reader group. |
 | 208 | NaN procedures | a | NUM | J | `nan` |  |  | NaN payload and sign through `Double.doubleToRawLongBits`. |
 | 209 | Enums and Enum Sets | a | HASH | S | `enums` |  | yes | Enums and enum sets; sample implementation and tests (MIT). |
 | 210 | Procedures and Syntax for Multiple Values | a | SYN | S | `multiple-values` |  | yes | Multiple-value procedures and syntax; sample implementation and tests. |
-| 211 | Scheme Macro Libraries | maintainer | EXP | X | `macros` | yes |  | `(srfi 211 syntax-rules)` re-exports R7RS's; `(srfi 211 syntax-case)` is excluded with `syntax-case`; the low-level sublibraries (`er-macro-transformer`, `ir-`, `sc-`/`rsc-`, `identifier-syntax`, `variable-transformer`) are a macro system beyond `syntax-rules`, the maintainer's call. |
+| 211 | Scheme Macro Libraries | b | EXP | X | `macros` | yes |  | `(srfi 211 syntax-rules)` re-exports R7RS's; `(srfi 211 syntax-case)` is excluded with `syntax-case`; the low-level sublibraries (`er-macro-transformer`, `ir-`, `sc-`/`rsc-`, `identifier-syntax`, `variable-transformer`) a macro system beyond `syntax-rules`, are not provided (the maintainer, 2026-11-21). |
 | 212 | Aliases | a | EXP | X | `aliases` |  | yes | `alias`: a core form binding an identifier to another's binding. |
 | 213 | Identifier Properties | d | — | — | — |  | yes | Identifier properties are read by `syntax-case` transformers (`lookup`), which the maintainer excluded. |
 | 214 | Flexvectors | a | VEC | S | `flexvectors` |  | yes | Flexvectors; sample implementation and tests. |
@@ -322,7 +319,7 @@ which is 235's: an erratum (237 is R6RS records), so 237 has no name.
 | 251 | Mixing groups of definitions with expressions within bodies | a | EXP | X | `body-mixtures` |  |  | Groups of definitions and expressions in bodies: D14 already mixes them with letrec* over the whole body, 251 scopes each group over what follows; either `(srfi 251)`'s own body forms or D14 changed to 251's semantics (a design.md change first). |
 | 252 | Property Testing | a | TEST | S | `property-testing` |  | yes | Property testing over 64, 158, 194. |
 | 253 | Data (Type-)Checking | a | MISC | S | `type-checking` |  | yes | Type checking (`check-arg`, `define-checked`); sample implementation. |
-| 254 | Ephemerons and Guardians | maintainer | — | J | — |  | yes | Ephemerons fit Java's weak references (sound, never breaking one whose value reaches its key), but a JVM can't resurrect an object, so guardians would never return one: the SRFI's "when it proves" makes that conforming and useless. Ship the library with inert guardians, or not at all. |
+| 254 | Ephemerons and Guardians | a | MISC | J | — |  | yes | Ephemerons fit Java's weak references (sound, never breaking one whose value reaches its key), but a JVM can't resurrect an object, so guardians would never return one: the SRFI's "when it proves" makes that conforming and useless. Shipped with inert guardians (the maintainer, 2026-11-21). |
 | 255 | Restarting conditions | a | REC | S | `restarting-conditions` |  | yes | Restarting conditions over 35 and `raise-continuable`; the sample uses `syntax-case`, so a port. |
 | 257 | Simple extendable pattern matcher with backtracking | a | SYN | S | — |  | yes | Extendable matcher with backtracking: the sample implementation is `syntax-rules`. |
 | 258 | Uninterned symbols | a | MISC | J | `uninterned-symbols` |  | yes | Uninterned symbols: `SSymbol`s outside the symbol table; the printer, `read`, and the prelude image's symbol records must keep them distinct. |
