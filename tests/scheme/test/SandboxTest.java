@@ -100,7 +100,8 @@ public class SandboxTest {
 
     @Test
     public void aConstrainedContextTakesTheOptionsAnEmbedderSets() {
-        try (Context context = constrained().option("scheme.LibraryPath", "/lib").option("scheme.BufferOutput", "false").option("scheme.StackSize", "8m").build()) {
+        try (Context context = constrained().option("scheme.LibraryPath", "/lib").option("scheme.BufferOutput", "false").option("scheme.InteractiveInput", "true").option("scheme.StackSize",
+                        "8m").build()) {
             assertEquals("3", eval(context, "(+ 1 2)"));
         }
         // An internal option for tests isn't one of them.
@@ -601,7 +602,8 @@ public class SandboxTest {
 
         @Test
         public void theOptionsAnEmbedderSetsWorkUnderUntrustedButThePreludeImages() {
-            try (Context context = untrusted().option("scheme.LibraryPath", "/lib").option("scheme.BufferOutput", "false").option("scheme.StackSize", "8m").build()) {
+            try (Context context = untrusted().option("scheme.LibraryPath", "/lib").option("scheme.BufferOutput", "false").option("scheme.InteractiveInput", "true").option("scheme.StackSize",
+                            "8m").build()) {
                 assertEquals("3", eval(context, "(+ 1 2)"));
             }
             // Expanded rather than restored, the standard libraries' roots would count towards

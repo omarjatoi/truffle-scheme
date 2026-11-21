@@ -134,6 +134,7 @@ launcher's `--help:languages`):
 |---|---|---|
 | `scheme.LibraryPath` | none | Directories to search for libraries, separated by the path separator. |
 | `scheme.BufferOutput` | `true` | Buffer standard output; it is written when Scheme reads standard input, writes to standard error, flushes or exits, and when control returns to Java (design.md D10). |
+| `scheme.InteractiveInput` | `false` | Standard input is a terminal: its end (Ctrl-D) ends only the read that meets it. Otherwise, once a read has returned the end, the console port stays there, and `char-ready?` is `#t` (design.md D10, "The console's end"). |
 | `scheme.StackSize` (expert) | `0` | The Java stack size of the thread the context is created on, when you know it (below). |
 
 (`scheme.PreludeImage` and `scheme.SpillDepth` are internal, for tests, and so
@@ -185,7 +186,7 @@ for code you trust but whose access to the host you want to regulate:
 `get-environment-variable` finds none; `exit` ends the context, not the
 JVM; and `java-type` finds the classes your class filter allows, with only
 their members annotated `@HostAccess.Export` (`HostAccess.CONSTRAINED`, the
-policy's default; design.md D20). `scheme.LibraryPath`, `scheme.BufferOutput` and `scheme.StackSize` can
+policy's default; design.md D20). `scheme.LibraryPath`, `scheme.BufferOutput`, `scheme.InteractiveInput` and `scheme.StackSize` can
 be set under it, and under the stricter policies below.
 
 With or without a policy, Truffle's limits stop a context that runs too long
