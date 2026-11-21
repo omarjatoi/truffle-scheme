@@ -3024,7 +3024,7 @@ Each entry: the decision, why, and what was rejected.
   | CI, no cache | 4.9 min on 7 runners (17 runner-min) | 10.3 min on 2 runners (13.7 runner-min) |
   | CI, cache from an earlier run of the same change | same | 1.7 min (all cached) |
 
-- **Bazel 9** (9.3.1, from 8.8.2; the maintainer: *"any gains from
+- **Bazel 9** (9.3.1, from 8.8.2, now 9.3.2; the maintainer: *"any gains from
   upgrading to bazel 9? if so, lets go ahead and do that"*). 9.3.1 was the
   newest 9.x at least two weeks old (9.3.2, 2026-11-05, wasn't yet).
   - *What it took.* No Starlark: the repository already loaded every rule
@@ -3100,6 +3100,19 @@ Each entry: the decision, why, and what was rejected.
     `--config=local` command and the next remote one check their actions
     against the cache again; 9.3.2 reverts it as over-eager
     (bazelbuild/bazel#32254), and is the next version once two weeks old.
+  - *9.3.2* (2026-11-05, taken 2026-11-21, the newest 9.x two weeks old;
+    9.3.3 came out 2026-11-19). A patch release with two changes, no flag
+    or Starlark change for us: it reverts 9.3.0's discarding of executed
+    actions when the remote endpoints change (above), so a `--config=local`
+    command no longer costs the next remote one its record of what ran;
+    and it fixes an occasional hang while fetching an external repository
+    (bazelbuild/bazel#32159). apple_support (2.12.0) and rules_cc (0.2.28)
+    moved with it, both two weeks old; the other modules and the Maven
+    artifacts stay: JUnit 4.13.2 is 4's last; hamcrest-core 1.3 is the
+    version it declares, and hamcrest-core 2.x and 3.0 are empty stubs
+    that depend on another artifact, `org.hamcrest:hamcrest`, a new
+    library for nothing; the lint tools stay at GraalVM's ("Other
+    versions", above).
 
 - **Platforms and C and C++ toolchains (decided in M10-01).** C and C++ are
   built with Bazel's own rules and toolchains, and which machine runs an
