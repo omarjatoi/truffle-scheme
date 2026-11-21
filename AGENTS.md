@@ -337,6 +337,6 @@ tests/scheme/test/         JUnit unit tests; add freely
 docs/                      design.md (decisions), plan.md (milestones, status block), usage.md, embedding.md,
                            truffle-guidance.md and graalvm-configuration.md (GraalVM's guidance, audited),
                            upstream.md (Truffle bugs we work around), performance-research.md,
-                           benchmarks.md (the comparative report, generated)
+                           benchmarks.md (the comparative report, generated), srfi.md (every final SRFI, D21)
 docs/examples/             programs and sources that docs/usage.md and docs/embedding.md run (the readme check)
 ```
