@@ -1905,7 +1905,7 @@ are local (bench/README.md: the load rule, `-Xmx2g`, the serial
 collector); each task that may change performance measures with
 interleaved A/B runs.
 
-- [ ] **M13-01 · The load during a measurement** *(early)*
+- [x] **M13-01 · The load during a measurement** *(early)*
   - #274's follow-up, and M12's exit: the load rule checks the 1-minute
     load only at a `bench-check --measure` run's start and end, and the
     report only before each program. M11's and M12's exits each threw away

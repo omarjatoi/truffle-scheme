@@ -422,6 +422,62 @@ class _Measured:
         self.wall_seconds = wall_seconds  # from starting the process to its exit
 
 
+# The load rule (bench/README.md "Thresholds"): a measurement made while the machine's 1-minute load
+# average passed this is left out of the thresholds, and marked in the report.
+_LOAD_LIMIT = 10
+# How often _LoadSampler reads the load average, in seconds. The kernel updates it every 5 s
+# (Linux and macOS alike), so this misses none of its values.
+_LOAD_EVERY = 1.0
+
+
+class _LoadSampler:
+    """The machine's 1-minute load average while the `with` block runs, read at its start, every
+    `every` seconds by a thread of its own, and at its end: summary() gives {start, min, max, end},
+    min and max being the lowest and the peak of every reading."""
+
+    def __init__(self, every=_LOAD_EVERY, read=lambda: os.getloadavg()[0]):
+        self._every = every
+        self._read = read
+        self._readings = []
+        self._stop = threading.Event()
+        self._thread = None
+
+    def _sample(self):
+        self._readings.append(round(self._read(), 2))
+
+    def _run(self):
+        while not self._stop.wait(self._every):
+            self._sample()
+
+    def __enter__(self):
+        self._sample()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._stop.set()
+        self._thread.join()
+        self._sample()
+        return False
+
+    def summary(self):
+        return {'start': self._readings[0], 'min': min(self._readings), 'max': max(self._readings), 'end': self._readings[-1]}
+
+
+def _merged_load(loads):
+    """One _LoadSampler summary for measurements made one after another, from theirs (in order), or
+    None without any."""
+    if not loads:
+        return None
+    return {'start': loads[0]['start'], 'min': min(load['min'] for load in loads), 'max': max(load['max'] for load in loads),
+            'end': loads[-1]['end']}
+
+
+def _load_text(load):
+    return f'{load["start"]:g} to {load["end"]:g}, peak {load["max"]:g}'
+
+
 def _gc_log_vm_args(path):
     """The JVM options that log each collection to path, a line per pause, for _heap_from_gc_log."""
     return [f'-Xlog:gc:file={path}']
@@ -794,9 +850,6 @@ def r7rs_bench_report(args):
         start = time.time()
         loads = []
         for i, program in enumerate(programs):
-            # The 1-minute load average before each program, and at the end: the report states it.
-            loads.append(round(os.getloadavg()[0], 2))
-            report['load'] = {'start': loads[0], 'max': max(loads)}
             with open(join(bench_set.dir, 'inputs', program + '.input'), encoding='utf-8') as f:
                 full = _input_count(f.read())
             count = max(1, round(full * options.scale))
@@ -807,11 +860,16 @@ def r7rs_bench_report(args):
             order = runnable[i % len(runnable):] + runnable[:i % len(runnable)] if runnable else []
             for impl in order:
                 run_count = max(1, round(count * options.interpreter_scale)) if impl.key == 'interpreter' else count
-                try:
-                    result = _run_one(impl, words, ludes.get(impl.key), bench_set, program, run_count, options, root)
-                except _ReportError as e:
-                    result = {'status': 'error', 'times': [], 'detail': str(e)}
+                # The 1-minute load average during the run (_LoadSampler), which the report gives
+                # next to its time.
+                with _LoadSampler() as sampler:
+                    try:
+                        result = _run_one(impl, words, ludes.get(impl.key), bench_set, program, run_count, options, root)
+                    except _ReportError as e:
+                        result = {'status': 'error', 'times': [], 'detail': str(e)}
                 result['count'] = run_count
+                result['load'] = sampler.summary()
+                loads.append(result['load'])
                 if result['status'] == 'ok':
                     # The comparable number: the first (or only) run in a fresh process, as in
                     # ecraven's tables; the interpreter's scaled up to the count the rest ran.
@@ -823,11 +881,15 @@ def r7rs_bench_report(args):
                 entry['results'][impl.key] = result
                 shown = f'{result["seconds"]:.3f}s' if result['status'] == 'ok' else result['status']
                 log(f'bench-report: [{i + 1}/{len(programs)}, {(time.time() - start) / 60:.0f} min] '
-                       f'{program} on {impl.title} (count {run_count}): {shown}')
+                       f'{program} on {impl.title} (count {run_count}): {shown}, 1-minute load {_load_text(result["load"])}')
+            entry['load'] = _merged_load([result['load'] for result in entry['results'].values()])
+            if loads:
+                report['load'] = {'start': loads[0]['start'], 'max': max(load['max'] for load in loads)}
             _write_json(report, options.json)
         report['minutes'] = round((time.time() - start) / 60, 1)
-        loads.append(round(os.getloadavg()[0], 2))
-        report['load'] = {'start': loads[0], 'max': max(loads), 'end': loads[-1]}
+        end = round(os.getloadavg()[0], 2)
+        report['load'] = {'start': loads[0]['start'] if loads else end, 'max': max([end] + [load['max'] for load in loads]),
+                          'end': end}
         _write_json(report, options.json)
         _write_report_markdown(report, options.output)
         log(f'bench-report: wrote {options.output} and {options.json}')
@@ -949,9 +1011,15 @@ def _write_report_markdown(report, path):
             'Our JVMs run with the default heap limits (no `-Xmx`), so theirs is as much as the JVM\'s default '
             'ergonomics let the heap grow.'))
     load = report.get('load')
+    # Since M13-01, the load during each run, next to its time; before, only before each program.
+    sampled = any('load' in entry for entry in programs.values())
     if load:
-        out(f'- The machine\'s 1-minute load average: {load["start"]:g} at the start, at most {load["max"]:g} before a program'
-            + (f', {load["end"]:g} at the end' if 'end' in load else '') + '.')
+        out(f'- The machine\'s 1-minute load average: {load["start"]:g} at the start, at most {load["max"]:g} '
+            + ('during a run' if sampled else 'before a program')
+            + (f', {load["end"]:g} at the end' if 'end' in load else '') + '.'
+            + (f' Read every {_LOAD_EVERY:g} s during each run; the Time table gives it for each program, and marks a run '
+               f'during which it passed {_LOAD_LIMIT} (bench/README.md "Thresholds"), whose time the load may have stretched.'
+               if sampled else ''))
     out('')
     out('## Summary')
     out('')
@@ -987,10 +1055,12 @@ def _write_report_markdown(report, path):
     out('')
     out('## Time')
     out('')
-    out('Seconds for the count, and in parentheses the time relative to the fastest; the fastest is in bold.')
+    out('Seconds for the count, and in parentheses the time relative to the fastest; the fastest is in bold.'
+        + (f' The last column is the machine\'s 1-minute load average during the program\'s runs, lowest–highest; ‡ marks '
+           f'a run during which it passed {_LOAD_LIMIT}.' if sampled else ''))
     out('')
-    out('| Program | Count | ' + ' | '.join(title for _, _, title in columns) + ' |')
-    out('|---|--:|' + '--:|' * len(columns))
+    out('| Program | Count | ' + ' | '.join(title for _, _, title in columns) + ' |' + (' 1-minute load |' if sampled else ''))
+    out('|---|--:|' + '--:|' * len(columns) + ('--:|' if sampled else ''))
     for program, entry in programs.items():
         cells = []
         for key, field, _ in columns:
@@ -1002,8 +1072,13 @@ def _write_report_markdown(report, path):
             else:
                 t, r = result[field], ratio(program, key, field)
                 mark = '†' if key == 'interpreter' and result['count'] != entry['count'] else ''
+                if result.get('load', {}).get('max', 0) > _LOAD_LIMIT:
+                    mark += '‡'
                 text = f'{t:.2f}{mark} ({r:.1f})'
                 cells.append(f'**{text}**' if r == 1.0 and field == 'seconds' else text)
+        if sampled:
+            load = entry.get('load')
+            cells.append(f'{load["min"]:g}–{load["max"]:g}' if load else '')
         out(f'| {program} | {entry["count"]} | ' + ' | '.join(cells) + ' |')
     out('')
     out('## Peak memory')
@@ -1255,8 +1330,43 @@ def _matching(run, case):
     return 'metric_ms' in result and result['workload'] == case.workload()
 
 
-def _update_thresholds(runs, cases, note):
-    """Rewrites bench/thresholds.json's entries for `cases` from the measurement files `runs`."""
+def _load_rule(runs, names):
+    """The load rule (bench/README.md "Thresholds") on bench-check's runs (named `names`, in the
+    log): (the runs to use, what the thresholds' note says of it). A run is left out if its 1-minute
+    load passed _LOAD_LIMIT while it ran: its `load.max`, the peak of the readings `--measure` takes
+    during each benchmark (_LoadSampler). A run from before M13-01 has none; it is kept, and the note
+    says so."""
+    kept, left_out, unrecorded = [], [], 0
+    for run, name in zip(runs, names):
+        peak = (run.get('load') or {}).get('max')
+        if peak is not None and peak > _LOAD_LIMIT:
+            left_out.append(peak)
+            log(f'bench-check: left out {name}: the 1-minute load passed {_LOAD_LIMIT} during it (peak {peak:g})')
+            continue
+        unrecorded += peak is None
+        kept.append(run)
+    rule = f'a 1-minute load above {_LOAD_LIMIT} during a run, read every {_LOAD_EVERY:g} s'
+    if left_out:
+        parts = [f'{len(left_out)} of {len(runs)} runs left out by the load rule ({rule}): peaks '
+                 + ', '.join(f'{peak:g}' for peak in left_out)]
+    else:
+        parts = [f'no run left out by the load rule ({rule})']
+    peaks = [run['load']['max'] for run in kept if (run.get('load') or {}).get('max') is not None]
+    if peaks:
+        parts.append((f'the {len(peaks)} runs used peaked at ' if len(peaks) > 1 else 'the run used peaked at ')
+                     + (f'{min(peaks):g}-{max(peaks):g}' if min(peaks) < max(peaks) else f'{max(peaks):g}'))
+    if unrecorded:
+        parts.append(f'{unrecorded} run(s) recorded no load (measured before M13-01), so the rule could not check them')
+    return kept, '; '.join(parts)
+
+
+def _update_thresholds(runs, cases, note, names=None):
+    """Rewrites bench/thresholds.json's entries for `cases` from the measurement files `runs`
+    (named `names` in the log), less those the load rule leaves out (_load_rule)."""
+    runs, load_note = _load_rule(runs, names or [f'run {i + 1}' for i in range(len(runs))])
+    if not runs:
+        fail(f'bench-check: every run passed a 1-minute load of {_LOAD_LIMIT}: measure again while the machine is quieter')
+    note = f'{note.rstrip(". ")}. {load_note[0].upper()}{load_note[1:]}' if note else load_note[0].upper() + load_note[1:]
     thresholds = _read_thresholds()
     entries = thresholds.get('benchmarks', {})
     for case in cases:
@@ -1336,22 +1446,32 @@ def r7rs_bench_check(args):
         for path in options.sources:
             with open(path, encoding='utf-8') as f:
                 runs.append(json.load(f))
-        _update_thresholds(runs, cases, options.note)
+        _update_thresholds(runs, cases, options.note, options.sources)
         return 0
+
+    def run_case(case):
+        """_run_check_case, with the 1-minute load during it (_LoadSampler) as its `load`."""
+        with _LoadSampler() as sampler:
+            result = _run_check_case(case, options.timeout)
+        result['load'] = sampler.summary()
+        return result
 
     def measure():
         results = {}
         for i, case in enumerate(cases):
-            result = _run_check_case(case, options.timeout)
+            result = run_case(case)
             result['workload'] = case.workload()
             results[case.key] = result
             shown = f'{result["metric_ms"]:.1f} ms' if 'metric_ms' in result else 'ERROR ' + result['error']
-            log(f'bench-check: [{i + 1}/{len(cases)}] {case.key}: {shown}')
+            log(f'bench-check: [{i + 1}/{len(cases)}] {case.key}: {shown}, 1-minute load {_load_text(result["load"])}')
         return results
 
     def measurement(results):
+        # The run's load: from its first benchmark's start to its last's end, and the peak of every
+        # reading, which --update's load rule checks.
         return {'host': _host_description(), 'platform': _bench_platform(), 'commit': _git_commit(),
-                'date': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M UTC'), 'results': results}
+                'date': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),
+                'load': _merged_load([result['load'] for result in results.values()]), 'results': results}
 
     if options.update:
         runs = []
@@ -1397,7 +1517,8 @@ def r7rs_bench_check(args):
             while status != 'ok' and enforced and tries < options.retries:
                 tries += 1
                 log(f'bench-check: {case.key}: {why}: retry {tries} of {options.retries}')
-                again = _run_check_case(case, options.timeout)
+                again = run_case(case)
+                result['load'] = _merged_load([result['load'], again['load']])
                 result.setdefault('retries_ms', []).append(again.get('metric_ms'))
                 if again.get('metric_ms') is not None and again['metric_ms'] < result['metric_ms']:
                     result['metric_ms'], result['samples_ms'] = again['metric_ms'], again['samples_ms']
@@ -1414,8 +1535,9 @@ def r7rs_bench_check(args):
     lines = [f'Thresholds measured on {measured_on}; this is {_bench_platform()}: '
              + ('enforced.' if enforced else 'not enforced (`--enforce` to).'), '',
              f'Machine factor (median of measured / baseline): {f"{factor:.2f}" if factor else "none (too few benchmarks)"}', '',
-             '| Benchmark | Group | Baseline (ms) | Threshold (ms) | Measured (ms) | ×baseline | Adjusted ×baseline | Adjusted threshold | Status |',
-             '|---|---|--:|--:|--:|--:|--:|--:|---|']
+             '| Benchmark | Group | Baseline (ms) | Threshold (ms) | Measured (ms) | ×baseline | Adjusted ×baseline | Adjusted threshold '
+             '| Peak load | Status |',
+             '|---|---|--:|--:|--:|--:|--:|--:|--:|---|']
     for case, result, entry, status in rows:
         measured = result.get('metric_ms')
         known = entry is not None and measured is not None
@@ -1423,7 +1545,11 @@ def r7rs_bench_check(args):
         adjusted = f'{measured / entry["baseline_ms"] / factor:.2f}' if known and factor else ''
         lines.append(f'| {case.key} | {case.group} | {entry["baseline_ms"] if entry else ""} | {entry["threshold_ms"] if entry else ""} '
                      f'| {measured if measured is not None else ""} | {ratio} | {adjusted} '
-                     f'| {entry.get("adjusted_threshold", "") if entry else ""} | {status} |')
+                     f'| {entry.get("adjusted_threshold", "") if entry else ""} | {result["load"]["max"]:g} | {status} |')
+    loaded = [case.key for case, result, _, _ in rows if result['load']['max'] > _LOAD_LIMIT]
+    if loaded:
+        lines += ['', f'The 1-minute load passed {_LOAD_LIMIT} during {", ".join(loaded)} (Peak load): their times may be the '
+                  'load\'s, not the code\'s (bench/README.md "Thresholds").']
     log('\n'.join(lines))
     if options.markdown:
         with open(options.markdown, 'a', encoding='utf-8') as f:

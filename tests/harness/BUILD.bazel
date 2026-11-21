@@ -4,6 +4,7 @@ package(default_visibility = ["//visibility:public"])
 
 exports_files([
     "check_bench_gc.py",
+    "check_bench_load.py",
     "check_compile_bound_native.py",
     "check_launcher.py",
     "check_launcher_vm.py",
