@@ -1875,3 +1875,240 @@ Max) passes the same both interpreted and with `--compile`;
 `//tests:launcher_vm_native` and `//tests:compile_bound_native` pass, as does
 `//tests:launcher_vm_native` for this Mac
 (`--platforms=//bazel/platforms:macos_arm64`). M13 is not drafted here.
+
+## M13 · Calls across compilations, and what M12 left
+
+What M12's exit (#304, `docs/benchmarks.md` at `21be262a34b8`) and the
+follow-ups of M12's PRs (#276-#300) left: the argument arrays and
+`TailCall`s of calls Truffle doesn't inline, now the largest cost of
+`sboyer`, `graphs` and `compiler` (#298), indirect calls' argument
+profiling (D17), `pi`'s and `chudnovsky`'s `BigInteger` division (#298),
+the report's worst ratios after those (`compiler`, `matrix`, `dynamic`),
+what got slower over M12 (`bench-check`'s `peval`, `fibc` and `startup`,
+and `dynamic` after #297), stepping over a `raise` that a `guard` catches
+(#299), complex division's dividend and `sqrt`'s infinities (#280), the
+console's end of file (#284), and the load rule's blind spot inside a run
+(#274, and M12's exit, which also threw away a set of runs). Performance
+comes first on the JIT and the native image (design.md's preamble): tasks
+measure the JIT's and the native launcher's first runs and steady state,
+and none sets an interpreter-only target, though the interpreter must not
+become slow. Not here: memory (the JIT launcher's peak RSS, the collector's
+policy for large heaps, M12-04), error messages, stack traces through
+continuations (#283) and long fuzzing campaigns, which are M14's; SRFIs,
+M15's; threads, M16's; R7RS-large (no `(scheme list)`, no `syntax-case`);
+build and test plumbing (path mapping between this Mac's and Linux's Java
+compiles, #286; a test case per conformance test, #281; an unpacked isolate
+library for embedders, #290); and, the maintainer's to decide, the CI
+image (#232), GraalVM 25.6, and shipping Insight and the heap dump tool.
+Filing upstream issues (docs/upstream.md) stays a human's call. Benchmarks
+are local (bench/README.md: the load rule, `-Xmx2g`, the serial
+collector); each task that may change performance measures with
+interleaved A/B runs.
+
+- [ ] **M13-01 · The load during a measurement** *(early)*
+  - #274's follow-up, and M12's exit: the load rule checks the 1-minute
+    load only at a `bench-check --measure` run's start and end, and the
+    report only before each program. M11's and M12's exits each threw away
+    a set of 12 runs in which one to three benchmarks took 1.3-2.4 times
+    their median at a load under 10 at both ends (M12's: `triangl` 53.6 ms
+    against 28.6). M12's report's native `pi` took 2.6 times M11's, and
+    three re-runs at a load under 7 took what M11's did (#304); nothing in
+    the report tells the two apart.
+  - **Done when** `bench-check --measure` samples the load during each
+    benchmark and records its peak in the run's file, `--update` leaves out
+    a run whose peak passed 10 and says so in the note it writes, and the
+    report records the load around each program's runs next to its
+    result, with tests of the harness (`//tests:tools` or a Python test of
+    `bench.py`) and bench/README.md "Thresholds" saying what is checked.
+- [ ] **M13-02 · Complex division's dividend, and `sqrt`'s infinities** *(early)*
+  - #280's follow-ups, against R7RS §6.2 (with its errata), C99 Annex G
+    and IEEE 754. Numbers area only (AGENTS.md "Areas").
+  - `_Cdivd` scales only the divisor, so the dividend's products can still
+    overflow or go subnormal: `(/ (make-rectangular 1e308 1e308) 1.+1.i)`
+    is +inf.0+0.0i (1e308+0.0i is the quotient), and
+    `(/ (make-rectangular 1e-310 1e-310) (make-rectangular 3e-310
+    4e-310))` is 0.28000000000000114-0.04000000000000625i where the
+    nearest is 0.28-0.04i.
+  - `(sqrt (make-rectangular -inf.0 1.))` is +nan.0+inf.0i, where C99's
+    csqrt (G.6.4.2) gives +0.0+inf.0i. Accuracy near the cuts is limited
+    too: `sqrt`'s (r − x)/2, `atan`'s difference of logarithms and `acos`'s
+    π/2 − asin z round or cancel (`(acos 2.-1.i)`'s real part is an ulp
+    off); Kahan's algorithms would fix it but change every value's bits.
+  - chibi-scheme crashes (SIGSEGV) on `(atan +2.i)`: a row in
+    tests/fuzz/README.md's table of its departures (M12-02's format).
+  - **Done when** each has a test in `NumbersTest` and, where chibi-scheme
+    agrees, a `tests/diff/numbers-*.scm` case; division scales the
+    dividend too (or design.md D1 says why not, with the cases it leaves);
+    `sqrt`, `exp`, `log` and the inverse functions give G.6's special
+    values (a table in the test), and D1 records what follows C99 and
+    what R7RS's text overrides; Kahan's formulas near the cuts are
+    measured (values changed, speed) and taken or recorded in D1;
+    `bench-check` passes.
+- [ ] **M13-03 · `char-ready?` at the console's end of file** *(early)*
+  - #284's follow-up: at the end of piped input, `char-ready?` on the
+    console is `#f`, since `available()` is 0 and the port can't tell the
+    end from a pause. R7RS §6.13.2: *"If port is at end of file, then
+    char-ready? returns #t"*. Answering `#t` once a read has returned the
+    end needs the console's end to be sticky, and then a `read-char` after
+    Ctrl-D at a terminal wouldn't wait for more input as it does today.
+  - **Done when** design.md D10 records whether the console's end is
+    sticky, with what other implementations do (chibi-scheme, Chez,
+    Guile) and R7RS's text, and `IoTest` covers `char-ready?` and
+    `read-char` after the end of piped input, and after Ctrl-D on a
+    terminal if the decision distinguishes them.
+- [ ] **M13-04 · A call protocol for calls Truffle doesn't inline**
+  - #298's follow-up (bench/README.md "Where the slowest programs spend
+    their time"): where a callee isn't inlined, each call allocates its
+    argument array, and each tail call out of it a `TailCall` that crosses
+    the call: in JFR's allocation samples 59% and 25% of `sboyer`'s 9 GB an
+    iteration, 53% and 24% of `graphs`', and 2.3 of `compiler`'s 3.7 GB.
+    M12's report, steady state ×fastest: `sboyer` 4.6 (JIT) and 6.3
+    (native), `graphs` 4.2 and 3.8, `compiler` 5.8 and 7.0. *Rejected:*
+    one mutable `TailCall` per context (stores partial escape analysis
+    can't remove where the callee is inlined: `deriv` 1.3 times as long).
+  - Candidates, each with what Truffle offers first: the tail call's
+    arguments in the callee's own argument array when its arity allows
+    and the array can't be reached (a captured frame's copy, rule 3); the
+    trampoline's argument array reused across a loop's calls; a root that
+    isn't inlined running its tail calls in a trampoline of its own, so
+    that no `TailCall` crosses the call (rule 5's constant space still
+    holding); and `sboyer`'s `Long`s (12%: a global counter incremented
+    past the box cache).
+  - A design.md decision ("Calls and tail calls") first, in a PR of its
+    own (AGENTS.md), with the candidates measured.
+  - **Done when** the decision is recorded and applied if taken: `sboyer`,
+    `graphs`, `compiler`, `deriv`, `cpstak`, `ctak` and `fibc`, JIT and
+    native launcher, first runs and steady state, interleaved A/B with an
+    A/A pair; allocation per iteration before and after (JFR); every
+    torture mode passes, `bench-check` passes (re-measured if a threshold
+    is left far too loose).
+- [ ] **M13-05 · Indirect calls' argument profiling**
+  - D17 ("The native launcher's steady state"): an indirect call runs
+    `OptimizedCallTarget.profileArguments` behind a boundary and, natively,
+    `compiledIndirectEntryReturnObject`'s check of the arguments against
+    the callee's profile: about 30% of `graphs`' native steady state
+    before M12-05's cache of 12 took its two hottest sites direct.
+    `--engine.ArgumentTypeSpeculation=false` halves `fib` and `tak`
+    natively, so the default stays.
+  - **Done when** the report's programs are counted for the indirect calls
+    they still make in the steady state (per site: a trace or a counter in
+    a test build), and those whose calls cost more than a few percent get
+    fewer megamorphic sites (splitting the procedures they are in, as
+    Truffle does when a site reports polymorphism) or a cheaper path, with
+    `graphs` and the programs changed measured JIT and native, first runs
+    and steady state, interleaved; or what is left is recorded in D17 with
+    its evidence.
+- [ ] **M13-06 · `BigInteger` division for `pi` and `chudnovsky`**
+  - #298's follow-up: 87% of `pi`'s JFR samples are in `java.math`, 67% in
+    `MutableBigInteger.mulsub` and `divideMagnitude`, the JDK's schoolbook
+    division, which it uses unless the divisor has 80 words and the
+    quotient 40 (Burnikel-Ziegler); `chudnovsky`'s 55%, half of it
+    division. M12's report: `pi` 7.5 ×fastest in the JIT's steady state
+    (8.4 natively), `chudnovsky` 3.3; first runs 20.0 and 22.1. Guile
+    divides with GMP. Numbers area only (AGENTS.md "Areas").
+  - Candidates: Burnikel-Ziegler or a Newton reciprocal below the JDK's
+    thresholds, at the sizes these programs divide (measured first); exact
+    division where the divisor is known to divide; no new library
+    (AGENTS.md "Never").
+  - **Done when** the operand sizes of the two programs' divisions are
+    recorded, and a faster division is kept with `NumbersTest` checks
+    against `BigInteger.divideAndRemainder` on random operands at and
+    around each threshold, `pi`, `chudnovsky` and `bench-check` measured
+    JIT and native, interleaved; or design.md D1 records why the JDK's
+    stays, with the measurements.
+- [ ] **M13-07 · What got slower over M12**
+  - M12's exit: `bench-check`'s baselines, both sets of 12 runs, were
+    above M11's for `peval` (86.7 → 95.7 ms, 1.10), `fibc` (54.1 → 57.6,
+    1.07) and `startup` (283.6 → 303.6, 1.07; M10's 267.6), at a load of
+    3.4 to 6.1; and `dynamic`'s steady state rose over M12-05 (#295,
+    #297: 0.261 → 0.267 s on the JVM, 0.401 → 0.414 natively, in
+    bench/README.md's table), unexplained.
+  - **Done when** each is bisected over M12's merges (#277-#299) with
+    copies of each build, interleaved, and the cause found; fixed, with
+    the program measured before and after, or recorded with its evidence
+    (bench/README.md, design.md where a decision traded it); `bench-check`
+    re-measured for what changed.
+- [ ] **M13-08 · `compiler`, `matrix` and `dynamic`**
+  - M12's report, after `pi`'s and the call protocol's programs: steady
+    state ×fastest `compiler` 5.8 (JIT) and 7.0 (native), `matrix` 4.3
+    and 5.3, `dynamic` 2.4 and 3.6; first runs `compiler` 15.9 and 15.6,
+    `matrix` 10.2 and 8.5, `dynamic` 9.4 and 8.5. M12-05 found flat
+    profiles in the steady state (`compiler`'s `declaration-value`, 8%, an association
+    list's walk; `matrix`'s row operations) and the interpreter's time
+    until compilation in the first runs. The native launcher's steady
+    state is behind the JVM's on all three (`compiler` 0.66 against 0.55 s,
+    `dynamic` 0.43 against 0.29).
+  - **Done when** the native gap of each is found as M12-04 found
+    `parsing`'s (`sample` on an image with symbols, compilation and
+    deoptimization traces), and fixed or recorded in D17; the steady
+    states' hottest compilations are read (IGV or the schedule as text)
+    and what they spend their time on recorded in bench/README.md; fixes
+    kept with a test and interleaved A/B runs, JIT and native, first runs
+    and steady state.
+- [ ] **M13-09 · Stepping over a `raise` that a `guard` catches**
+  - #299's follow-up: `guard` captures a composable continuation
+    (DELIMITED, D4) and drops it when a clause catches. That isn't an
+    abandoning capture, so the frames it suspends still yield, and a step
+    over a `raise` that a `guard` catches most likely still waits for a
+    resumption that never comes (unchecked). The same holds for any
+    DELIMITED capture the prelude drops.
+  - **Done when** a `DebuggerTest` steps over a `raise` that a `guard`
+    catches and stops at the next statement, the frames a dropped capture
+    leaves ending for tools as D13's "Ending an escaped frame for tools"
+    does; every torture mode passes; a loop of caught raises, JIT and
+    native, first runs and steady state, unchanged or faster (interleaved
+    A/B), and `bench-check` passes.
+
+**Exit:** every task above is done, or its note records what was measured and
+why it isn't; `docs/benchmarks.md` and `bench/thresholds.json` are regenerated
+on the final M13 code; both suites pass in every mode, including through the
+native launcher.
+
+## M14 · Memory, errors and robustness
+
+**Exit:** the JIT launcher's peak memory (a median of 954 MB in M12's
+report, against the native launcher's 189) is measured where it goes, and
+what is ours is cut, with the report's median peak RSS before and after; an
+audit of error messages, of stack traces through continuations and the
+prelude (#283: an `exit`'s trace under a prompt's pending frames), and of
+source locations in macro-expanded code, with what it finds fixed or
+recorded in design.md D8 and D13; long differential-fuzzing campaigns
+against chibi-scheme (tests/fuzz/README.md), interpreted, compiled, under
+both tortures and through the native launcher, their mismatches fixed or
+listed among chibi's departures; and Nix packages for the launcher and the
+native launcher, as the flake's package outputs only (no CI or release
+pipeline); `docs/benchmarks.md` and `bench/thresholds.json` regenerated on
+the final M14 code; both suites pass in every mode, including through the
+native launcher.
+
+## M15 · SRFIs
+
+**Exit:** every final SRFI (not draft or withdrawn) that design.md D21
+(the SRFI decision, with docs/srfi.md's survey) classes as one to
+implement, to re-export from R7RS or to provide though superseded, apart
+from its threads group (M16), is a library under D21's names, each with its
+reference tests (or ours where it has none) passing interpreted, compiled,
+under both tortures and through the native launcher; R7RS-large stays out
+(no `(scheme list)`, no `syntax-case`), as D21 says; `docs/benchmarks.md`
+and `bench/thresholds.json` regenerated on the final M15 code; both suites
+pass in every mode, including through the native launcher.
+
+## M16 · Threads
+
+Starts with a design.md decision and an audit of the runtime's shared
+mutable state (global cells and their assumptions, caches, the prelude's
+and the ports' state, continuations' segments). Threads come from Truffle's
+own thread support (`Env.newTruffleThreadBuilder`,
+`isThreadAccessAllowed`, and a single-threaded `Assumption` invalidated in
+`initializeMultiThreading`), so that a single-threaded program pays nothing
+on the JIT and the native launcher.
+
+**Exit:** the decision and the audit are in design.md; D21's threads group
+(SRFI 18, 21, 120, 216, 230, and 226's thread libraries) are libraries,
+with their tests passing interpreted, compiled, under both tortures and
+through the native launcher; single-threaded programs are no slower, measured interleaved
+(the JIT's and the native launcher's first runs and steady state on the
+report's subset, and `bench-check`); every torture mode passes;
+`docs/benchmarks.md` and `bench/thresholds.json` regenerated on the final
+M16 code; both suites pass in every mode, including through the native
+launcher.
