@@ -1745,8 +1745,8 @@ public class IoTest {
             for (int most : mosts) {
                 String what = bytes.length + " bytes, at most " + most + " a read";
                 ShortReadStream in = new ShortReadStream(bytes, most);
-                readMixed(what, SPort.consoleInput(in), in, jdkDecodedPort(bytes), random);
-                SPort port = SPort.consoleInput(new ShortReadStream(bytes, most));
+                readMixed(what, SPort.consoleInput(in, false), in, jdkDecodedPort(bytes), random);
+                SPort port = SPort.consoleInput(new ShortReadStream(bytes, most), false);
                 for (int c : cps) {
                     assertEquals(what, c, port.readChar());
                 }
@@ -1758,9 +1758,12 @@ public class IoTest {
     /**
      * Standard input as a pipe delivers it: each write arrives on its own, a read returns at most
      * what is left of the first write not read yet, and a read with nothing written would block,
-     * which fails the test. {@link #finish} ends the input.
+     * which fails the test. {@link #finish} ends the input; {@link #typeEnd} is a terminal's
+     * Ctrl-D, which ends only the read that meets it.
      */
     private static final class SlowPipe extends InputStream {
+        /** A Ctrl-D among the writes ({@link #typeEnd}). */
+        private static final byte[] END = new byte[0];
         private final ArrayDeque<byte[]> writes = new ArrayDeque<>();
         /** How much of the first write has been read. */
         private int pos;
@@ -1789,6 +1792,11 @@ public class IoTest {
             finished = true;
         }
 
+        /** Ctrl-D typed at a terminal, after what was written before it: one read returns -1. */
+        void typeEnd() {
+            writes.add(END);
+        }
+
         @Override
         public int read() {
             byte[] one = new byte[1];
@@ -1807,6 +1815,10 @@ public class IoTest {
                 }
                 throw new AssertionError("the port read the pipe with nothing written: it would block");
             }
+            if (first == END) {
+                writes.poll();
+                return -1;
+            }
             int n = Math.min(len, first.length - pos);
             System.arraycopy(first, pos, b, off, n);
             pos += n;
@@ -1821,6 +1833,9 @@ public class IoTest {
         public int available() {
             int n = -pos;
             for (byte[] w : writes) {
+                if (w == END) {
+                    break;
+                }
                 n += w.length;
             }
             return Math.max(n, 0);
@@ -1842,7 +1857,7 @@ public class IoTest {
             int[] expected = jdkDecoded(bytes).codePoints().toArray();
             String what = bytes.length + " bytes";
             SlowPipe pipe = new SlowPipe();
-            SPort port = SPort.consoleInput(pipe);
+            SPort port = SPort.consoleInput(pipe, false);
             CharsetDecoder decoder = StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPLACE).onUnmappableCharacter(CodingErrorAction.REPLACE);
             ByteBuffer pending = ByteBuffer.allocate(bytes.length);
             // The characters the bytes written so far make, and how many of them have been read.
@@ -1901,7 +1916,7 @@ public class IoTest {
     @Test
     public void consoleInputReadsOnlyWhatItNeeds() {
         SlowPipe pipe = new SlowPipe();
-        SPort port = SPort.consoleInput(pipe);
+        SPort port = SPort.consoleInput(pipe, false);
         pipe.write("a");
         assertEquals('a', port.readChar());
         assertFalse(port.ready());
@@ -1965,6 +1980,108 @@ public class IoTest {
         pipe.finish();
         assertEquals("cut by the end", 0xFFFD, port.readChar());
         assertEquals(-1, port.readChar());
+    }
+
+    /**
+     * design.md D10, "The console's end": once a read of standard input has returned its end, the
+     * console port stays there (R7RS §6.13.2: "If the port is at end of file then char-ready?
+     * returns #t", and the next read-char doesn't hang). Every later read returns the end without
+     * reading the stream: here a stream that would give more after its end. Before a read has
+     * returned the end, the port can't tell it from a pipe that waits ({@code available()} is 0).
+     */
+    @Test
+    public void consoleEndIsStickyUnlessStandardInputIsATerminal() {
+        SlowPipe pipe = new SlowPipe();
+        SPort port = SPort.consoleInput(pipe, false);
+        pipe.write("ab");
+        pipe.typeEnd();
+        pipe.write("never read");
+        assertEquals('a', port.readChar());
+        assertEquals('b', port.readChar());
+        assertFalse("no read has returned the end yet", port.ready());
+        assertEquals(-1, port.readChar());
+        assertTrue("at the end", port.ready());
+        assertEquals(-1, port.peekChar());
+        assertTrue(port.ready());
+        assertEquals(-1, port.readChar());
+        assertTrue(port.ready());
+        assertEquals(SConstant.EOF, port.readLine());
+        assertEquals(SConstant.EOF, port.readString(3));
+        assertEquals(-1, port.readChar());
+        assertTrue(port.ready());
+        // A sequence that the end cuts is still read, as one U+FFFD, then the end stays.
+        SlowPipe cut = new SlowPipe();
+        SPort cutPort = SPort.consoleInput(cut, false);
+        cut.writeBytes('x', 0xE4, 0xB8);
+        cut.typeEnd();
+        cut.write("never read");
+        assertReadString("cut by the end", "x�", cutPort.readString(5));
+        assertTrue(cutPort.ready());
+        assertEquals(-1, cutPort.readChar());
+    }
+
+    /**
+     * design.md D10, "The console's end": on a terminal ({@code scheme.InteractiveInput}), Ctrl-D
+     * ends only the read that meets it. {@code char-ready?} is then #f, without reading (it would
+     * wait), until more is typed, and the next read returns what is typed next. A {@code peek-char}
+     * that meets Ctrl-D holds the eof object: {@code char-ready?} is #t, and the {@code read-char}
+     * after it returns the eof object without reading.
+     */
+    @Test
+    public void consoleEndOnATerminalEndsOneRead() {
+        SlowPipe terminal = new SlowPipe();
+        SPort port = SPort.consoleInput(terminal, true);
+        terminal.write("ab\n");
+        terminal.typeEnd();
+        assertEquals('a', port.readChar());
+        assertEquals('b', port.readChar());
+        assertEquals('\n', port.readChar());
+        assertEquals(-1, port.readChar());
+        assertFalse("after Ctrl-D, nothing typed", port.ready());
+        terminal.write("x\n");
+        assertTrue(port.ready());
+        assertEquals('x', port.readChar());
+        assertReadString("the rest of the line", "", port.readLine());
+        terminal.typeEnd();
+        assertEquals(SConstant.EOF, port.readLine());
+        assertFalse(port.ready());
+        terminal.write("more\n");
+        assertReadString("the line after Ctrl-D", "more", port.readLine());
+        terminal.typeEnd();
+        assertEquals(-1, port.peekChar());
+        assertTrue("peek-char holds the eof object", port.ready());
+        assertEquals(-1, port.readChar());
+        assertFalse(port.ready());
+        terminal.typeEnd();
+        assertEquals(SConstant.EOF, port.readString(4));
+        terminal.write("yz");
+        assertReadString("read-string after Ctrl-D", "yz", port.readString(2));
+        assertFalse(port.ready());
+    }
+
+    /**
+     * The console port's end through a context: sticky by default (an embedder's stream, a pipe),
+     * one read's on a terminal, which {@code scheme.InteractiveInput} says the stream is (the
+     * launcher sets it when stdin and stdout are a terminal).
+     */
+    @Test
+    public void theConsoleEndFollowsTheInteractiveInputOption() {
+        String program = "(define (r) (let ((c (read-char))) (if (eof-object? c) 'eof c))) (list (r) (char-ready?) (r) (char-ready?) (r))";
+        for (String interactive : new String[]{null, "false", "true"}) {
+            SlowPipe in = new SlowPipe();
+            in.write("a");
+            in.typeEnd();
+            in.write("b");
+            Context.Builder builder = Context.newBuilder(SCHEME).in(in);
+            if (interactive != null) {
+                builder.option("scheme.InteractiveInput", interactive);
+            }
+            try (Context context = builder.build()) {
+                // On a terminal, what is typed after Ctrl-D is ready, and read; elsewhere the end stays.
+                String expected = "true".equals(interactive) ? "(#\\a #f eof #t #\\b)" : "(#\\a #f eof #t eof)";
+                assertEquals("scheme.InteractiveInput=" + interactive, expected, context.eval(SCHEME, program).toString());
+            }
+        }
     }
 
     /**

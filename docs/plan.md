@@ -1944,7 +1944,7 @@ interleaved A/B runs.
     what R7RS's text overrides; Kahan's formulas near the cuts are
     measured (values changed, speed) and taken or recorded in D1;
     `bench-check` passes.
-- [ ] **M13-03 · `char-ready?` at the console's end of file** *(early)*
+- [x] **M13-03 · `char-ready?` at the console's end of file** *(early)*
   - #284's follow-up: at the end of piped input, `char-ready?` on the
     console is `#f`, since `available()` is 0 and the port can't tell the
     end from a pause. R7RS §6.13.2: *"If port is at end of file, then

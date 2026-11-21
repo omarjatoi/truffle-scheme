@@ -51,7 +51,7 @@ public class LanguageOptionsTest {
                 assertFalse(descriptor.getName(), descriptor.getUsageSyntax() == null || descriptor.getUsageSyntax().isEmpty());
             }
         }
-        assertTrue(names.toString(), names.containsAll(List.of("scheme.LibraryPath", "scheme.BufferOutput", "scheme.StackSize", "scheme.PreludeImage", "scheme.SpillDepth",
+        assertTrue(names.toString(), names.containsAll(List.of("scheme.LibraryPath", "scheme.BufferOutput", "scheme.InteractiveInput", "scheme.StackSize", "scheme.PreludeImage", "scheme.SpillDepth",
                         "scheme.Torture", "scheme.PreludeImageFile", "scheme.PreludeImageWrite")));
     }
 
@@ -100,6 +100,7 @@ public class LanguageOptionsTest {
                         {"scheme.SpillDepth", "-5"},
                         {"scheme.SpillDepth", "deep"},
                         {"scheme.BufferOutput", "maybe"},
+                        {"scheme.InteractiveInput", "maybe"},
                         {"scheme.PreludeImage", "nope"},
                         {"scheme.Torture", "true"},
                         {"scheme.NoSuchOption", "1"},

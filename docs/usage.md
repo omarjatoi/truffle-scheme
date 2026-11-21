@@ -252,6 +252,11 @@ output before it), calls `flush-output-port`, `exit` or `emergency-exit`, and
 when it ends. `--scheme.BufferOutput=false` writes each write at once
 elsewhere too, for a program whose progress something reads as it runs
 through a pipe; `--scheme.BufferOutput=true` buffers on a terminal too.
+On a terminal, Ctrl-D ends only the read that meets it: the next read waits
+for more input. Elsewhere (a pipe, a file), once a read has returned the end
+of standard input, every later read returns it too, and `char-ready?` is `#t`
+(R7RS §6.13.2; design.md D10). `--scheme.InteractiveInput` sets which, if the
+launcher can't tell (stdin a terminal but stdout redirected).
 Output file ports, textual and binary, are always buffered. What they hold is
 written out by `flush-output-port` and `close-port`, and also when the
 program ends, exits or stops with an error, even if it never closes them.

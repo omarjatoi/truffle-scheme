@@ -195,6 +195,19 @@ public abstract class SPort implements TruffleObject {
         return doReady();
     }
 
+    /**
+     * The console input port: whether standard input is a terminal, where its end ends only the read
+     * that meets it; otherwise, once a read has returned the end, the port stays there
+     * ({@code scheme.InteractiveInput}, design.md D10, "The console's end").
+     */
+    @TruffleBoundary
+    public final void setInteractive(boolean interactive) {
+        if (!(this instanceof Utf8Input console) || !console.console) {
+            throw unsupported();
+        }
+        console.interactive = interactive;
+    }
+
     // ------------------------------------------------------------------------------------------
     // The operations of each kind of port, each overridden by the kinds that support it: runtime
     // code, called only from the boundaries above.
@@ -306,10 +319,13 @@ public abstract class SPort implements TruffleObject {
      * The console input port over the context's standard input, whose bytes it decodes from UTF-8
      * itself, as a file's port does, but reading only what each read needs, so that it never waits
      * for more input than that (design.md D10, "Textual input ports decode UTF-8 themselves").
-     * Closing the port leaves the stream open.
+     * Unless the stream is {@code interactive} (a terminal), the port stays at its end once a read
+     * has returned it (D10, "The console's end"). Closing the port leaves the stream open.
      */
-    public static SPort consoleInput(InputStream in) {
-        return new Utf8Input(in, true);
+    public static SPort consoleInput(InputStream in, boolean interactive) {
+        Utf8Input port = new Utf8Input(in, true);
+        port.interactive = interactive;
+        return port;
     }
 
     public static SPort outputBytevector() {
@@ -688,13 +704,20 @@ public abstract class SPort implements TruffleObject {
         private final InputStream in;
         /** Whether this is the console's port: a read may block, and closing leaves the stream open. */
         private final boolean console;
+        /**
+         * The console's: whether standard input is a terminal, whose end ends only the read that
+         * meets it. Otherwise the end is sticky: once a read of the stream has returned it, the port
+         * reads the stream no more (design.md D10, "The console's end").
+         */
+        private boolean interactive;
         private final byte[] buffer = new byte[CHUNK];
         /** The bytes not decoded yet: {@code buffer[pos, limit)}. */
         private int pos;
         private int limit;
         /**
          * Whether the stream ended at its last read: nothing comes after {@code limit} (though a
-         * terminal may give more on a later read).
+         * file or a terminal may give more on a later read, which the console's port makes only if
+         * {@link #interactive}).
          */
         private boolean end;
         /**
@@ -742,9 +765,13 @@ public abstract class SPort implements TruffleObject {
         /**
          * One read of the stream, of at most {@code most} bytes, into the buffer after
          * {@code limit}, which skips an LF after a CR that ended a line ({@link #lineFeedPending}).
-         * Returns what the stream's read returned.
+         * Returns what the stream's read returned; -1 without reading if the console's end is sticky
+         * and a read has returned it ({@link #interactive}).
          */
         private int read(int most) {
+            if (end && console && !interactive) {
+                return -1;
+            }
             int r;
             try {
                 r = in.read(buffer, limit, most);
@@ -1102,11 +1129,13 @@ public abstract class SPort implements TruffleObject {
         /**
          * Files never block. On the console, a character is ready if the buffer holds one (a
          * malformed sequence's U+FFFD included), or once the bytes that the stream has without
-         * blocking ({@code available()}) make one, which this reads into the buffer.
+         * blocking ({@code available()}) make one, which this reads into the buffer; and once a read
+         * has returned the end, unless the stream is a terminal ({@link #interactive}), where the
+         * next read would wait for more.
          */
         @Override
         protected boolean doReady() {
-            if (!console || peeked != NONE) {
+            if (!console || peeked != NONE || end && !interactive) {
                 return true;
             }
             while (true) {

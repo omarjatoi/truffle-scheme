@@ -94,6 +94,8 @@ public final class SchemeMain extends AbstractLanguageLauncher {
     private static final String STACK_SIZE_RUNTIME_OPTION = "scheme.StackSize";
     /** Whether the runtime buffers standard output (design.md D10). */
     private static final String BUFFER_OUTPUT_OPTION = "scheme.BufferOutput";
+    /** Whether standard input is a terminal, whose end ends one read (design.md D10). */
+    private static final String INTERACTIVE_INPUT_OPTION = "scheme.InteractiveInput";
     private static final String END_STATUS_OPTION = "--end-status=";
     private static final String STACK_SIZE_OPTION = "--stack-size=";
     /** GraalVM's launchers' option for the host VM's options: {@code --vm.<option>}. */
@@ -186,6 +188,8 @@ public final class SchemeMain extends AbstractLanguageLauncher {
     private boolean compilation = true;
     /** Whether the command line sets {@value #BUFFER_OUTPUT_OPTION}. */
     private boolean bufferOutputGiven;
+    /** Whether the command line sets {@value #INTERACTIVE_INPUT_OPTION}. */
+    private boolean interactiveInputGiven;
     /** Whether the command line sets {@value #PROFILING_OPTION}: no warm-up then. */
     private boolean profilingGiven;
     /** Whether the launcher set {@value #TRACE_TRANSFER_OPTION}'s system property itself. */
@@ -471,6 +475,7 @@ public final class SchemeMain extends AbstractLanguageLauncher {
         }
         compilation = !"false".equals(option(polyglotOptions, COMPILATION_OPTION));
         bufferOutputGiven = option(polyglotOptions, BUFFER_OUTPUT_OPTION) != null;
+        interactiveInputGiven = option(polyglotOptions, INTERACTIVE_INPUT_OPTION) != null;
         profilingGiven = option(polyglotOptions, PROFILING_OPTION) != null;
         if (option(polyglotOptions, STACK_SIZE_RUNTIME_OPTION) != null) {
             throw abort("--" + STACK_SIZE_RUNTIME_OPTION + ": the launcher tells the runtime the size of the stack it evaluates on itself; " + STACK_SIZE_OPTION +
@@ -551,6 +556,12 @@ public final class SchemeMain extends AbstractLanguageLauncher {
             // On a terminal, each write shows at once; elsewhere the runtime buffers standard
             // output (design.md D10, "Standard output").
             builder.option(BUFFER_OUTPUT_OPTION, "false");
+        }
+        if (tty && !interactiveInputGiven) {
+            // On a terminal, Ctrl-D ends only the read that meets it; elsewhere the console port
+            // stays at standard input's end once a read has returned it (design.md D10, "The
+            // console's end").
+            builder.option(INTERACTIVE_INPUT_OPTION, "true");
         }
         int status;
         if (file == null) {

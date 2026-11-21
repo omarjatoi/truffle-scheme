@@ -752,6 +752,13 @@ def _terminal_session(workdir, command, label):
         term.send('(read-line)\r')
         term.send('typed text\r')
         term.expect(r'\n"typed text"\n> $', 'read-line reading the next line')
+        # Ctrl-D while Scheme code reads ends only that read (design.md D10, "The console's end"):
+        # the launcher makes standard input interactive on a terminal, so the session goes on.
+        term.send('(read-line)\r')
+        term.send('\x04')
+        term.expect(r'\n#<eof>\n> $', 'read-line meeting Ctrl-D')
+        term.send('(char-ready?)\r')
+        term.expect(r'\n#f\n> $', 'char-ready? after Ctrl-D')
         # Ctrl-C drops the unfinished input: else (+ 1 (+ 2 2)) would be 5.
         term.send('(+ 1\r')
         term.expect(r'\n  $', 'the continuation prompt again')
@@ -804,7 +811,31 @@ def _terminal_session(workdir, command, label):
     # JLine's history file has an entry per line, with the newlines inside one escaped.
     _check(re.search(r'\(\+ 10\\n20\)$', saved, re.MULTILINE) and not re.search(r'^(\d+:)?20\)$', saved, re.MULTILINE),
            f'terminal ({label}): the history file should have the input over two lines as one entry:\n{saved}')
-    log(f'  terminal ({label}): editing, history, continuation prompt, Ctrl-C, interrupts, read-line, Ctrl-D')
+    log(f'  terminal ({label}): editing, history, continuation prompt, Ctrl-C, interrupts, read-line, Ctrl-D in a read and at the prompt')
+
+
+def _terminal_program(workdir, command, label):
+    """A program on a terminal: Ctrl-D ends only the read that meets it, char-ready? is #f after
+    it, and the next read returns the next line typed (design.md D10, "The console's end")."""
+    program = join(workdir, 'console-end.scm')
+    with open(program, 'w', encoding='utf-8') as f:
+        f.write('(import (scheme base) (scheme write))\n'
+                '(write (read-line)) (newline)\n'
+                '(write (list (eof-object? (read-line)) (char-ready?))) (newline)\n'
+                '(write (read-line)) (newline)\n')
+    term = _Terminal(command + [program], workdir, dict(os.environ, TERM='xterm'))
+    try:
+        term.send('one\r')
+        term.expect(r'"one"\n', 'the first line read')
+        term.send('\x04')
+        term.expect(r'\(#t #f\)\n', 'read-line meeting Ctrl-D, and char-ready? after it')
+        term.send('two\r')
+        term.expect(r'"two"\n', 'the line typed after Ctrl-D')
+        status = term.wait()
+    finally:
+        term.kill()
+    _check(status == 0, f'terminal program ({label}): exit {status}\n{term.text()[-1500:]!r}')
+    log(f'  terminal program ({label}): Ctrl-D ends one read; char-ready? #f after it; the next line read')
 
 
 # Interrupter.PATIENCE: how long an interrupt waits before a second Ctrl-C gives up on it.
@@ -844,11 +875,13 @@ def _terminal_give_up(workdir, command, label):
 def _terminal(workdir, commands):
     _terminal_session(workdir, commands.bare([]), 'JVM')
     _terminal_give_up(workdir, commands.bare([]), 'JVM')
+    _terminal_program(workdir, commands.bare([]), 'JVM')
     native = os.environ.get('SCHEME_NATIVE_LAUNCHER')
     if native:
         _check(os.path.isfile(native), f'SCHEME_NATIVE_LAUNCHER={native} is not a file')
         _terminal_session(workdir, [native], 'native')
         _terminal_give_up(workdir, [native], 'native')
+        _terminal_program(workdir, [native], 'native')
 
 
 def _help(workdir, commands):
@@ -895,7 +928,7 @@ SMOKE_TESTS = {
     'cputracer': ('CPU tracer counts entries and statements exactly', _cputracer),
     'coverage': ('coverage tool: exact statement, line and root coverage in its histogram, JSON and LCOV', _coverage),
     'memtracer': ('memory tracer counts the program\'s allocations', _memtracer),
-    'terminal': ('the REPL on a terminal: line editing, history, interrupts, read-line', _terminal),
+    'terminal': ('the REPL and a program on a terminal: line editing, history, interrupts, read-line, Ctrl-D', _terminal),
 }
 
 

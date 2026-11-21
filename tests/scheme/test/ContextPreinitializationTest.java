@@ -180,6 +180,25 @@ public class ContextPreinitializationTest {
         assertEquals("from the run", Files.readString(dir.resolve("written.txt"), StandardCharsets.UTF_8));
     }
 
+    /**
+     * The console input port, which the prelude's parameters hold from the pre-initialization, takes
+     * the run's {@code scheme.InteractiveInput} (design.md D10, "The console's end"): at the end of
+     * standard input (a file here), {@code char-ready?} is #t, unless the run says standard input is
+     * a terminal, where it is #f.
+     */
+    @Test
+    public void thePatchedConsoleInputTakesTheRunsInteractiveInput() throws IOException, InterruptedException {
+        Path dir = folder.newFolder("console-end").toPath();
+        Path program = Files.writeString(dir.resolve("prog.scm"), "(import (scheme base) (scheme write) (scheme char))\n(write (list (read-char) (eof-object? (read-char)) (char-ready?)))\n",
+                        StandardCharsets.UTF_8);
+        for (boolean interactive : new boolean[]{false, true}) {
+            Result r = scheme(dir, Map.of(), "a", "--scheme.InteractiveInput=" + interactive, program.toString());
+            assertTrue("the context is the pre-initialized one: " + r.err(), r.err().contains(PATCHED));
+            assertEquals(r.err(), 0, r.status());
+            assertEquals("scheme.InteractiveInput=" + interactive, "(#\\a #t " + (interactive ? "#f" : "#t") + ")", r.out());
+        }
+    }
+
     @Test
     public void theReplRunsInThePatchedContext() throws IOException, InterruptedException {
         Path dir = folder.newFolder("repl").toPath();

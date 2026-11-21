@@ -208,8 +208,9 @@ public final class SchemeContext {
      * over ({@code SchemeLanguage.patchContext}, design.md D17). What else comes from the Env (the
      * command line, environment variables, files and the current directory, {@code exit}) is read
      * from {@link #getEnv()} when it is used, and the compiler rebinds the library path. The console
-     * ports keep their identity, since the prelude's parameters hold them, and use the new streams:
-     * pre-initialization reads and writes none, so nothing is left buffered.
+     * ports keep their identity, since the prelude's parameters hold them, and use the new streams
+     * and the run's {@code scheme.InteractiveInput}: pre-initialization reads and writes none, so
+     * nothing is left buffered.
      */
     @TruffleBoundary
     void patch(TruffleLanguage.Env newEnv) {
@@ -219,6 +220,9 @@ public final class SchemeContext {
         stdout.target = newEnv.out();
         stderr.target = newEnv.err();
         stdin.target = newEnv.in();
+        if (stdinPort != null) {
+            stdinPort.setInteractive(newEnv.getOptions().get(SchemeLanguage.INTERACTIVE_INPUT));
+        }
         this.allocationReporter = newEnv.lookup(AllocationReporter.class);
         // The run's options, and the run's threads: the stack measured so far was the image build's,
         // and the thread that takes the context over is the one scheme.StackSize describes.
@@ -278,7 +282,7 @@ public final class SchemeContext {
     @TruffleBoundary
     public SPort stdinPort() {
         if (stdinPort == null) {
-            stdinPort = SPort.consoleInput(stdin);
+            stdinPort = SPort.consoleInput(stdin, env.getOptions().get(SchemeLanguage.INTERACTIVE_INPUT));
         }
         return stdinPort;
     }

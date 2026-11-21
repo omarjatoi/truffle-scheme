@@ -95,6 +95,15 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
                     category = OptionCategory.USER, stability = OptionStability.STABLE, usageSyntax = "true|false", sandbox = SandboxPolicy.UNTRUSTED) //
     public static final OptionKey<Boolean> BUFFER_OUTPUT = new OptionKey<>(true);
 
+    /**
+     * Whether standard input is a terminal (design.md D10, "The console's end"): its end then ends
+     * only the read that meets it, as Ctrl-D does; otherwise, once a read has returned the end, the
+     * console port stays there. The launcher sets it when stdin and stdout are a terminal.
+     */
+    @Option(name = "InteractiveInput", help = "Standard input is a terminal: its end (Ctrl-D) ends only the read that meets it, and char-ready? is #f until more is typed; false keeps the console port at the end once a read has returned it, where char-ready? is #t (default: false, the launcher's true on a terminal).", //
+                    category = OptionCategory.USER, stability = OptionStability.STABLE, usageSyntax = "true|false", sandbox = SandboxPolicy.UNTRUSTED) //
+    public static final OptionKey<Boolean> INTERACTIVE_INPUT = new OptionKey<>(false);
+
     // Constant options (design.md D17, "Constant options"): fixed for the process before the
     // polyglot runtime starts, from -Dpolyglot.<name>=<value> as the generated descriptors' class
     // is initialized (in a native image, when the image is built); an engine or context may repeat
