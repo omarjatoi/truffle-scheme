@@ -2345,7 +2345,8 @@ Each entry: the decision, why, and what was rejected.
     without blocking (`available()`) complete one, which it reads into the
     buffer; the JDK's reader answered true for a sequence cut in its
     buffer too, whose `read-char` could block. With nothing buffered and
-    nothing available it is `#f`, as it was, at the end of a pipe too. The
+    nothing available it is `#f`, as it was (at the end of a pipe too,
+    until M13-03: "The console's end", below). The
     console flushes standard output before each read of the stream, as
     before. Reading 10 MB piped into the launcher (#220's files, written
     to standard input by `cat`, 10 copies, each timed), against the JDK's
@@ -2358,6 +2359,60 @@ Each entry: the decision, why, and what was rejected.
     0.027 s against 0.043 s and 0.013 s against 0.021 s; 0.024 s against
     0.053 s and 0.017 s against 0.039 s; 0.089 s against 0.129 s and
     0.084 s against 0.118 s (load 9.4-9.7, a round above 10 left out).
+  - **The console's end (M13-03).** Once a read of standard input has
+    returned its end, the console port stays there: `char-ready?` is `#t`,
+    and `read-char`, `peek-char`, `read-line` and `read-string` return the
+    eof object without reading the stream again. Unless standard input is a
+    terminal: the `scheme.InteractiveInput` option, which the launcher sets
+    when stdin and stdout are a terminal (the framework's `isTTY()`, as for
+    `scheme.BufferOutput`) unless the command line gives it. There Ctrl-D
+    ends only the read that meets it: `char-ready?` is `#f` until more is
+    typed, and the next read waits for it, as before. R7RS §6.13.2 (no
+    erratum touches it): *"If char-ready? returns #t then the next
+    read-char operation on the given port is guaranteed not to hang. If the
+    port is at end of file then char-ready? returns #t"*, with the
+    rationale *"If char-ready? were to return #f at end of file, a port at
+    end of file would be indistinguishable from an interactive port that
+    has no ready characters."* A pipe's end is final (every read after it
+    returns the end at once), so `#t` there is what R7RS asks, and making
+    the end sticky keeps that promise for any stream, an embedder's
+    included, whose read after the end could block (`InputStream`'s
+    contract makes -1 *"the end of the stream"*). A terminal's end isn't:
+    after Ctrl-D the port is an interactive port with no ready characters,
+    whose `#f` R7RS's rationale describes; `#t` there would let the next
+    `read-char` wait, which R7RS rules out, unless the end were sticky
+    there too.
+    - What the others do, run with `ab` piped in, then at a terminal (a
+      pty) with `ab`, Return and Ctrl-D typed, `char-ready?` asked, and a
+      `peek-char` and `read-char` after it: chibi-scheme 0.12 answers `#f`
+      at the pipe's end, even after `peek-char` has returned the eof
+      object; Chez Scheme 10.4.1 answers `#t` at the pipe's end; Guile
+      3.0.11 answers `#f` after `read-char` returned the end and `#t`
+      after `peek-char` did, which is what this port did until M13-03 (it
+      holds the eof object `peek-char` returned). At the terminal all three
+      answer `#f` after Ctrl-D, and their next read waits for the next
+      line. So this keeps the terminal's behaviour of all three and takes
+      Chez's at a pipe's end.
+    - Java can't ask whether standard input is readable without a native
+      call: `available()` is 0 both at a pipe's end and while it waits for
+      more. So the port knows its end only once a read has returned it,
+      and before that `char-ready?` at the end of an empty pipe is `#f`
+      (Chez: `#t`). Likewise, with stdin a terminal and stdout redirected
+      the launcher can't tell (D10, "Standard output is buffered"), so
+      there the end is sticky: after Ctrl-D the program reads no more,
+      which is what C's stdio does everywhere. An embedder's stream is not
+      a terminal unless it sets the option. File ports are unchanged: a
+      file never blocks, so they are always ready.
+    - *Rejected:* the end sticky everywhere, as C's stdio makes it (C17
+      7.21.7.1: `fgetc` returns EOF while the stream's end-of-file
+      indicator is set; glibc since 2.28): at a terminal a program could
+      read nothing after one Ctrl-D, and the REPL, which reads its lines
+      through the same port, would end when a `(read-line)` typed at it
+      met Ctrl-D. `#t` once a read has returned the end, with each later
+      read going to the stream again: at a terminal, the `read-char` after
+      that `#t` waits. Telling a terminal from the stream itself: the
+      launcher hands the context `System.in`, and nothing in Truffle's
+      `Env` says what the stream is.
   - A `read-string` of more than a buffer from a stream whose
     `available()` says less than what is left (a pipe's, or 0 from an
     embedder's file system that doesn't implement it) starts with room for
