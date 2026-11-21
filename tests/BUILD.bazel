@@ -464,6 +464,17 @@ harness_test(
     size = "small",
 )
 
+# The load rule (bench/README.md "Thresholds"): bench-check reads the load during each benchmark,
+# --update leaves out a run whose peak passed 10, and bench-report gives the load next to its times.
+harness_test(
+    name = "bench_load",
+    check = "bench_load",
+    args = [],
+    data = [],
+    deps = ["commands"],
+    size = "small",
+)
+
 # AGENTS.md rule 1: Java builtins never call Scheme.
 harness_test(
     name = "rules",

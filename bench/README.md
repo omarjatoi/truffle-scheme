@@ -246,9 +246,12 @@ run (our JIT's and native launcher's once per iteration), and
 `--interpreter-timeout` our interpreter's (ten programs have a count of 1,
 which no scale reduces). Implementations take turns per program, in a
 rotating order, so a machine whose load changes during the run affects them
-evenly; the report also states the machine's 1-minute load average at the
-start, the most before any program, and at the end. The machine is shared, so
-run it while it is quiet, as for `bench-check` (Thresholds, below), and say
+evenly. The report also gives the machine's 1-minute load average, read every
+second while each implementation runs a program (M13-01): the Time table's last
+column is the lowest and highest it read during the program's runs, a time
+measured while it passed 10 (the load rule, Thresholds below) is marked ‡, and
+Conditions gives it at the start, the most during a run, and at the end. The
+machine is shared, so run it while it is quiet, as for `bench-check`, and say
 how loaded it was with `--note`.
 
 How long it takes: the committed report (`--scale 0.1 --interpreter-timeout
@@ -311,9 +314,19 @@ So a slowdown of a few benchmarks is caught from about a quarter, but one of eve
 raises the machine factor, which load would explain too, and is caught only past 1.4 times.
 
 The machine is shared with other builds, so measure and check while it is quiet: in a run made at
-a load average of 22 on its 16 cores, most benchmarks took 2 to 4 times as long. Runs with a
-1-minute load above 10 at their start or end are left out; the committed runs (M9's exit) had a load of
-3.6 to 5.9, so none was (the file's note says so).
+a load average of 22 on its 16 cores, most benchmarks took 2 to 4 times as long. The load rule:
+a run during which the 1-minute load passed 10 is left out of the thresholds. What is checked
+(M13-01): `bench-check` reads the 1-minute load average when each benchmark starts, every second
+while it runs (the kernel updates it every 5 s) and when it ends, prints it after the benchmark's
+time and in the table's Peak load column, and records it in the `--json` file, per benchmark
+(`load`: start, lowest, peak and end) and for the run (`load.max`, the peak of all its readings).
+`--update` leaves out a run whose peak passed 10, logs which, and says in the thresholds' note how
+many it left out, their peaks, and the peaks of the runs it used; a file from before M13-01
+records no load, so it is kept and the note says how many such runs there were. Until M13-01 the
+rule read the load only at a run's start and end, so a burst in the middle went unseen: M11's and
+M12's exits each threw away a set of runs in which one to three benchmarks took 1.3 to 2.4 times
+their median at a load under 10 at both ends. The rule doesn't catch everything the load does: in
+M12's discarded set, the load during the runs never passed 9.3.
 
 Don't build in the same workspace while a benchmark runs. Since Bazel 9 (#276), a build or test
 there may remove outputs it doesn't need from `bazel-out` and the runfiles, such as the JDK's
@@ -352,7 +365,8 @@ bazel run //:r7rs -- bench-check --update --from /tmp/runs/*.json --note "how lo
 ```
 
 `bench-check --update` without `--from` measures and updates in one go (`--runs`, default 3).
-Separate `--measure` runs let you note the load around each.
+Either way, the load rule leaves out a run whose 1-minute load passed 10 (above), and fails if it
+leaves out every run.
 
 ## Where the slowest programs spend their time
 
