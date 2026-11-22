@@ -168,6 +168,60 @@ public class TailCallCacheTest {
         assertTrue(log, osr.matcher(log).find());
     }
 
+    /**
+     * The bytes {@code program}'s procedure (of one argument) allocates on this thread per unit of
+     * {@code n}, in one run long enough that what runs before it is compiled doesn't count.
+     */
+    private static double allocatedPer(String program, int n, int expected) {
+        Assume.assumeTrue("torture mode", SchemeLanguage.constant(SchemeLanguage.TORTURE) == SchemeLanguage.Torture.OFF);
+        Assume.assumeTrue("no per-thread allocation counter", ManagementFactory.getThreadMXBean() instanceof com.sun.management.ThreadMXBean);
+        com.sun.management.ThreadMXBean threads = (com.sun.management.ThreadMXBean) ManagementFactory.getThreadMXBean();
+        Context.Builder builder = Context.newBuilder(SCHEME).allowExperimentalOptions(true).out(new ByteArrayOutputStream());
+        builder.option("engine.Compilation", "true").option("engine.CompileImmediately", "false").option("engine.BackgroundCompilation", "false");
+        Context context;
+        try {
+            context = builder.build();
+        } catch (IllegalArgumentException e) {
+            Assume.assumeNoException("no optimizing Truffle runtime", e);
+            throw e;
+        }
+        try (Context c = context) {
+            Value run = c.eval(SCHEME, program);
+            long before = threads.getCurrentThreadAllocatedBytes();
+            assertEquals(expected, run.execute(n).asInt());
+            return (threads.getCurrentThreadAllocatedBytes() - before) / (double) n;
+        }
+    }
+
+    @Test
+    public void aTailCallOfACalleeThatIsNotInlinedAllocatesOnlyItsArguments() {
+        // The loop's call site sees six procedures, more than its cache holds, so it calls each
+        // indirectly, and Truffle inlines none. Each ends in a tail call of leaf, which comes back
+        // across that call to the call site's trampoline: as its argument array alone (design.md
+        // "Calls Truffle doesn't inline"), 24 bytes; it was a TailCall too, 48 in all. With the
+        // indirect call's own argument array, 48 bytes a call, 72 before.
+        double perCall = allocatedPer("(define (leaf x) (+ x 1))" +
+                        "(define (f0 x) (leaf x)) (define (f1 x) (leaf x)) (define (f2 x) (leaf x))" +
+                        "(define (f3 x) (leaf x)) (define (f4 x) (leaf x)) (define (f5 x) (leaf x))" +
+                        "(define fs (vector f0 f1 f2 f3 f4 f5))" +
+                        "(lambda (n) (let loop ((i 0) (s 0)) (if (= i n) (- s (* 2 n)) (loop (+ i 1) (+ s ((vector-ref fs (remainder i 6)) 1))))))",
+                        20_000_000, 0);
+        assertTrue("bytes allocated per call: " + perCall, perCall < 60);
+    }
+
+    @Test
+    public void aFixnumInABoxIsNotAllocated() {
+        // count is assigned, so it lives in a box (design.md D2), which inc!, a closure, holds: a
+        // real object, which partial escape analysis doesn't remove. A fixnum assigned to it stays
+        // unboxed in the box, so incrementing it past the JDK's cache of small Longs allocates
+        // nothing (design.md "Calls Truffle doesn't inline", the counter of ecraven's sboyer): 24
+        // bytes an increment before.
+        double perIncrement = allocatedPer("(define inc! #f) (define get #f)" +
+                        "(let ((count 1000)) (set! inc! (lambda () (set! count (+ count 1)))) (set! get (lambda () count)))" +
+                        "(lambda (n) (let loop ((i 0)) (if (< i n) (begin (inc!) (loop (+ i 1))) (- (get) (get)))))", 20_000_000, 0);
+        assertTrue("bytes allocated per increment: " + perIncrement, perIncrement < 4);
+    }
+
     @Test
     public void compiledTailCallLoopsAllocateOnlyTheArguments() {
         // run's call of ev? performs 20,000,000 tail calls between ev? and od?, which come back to

@@ -51,7 +51,7 @@ public final class PrimitiveRootNode extends RootNode {
             node = createBody();
         }
         Object result = node.invoke(args);
-        if (!spec.returnsValue() && result instanceof TailCall tail && tail.arguments != args) {
+        if (!spec.returnsValue() && TailCall.argumentsOf(result) instanceof Object[] tail && tail != args) {
             // apply's list, say: the caller may hold the array while the tail call it asks for
             // runs, which may be for ever (R7RS §3.5, design.md "Tail calls keep nothing alive").
             if (CompilerDirectives.inCompiledCode()) {

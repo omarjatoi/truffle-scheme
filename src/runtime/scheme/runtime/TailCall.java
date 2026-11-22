@@ -10,13 +10,18 @@ import scheme.runtime.printer.Printer;
 import scheme.runtime.value.SClosure;
 
 /**
- * Returned from a tail call site instead of calling (design.md "Calls and tail calls"). The
- * trampoline at the nearest non-tail call site performs it. {@code arguments[0]} is the procedure.
+ * A tail call's request (design.md "Calls and tail calls"): what a procedure that ends in a tail
+ * call returns, for the trampoline it returns to (a non-tail call site's or a prompt's) to
+ * perform. {@code arguments[0]} is the procedure.
  *
- * <p>It is what a procedure that ends in a tail call returns, so tools see it as that procedure's
- * return value (the debugger's, after stepping out of it). They show it as the call it stands for,
- * {@code #<tail call (g 2)>}, not as a foreign object (plan.md M6-05): the call's own value doesn't
- * exist yet.
+ * <p>A tail call a procedure makes is requested by its argument array alone while no tool is
+ * attached (design.md "Calls Truffle doesn't inline"): where the request crosses a call Truffle
+ * doesn't inline, it is then one allocation, not two. With a tool attached ({@code noTags}
+ * invalid), and from the primitives that request one ({@code apply}, {@code eval}), it is a
+ * {@code TailCall}: tools see it as that procedure's return value (the debugger's, after stepping
+ * out of it), and show it as the call it stands for, {@code #<tail call (g 2)>}, not as a foreign
+ * object (plan.md M6-05): the call's own value doesn't exist yet. An {@code Object[]} is never a
+ * Scheme value, so the two can't be confused with one.
  */
 @ExportLibrary(InteropLibrary.class)
 public final class TailCall implements TruffleObject {
@@ -27,6 +32,23 @@ public final class TailCall implements TruffleObject {
     public TailCall(Object procedure, Object[] arguments) {
         this.procedure = procedure;
         this.arguments = arguments;
+    }
+
+    /**
+     * The arguments of the tail call {@code value} requests, element 0 the procedure (a
+     * {@code TailCall}'s, or the argument array that requests it alone); null if {@code value} is a
+     * value.
+     */
+    public static Object[] argumentsOf(Object value) {
+        if (value instanceof Object[] arguments) {
+            return arguments;
+        }
+        return value instanceof TailCall tail ? tail.arguments : null;
+    }
+
+    /** Whether {@code value} requests a tail call ({@link #argumentsOf}). */
+    public static boolean is(Object value) {
+        return value instanceof Object[] || value instanceof TailCall;
     }
 
     @ExportMessage

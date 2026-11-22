@@ -144,6 +144,6 @@ final class FrameVariables {
 
     /** The variable's value: a Box's contents, or what its storage holds. */
     static Object value(Object raw) {
-        return raw instanceof Box box ? box.value : raw;
+        return raw instanceof Box box ? box.get() : raw;
     }
 }
