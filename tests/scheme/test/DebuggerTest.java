@@ -792,6 +792,26 @@ public class DebuggerTest {
     }
 
     @Test
+    public void aStepOverACallWhoseContinuationIsCapturedStopsAtTheNextStatement() {
+        String program = """
+                        (import (scheme base))
+                        (define saved #f)
+                        (define (keep)
+                          (call/cc (lambda (k) (set! saved k) 1))
+                          2)
+                        (define (f)
+                          (car '(1))
+                          (keep)
+                          3)
+                        (f)
+                        """;
+        // keep's call/cc captures f's frame, which the root prompt then resumes from a copy: the
+        // same frame to the debugger (SchemeRootNode.isSameFrame), so the step over keep goes on
+        // at f's next statement. (Before, it waited for the original frame's resumption.)
+        assertEquals(List.of("f:7 @3", "f:8 @3", "f:9 @2", "3"), steps(program, 7, "oo", false, false));
+    }
+
+    @Test
     public void aBreakpointOnACaughtRaiseIsHitAgainAsItsFrameEnds() {
         // Known limitation (docs/upstream.md, "A breakpoint is hit again when its frame resumes"):
         // the frame ends by resuming, inside the statement that has the breakpoint.
