@@ -150,10 +150,10 @@ public class StableWarmupTest {
     public void aMegamorphicCacheKeepsTheProceduresItHolds() {
         // M13-05: past its limit a cache calls the procedures it doesn't hold indirectly, and keeps
         // calling the ones it holds directly. It used to drop them all for one indirect call: in
-        // ecraven's scheme, dynamic, compiler and peval, 5 to 14 times as many indirect calls, each
-        // with Truffle's argument profiling. Here p1 tail-calls one of five procedures (the first
-        // tail call's cache holds four), each of which tail-calls p2, then p3 to p15, thirteen
-        // procedures (the cache of the later ones holds twelve).
+        // ecraven's dynamic and compiler, 4 to 5 times as many indirect calls, each with Truffle's
+        // argument profiling. Here p1 tail-calls one of five procedures (the first tail call's
+        // cache holds four), each of which tail-calls p2, and p2 to p15, fourteen procedures, come
+        // after it (the cache of the later ones holds twelve).
         StringBuilder chain = new StringBuilder("(define (p1 x) (case (modulo x 5) ((0) (q0 x)) ((1) (q1 x)) ((2) (q2 x)) ((3) (q3 x)) (else (q4 x))))");
         for (int i = 0; i < 5; i++) {
             chain.append("(define (q").append(i).append(" x) (p2 x))");

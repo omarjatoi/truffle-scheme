@@ -354,8 +354,9 @@ public final class Trampoline extends Node {
          * the procedures the cache holds are still called directly, and can still be inlined. When
          * it dropped them, a dispatcher's site (a procedure that tail-calls one of 13 others, for
          * a cache of 12) called every procedure indirectly, each call with Truffle's argument
-         * profiling: 5 to 14 times as many indirect calls in ecraven's {@code scheme},
-         * {@code dynamic}, {@code compiler} and {@code peval} (design.md "Calls and tail calls").
+         * profiling: in ecraven's {@code dynamic} and {@code compiler} 4 to 5 times as many indirect
+         * calls, in {@code scheme} twice as many (design.md "Calls and tail calls"). A call site's
+         * own cache still drops its entries ({@code SchemeRootNode.Call}).
          */
         @Specialization
         static Object doIndirect(SClosure procedure, Object[] arguments,
