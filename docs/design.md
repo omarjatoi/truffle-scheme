@@ -33,9 +33,11 @@ follow it or deviate, with the decision below that says why.
 - **Tail calls** are ours to implement, because Truffle has no guest tail
   calls. (`@GenerateBytecode(enableTailCallHandlers)` is about how the
   interpreter dispatches its own bytecode handlers, not about guest calls.)
-  A tail call returns a `TailCall(procedure, args)` marker. Every non-tail
-  call site runs a trampoline loop: call, and while the result is a
-  `TailCall`, perform it. Tail calls never grow the Java stack.
+  A tail call returns a `TailCall(procedure, args)` marker (while no tool is
+  attached, its argument array alone: "Calls Truffle doesn't inline",
+  below). Every non-tail call site runs a trampoline loop: call, and while
+  the result is a tail call, perform it. Tail calls never grow the Java
+  stack.
 - **Primitives run in place (M5-09).** A call, in tail position or not, whose
   procedure is a leaf primitive that returns a value runs the primitive at the
   call site, with a node of the site's own and no Truffle call, `TailCall` or
@@ -185,6 +187,114 @@ follow it or deviate, with the decision below that says why.
   up to the cache limit the site inlines what it has seen and doesn't report,
   since each split is another compilation (25.5's Bytecode DSL can't compile
   `@ReportPolymorphism` on an operation, so the cache initializer reports).
+- **Calls Truffle doesn't inline (M13-04).** Where a callee isn't inlined
+  (a recursion, the inlining budget, a megamorphic site), a tail call it
+  makes comes back across the call to the trampoline that called it, as
+  its request. That was a `TailCall` and its argument array, both
+  allocated: in JFR's allocation samples (#298) 59% (arrays) and 25%
+  (`TailCall`s) of `sboyer`'s 9 GB an iteration, 53% and 24% of `graphs`'.
+  Two changes, each measured on its own (below):
+  - *A tail call's request is its argument array* while no tool is attached
+    (`SchemeLanguage.noTags`): `MakeTailCall` returns the array, whose
+    element 0 is the procedure, as in a `TailCall`'s; an `Object[]` is
+    never a Scheme value. One allocation instead of two where a request
+    crosses a call. With a tool attached it is a `TailCall`, which tools
+    show as `#<tail call (g 2)>` (M6-05), and the primitives that request a
+    tail call (`apply`, `eval`, `call/cc`'s receiver) return one; every
+    trampoline and the prompts' driver take both (`TailCall.argumentsOf`).
+  - *A box keeps a fixnum unboxed.* An assigned variable's box (D2) keeps a
+    `long` that `BoxSet` stores from an unboxed operand in a field of its
+    own, which `BoxRef` reads as a `long` (both specializations, so a box
+    that has held something else costs a load and a compare); anything else
+    boxes it on the way out (`Box.get`). `sboyer`'s `rewrite-count`, a
+    letrec* counter its closures share, allocated a `Long` on each
+    increment, 12% of its bytes. A box is 8 bytes larger (24).
+  - *Measured and not kept: an entry per procedure* (the task's "a root
+    that isn't inlined running its tail calls in a trampoline of its own").
+    A procedure that makes a tail call other than a loop's jump back is
+    called from non-tail call sites through an internal root of its own
+    that calls it, always inlined (`DirectCallNode.forceInlining`), and
+    runs the trampoline the call site ran: where Truffle doesn't inline the
+    entry, its compilation still has the procedure and its tail callees,
+    so no request crosses a call. The procedure's frame has returned when
+    its tail call is made, so stack traces, error locations, the debugger
+    and `sandbox.MaxStackFrames` were unchanged, every test passed, and it
+    gave the most where calls aren't inlined (`sboyer` 0.89, `graphs` 0.81
+    alone; 0.81 and 0.76 with the two changes above). But each procedure
+    that makes tail calls is compiled twice, as itself (a tail callee) and
+    as its entry, and a first-tier compilation, which inlines nothing, not
+    even a forced call, makes each such call two: `compiler` made 1,170
+    compilations instead of 827, and its steady state was 1.21 times as
+    long (1.36 with the two changes; 1.27 still at its twelfth iteration),
+    `deriv`'s first iteration 1.15. Two ways around that, also measured:
+    - *An entry only once a procedure's own last-tier compilation returns a
+      request* (an `Assumption` per procedure, which call sites that cached
+      it depend on): each switch invalidates the procedure and its callers'
+      compiled code, `compiler` 290 times (1,589 compilations), and the
+      warm-up tests that check that compiled code isn't invalidated failed
+      (`SplitRecompilationTest`, `ResumedLoopRecompilationTest`,
+      `TrampolineLoopRecompilationTest`).
+    - *A clone of the entry per call site* (`DirectCallNode.cloneCallTarget`,
+      so that its trampoline's caches are the site's, as before): more
+      compilations still, `compiler` slower than with one entry.
+    Not compiling entries at the first tier (`prepareForCompilation`
+    returning false) left them uncompiled at the last tier too.
+  - *Rejected:*
+    - The procedure running its own tail calls (`MakeTailCall` with a
+      trampoline of its own), told apart from a trampoline's tail callee,
+      which must return its request, by the low bit of the stack use
+      (`SchemeContext.stackUse`, odd in a loop's callees). As little
+      allocation (`sboyer` 5.1 GB an iteration against 8.1), but the frame
+      that made the tail call stays on the stack while the call runs: it
+      shows in stack traces and moves error locations (`EmbeddingTest`: an
+      `exit` in tail position was located in the procedure that
+      tail-called it), it keeps that frame's variables alive
+      (`tail-lazy-*` ran out of heap), and a recursion through a tail call
+      holds two frames a level: 28 tests failed. `deriv` 1.19.
+    - The same only where the procedure is the root of a compilation
+      (`CompilerDirectives.inCompilationRoot()`), so the interpreter and
+      its stack traces are as before: the interpreter never runs that path,
+      so it never fills the trampoline's cache, and compiled code that
+      reaches it deoptimizes each time, a cycle (`sboyer` 50-90 s an
+      iteration; Graal: "Deopt taken too many times").
+    - The trampoline's argument array reused across its loop's calls (a
+      spare array per length in the loop's frame, taken only when no
+      capture could have kept the callee's frame and no tool is attached):
+      copying an inlined callee's virtual array into the spare one
+      materializes it, so nothing is saved (`cpstak` 76.7 GB an iteration
+      either way).
+    - The tail call's arguments in the procedure's own argument array where
+      the arity allows: the hot tail calls' doesn't (`sboyer`'s `rewrite`,
+      1 argument, to `rewrite-with-lemmas`, 2, and `rewrite-args`, 1, to
+      `scons`, 3; `cpstak` alternates 4 and 1), and a frame's copy shares
+      its original's array (`PromptDriver.copy`, rule 3), by which tools
+      tell frames apart (`isSameFrame`). Not built.
+  - *Measured.* Each prototype in a copy of its build, interleaved with
+    `main` (`ec70c8d`) and an A/A copy of it, 3 rounds in a rotating order,
+    a fresh JVM per run, 5 iterations at the report's counts, the launcher's
+    options and `-Xmx2g`, on an Apple M3 Max shared with other work; no run
+    started or ended at a 1-minute load above 10 (2.2 to 9.4). The medians
+    of each round's ratio to `main`, steady state (the best of iterations
+    2-5) and first iteration:
+
+    | JIT, steady / first | A/A | request is the array | box keeps a fixnum | entry | entry, array, box | low bit |
+    |---|--:|--:|--:|--:|--:|--:|
+    | `sboyer` | 1.03 / 1.01 | 0.91 / 0.94 | 0.98 / 0.97 | 0.90 / 0.90 | 0.81 / 0.84 | 0.96 / 0.90 |
+    | `graphs` | 0.99 / 0.98 | 0.87 / 0.89 | 0.98 / 0.98 | 0.81 / 0.85 | 0.76 / 0.81 | 0.94 / 0.90 |
+    | `ctak` | 1.00 / 1.00 | 0.92 / 0.92 | 1.01 / 1.00 | 0.99 / 1.00 | 0.91 / 0.92 | 0.94 / 1.01 |
+    | `fibc` | 0.98 / 0.99 | 0.93 / 1.01 | 1.00 / 1.01 | 0.99 / 0.99 | 0.94 / 0.99 | 0.97 / 1.14 |
+    | `cpstak` | 1.01 / 1.00 | 0.99 / 1.07 | 1.00 / 1.08 | 0.99 / 1.01 | 0.99 / 1.00 | 0.99 / 1.12 |
+    | `deriv` | 0.97 / 0.99 | 0.99 / 0.98 | 0.98 / 0.99 | 0.97 / 1.15 | 0.95 / 1.10 | 1.19 / 1.04 |
+    | `compiler` | 1.06 / 1.01 | 1.05 / 0.96 | 1.07 / 0.97 | 1.21 / 1.01 | 1.36 / 1.06 | 1.08 / 1.02 |
+
+    In JFR's allocation samples (`-XX:StartFlightRecording`, settings
+    `profile`), gigabytes an iteration over the 5, `main` / the two changes
+    kept / with the entry: `sboyer` 8.1 / 5.0 / 3.9 (the `TailCall`s' 1.4
+    and the `Long`s' 1.2 gone), `graphs` 11.7 / 9.6 / 8.5, `ctak` 11.6 /
+    9.2 / 9.2, `fibc` 0.73 / 0.56 / 0.57, `compiler` 0.94 / 0.66 / 0.89,
+    `cpstak` 82.5 / 76.6 / 76.6, `deriv` 1.9 / 2.1 / 2.0. `cpstak`'s are the
+    arrays and closures that cross its trampoline loop's back edge (M12-05),
+    which none of these touches.
 - **Rare paths stay out of compiled code (M7-01).** The spill at the depth
   limit (below) is behind a branch profile: a site that has never spilled
   compiles without it. It was about two thirds of every non-tail call site's
