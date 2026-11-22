@@ -253,6 +253,7 @@ final class PromptDriver extends Node {
                                     }
                                     pending = split.after();
                                     frame.setObject(PENDING_SLOT, pending);
+                                    endForTools(split.before(), context);
                                     value = receive(context, capture.receiver, Continuation.capture(split.before(), capture.dynEnv, true, context), capture.dynEnv, split.marker().dynEnv());
                                 } else {
                                     // This prompt: abort to it.
@@ -262,6 +263,7 @@ final class PromptDriver extends Node {
                                     }
                                     pending = null;
                                     frame.setObject(PENDING_SLOT, pending);
+                                    endForTools(all, context);
                                     value = receive(context, capture.receiver, Continuation.capture(all, capture.dynEnv, true, context), capture.dynEnv, promptEnv);
                                 }
                                 continue;
@@ -529,6 +531,31 @@ final class PromptDriver extends Node {
         return count;
     }
 
+    /**
+     * A composable continuation's frames have left the stack for this prompt (D4: a {@code guard}
+     * that caught a raise): in code with tools, they end here ({@link Ending}). Without tags (no
+     * tool asked for them, or {@code UNTRUSTED}'s, which are there from the start) a frame emits no
+     * events, and nothing is resumed.
+     */
+    @TruffleBoundary
+    private static void endForTools(SegmentList segments, SchemeContext context) {
+        if (context.materializesTags()) {
+            return;
+        }
+        ArrayList<Capture.Segment> tagged = null;
+        for (SegmentList l = segments; l != null; l = l.tail) {
+            if (l.head instanceof Capture.Segment segment && segment.root().getSourceRootNode().getBytecodeNode().getTagTree() != null) {
+                if (tagged == null) {
+                    tagged = new ArrayList<>();
+                }
+                tagged.add(segment);
+            }
+        }
+        if (tagged != null) {
+            Ending.end(tagged.toArray(new Capture.Segment[0]));
+        }
+    }
+
     /** Calls {@code target}, which throws {@code error} (any other exception goes on). */
     private static void rethrown(SchemeError error, RootCallTarget target, Node location, Object... arguments) {
         try {
@@ -665,7 +692,7 @@ final class PromptDriver extends Node {
      */
     static MaterializedFrame copy(MaterializedFrame frame) {
         FrameDescriptor descriptor = frame.getFrameDescriptor();
-        MaterializedFrame copy = Truffle.getRuntime().createMaterializedFrame(frame.getArguments().clone(), descriptor);
+        MaterializedFrame copy = Truffle.getRuntime().createMaterializedFrame(frame.getArguments(), descriptor);
         frame.copyTo(0, copy, 0, descriptor.getNumberOfSlots());
         return copy;
     }

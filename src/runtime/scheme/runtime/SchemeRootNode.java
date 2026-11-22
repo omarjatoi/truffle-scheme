@@ -27,6 +27,7 @@ import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.Cached.Shared;
 import com.oracle.truffle.api.dsl.Fallback;
 import com.oracle.truffle.api.dsl.Specialization;
+import com.oracle.truffle.api.frame.Frame;
 import com.oracle.truffle.api.frame.FrameDescriptor;
 import com.oracle.truffle.api.frame.FrameSlotKind;
 import com.oracle.truffle.api.frame.MaterializedFrame;
@@ -243,6 +244,17 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
      */
     public String getProcedureName() {
         return name;
+    }
+
+    /**
+     * Whether two frames are one execution of this root, for a tool matching a frame's resumption
+     * with its yield (the debugger's step over a call during which the frame suspended): the same
+     * frame, or a copy of it that a prompt resumed (AGENTS.md rule 3). A copy shares its
+     * original's arguments ({@code PromptDriver.copy}), which every call has its own of.
+     */
+    @Override
+    protected boolean isSameFrame(Frame frame1, Frame frame2) {
+        return frame1 == frame2 || frame1.getArguments() == frame2.getArguments();
     }
 
     /**
@@ -616,6 +628,16 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
         @Specialization
         static Object doUnwind(SchemeError error) {
             throw error;
+        }
+
+        /**
+         * A guard's capture left this frame for its prompt, in code with tools: the frames it called
+         * end inside it, then it ends here, for the tags around its call site ({@link Ending}).
+         */
+        @Specialization
+        static Object doEnd(Ending ending) {
+            ending.endInner();
+            throw ending.exception;
         }
 
         @Fallback
