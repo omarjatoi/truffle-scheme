@@ -368,6 +368,10 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
      * docs/upstream.md#reportpolymorphism-on-an-operation. When that test fails after a Truffle
      * upgrade, put {@code @ReportPolymorphism.Megamorphic} here instead.)
      *
+     * <p>Past the cache's limit, {@code doIndirect} calls the procedures the cache doesn't hold, and
+     * the ones it holds are still called directly (plan.md M13-05): it doesn't replace
+     * {@code doDirect}, as in {@link Trampoline}'s caches.
+     *
      * <p>A call of a procedure ({@code doDirect}, {@code doIndirect}) is an {@link InliningCutoff}:
      * HotSpot compiles the bytecode interpreter's {@code continueAt} with the handler of every
      * instruction a program has run inlined into it, and compiles it again whenever the program

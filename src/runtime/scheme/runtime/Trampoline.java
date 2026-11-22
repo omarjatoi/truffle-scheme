@@ -31,7 +31,9 @@ import scheme.runtime.value.SClosure;
  * target, so a procedure reached by a tail call can be inlined into the site, and its
  * {@code TailCall} and argument array can be scalar-replaced. A primitive that only returns values
  * runs in place instead, with a node of the cache's own (plan.md M10-03). Past {@link #CACHE_LIMIT}
- * targets ({@link #REST_CACHE_LIMIT} for the tail calls after the first) a cache calls indirectly.
+ * targets ({@link #REST_CACHE_LIMIT} for the tail calls after the first) a cache calls the
+ * procedures it doesn't hold indirectly, and goes on calling the ones it holds directly (plan.md
+ * M13-05).
  *
  * <p>There are two caches (plan.md M7-01): one for the first tail call that comes back, and one for
  * the tail calls after it. A procedure's tail calls form a chain ({@code map} tail-calls its
@@ -347,6 +349,14 @@ public final class Trampoline extends Node {
             return callNode.call(arguments);
         }
 
+        /**
+         * A procedure the cache doesn't hold, once it is full. It doesn't replace {@code doDirect}:
+         * the procedures the cache holds are still called directly, and can still be inlined. When
+         * it dropped them, a dispatcher's site (a procedure that tail-calls one of 13 others, for
+         * a cache of 12) called every procedure indirectly, each call with Truffle's argument
+         * profiling: 5 to 14 times as many indirect calls in ecraven's {@code scheme},
+         * {@code dynamic}, {@code compiler} and {@code peval} (design.md "Calls and tail calls").
+         */
         @Specialization
         static Object doIndirect(SClosure procedure, Object[] arguments,
                         @Bind Node node,

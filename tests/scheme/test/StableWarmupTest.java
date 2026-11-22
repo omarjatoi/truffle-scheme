@@ -147,6 +147,25 @@ public class StableWarmupTest {
     }
 
     @Test
+    public void aMegamorphicCacheKeepsTheProceduresItHolds() {
+        // M13-05: past its limit a cache calls the procedures it doesn't hold indirectly, and keeps
+        // calling the ones it holds directly. It used to drop them all for one indirect call: in
+        // ecraven's scheme, dynamic, compiler and peval, 5 to 14 times as many indirect calls, each
+        // with Truffle's argument profiling. Here p1 tail-calls one of five procedures (the first
+        // tail call's cache holds four), each of which tail-calls p2, then p3 to p15, thirteen
+        // procedures (the cache of the later ones holds twelve).
+        StringBuilder chain = new StringBuilder("(define (p1 x) (case (modulo x 5) ((0) (q0 x)) ((1) (q1 x)) ((2) (q2 x)) ((3) (q3 x)) (else (q4 x))))");
+        for (int i = 0; i < 5; i++) {
+            chain.append("(define (q").append(i).append(" x) (p2 x))");
+        }
+        for (int i = 2; i < 15; i++) {
+            chain.append("(define (p").append(i).append(" x) (p").append(i + 1).append(" x))");
+        }
+        chain.append("(define (p15 x) (+ x 1)) (define (site x) (* 2 (p1 x)))");
+        assertEquals(List.of(4, 12), tailCallCaches(chain + "(let loop ((i 0)) (if (< i 10) (begin (site i) (loop (+ i 1)))))", "site"));
+    }
+
+    @Test
     public void onlyMegamorphicSitesSplitTheCaller() throws IOException {
         // The first procedure a callee tail-calls can depend on the caller: here run tail-calls the
         // procedure twice was given, so twice's site sees a different one for each caller of twice.
