@@ -179,6 +179,12 @@ public final class SchemeLanguage extends TruffleLanguage<SchemeContext> {
      * language: until then nothing reports allocations, at no cost ({@link Allocations}).
      */
     final Assumption noAllocationListeners = Assumption.create("no allocation listeners");
+    /**
+     * Valid until a tool asks for tags in a root of this language ({@link SchemeRootNode}'s
+     * {@code prepareForInstrumentation}): until then no frame has tags to end, at no cost
+     * ({@code PromptDriver.endForTools}, design.md D13).
+     */
+    final Assumption noTags = Assumption.create("no tags materialized");
 
     @Override
     protected SchemeContext createContext(Env env) {

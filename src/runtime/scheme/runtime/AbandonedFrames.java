@@ -46,4 +46,10 @@ final class AbandonedFrames extends ControlFlowException {
     static AbandonedFrames of(Capture capture) {
         return new AbandonedFrames(capture);
     }
+
+    /** What the frames a guard's capture left end with, for tools: no capture ({@link Ending}). */
+    @TruffleBoundary
+    static AbandonedFrames ending() {
+        return new AbandonedFrames(null);
+    }
 }

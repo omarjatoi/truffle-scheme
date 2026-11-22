@@ -735,6 +735,89 @@ public class DebuggerTest {
         assertSteps(List.of("<lambda@steps.scm:24:25>:25 @3", "handled:21 @2", "handled:26 @2", VALUE), 25, "oo");
     }
 
+    /**
+     * Each raise is caught by a guard, which captures the frames between the raise and itself as a
+     * composable continuation and drops it (design.md D4): the raise's own frame, the frames that
+     * called it (thrower's caller), and in deep, 10,000 of them, most of them spilled to the heap.
+     */
+    private static final String GUARDS = """
+                    (import (scheme base))
+                    (define (caught)
+                      (let ((r (guard (e ((symbol? e) 2))
+                                 (car '(1))
+                                 (raise 'oops)
+                                 0)))
+                        (+ r 1)))
+                    (define (thrower)
+                      (car '(1))
+                      (raise 'deep)
+                      0)
+                    (define (nested)
+                      (let ((r (guard (e (#t 4))
+                                 (+ 1 (thrower)))))
+                        (+ r 1)))
+                    (define (bottom)
+                      (car '(1))
+                      (raise 'bottom)
+                      0)
+                    (define (down n)
+                      (if (= n 0) (bottom) (+ 1 (down (- n 1)))))
+                    (define (deep)
+                      (guard (e (#t 6))
+                        (down 10000)))
+                    (list (caught) (nested) (deep))
+                    """;
+
+    private static final String GUARDS_VALUE = "(3 5 6)";
+
+    private static void assertGuardSteps(List<String> expected, int line, String steps) {
+        assertEquals(expected, steps(GUARDS, line, steps, false, false));
+        assertEquals(expected, steps(GUARDS, line, steps, true, false));
+    }
+
+    @Test
+    public void aStepOverARaiseThatAGuardCatchesStopsAtTheNextStatement() {
+        // The frames the guard's capture suspended end for tools (design.md D13, "Ending a guard's
+        // frames for tools"), and the step stops at the next statement that runs: the guard's
+        // clauses, which are located at the guard, in the procedure the guard makes of them.
+        assertGuardSteps(List.of("<lambda@steps.scm:3:12>:4 @8", "<lambda@steps.scm:3:12>:5 @8", "<lambda@steps.scm:3:12>:3 @4", GUARDS_VALUE), 4, "oo");
+        // From a procedure the guard's body called: its frame ends, then its caller's, which
+        // doesn't stop on the way.
+        assertGuardSteps(List.of("thrower:9 @9", "thrower:10 @9", "<lambda@steps.scm:13:12>:13 @4", GUARDS_VALUE), 9, "oo");
+        // 10,000 frames down, most of them on the heap.
+        List<String> deep = steps(GUARDS, 17, "oo", false, false);
+        assertEquals(deep.toString(), 4, deep.size());
+        assertTrue(deep.toString(), deep.get(0).startsWith("bottom:17 @") && deep.get(1).startsWith("bottom:18 @"));
+        assertEquals(List.of("<lambda@steps.scm:23:3>:23 @2", GUARDS_VALUE), deep.subList(2, 4));
+    }
+
+    @Test
+    public void aStepOverACallWhoseContinuationIsCapturedStopsAtTheNextStatement() {
+        String program = """
+                        (import (scheme base))
+                        (define saved #f)
+                        (define (keep)
+                          (call/cc (lambda (k) (set! saved k) 1))
+                          2)
+                        (define (f)
+                          (car '(1))
+                          (keep)
+                          3)
+                        (f)
+                        """;
+        // keep's call/cc captures f's frame, which the root prompt then resumes from a copy: the
+        // same frame to the debugger (SchemeRootNode.isSameFrame), so the step over keep goes on
+        // at f's next statement. (Before, it waited for the original frame's resumption.)
+        assertEquals(List.of("f:7 @3", "f:8 @3", "f:9 @2", "3"), steps(program, 7, "oo", false, false));
+    }
+
+    @Test
+    public void aBreakpointOnACaughtRaiseIsHitAgainAsItsFrameEnds() {
+        // Known limitation (docs/upstream.md, "A breakpoint is hit again when its frame resumes"):
+        // the frame ends by resuming, inside the statement that has the breakpoint.
+        assertGuardSteps(List.of("<lambda@steps.scm:3:12>:5 @8", "<lambda@steps.scm:3:12>:5 @8", GUARDS_VALUE), 5, "o");
+    }
+
     @Test
     public void anExceptionBreakpointDoesntStopAtAnEscape() {
         // An escape ends its frames with a control-flow exception, which is no guest exception

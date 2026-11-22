@@ -3591,13 +3591,28 @@ Each entry: the decision, why, and what was rejected.
       Java call each (AGENTS.md rule 4); the ones outside them end first,
       one after the other, outermost first, so only a step that started
       more than 64 frames out from the `raise` can stop on its way.
-    - *What it costs.* Without tags, a walk of the capture's segments, at
-      the abort, testing each one's bytecode for a tag tree (measured in
-      M13-09's PR). With them, a copy and a call per frame. The frames'
-      resumptions are entries to the tools that take a resumption for one
-      ("Yields and tools"): the CPU tracer and the coverage tool count the
-      frames of a caught raise twice, and a line breakpoint on a statement a
-      caught raise was in is hit again as its frame ends.
+    - *What it costs.* Nothing without tools: the driver looks for tags only
+      once a tool has asked for them in some root of the engine, an
+      `Assumption` of the language (`noTags`) that `SchemeRootNode`'s
+      `prepareForInstrumentation` invalidates (the Bytecode DSL's own
+      override calls it), and which compiled code reads as a constant. With
+      tools, a walk of the capture's segments, testing each one's bytecode
+      for a tag tree, and a copy and a call per frame that has tags. The
+      frames' resumptions are entries to the tools that take a resumption
+      for one ("Yields and tools"): the CPU tracer and the coverage tool
+      count the frames of a caught raise twice, and a line breakpoint on a
+      statement a caught raise was in is hit again as its frame ends.
+    - *Measured.* Copies of each build, an Apple M3 Max shared with other
+      agents. A loop of 100,000 caught raises (half of them a symbol raised
+      in the guard's body, half a number raised five calls down), 15
+      iterations a process, the first and the median of the last five, in
+      8 interleaved rounds that run `main` twice (an A/A pair), each run
+      started below a 1-minute load of 9 and none passing 10 (8.8-9.5).
+      JIT: first iteration 308 ms against `main`'s 315 and 319, steady state
+      23.2 against 23.3 and 23.3; native launcher: 112 against 114 and 114,
+      and 27.9 against 28.1 and 28.3. Without the assumption, the walk at
+      every caught raise made the steady state 6.5% slower JIT (24.7 against
+      23.1 and 23.3) and 4% natively (29.3 against 28.3 and 28.0), 6 rounds.
     - *Rejected:* ending the frames one after the other (the stops above);
       ending them when a clause matches (`guard`'s clauses would call the
       runtime between a test and its body, a call on every caught raise
