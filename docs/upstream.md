@@ -1157,7 +1157,9 @@ a tool that counts `onEnter` counts each resumption as one more entry.
   design.md) is resumed once. `(down 300)`, a non-tail recursion of 301
   calls, run with `--scheme.SpillDepth=50`, counts 555 entries of `down`'s
   root and 555 executions of its one statement, in both tools; 301 without
-  the spill.
+  the spill. And since M13-09, each frame between a `raise` and the `guard`
+  that catches it, which the guard ends by resuming it (design.md D13,
+  "Ending a guard's frames for tools"), counts twice.
 - **Our workaround:** none. docs/usage.md's tools table says so.
 
 ### Issue text
@@ -1232,7 +1234,10 @@ such a statement stops at the next one; the breakpoint doesn't.
 - **Actual:** two, the second as the frame resumes.
 - **In Scheme:** a breakpoint on a statement whose call spills stops again
   when its frame comes back from the heap
-  (`SteppingTest.aBreakpointIsHitAgainWhenItsFrameResumes`).
+  (`SteppingTest.aBreakpointIsHitAgainWhenItsFrameResumes`), and since
+  M13-09, one on a statement whose raise a `guard` caught stops again as the
+  guard ends its frame (design.md D13, "Ending a guard's frames for tools";
+  `DebuggerTest.aBreakpointOnACaughtRaiseIsHitAgainAsItsFrameEnds`).
 - **Our workaround:** none. docs/usage.md's tools table says so.
 
 ### Issue text

@@ -686,9 +686,10 @@ final class PromptDriver extends Node {
     }
 
     /**
-     * A copy of a suspended frame (design.md "Copying a frame"): the arguments and every slot,
-     * operand stack included. A shared segment's original is never resumed, so every resume of it is
-     * independent.
+     * A copy of a suspended frame (design.md "Copying a frame"): every slot, operand stack
+     * included. A shared segment's original is never resumed, so every resume of it is independent.
+     * The arguments array is shared: past its prologue a frame's holds only the closure, and nothing
+     * writes it; and it makes the copy the same frame to tools ({@code SchemeRootNode.isSameFrame}).
      */
     static MaterializedFrame copy(MaterializedFrame frame) {
         FrameDescriptor descriptor = frame.getFrameDescriptor();

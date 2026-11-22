@@ -2052,7 +2052,7 @@ interleaved A/B runs.
     and what they spend their time on recorded in bench/README.md; fixes
     kept with a test and interleaved A/B runs, JIT and native, first runs
     and steady state.
-- [ ] **M13-09 · Stepping over a `raise` that a `guard` catches**
+- [x] **M13-09 · Stepping over a `raise` that a `guard` catches**
   - #299's follow-up: `guard` captures a composable continuation
     (DELIMITED, D4) and drops it when a clause catches. That isn't an
     abandoning capture, so the frames it suspends still yield, and a step
