@@ -25,7 +25,8 @@ import scheme.runtime.value.SClosure;
 
 /**
  * The trampoline of a non-tail call site or a prompt (design.md "Calls and tail calls"): performs
- * the {@link TailCall}s that come back, until a value does (plan.md M5-10). Each call site has its
+ * the tail calls that come back (a {@link TailCall}, or the argument array that requests one:
+ * {@link TailCall#argumentsOf}), until a value does (plan.md M5-10). Each call site has its
  * own, with inline caches of {@link DirectCallNode}s keyed on the tail-called procedure's call
  * target, so a procedure reached by a tail call can be inlined into the site, and its
  * {@code TailCall} and argument array can be scalar-replaced. A primitive that only returns values
@@ -187,17 +188,20 @@ public final class Trampoline extends Node {
      * method's host-compiled code, at whatever speed HotSpot had compiled it to.
      */
     public Object run(VirtualFrame frame, Object value) {
-        if (!(value instanceof TailCall tail)) {
+        Object[] tail = TailCall.argumentsOf(value);
+        if (tail == null) {
             return value;
         }
         // The first tail call is peeled out of the loop, so a TailCall built by a callee inlined
         // into this site never flows into the loop's phi and can stay virtual.
-        Object result = first.execute(tail.procedure, tail.arguments);
+        Object result = first.execute(tail[0], tail);
         LoopNode.reportLoopCount(this, 1);
-        if (!(result instanceof TailCall)) {
+        Object[] next = TailCall.argumentsOf(result);
+        if (next == null) {
             return result;
         }
-        frame.setAuxiliarySlot(body().slot(frame), ((TailCall) result).arguments);
+        frame.setAuxiliarySlot(body().slot(frame), next);
+        next = null;
         // Only the frame holds it now, and the loop clears it as it makes the call: this method's
         // Java frame, which an interpreter keeps for the whole loop, mustn't keep its arguments
         // alive (design.md "Tail calls keep nothing alive").
@@ -210,13 +214,14 @@ public final class Trampoline extends Node {
      * own ({@code raise} for an error): a Java loop, which isn't compiled by OSR.
      */
     public Object run(Object value) {
-        if (!(value instanceof TailCall tail)) {
+        Object[] tail = TailCall.argumentsOf(value);
+        if (tail == null) {
             return value;
         }
-        Object result = first.execute(tail.procedure, tail.arguments);
+        Object result = first.execute(tail[0], tail);
         TailCalls rest = body().rest;
-        while (result instanceof TailCall next) {
-            result = rest.execute(next.procedure, next.arguments);
+        for (Object[] next = TailCall.argumentsOf(result); next != null; next = TailCall.argumentsOf(result)) {
+            result = rest.execute(next[0], next);
         }
         return result;
     }
@@ -273,8 +278,9 @@ public final class Trampoline extends Node {
             // nothing alive").
             frame.setAuxiliarySlot(index, null);
             Object result = rest.execute(arguments[0], arguments);
-            if (result instanceof TailCall next) {
-                frame.setAuxiliarySlot(index, next.arguments);
+            Object[] next = TailCall.argumentsOf(result);
+            if (next != null) {
+                frame.setAuxiliarySlot(index, next);
                 return CONTINUE_LOOP_STATUS;
             }
             return result;

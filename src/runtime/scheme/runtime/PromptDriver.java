@@ -273,7 +273,7 @@ final class PromptDriver extends Node {
                                 continue;
                             }
                         }
-                    } else if (value instanceof TailCall tail) {
+                    } else if (TailCall.argumentsOf(value) instanceof Object[] tailArguments) {
                         // The escape prompt (M5-04) whose return this tail call's continuation is, if
                         // any: this one with nothing pending, or one flattened next in line.
                         EscapeRootNode.Target target = null;
@@ -285,25 +285,25 @@ final class PromptDriver extends Node {
                             target = t;
                         }
                         if (target != null) {
-                            if (EscapeRootNode.escapesTo(tail.procedure, target, context)) {
+                            if (EscapeRootNode.escapesTo(tailArguments[0], target, context)) {
                                 // k, tail-called in its own prompt's tail position: no need to throw.
-                                value = EscapeRootNode.values(tail.arguments);
+                                value = EscapeRootNode.values(tailArguments);
                                 if (pending == null) {
                                     return value;
                                 }
                                 pending = pending.tail;
                                 continue;
                             }
-                            if (tail.arguments.length == 2 && tail.procedure instanceof SClosure c && c.callTarget.getRootNode() instanceof EscapeRootNode callEC) {
+                            if (tailArguments.length == 2 && tailArguments[0] instanceof SClosure c && c.callTarget.getRootNode() instanceof EscapeRootNode callEC) {
                                 // %call/ec in that prompt's tail position has the same continuation, so it
                                 // runs in that prompt, in constant space (R7RS §3.5).
                                 frame.setObject(PENDING_SLOT, pending);
-                                value = callWithProcedure(tail.arguments[1], new Object[]{null, callEC.continuation(target, context)});
+                                value = callWithProcedure(tailArguments[1], new Object[]{null, callEC.continuation(target, context)});
                                 continue;
                             }
                         }
                         frame.setObject(PENDING_SLOT, pending);
-                        value = callWithProcedure(tail.procedure, tail.arguments);
+                        value = callWithProcedure(tailArguments[0], tailArguments);
                     } else if (pending == null) {
                         return value;
                     } else {

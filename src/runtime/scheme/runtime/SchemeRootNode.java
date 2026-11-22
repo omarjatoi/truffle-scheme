@@ -525,6 +525,9 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
     /**
      * A tail call: returns a request to the caller's trampoline instead of calling. The arguments
      * start at index 1, as in {@link Call}, and the array becomes the callee's frame arguments.
+     * While no tool is attached, the array is the request ({@link TailCall#argumentsOf}): where it
+     * crosses a call Truffle doesn't inline, one allocation instead of two (design.md "Calls
+     * Truffle doesn't inline").
      *
      * <p>A primitive that only returns values runs in place instead, as at a non-tail call site
      * (plan.md M5-09), and its value is this procedure's. That is safe because it is a leaf
@@ -547,8 +550,11 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
         }
 
         @Specialization
-        static TailCall doMake(Object procedure, @Variadic(startOffset = 1) Object[] arguments) {
+        static Object doMake(Object procedure, @Variadic(startOffset = 1) Object[] arguments, @Bind Node node) {
             arguments[0] = procedure;
+            if (SchemeLanguage.get(node).noTags.isValid()) {
+                return arguments;
+            }
             return new TailCall(procedure, arguments);
         }
 
@@ -563,7 +569,7 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
 
     /** A primitive run in place returns a value: never a request for a trampoline or a prompt. */
     static Object inPlaceResult(Object result) {
-        assert !(result instanceof TailCall) && !(result instanceof Capture);
+        assert !TailCall.is(result) && !(result instanceof Capture);
         return result;
     }
 
@@ -953,10 +959,19 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
      * the loop, where it failed at once and invalidated the compiled root, once per call target
      * (M12-12, design.md D17 "The native launcher's steady state"; docs/upstream.md). The same holds
      * for {@link BoxSet}, {@link LoadCaptured} and {@link PatchCaptured}.
+     *
+     * <p>A box that holds a fixnum stored from an unboxed {@code long} ({@link Box#holdsLong}) is
+     * read as one, so a counter in an assigned variable allocates nothing (design.md "Calls Truffle
+     * doesn't inline": the counter of ecraven's sboyer).
      */
     @Operation
     public static final class BoxRef {
-        @Specialization
+        @Specialization(guards = "box.holdsLong()")
+        static long doLong(Box box) {
+            return box.longValue;
+        }
+
+        @Specialization(guards = "!box.holdsLong()")
         static Object doRef(Box box) {
             return box.value;
         }
@@ -967,10 +982,19 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
         }
     }
 
-    /** Assigns an assigned variable. Its operand's type is checked, not cast, as {@link BoxRef}'s is. */
+    /**
+     * Assigns an assigned variable. Its operand's type is checked, not cast, as {@link BoxRef}'s is.
+     * A {@code long} stays unboxed in the box, until a value of another type is assigned at this
+     * site.
+     */
     @Operation
     public static final class BoxSet {
         @Specialization
+        static void doLong(Box box, long value) {
+            box.setLong(value);
+        }
+
+        @Specialization(replaces = "doLong")
         static void doSet(Box box, Object value) {
             box.value = value;
         }

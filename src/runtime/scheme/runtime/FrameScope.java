@@ -102,7 +102,7 @@ final class FrameScope implements TruffleObject {
         if (k < 0 || !(variables.raw(frame, k) instanceof Box box)) {
             throw UnsupportedMessageException.create();
         }
-        box.value = InteropValues.toScheme(value);
+        box.set(InteropValues.toScheme(value));
     }
 
     @ExportMessage
