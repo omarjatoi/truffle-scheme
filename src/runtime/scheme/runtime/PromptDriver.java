@@ -253,7 +253,9 @@ final class PromptDriver extends Node {
                                     }
                                     pending = split.after();
                                     frame.setObject(PENDING_SLOT, pending);
-                                    endForTools(split.before(), context);
+                                    if (!language().noTags.isValid()) {
+                                        endForTools(split.before(), context);
+                                    }
                                     value = receive(context, capture.receiver, Continuation.capture(split.before(), capture.dynEnv, true, context), capture.dynEnv, split.marker().dynEnv());
                                 } else {
                                     // This prompt: abort to it.
@@ -263,7 +265,9 @@ final class PromptDriver extends Node {
                                     }
                                     pending = null;
                                     frame.setObject(PENDING_SLOT, pending);
-                                    endForTools(all, context);
+                                    if (!language().noTags.isValid()) {
+                                        endForTools(all, context);
+                                    }
                                     value = receive(context, capture.receiver, Continuation.capture(all, capture.dynEnv, true, context), capture.dynEnv, promptEnv);
                                 }
                                 continue;
@@ -531,11 +535,17 @@ final class PromptDriver extends Node {
         return count;
     }
 
+    private SchemeLanguage language() {
+        return getRootNode().getLanguage(SchemeLanguage.class);
+    }
+
     /**
      * A composable continuation's frames have left the stack for this prompt (D4: a {@code guard}
      * that caught a raise): in code with tools, they end here ({@link Ending}). Without tags (no
      * tool asked for them, or {@code UNTRUSTED}'s, which are there from the start) a frame emits no
-     * events, and nothing is resumed.
+     * events, and nothing is resumed. Called only once a tool has asked for tags
+     * ({@link SchemeLanguage#noTags}): else a loop of caught raises paid for the walk (its steady
+     * state 6.5% slower JIT, 4% natively: design.md D13).
      */
     @TruffleBoundary
     private static void endForTools(SegmentList segments, SchemeContext context) {

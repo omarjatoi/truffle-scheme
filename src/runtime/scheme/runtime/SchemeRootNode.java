@@ -1,6 +1,7 @@
 package scheme.runtime;
 
 import java.util.Arrays;
+import java.util.Set;
 
 import com.oracle.truffle.api.Assumption;
 import com.oracle.truffle.api.CompilerAsserts;
@@ -244,6 +245,16 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
      */
     public String getProcedureName() {
         return name;
+    }
+
+    /**
+     * A tool asks for {@code materializedTags} in this root: frames may have tags from now on
+     * ({@link SchemeLanguage#noTags}). The Bytecode DSL's own override, which reparses the root with
+     * them, calls this.
+     */
+    @Override
+    protected void prepareForInstrumentation(Set<Class<?>> materializedTags) {
+        getLanguage(SchemeLanguage.class).noTags.invalidate();
     }
 
     /**
