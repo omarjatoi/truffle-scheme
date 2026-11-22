@@ -347,7 +347,7 @@ public final class Trampoline extends Node {
             return callNode.call(arguments);
         }
 
-        @Specialization(replaces = "doDirect")
+        @Specialization
         static Object doIndirect(SClosure procedure, Object[] arguments,
                         @Bind Node node,
                         @Cached("megamorphic()") IndirectCallNode callNode) {

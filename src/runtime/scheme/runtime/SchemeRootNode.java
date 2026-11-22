@@ -435,7 +435,7 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
             }
         }
 
-        @Specialization(replaces = "doDirect")
+        @Specialization
         @InliningCutoff
         static Object doIndirect(SClosure procedure, @Variadic(startOffset = 1) Object[] arguments,
                         @Bind Node node,
