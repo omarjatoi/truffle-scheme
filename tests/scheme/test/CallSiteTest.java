@@ -225,21 +225,6 @@ public class CallSiteTest {
         }
     }
 
-    @Test
-    public void aMegamorphicSiteStillInlinesTheProceduresItHolds() throws IOException {
-        // app's call site sees five procedures, more than its cache holds: rare once, early, and
-        // h0 to h3 from then on. Past its limit the site calls rare indirectly, but keeps h0 to h3,
-        // which compiled code inlines (M13-05). It used to call every procedure indirectly once it
-        // had seen a fifth, so none of them was inlined, and each call profiled its arguments.
-        String program = "(define (h0 x) (+ x 10)) (define (h1 x) (+ x 11)) (define (h2 x) (+ x 12)) (define (h3 x) (+ x 13)) (define (rare x) (- x 1))" +
-                        "(define hs (vector h0 h1 h2 h3)) (define (app f x) (+ 1 (f x)))" +
-                        "(let loop ((i 0) (s 0)) (if (= i 3000) s (loop (+ i 1) (+ s (app (if (= i 5) rare (vector-ref hs (modulo i 4))) i)))))";
-        String log = engineLog(program, "compiler.TraceInlining", "true");
-        for (String procedure : new String[]{"h0", "h1", "h2", "h3"}) {
-            assertTrue(procedure + ":\n" + log, Pattern.compile("Inlined\\s+" + procedure + "\\b").matcher(log).find());
-        }
-    }
-
     // ------------------------------------------------------------------------------------------
     // Named let as a loop of the enclosing root
 

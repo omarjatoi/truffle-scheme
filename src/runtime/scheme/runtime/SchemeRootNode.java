@@ -368,9 +368,13 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
      * docs/upstream.md#reportpolymorphism-on-an-operation. When that test fails after a Truffle
      * upgrade, put {@code @ReportPolymorphism.Megamorphic} here instead.)
      *
-     * <p>Past the cache's limit, {@code doIndirect} calls the procedures the cache doesn't hold, and
-     * the ones it holds are still called directly (plan.md M13-05): it doesn't replace
-     * {@code doDirect}, as in {@link Trampoline}'s caches.
+     * <p>Past the cache's limit, {@code doIndirect} replaces {@code doDirect}: every procedure is
+     * called indirectly, and the site reports polymorphism. {@link Trampoline}'s caches keep their
+     * entries instead (plan.md M13-05); a site's own procedures are often passed in (a
+     * {@code call-with-values} producer, {@code map}'s procedure), and the four it saw first are then
+     * no better than any other. Kept, they stayed inlined in the site's procedure, and each change
+     * in them recompiled it: compiled immediately, Larceny's {@code write} section recompiled
+     * {@code call-with-values} until Truffle took it for a deoptimization cycle.
      *
      * <p>A call of a procedure ({@code doDirect}, {@code doIndirect}) is an {@link InliningCutoff}:
      * HotSpot compiles the bytecode interpreter's {@code continueAt} with the handler of every
@@ -439,7 +443,7 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
             }
         }
 
-        @Specialization
+        @Specialization(replaces = "doDirect")
         @InliningCutoff
         static Object doIndirect(SClosure procedure, @Variadic(startOffset = 1) Object[] arguments,
                         @Bind Node node,
