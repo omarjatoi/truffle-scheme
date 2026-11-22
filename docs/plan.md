@@ -2023,7 +2023,7 @@ interleaved A/B runs.
     around each threshold, `pi`, `chudnovsky` and `bench-check` measured
     JIT and native, interleaved; or design.md D1 records why the JDK's
     stays, with the measurements.
-- [ ] **M13-07 · What got slower over M12**
+- [x] **M13-07 · What got slower over M12**
   - M12's exit: `bench-check`'s baselines, both sets of 12 runs, were
     above M11's for `peval` (86.7 → 95.7 ms, 1.10), `fibc` (54.1 → 57.6,
     1.07) and `startup` (283.6 → 303.6, 1.07; M10's 267.6), at a load of
@@ -2035,6 +2035,13 @@ interleaved A/B runs.
     the program measured before and after, or recorded with its evidence
     (bench/README.md, design.md where a decision traded it); `bench-check`
     re-measured for what changed.
+  - Done (bench/README.md "What got slower over M12"): `peval` is #245's
+    literal pairs (1.04 on the JVM, 1.05 natively; recorded in design.md
+    D1 as the decision's cost); `fibc` is #237, M11's polyglot library,
+    after M11's baselines (its compilation reaches Truffle's inlining
+    expansion budget sooner; recorded, not changed); `startup` and
+    `dynamic` have no slower build. No code changed, so no threshold was
+    re-measured.
 - [ ] **M13-08 · `compiler`, `matrix` and `dynamic`**
   - M12's report, after `pi`'s and the call protocol's programs: steady
     state ×fastest `compiler` 5.8 (JIT) and 7.0 (native), `matrix` 4.3

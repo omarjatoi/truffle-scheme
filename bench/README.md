@@ -471,6 +471,89 @@ is M11's report's, to its two decimals. In seconds, first iteration / steady sta
   a global, and 10 million calls of it take 20-70 ms); `matrix`'s its row
   operations (`_-split-`, `_-*-`, `loop`, 17-21% each).
 
+## What got slower over M12
+
+M12's exit (plan.md M13-07) found `bench-check`'s baselines above M11's for
+`peval` (86.7 → 95.7 ms), `fibc` (54.1 → 57.6) and `startup` (283.6 →
+303.6), and the table above has `dynamic`'s steady state a little slower
+after M12-05. M11's baselines were measured at `a7d6f23` (#263), so the
+window is every merge after it up to M12's last code, `8fdf238` (#299):
+M11's polyglot work (#237, #266-#273), M10-07's literal pairs (#245, merged
+at M12's start) and M12's merges (#277-#299).
+
+How it was bisected: a build of every merge in the window that changed
+`src/`, `bazel/` or the build files (13 different builds; Bazel 9.3.1's,
+#276, and M12-09's, #286, gave jars identical to the merge before, so they
+were left out), each copied out of `bazel-out` (the module path's jars,
+once the JDK) with the native launcher for five of them, and run with
+`bench-check`'s own code (`tests/harness/bench.py`, `_run_check_case`:
+fresh JVMs, `-Xmx2g`, the serial collector, the median of the last 10 of
+25 iterations) on each copy in turn, in a rotating order, with A/A pairs
+(two copies of the same build). `dynamic` ran at the report's count (50),
+5 iterations, the best after the first. A run started only while the
+1-minute and 5-minute loads were at most 10, and one whose 1-minute load
+was above 10 at its end was left out. Two sets on the JVM: 8 rounds at a
+1-minute load of 3.8-10 (below), and an earlier 3 rounds at 5.2-10, which
+agree except where said; and the native launcher's, 12 rounds of `peval`
+at the report's count (200) and `dynamic`, as the report runs them
+(`--vm.Xmx2g`, the best of iterations 2-5), at 7.1-9.9. In ms, the median
+of the rounds:
+
+| Build | `peval` | `fibc` | `startup` | `dynamic` JIT | `peval` native | `dynamic` native |
+|---|--:|--:|--:|--:|--:|--:|
+| `a7d6f23` (#263, M11's baselines) | 91.8 | 55.9 | 291.5 | 264.6 | | |
+| the same, A/A | 91.7 | 55.3 | 297.0 | 257.6 | | |
+| `7e32178` (#237, the polyglot library) | 91.9 | **58.0** | 291.4 | 254.6 | | |
+| `1ad17b0` (M11's exit) | 92.4 | 58.0 | 299.8 | 259.1 | 350.4 | 424.0 |
+| `e438f3e` (#245, literal pairs) | **95.9** | 58.0 | 300.5 | 266.4 | **368.4** | 417.8 |
+| `f4fc307` (#292, before M12-05) | 94.8 | 58.5 | 293.2 | 260.7 | 361.6 | 410.9 |
+| `c3908b1` (#295) | 95.1 | 58.3 | 294.6 | 260.0 | 365.9 | 402.0 |
+| `1b67af3` (#297) | 94.8 | 58.0 | 296.7 | 264.0 | 357.4 | 406.4 |
+| `8fdf238` (#299, M12's last code) | 95.7 | 58.2 | 302.0 | 263.2 | 362.0 | 405.4 |
+| the same, A/A | 94.8 | 58.0 | 293.2 | 271.4 | 364.9 | 408.0 |
+| `8ce0721` (`main`, M13-02) | 95.4 | 58.5 | 298.0 | 265.9 | | |
+| the same, `InliningExpansionBudget=20000` | 102.4 | 54.5 | 299.6 | 260.3 | | |
+
+- `peval`: M10-07's literal pairs (#245), 1.04 times the build before
+  (3.5 ms; the earlier set 1.09, 87.6 → 95.3), and natively 1.05 (350.4 →
+  368.4 ms at the report's count), and no other step. `peval`
+  takes quoted lambda expressions apart and rebuilds them as lists made at
+  run time, so the same `car` and `cdr` sites see both classes: in the
+  prelude's `cadr` and `caddr` and its own `const-expr?`, both
+  specializations are compiled (`cadr` 588 → 728 bytes of code, `caddr` 652
+  → 836); return-type profiles that saw one class see two (`s!` is
+  deoptimized 8 times instead of 3, invalidated for its profiled return
+  type); and the larger callees leave less of the inlining budget (`alpha`
+  inlines 46 calls instead of 61). design.md D1 ("Literal pairs are
+  immutable") records it as the decision's cost.
+- `fibc`: M11's polyglot library (#237), 1.04 times the build before it
+  (the earlier set 1.05, 53.6 → 56.0), before M12 but after M11's
+  baselines were measured. Nothing on `fibc`'s path does more work
+  (removing #237's check from `%continuation-dynamic-env`,
+  `Continuation.checkInvocable`, changed neither its compilations nor its
+  time: 57.9 ms against `main`'s 58.1 in 10 more rounds, where `a7d6f23`
+  took 55.8 and 55.6 and #237 57.8); its compilation inlines less.
+  `fibc`'s second-tier compilation now reaches Truffle's inlining expansion
+  budget (`compiler.InliningExpansionBudget`, 12,000 by default) sooner
+  (`--compiler.TraceInlining`): it inlines 82-85 calls instead of 123
+  (`pred` 31 times instead of 61, `addc` 8 times instead of 12, the rest
+  left as calls), the same on `main`; the inlining budget
+  (`InliningInliningBudget`) at 20,000 doesn't change that. With the
+  expansion budget at 20,000 it inlines 123 again and takes 54.5 ms (in
+  both sets it ran in), as before #237. Not changed: it is the engine's
+  budget for every compilation, and with 20,000 `peval` took 1.07 times as
+  long.
+- `startup`: no build is slower. In each set the builds' medians are no
+  further apart than the A/A pairs' (3.6% here, the A/A 1.9%; the earlier
+  set's A/A 5%), in no order of date; but the sets differ: most builds took
+  270-277 ms in the earlier set, and 291-302 here. The 7% between M11's
+  baseline and M12's is the machine's, not the code's.
+- `dynamic`: on the JVM, no step at M12-05's #295 or #297, nor anywhere:
+  the builds' medians spread over 255-271 ms and the A/A pairs alone over
+  3%. Natively the same: 402-411 ms from #292 to #299, the A/A pair 405
+  and 408 (M12-05's 0.401 → 0.414 s and 0.261 → 0.267 on the JVM were 2
+  processes each).
+
 ## Polyglot
 
 `polyglot/foreign.scm` (ours) times foreign access, `(graalvm polyglot)`

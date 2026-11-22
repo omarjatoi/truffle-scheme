@@ -1789,6 +1789,25 @@ Each entry: the decision, why, and what was rejected.
     them and merged this design as it is (#245): the JIT is neutral or
     faster, memory is unchanged, and the native first runs' cost is under
     2%.
+  - *A cost found after it (M13-07): `peval` in the JIT's steady state.*
+    `bench-check`'s `peval` baseline rose 1.10 times over M12; bisected
+    over copies of every build since M11's baselines, interleaved with A/A
+    pairs, its one step is this design: 1.04 times the build before (92.4
+    → 95.9 ms, 8 rounds; an earlier 3 rounds 1.09), the A/A within 0.2%,
+    and the native launcher's 1.05 (350.4 → 368.4 ms at the report's
+    count, 12 rounds).
+    `peval` takes quoted lambda expressions apart and rebuilds them as
+    lists made at run time, so the same `car` and `cdr` sites see both
+    classes (the prelude's `cadr` and `caddr`, its own `const-expr?`):
+    both specializations are compiled (`cadr` 588 → 728 bytes of code),
+    return-type profiles see two classes where they saw one (`s!`
+    deoptimized 8 times instead of 3), and the larger callees leave less
+    of the inlining budget (`alpha` inlines 46 calls instead of 61). M10-07's
+    measurements had no program that mixes the two kinds of pair in its
+    hot code. The designs measured above don't avoid it: one
+    specialization for both classes compares the class twice and loses the
+    exact class just as these sites do. Kept as the decision's cost
+    (bench/README.md, "What got slower over M12").
 - **Records (M7-04)** are static objects (Truffle's Static Object Model):
   their fields are fields of the object itself, so a record is one
   allocation and a field access is a field load. A language has one
