@@ -672,11 +672,17 @@ follow it or deviate, with the decision below that says why.
   only references to shared boxes. A segment only its prompt driver can
   reach is resumed in place instead (Owned segments, below).
 - **Copying a frame:**
-  `Truffle.getRuntime().createMaterializedFrame(frame.getArguments().clone(), descriptor)`,
+  `Truffle.getRuntime().createMaterializedFrame(frame.getArguments(), descriptor)`,
   then `frame.copyTo(0, copy, 0, descriptor.getNumberOfSlots())`. This copies
-  the arguments and every frame slot, operand stack included. It's the same
-  copy `BytecodeFrame.copy()` makes internally, but `BytecodeFrame` doesn't
-  expose its frame, so it can't be used directly. The copy is passed to the
+  every frame slot, operand stack included. It's the copy
+  `BytecodeFrame.copy()` makes internally, but `BytecodeFrame` doesn't
+  expose its frame, so it can't be used directly. The arguments array is
+  shared, not copied (M13-09): a frame suspends only after its prologue,
+  which leaves nothing in it but the closure (`BindArguments`,
+  `ReleaseArguments`), and nothing writes it after. Every call has an array
+  of its own, so the array is the frame's identity, which a copy keeps:
+  tools match a resumed copy with the frame that yielded by it (D13,
+  "Ending a guard's frames for tools"). The copy is passed to the
   segment's `ContinuationRootNode` call target as `(copy, value)`, through a
   `DirectCallNode` inline cache keyed on the `ContinuationRootNode`.
 - **Never resume a shared original frame.** Truffle documents a
@@ -3451,7 +3457,9 @@ Each entry: the decision, why, and what was rejected.
     it", a feature request). A step through an escape (invoking `k`,
     which abandons the frames between: an APPLY or ESCAPE capture) would
     never complete, as the abandoned frame never resumes, so with tools
-    such a frame doesn't suspend (below).
+    such a frame doesn't suspend (below). Nor would a step over a `raise`
+    that a `guard` catches, whose frames suspend and are dropped, so with
+    tools those end as the guard catches (below).
     The CPU sampler walks stacks and isn't affected.
   - *Ending an escaped frame for tools (M12-06).* A frame that a
     continuation's invocation abandons (an APPLY or ESCAPE capture) has
@@ -3544,6 +3552,59 @@ Each entry: the decision, why, and what was rejected.
       `parsing`, two runs each) were the same sizes for all of them: 40-42
       KB of bytecode and 12-16 KB of code for the first, 47-85 KB and 21-38
       KB for the later ones.
+  - *Ending a guard's frames for tools (M13-09).* A `guard` that catches a
+    raise has suspended the frames between the `raise` and itself into a
+    composable continuation (a DELIMITED capture, D4), which it drops. They
+    can't throw instead, as an escape's do: if no clause matches, the guard
+    reinstates them. Suspended, each is a generator's to the debugger, so a
+    step over a call that raised waited for a resumption that never comes.
+    So when such a capture aborts to its prompt, the prompt's driver ends
+    each of its frames whose bytecode has tags (`PromptDriver.endForTools`;
+    not under `UNTRUSTED`, as above): resumed from a copy with an `Ending`
+    as its value, the frame's call site (`Resumed`) ends the frames it
+    called, then throws `AbandonedFrames`, the unwind exception above, which
+    its tags take for an exceptional return. A step over the `raise` then
+    stops at the next statement that runs: the guard's clauses (located at
+    the guard, in the procedure the guard makes of them).
+    - *At the abort, not when a clause matches.* Only the clauses can tell,
+      and they run after the abort, in the guard's dynamic environment (R7RS
+      §4.2.7); a step that still waited would pass them. Every DELIMITED
+      capture is a guard's (prompts aren't exposed, D4). If no clause
+      matches, the continuation is reinstated, and its frames resume from
+      copies, which tools take for calls, as any resumed frame (above).
+    - *A copy is the same frame.* The debugger matches a frame's resumption
+      with its yield by `RootNode.isSameFrame`, which Truffle provides for
+      this (*"Frame comparison is used to match the particular yielded and
+      resumed execution"*), by identity unless a language says otherwise. A
+      shared segment is resumed from a copy (AGENTS.md rule 3), so
+      `SchemeRootNode.isSameFrame` also takes a frame for the same as one
+      with its arguments array, which a copy shares ("Copying a frame"). A
+      step over a call during which the frame's continuation was captured
+      and re-entered now stops at its next statement too.
+    - *Nested, as the frames were on the stack.* Each frame ends inside the
+      one that called it, as an exception unwinding them would: the frames
+      outside the frame a step started in end before it, while the step
+      still waits for it, and those inside it end deeper than it, where a
+      step over doesn't stop. Ended one after the other, innermost first,
+      each frame outside the stepping one stopped at the statement it was
+      in, as it ended (a prototype). Only the 64 innermost frames nest, a
+      Java call each (AGENTS.md rule 4); the ones outside them end first,
+      one after the other, outermost first, so only a step that started
+      more than 64 frames out from the `raise` can stop on its way.
+    - *What it costs.* Without tags, a walk of the capture's segments, at
+      the abort, testing each one's bytecode for a tag tree (measured in
+      M13-09's PR). With them, a copy and a call per frame. The frames'
+      resumptions are entries to the tools that take a resumption for one
+      ("Yields and tools"): the CPU tracer and the coverage tool count the
+      frames of a caught raise twice, and a line breakpoint on a statement a
+      caught raise was in is hit again as its frame ends.
+    - *Rejected:* ending the frames one after the other (the stops above);
+      ending them when a clause matches (`guard`'s clauses would call the
+      runtime between a test and its body, a call on every caught raise
+      with or without tools, and the abort above already decides); resuming
+      the original frames to end them (rule 3: the continuation may yet be
+      reinstated); a frame slot for a frame's identity (a slot in every
+      frame, where the arguments array is one already).
 - **Logging.** The language logs through Truffle (`TruffleLogger`), so
   `--log.scheme.level=FINE` (the launcher), `-Dpolyglot.log.scheme.level=FINE`
   or `Context.Builder.option("log.scheme.level", "FINE")` turns it on, and
