@@ -493,7 +493,7 @@ final class Arithmetic {
         if (y.signum() == 0) {
             throw new SchemeError(who + ": division by zero");
         }
-        BigInteger[] qr = x.divideAndRemainder(y);
+        BigInteger[] qr = ArithmeticDivision.divideAndRemainder(x, y);
         if (floor && qr[1].signum() != 0 && qr[1].signum() != y.signum()) {
             qr[0] = qr[0].subtract(BigInteger.ONE);
             qr[1] = qr[1].add(y);

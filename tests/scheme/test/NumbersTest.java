@@ -8,6 +8,7 @@ import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Random;
 
 import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.Source;
@@ -1031,5 +1032,89 @@ public class NumbersTest {
         }
         assertEquals("(9223372036854775808 -9223372036854775809 9223372037000250000 #t)",
                         write("(list " + big + " (- -9223372036854775808 1) (* 3037000500 3037000500) (exact-integer? " + big + "))"));
+    }
+
+    /**
+     * M13-06: the division of big integers (the builtins' {@code ArithmeticDivision}: Knuth's
+     * algorithm D on 64-bit digits, between the JDK's thresholds) against
+     * {@link BigInteger#divideAndRemainder}, by {@code truncate/} and {@code floor/} and their
+     * quotients and remainders, on random operands of both signs at and around each threshold:
+     * a divisor and a quotient of 8 32-bit digits (below either the JDK divides), the JDK's
+     * Burnikel-Ziegler thresholds (a divisor of 80 digits and a quotient of 40), and a divisor of
+     * 256 digits (past it and those, the JDK divides again); at the 64-bit digits' edges; and with operands that make
+     * the algorithm's rare steps happen: a top digit equal to the divisor's (the quotient digit
+     * estimated as B - 1), and the quotient digit one too large after its test (D6's add-back).
+     */
+    @Test
+    public void bigDivisionMatchesTheJdk() {
+        Random random = new Random(1306);
+        List<BigInteger[]> cases = new ArrayList<>();
+        // Divisors (in bits) on both sides of 8, 80 and 256 32-bit digits, and dividends of 8 and 40
+        // digits more, where ArithmeticDivision's choice changes.
+        int[] divisorBits = {63, 64, 65, 127, 128, 129, 224, 225, 256, 257, 32 * 79, 32 * 79 + 1, 32 * 80, 32 * 80 + 1, 32 * 255, 32 * 255 + 1, 32 * 256, 32 * 256 + 1};
+        for (int b : divisorBits) {
+            int bInts = (b + 31) / 32;
+            int[] dividendBits = {b - 1, b, b + 1, b + 64, b + random.nextInt(3000), 32 * (bInts + 7), 32 * (bInts + 7) + 1, 32 * (bInts + 8), 32 * (bInts + 8) + 1, 32 * (bInts + 39),
+                            32 * (bInts + 39) + 1, 32 * (bInts + 40), 32 * (bInts + 40) + 1};
+            for (int a : dividendBits) {
+                for (int kind = 0; kind < (b < 8000 ? 4 : 1); kind++) {
+                    cases.add(new BigInteger[]{operand(random, a, kind), operand(random, b, (kind + 1) % 4)});
+                }
+            }
+        }
+        for (int i = 0; i < 300; i++) {
+            int b = 2 + random.nextInt(3200);
+            cases.add(new BigInteger[]{operand(random, b + random.nextInt(3200) - 64, random.nextInt(4)), operand(random, b, random.nextInt(4))});
+        }
+        // Near multiples of the divisor: a remainder of 0 or close to it, or to the divisor.
+        for (int i = 0; i < 100; i++) {
+            BigInteger b = operand(random, 65 + random.nextInt(3000), random.nextInt(4));
+            BigInteger q = operand(random, 1 + random.nextInt(1500), random.nextInt(4));
+            cases.add(new BigInteger[]{b.multiply(q).add(BigInteger.valueOf(random.nextInt(5) - 2)), b});
+            cases.add(new BigInteger[]{b.multiply(q).add(b.abs()).subtract(BigInteger.ONE), b});
+        }
+        // 2^(t+1) / (2^t + 1): the top digits make the estimate 2 and the divisor's last digit, below
+        // the two the estimate's test sees, makes it 1 (an add-back, for a divisor of three digits or
+        // more). b 2^64 - 1 over b: the remainder's top digit equals the divisor's (B - 1, then an
+        // add-back too).
+        for (int t = 120; t < 400; t += 7) {
+            BigInteger b = BigInteger.ONE.shiftLeft(t).add(BigInteger.ONE);
+            cases.add(new BigInteger[]{BigInteger.ONE.shiftLeft(t + 1), b});
+            cases.add(new BigInteger[]{BigInteger.ONE.shiftLeft(t + 1).multiply(operand(random, 200, 0)).negate(), b});
+            BigInteger c = operand(random, t, 0).abs();
+            cases.add(new BigInteger[]{c.shiftLeft(64).subtract(BigInteger.ONE), c});
+            cases.add(new BigInteger[]{c.shiftLeft(64).subtract(BigInteger.ONE).negate(), c});
+        }
+        StringBuilder program = new StringBuilder("(define cases '(");
+        StringBuilder expected = new StringBuilder("(");
+        for (BigInteger[] c : cases) {
+            BigInteger a = c[0];
+            BigInteger b = c[1];
+            program.append('(').append(a).append(' ').append(b).append(')');
+            BigInteger[] truncated = a.divideAndRemainder(b);
+            BigInteger[] floored = truncated.clone();
+            if (floored[1].signum() != 0 && floored[1].signum() != b.signum()) {
+                floored[0] = floored[0].subtract(BigInteger.ONE);
+                floored[1] = floored[1].add(b);
+            }
+            expected.append(expected.length() == 1 ? "" : " ").append('(').append(String.join(" ", truncated[0].toString(), truncated[1].toString(), floored[0].toString(), floored[1].toString(),
+                            truncated[0].toString(), truncated[1].toString(), floored[1].toString())).append(')');
+        }
+        program.append("))\n(map (lambda (c) (let ((a (car c)) (b (cadr c)))" + " (append (call-with-values (lambda () (truncate/ a b)) list) (call-with-values (lambda () (floor/ a b)) list)" +
+                        " (list (quotient a b) (remainder a b) (modulo a b))))) cases)");
+        expected.append(')');
+        assertEquals(expected.toString(), write("(let () " + program + ")"));
+    }
+
+    /** A random integer of {@code bits} bits (at least 1) and either sign, by kind: random, all ones, a power of two, or 2^bits less a small random number. */
+    private static BigInteger operand(Random random, int bits, int kind) {
+        int n = Math.max(1, bits);
+        BigInteger x = switch (kind) {
+            case 1 -> BigInteger.ONE.shiftLeft(n).subtract(BigInteger.ONE);
+            case 2 -> BigInteger.ONE.shiftLeft(n - 1);
+            case 3 -> BigInteger.ONE.shiftLeft(n).subtract(new BigInteger(Math.max(1, n / 3), random)).max(BigInteger.ONE);
+            default -> new BigInteger(n, random).setBit(n - 1);
+        };
+        return random.nextBoolean() ? x : x.negate();
     }
 }
