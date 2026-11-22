@@ -1963,7 +1963,7 @@ interleaved A/B runs.
     Guile) and R7RS's text, and `IoTest` covers `char-ready?` and
     `read-char` after the end of piped input, and after Ctrl-D on a
     terminal if the decision distinguishes them.
-- [ ] **M13-04 · A call protocol for calls Truffle doesn't inline**
+- [x] **M13-04 · A call protocol for calls Truffle doesn't inline**
   - #298's follow-up (bench/README.md "Where the slowest programs spend
     their time"): where a callee isn't inlined, each call allocates its
     argument array, and each tail call out of it a `TailCall` that crosses
@@ -1989,6 +1989,19 @@ interleaved A/B runs.
     A/A pair; allocation per iteration before and after (JFR); every
     torture mode passes, `bench-check` passes (re-measured if a threshold
     is left far too loose).
+  - Done (design.md "Calls Truffle doesn't inline", #313): a tail call's
+    request is its argument array while no tool is attached, and a box
+    keeps a fixnum unboxed. Steady state / first iteration against `main`,
+    4 interleaved rounds with an A/A pair, JIT: `sboyer` 0.89 / 0.89,
+    `graphs` 0.85 / 0.92, `ctak` 0.92 / 0.93, `fibc` 0.95 / 1.00, `compiler`
+    1.06 / 0.98, `deriv` 1.02 / 1.00, `cpstak` 1.02 / 1.04 (A/A 0.99 /
+    1.04); native: `sboyer` 0.80 / 0.87, `graphs` 0.93 / 0.94, `ctak` 0.94
+    / 0.92, `fibc` 0.86 / 0.94, `deriv` 0.97 / 0.96, `compiler` 1.02 /
+    1.00, `cpstak` 1.00 / 0.97. JFR, gigabytes an iteration: `sboyer` 8.1 →
+    5.0, `graphs` 11.7 → 9.6, `ctak` 11.6 → 9.2, `fibc` 0.73 → 0.56,
+    `compiler` 0.94 → 0.66, `cpstak` 82.5 → 76.6, `deriv` 1.9 → 2.1. An
+    entry per procedure, which kept no request from crossing a call, was
+    measured and not kept: `compiler` 1.21 (twice the compilations).
 - [ ] **M13-05 · Indirect calls' argument profiling**
   - D17 ("The native launcher's steady state"): an indirect call runs
     `OptimizedCallTarget.profileArguments` behind a boundary and, natively,
