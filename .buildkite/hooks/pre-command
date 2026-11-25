@@ -3,6 +3,12 @@
 # the CI dev shell's environment (flake.nix .#ci: just Bazel), and Bazel's CI settings in this
 # agent's ~/.bazelrc, with the BuildBuddy key from the cluster secret. Steps then run plain `bazel`.
 set -eo pipefail
+
+# Except the pipeline-upload step (key `pipeline`, in the pipeline's settings on Buildkite): it
+# only runs `buildkite-agent pipeline upload`, which needs neither Nix nor Bazel.
+if [[ "${BUILDKITE_STEP_KEY:-}" == "pipeline" ]]; then
+  exit 0
+fi
 if [ ! -e /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh ]; then
   curl -sSfL https://install.determinate.systems/nix | sh -s -- install linux --init none --no-confirm
 fi
