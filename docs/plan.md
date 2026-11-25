@@ -2002,7 +2002,7 @@ interleaved A/B runs.
     `compiler` 0.94 → 0.66, `cpstak` 82.5 → 76.6, `deriv` 1.9 → 2.1. An
     entry per procedure, which kept no request from crossing a call, was
     measured and not kept: `compiler` 1.21 (twice the compilations).
-- [ ] **M13-05 · Indirect calls' argument profiling**
+- [x] **M13-05 · Indirect calls' argument profiling**
   - D17 ("The native launcher's steady state"): an indirect call runs
     `OptimizedCallTarget.profileArguments` behind a boundary and, natively,
     `compiledIndirectEntryReturnObject`'s check of the arguments against
@@ -2018,6 +2018,16 @@ interleaved A/B runs.
     `graphs` and the programs changed measured JIT and native, first runs
     and steady state, interleaved; or what is left is recorded in D17 with
     its evidence.
+  - Done (design.md D17, "Indirect calls", and "Calls and tail calls"):
+    counted per site in a test build, over ecraven's 57 programs at the
+    report's counts; only `scheme`, `dynamic`, `compiler` and `peval` make
+    more than a thousand an iteration (`graphs` none). The trampolines'
+    caches keeping their entries past their limit took 1.1 to 5.3 times
+    fewer, and changed no time beyond the A/A pairs', JIT or native, first
+    runs or steady state, so it is recorded as measured and not kept, with
+    the call sites' caches keeping theirs (a deoptimization cycle compiled
+    immediately); what is left costs less than a few percent. No code
+    changed.
 - [ ] **M13-06 · `BigInteger` division for `pi` and `chudnovsky`**
   - #298's follow-up: 87% of `pi`'s JFR samples are in `java.math`, 67% in
     `MutableBigInteger.mulsub` and `divideMagnitude`, the JDK's schoolbook
