@@ -187,6 +187,53 @@ follow it or deviate, with the decision below that says why.
   up to the cache limit the site inlines what it has seen and doesn't report,
   since each split is another compilation (25.5's Bytecode DSL can't compile
   `@ReportPolymorphism` on an operation, so the cache initializer reports).
+  - *Measured and not kept: a cache past its limit keeping what it holds
+    (M13-05).* Past its limit a cache drops every entry for one
+    `IndirectCallNode` (the DSL's `replaces`, as Truffle's guides write a
+    call node), so a dispatcher that tail-calls one of 13 procedures, past
+    the later tail calls' cache of 12, makes every one of the site's later
+    tail calls indirect. Kept, the entries go on calling (and inlining)
+    what the cache holds, and only the rest is called indirectly. Counted
+    per site in a test build (D17, "The native launcher's steady state"),
+    the trampolines' caches keeping their entries took an iteration's
+    indirect calls from 1,959,983 to 960,003 in ecraven's `scheme`
+    (`comp-vals`' later tail calls, 13 `gen-*` procedures: 1,009,980 to
+    10,000), 706,931 to 132,503 in `dynamic`, 234,164 to 52,599 in
+    `compiler` and 277,599 to 251,400 in `peval`. But no program got
+    faster. Interleaved with `main` (`c4bcf4b`) and an A/A copy of it, 4
+    rounds in a rotating order, a fresh process per run, 5 iterations at
+    the report's counts, `-Xmx2g`; the load read at the start and every
+    second, 4.7 to 9.2 (one run that passed 10 run again). `main`'s
+    medians in seconds, and the medians of the per-round ratios to it
+    (A/A, kept), steady state (best of iterations 2-5) / first iteration:
+
+    | | JIT: `main` | A/A | kept | Native: `main` | A/A | kept |
+    |---|--:|--:|--:|--:|--:|--:|
+    | `scheme` | 0.347 / 0.928 | 0.99 / 1.00 | 1.01 / 1.00 | 0.453 / 1.013 | 1.00 / 1.03 | 1.01 / 1.00 |
+    | `dynamic` | 0.281 / 1.121 | 1.00 / 1.02 | 1.03 / 1.07 | 0.415 / 0.998 | 0.98 / 1.00 | 1.02 / 1.06 |
+    | `compiler` | 0.334 / 1.577 | 1.02 / 1.02 | 1.06 / 1.00 | 0.529 / 1.604 | 0.98 / 0.99 | 1.03 / 0.99 |
+    | `peval` | 0.341 / 1.041 | 0.99 / 0.99 | 1.00 / 0.99 | 0.370 / 0.915 | 1.00 / 0.98 | 0.95 / 0.96 |
+    | `graphs` | 1.494 / 1.891 | 1.03 / 0.99 | 1.00 / 1.00 | 1.560 / 1.785 | 1.02 / 0.99 | 1.01 / 1.00 |
+    | `conform`, `slatex`, `nucleic` | | | within the A/A pairs' | | | within them |
+
+    A million indirect calls fewer an iteration didn't move `scheme`'s
+    0.35 s beyond 2%, so an indirect call costs under about 10 ns there, JIT
+    and native; and the entries kept compiled code larger (`dynamic`'s
+    first iteration 1.06-1.07, `compiler`'s steady state on the JVM 1.06
+    against an A/A of 1.02). The call site's own cache (`Call`) keeping
+    its entries too cut more (`scheme` 140,001, `peval` 36,200), but
+    compiled immediately, Larceny's `write` section failed every time:
+    `call-with-values`' `(producer)` site, megamorphic over the section's
+    test thunks, kept inlined the four it saw first, which never ran
+    again, and changes in what they call recompiled `call-with-values`
+    into the same code, until Truffle's deoptimization cycle detection
+    (from 15 compilations of a call target,
+    `compiler.DeoptCycleDetectionThreshold`, no compilation identical to
+    an earlier one) bailed out for good ("Deopt taken too many times"). A
+    call site's procedures are often passed in, so the ones it saw first
+    are no better than the others. With only the trampolines' entries
+    kept, every test passed (`bazel test //...`, and `test --compile`,
+    `--torture` and `--torture-owned`).
 - **Calls Truffle doesn't inline (M13-04).** Where a callee isn't inlined
   (a recursion, the inlining budget, a megamorphic site), a tail call it
   makes comes back across the call to the trampoline that called it, as
@@ -5471,7 +5518,7 @@ Each entry: the decision, why, and what was rejected.
       (`-Djdk.graal.PrintCompilation=true`, interpreted `parsing`) are the
       same sizes as `main`'s within their run-to-run spread (40.4-40.7 KB
       of bytecode against 40.4-40.7, 14-16 KB of code against 14-16).
-    - *Not fixed: `graphs`' indirect calls.* `graphs` folds with many
+    - *Indirect calls: `graphs`' (M12-04), and what is left (M13-05).* `graphs` folds with many
       different closures (`fold`, `vector-fold`, `gnatural-fold`), so its
       call sites go megamorphic and call through an `IndirectCallNode`.
       With argument type speculation on (the engine's default), each such
@@ -5493,6 +5540,30 @@ Each entry: the decision, why, and what was rejected.
       which don't report, seeing 9 to 12 procedures past their limit of 8;
       with 12 ("Calls and tail calls"), `graphs` takes 1.72 s natively
       instead of 3.16, and 1.67 on the JVM instead of 2.12.
+      M13-05 counted every indirect call per site, in a test build with
+      a counter at each `IndirectCallNode` call (the call sites', the
+      trampolines' and the prompts' resumptions), over 5 iterations of
+      each of ecraven's 57 programs at the report's counts. `graphs`
+      makes none now. Only four programs make more than a thousand an
+      iteration (the rest: `equal` 1,000, `nucleic` 103, `conform` 5, the
+      others none): `scheme` 1,959,983 (its closure compiler: `comp-vals`'
+      later tail calls, 13 `gen-*` procedures past a cache of 12,
+      1,009,980; `gen-combination-2`'s closure's `(arg2 rte)`, 870,003),
+      `dynamic` 706,931 (`instantiate-type`'s type constructors,
+      `dynamic-parse-expression`'s dispatch over 14 parsers, `map`'s
+      procedure), `peval` 277,599 (one copy of `map`'s loop that its
+      callers share, mapping `const-value`, `alpha` and `bs`, 215,200;
+      `constant-fold-global`'s folders, 62,399) and `compiler` 234,164
+      (the `gen-gvm-instr` loop's dispatch over 29 procedures). At most
+      5.6 million a second of the steady state (`scheme`'s), where M12-04
+      found `graphs`' calls at 30% of its native time. Taking four in
+      five of `dynamic`'s and half of `scheme`'s direct, by keeping the
+      trampolines' entries past their limit, changed no program's time
+      beyond the A/A pairs' spread, JIT or native ("Calls and tail
+      calls", *Measured and not kept: a cache past its limit keeping what
+      it holds*), so what is left costs these programs less than a few
+      percent, and stays: argument type speculation on, the caches as
+      they are.
     - *Fixed (M12-12): `parsing`'s recompilations.* The native launcher
       invalidated `parsing`'s large compilations (`parse-data`,
       `parse-datum`, `parse-list2`: 10,000 to 23,000 nodes, 1.0 to 1.6 s
