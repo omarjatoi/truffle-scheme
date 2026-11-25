@@ -216,7 +216,12 @@ public class CallSiteTest {
             program.append("(define (f2").append(i).append(" l) (for-each (lambda (y z) (set! s (+ s y z ").append(i).append("))) l l))");
             calls.append(" (m").append(i).append(" l) (m2").append(i).append(" l) (f").append(i).append(" l) (f2").append(i).append(" l)");
         }
-        program.append("(let loop ((i 0)) (if (< i 3000) (begin").append(calls).append(" (loop (+ i 1)))))");
+        // The calls are in a procedure of their own, called from the loop, none of them in tail
+        // position: since Truffle 25.6 a callee is split when the root that calls it is prepared
+        // for compilation, and the loop's root, which runs once, is only compiled by on-stack
+        // replacement, which splits nothing.
+        program.append("(define (calls)").append(calls).append(" #t)");
+        program.append("(let loop ((i 0)) (if (< i 3000) (begin (calls) (loop (+ i 1)))))");
         String log = engineLog(program.toString(), "engine.TraceSplitting", "true");
         for (String procedure : new String[]{"map", "for-each"}) {
             long splits = Pattern.compile("split\\s+\\S+\\s+" + Pattern.quote(procedure) + "\\s").matcher(log).results().count();
