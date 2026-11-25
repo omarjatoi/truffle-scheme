@@ -6,7 +6,7 @@ module(name = "truffle_scheme")
 # version picks both: the JDK in bazel/graalvm.bzl and the Maven artifacts below. Upgrading:
 # add the release to bazel/graalvm.bzl, change this, `bazel run @jvm//:pin`, and bump
 # nixpkgs in flake.lock (the dev shell's GraalVM) together.
-TRUFFLE_VERSION = "25.5.5.0.3"
+TRUFFLE_VERSION = "25.6.5.1"
 
 # Each module moves to a new release once it is two weeks old (design.md D11, "Other versions").
 # apple_support first: its Xcode C++ toolchain must be registered before rules_cc's autodetected one

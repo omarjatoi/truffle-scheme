@@ -16,7 +16,7 @@ native-image also has the G1 collector. Bazel downloads it only then. It is rele
 GraalVM Free Terms and Conditions (its LICENSE.txt), which allow using it, and redistributing it
 unmodified at no charge; its download asks for no license acceptance. Oracle publishes no checksum
 next to these archives: the sha256s are of the archives as downloaded from these URLs on
-2026-11-17. An upgrade adds the new version's Oracle release too.
+2026-11-25 (25.6.5.1). An upgrade adds the new version's Oracle release too.
 
 Repositories:
   @graalvm_<platform>   one per platform: the unpacked JDK, its `java_runtime` (`:jdk`) and its
@@ -45,26 +45,26 @@ _PLATFORMS = {
 
 # GraalVM version -> (release tag's archive prefix, top directory, {platform: sha256}).
 _RELEASES = {
-    "25.5.5.0.3": (
-        "https://github.com/graalvm/graalvm-ce-builds/releases/download/graal-25.5.5.0.3/graalvm-community-jdk-25i5-25.0.5.0.3_",
-        "graalvm-community-25.5.5.0.3+1.1",
+    "25.6.5.1": (
+        "https://github.com/graalvm/graalvm-ce-builds/releases/download/graal-25.6.5.1/graalvm-community-jdk-25i6-25.0.5.1_",
+        "graalvm-community-25.6.5.1+2.1",
         {
-            "linux_x64": "c6438dee6c3ade2220d40b7ccdcad24b512d30e233e61bb4fc70519522de34ef",
-            "linux_aarch64": "41741c0650ae7564a78335f9e4fc353a902e6ff1d4140f2e4fabd1c55d5cce66",
-            "macos_aarch64": "54369d4a5931a5a2101c7c52444a4e7e6647a3a4e041335053cda6fd22295e0c",
+            "linux_x64": "d792848db26f1602f0a5cf2cd9279d9a652d32ab450d891ce616c9ca67e359d0",
+            "linux_aarch64": "d8e6edf0009bb5d70c6a670eb030d36aa804795427306434c0f7f63c01435307",
+            "macos_aarch64": "19ef5175f18fe2a957a5ec4cc3dd263a164e88ae621cf80ee1c715ede72469f0",
         },
     ),
 }
 
 # The same for Oracle GraalVM (https://www.graalvm.org/downloads/, its "script-friendly URLs").
 _ORACLE_RELEASES = {
-    "25.5.5.0.3": (
-        "https://gds.oracle.com/download/graal/25i5/archive/graalvm-jdk-25i5-25.0.5.0.3_",
-        "graalvm-25.5.5.0.3+1.1",
+    "25.6.5.1": (
+        "https://gds.oracle.com/download/graal/25i6/archive/graalvm-jdk-25i6-25.0.5.1_",
+        "graalvm-25.6.5.1+4.1",
         {
-            "linux_x64": "90582f405cb89a825a43297cdacc7f427ce04039a249f5f0fc75c95b50600b08",
-            "linux_aarch64": "c4e423cdbf21963329d4fb7846fdc2236dcd9cb3e996484d06c3b6d363b58a83",
-            "macos_aarch64": "3c51d8ef62c63eb8454727f32d67aaff39afabe4c90b3c811c11547029c10819",
+            "linux_x64": "c258365739c022ee2189bc83dac72c3627f34cb0b02668e4bd3969380ed54b69",
+            "linux_aarch64": "aa02942ba8a8860e330737919d5b77c28489fc56661d500bdb1436ab96d11799",
+            "macos_aarch64": "5c0182f80bff02da9266a9928606e65ea2ac53a8cdb195fb3680972378e4e192",
         },
     ),
 }
@@ -73,7 +73,7 @@ _ORACLE_RELEASES = {
 # sdk/src/org.graalvm.launcher.native/src/launcher.cc): //:scheme-native's executable (design.md
 # D17, "VM options"). The release notes name the tag ("Based on the commit").
 _LAUNCHER_SOURCES = {
-    "25.5.5.0.3": ("graal-25.5.5.0.3", "9c8b76ae842fc6f6552fa4c1b523463c4817e7d0d52bd041f9f1dd0e274a9951"),
+    "25.6.5.1": ("graal-25.6.5.1", "9c8b76ae842fc6f6552fa4c1b523463c4817e7d0d52bd041f9f1dd0e274a9951"),
 }
 
 # The JDK's JNI headers as a C library, for the native launcher (//:scheme-native), which includes
