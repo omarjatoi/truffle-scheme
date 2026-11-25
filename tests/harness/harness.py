@@ -52,7 +52,7 @@ _GC_CHOICE = re.compile(r'^-XX:\+Use\w+GC$')
 LAUNCHER_COMPILER_VM_ARGS = ['-XX:CICompilerCount=4']
 _COMPILER_CHOICE = re.compile(r'^-XX:(CICompilerCount=|[+-]CICompilerCountPerCPU$)')
 # The compiler's instrumentation (`--compiler.InstrumentBoundaries`, `--compiler.InstrumentBranches`):
-# GraalVM 25.5's libgraal fails every compilation it instruments (docs/upstream.md), so with one of
+# GraalVM's libgraal (25.5 and 25.6) fails every compilation it instruments (docs/upstream.md), so with one of
 # them on (or their deprecated `--engine.` names), the JVM compiles with Graal compiled for HotSpot
 # (design.md D17, "Options"), unless the JVM options choose.
 LAUNCHER_INSTRUMENT_VM_ARGS = ['-XX:-UseJVMCINativeLibrary']

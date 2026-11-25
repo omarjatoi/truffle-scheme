@@ -90,7 +90,7 @@ push fixes.
 ## Environment
 
 Run everything inside `nix develop`. It provides `bazel` (bazelisk, at
-`.bazelversion`), Python, git, `gh`, chibi-scheme and a GraalVM CE 25.5 JDK
+`.bazelversion`), Python, git, `gh`, chibi-scheme and a GraalVM CE 25.6 JDK
 (`JAVA_HOME`). Bazel downloads its own copy of that GraalVM release
 (`bazel/graalvm.bzl`): it compiles and runs everything, and its Graal
 compiler is the JIT the tests use. It also builds the chibi-scheme the
@@ -312,7 +312,7 @@ BUILD.bazel                the scheme, scheme.launcher modules (jars), the prelu
 bazel/                     the GraalVM toolchain (graalvm.bzl), module jars and the native library (java_module.bzl),
                            bazel-bin/scheme's checks (launcher.bzl), chibi-scheme (chibi.bzl), lint tests (lint/),
                            platforms (platforms/: Linux remote, macOS here)
-flake.nix, flake.lock      dev shell: bazel, Python, gh, chibi-scheme, GraalVM 25.5
+flake.nix, flake.lock      dev shell: bazel, Python, gh, chibi-scheme, GraalVM 25.6
 .buildkite/                CI: the pipeline and its pre-command hook
 src/reader/                reader + datum labels
 src/compiler/              expander + core AST -> Bytecode DSL builder calls

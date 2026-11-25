@@ -33,7 +33,7 @@ torture mode captures and re-enters a continuation at every non-tail call;
 
 ## Quick start
 
-The Nix dev shell provides Bazel, a GraalVM CE 25.5 JDK, Python and
+The Nix dev shell provides Bazel, a GraalVM CE 25.6 JDK, Python and
 chibi-scheme; Bazel downloads the same GraalVM release and the Maven jars it
 builds with (design.md D11). You need Nix with flakes; from a checkout of this
 repository:
@@ -512,7 +512,7 @@ tests do; `--help:tools` lists every tool option.
 
 ### What each tool sees
 
-GraalVM 25.5's tools, run against programs with tail calls, `call/cc`
+GraalVM 25.6's tools, run against programs with tail calls, `call/cc`
 escapes and re-entries, recursion deep enough to spill frames to the heap,
 macros (from the program, a library, and the standard libraries), procedures
 of the standard libraries calling back, and `eval` (design.md D13, "Tools",

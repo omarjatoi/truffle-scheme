@@ -380,6 +380,10 @@ public class SandboxTest {
             assertEquals("((1 . a) (2 . b))", eval(context, "(map cons '(1 2) '(a b))"));
             assertEquals("\"cba\"", eval(context, "(list->string (reverse (string->list \"abc\")))"));
             assertEquals("42", eval(context, "(call/cc (lambda (k) (dynamic-wind (lambda () #f) (lambda () (k 42)) (lambda () #f))))"));
+            // Records are static objects, whose accesses UNTRUSTED checks since Truffle 25.6
+            // (engine.ForceStaticObjectSafetyChecks, docs/graalvm-configuration.md).
+            assertEquals("7", eval(context, "(define-record-type point (make-point x y) point? (x point-x set-point-x!) (y point-y))" +
+                            "(let ((p (make-point 1 2))) (set-point-x! p 5) (+ (point-x p) (point-y p)))"));
             // Deep enough that its frames spill to the heap (design.md "Continuations").
             assertEquals("100000", eval(context, DEPTH + "(depth 100000)"));
             assertEquals("1000000", eval(context, "(let loop ((i 0)) (if (< i 1000000) (loop (+ i 1)) i))"));

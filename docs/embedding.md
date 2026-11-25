@@ -16,7 +16,7 @@ covers the same API in more depth.
 Nothing is published to Maven: `bazel build //:scheme_jars` puts the
 language's jar (`scheme.jar`), the launcher's, and Truffle's jars in
 `bazel-bin/scheme_jars/`, a directory for the module path. Truffle's jars are
-Maven Central's, at exactly the dev shell's GraalVM version, 25.5.5.0.3
+Maven Central's, at exactly the dev shell's GraalVM version, 25.6.5.1
 (design.md D11): `org.graalvm.polyglot:polyglot`, `org.graalvm.truffle`'s
 `truffle-api`, `truffle-runtime` and `truffle-compiler`, and the
 `org.graalvm.sdk` jars they use (`maven_install.json` locks each with its

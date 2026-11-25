@@ -2,13 +2,13 @@
 
 The release is chosen by the Truffle version in MODULE.bazel (`graalvm.jdk(version = ...)`), so
 the JDK and the Truffle libraries can't drift apart: a Truffle version with no pinned release
-here fails the build. The archives are the same files nixpkgs fetches for
-`graalvmPackages.graalvm-ce` (the sha256s match flake.lock's nixpkgs), so Bazel and the Nix dev
-shell run byte-identical JDKs.
+here fails the build. The archives are the same files the Nix dev shell's GraalVM is built from
+(flake.nix pins the same sha256s; design.md D11, "Nix"), so Bazel and the dev shell run
+byte-identical JDKs.
 
 Upgrading: add the new release's URLs and sha256s (published next to each archive as
 `<archive>.sha256`) below, and its source tag and launcher.cc's sha256 (_LAUNCHER_SOURCES), then bump TRUFFLE_VERSION in MODULE.bazel and run
-`bazel run @jvm//:pin` (see AGENTS.md).
+`REPIN=1 bazel run @jvm//:pin`, and move flake.nix's GraalVM (design.md D11, "Upgrading").
 
 Oracle GraalVM at the same version is pinned too, for `//:scheme-native` alone, and only when
 `--//:native_graalvm=oracle` asks for it (design.md D17, "The native image's collector"): its

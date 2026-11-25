@@ -4,8 +4,8 @@ module(name = "truffle_scheme")
 
 # design.md D11: the GraalVM JDK and the Truffle libraries are the same release. This one
 # version picks both: the JDK in bazel/graalvm.bzl and the Maven artifacts below. Upgrading:
-# add the release to bazel/graalvm.bzl, change this, `bazel run @jvm//:pin`, and bump
-# nixpkgs in flake.lock (the dev shell's GraalVM) together.
+# add the release to bazel/graalvm.bzl, change this, `REPIN=1 bazel run @jvm//:pin`, and move
+# the dev shell's GraalVM (flake.nix) together.
 TRUFFLE_VERSION = "25.6.5.1"
 
 # Each module moves to a new release once it is two weeks old (design.md D11, "Other versions").

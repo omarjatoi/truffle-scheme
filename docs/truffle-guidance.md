@@ -9,7 +9,8 @@ guides, inlining, splitting, on-stack replacement, options). For each
 recommendation: what GraalVM says, what we do, and whether we **follow** it,
 **deviate deliberately** (with the design.md decision and its evidence), or
 deviated **by mistake** (and the PR that fixed it). Written November 2026,
-against GraalVM CE 25.5 / Truffle 25.5.5.0.3 (design.md D11).
+against GraalVM CE 25.5 / Truffle 25.5.5.0.3, and re-checked against
+GraalVM CE 25.6 / Truffle 25.6.5.1 on the upgrade (design.md D11, "25.6").
 
 Its companion, [graalvm-configuration.md](graalvm-configuration.md), audits
 how the language is configured, packaged and embedded (options, the
@@ -28,6 +29,15 @@ identical: `PartialEvaluation.md`, `Optimizing.md`, `HostCompilation.md`,
 25.5 tag: `bytecode_dsl/UserGuide.md`, `bytecode_dsl/Optimization.md` (master
 adds a quickening section), `splitting/Splitting.md` (master describes 25.6's
 splitting at compilation preparation, GR-79412), `Options.md` (one option).
+At the `graal-25.6.5.1` tag the first twelve are still the same as at
+25.5's, and the four that differ are what `master` had: the user guide adds
+the bytecode index modes (`BytecodeIndexMode`, 25.6; our
+`storeBytecodeIndexInFrame = true` is its `FRAME`) and
+`getInstrumentationNodeObject`; `Optimization.md` gains the quickening
+section and drops its sentence on `boolean` boxing elimination (below);
+`Splitting.md` describes splitting at the caller's compilation (below);
+`Options.md` rewords `engine.DebugCacheCompile`. The rows below that 25.6
+changes say so.
 Links below are to the 25.5 tag, e.g.
 `https://github.com/oracle/graal/blob/vm-25.5.5.0.3/truffle/docs/PartialEvaluation.md`,
 abbreviated `25.5:PartialEvaluation.md`. Every API claim we acted on was
@@ -163,11 +173,11 @@ Sources: 25.5:bytecode_dsl/UserGuide.md, 25.5:bytecode_dsl/Optimization.md,
 | Recommendation | GraalVM says | What we do | Status |
 |---|---|---|---|
 | Boxing elimination | *"A major source of overhead in interpreted code ... is boxing."* | `boxingEliminationTypes = {long, double, boolean}` (M5-06, M7-03). | Follow |
-| ... but not for `boolean` | *"Note that `boolean` boxing elimination is supported, but is generally not worth the overhead of the additional instructions it produces."* (25.5:bytecode_dsl/Optimization.md) | `boolean` is in the set: predicates' operations return `boolean`, and an `if` on one branches without `Truthy` (M7-03); M8-04's `LoopTest` takes it. M7-03 measured the set, not `boolean` alone. | Deliberate, measured: no difference either way (below), and over the report's interpreter subset 0.985-0.992 alone, with the longest programs 1.06-1.14 (design.md "The interpreter's first runs", M10-02); kept |
+| ... but not for `boolean` | *"Note that `boolean` boxing elimination is supported, but is generally not worth the overhead of the additional instructions it produces."* (25.5:bytecode_dsl/Optimization.md) | `boolean` is in the set: predicates' operations return `boolean`, and an `if` on one branches without `Truthy` (M7-03); M8-04's `LoopTest` takes it. M7-03 measured the set, not `boolean` alone. 25.6's page no longer has the sentence. | Deliberate, measured: no difference either way (below), and over the report's interpreter subset 0.985-0.992 alone, with the longest programs 1.06-1.14 (design.md "The interpreter's first runs", M10-02); kept |
 | `@ConstantOperand` for values that guide PE | *"Operands whose values guide partial evaluation (e.g., loop counters used to unroll loops) should be declared using `@ConstantOperand`."* | Global cells, local accessors and ranges, arity counts, the closure's root, `Assoc`'s alist. | Follow |
 | Variadic operands are PE-constant up to 8 | *"a variadic operand only has a PE constant length up to a certain length (8)"* | Nothing unrolls over a variadic operand's length: `BindArguments` unrolls over its constant operand, not the array. | Follow |
 | Uncached interpreter | *"It is strongly recommended to enable uncached execution, because it can reduce the footprint of your language and improve start-up times."* | Off. | Deliberate: design.md "No uncached interpreter (M8-04)": measured both ways; with roots uncached at first, splitting broke (a call site in the uncached tier has no call node), and with only run-once code uncached, nothing changed measurably. |
-| `storeBytecodeIndexInFrame` only when needed | *"this feature should only be enabled for fast-path bci access outside of the current operation (e.g., for closures or frame introspection). Storing the bci in the frame increases frame size and requires additional frame writes, so it can negatively affect performance."* (`GenerateBytecode.storeBytecodeIndexInFrame`) | On, with each operation saying whether it stores (`storeBytecodeIndex`): calls and operations that can fail store it, the rest don't. | Deliberate: design.md D13 (locations exact across yields and in compiled code, for guest stack traces of suspended frames, M6-04). Measured off in M10-02: the report's interpreter subset 1.006-1.020 times, no cost to recover. |
+| `storeBytecodeIndexInFrame` only when needed | *"this feature should only be enabled for fast-path bci access outside of the current operation (e.g., for closures or frame introspection). Storing the bci in the frame increases frame size and requires additional frame writes, so it can negatively affect performance."* (`GenerateBytecode.storeBytecodeIndexInFrame`) | On, with each operation saying whether it stores (`storeBytecodeIndex`): calls and operations that can fail store it, the rest don't. | Deliberate: design.md D13 (locations exact across yields and in compiled code, for guest stack traces of suspended frames, M6-04). Measured off in M10-02: the report's interpreter subset 1.006-1.020 times, no cost to recover. 25.6 makes it a mode, `FRAME`, of `bytecodeIndexMode`, and its user guide recommends `MANUAL` with the index passed explicitly to calls and exceptions (25.6's call overloads): not measured here yet (a follow-up of the upgrade). |
 | Source information and reparsing | *"Source information is designed to have no performance overhead until it is requested"* | Roots are parsed `WITH_SOURCE` (source sections from the start, for errors' locations, D13); tag instructions are added by reparsing when a tool attaches. | Follow |
 | Serialization | *"allows a language to implement bytecode caching"* | The prelude image (D13, M5-03, M7-05). | Follow |
 | Continuations | *"single-method continuations, whereby a root node is suspended and can be resumed"* | A custom `@Yield` at each call site (D12); frames copied for multi-shot. | Follow (extended: D12) |
@@ -207,7 +217,7 @@ the report's interpreter subset, and of `continueAt`'s host compilation time
 |---|---|---|---|
 | Language-agnostic inlining, budgets | [Inlining](https://www.graalvm.org/latest/graalvm-as-a-platform/language-implementation-framework/Inlining/): inlining by *"the number of Graal nodes ... after partial evaluation"*, with exploration and inlining budgets | Truffle's defaults; no `DirectCallNode.forceInlining`. Halving the inlining budget and recursive inlining depth 0 were measured and rejected (design.md M5-04, "Not cut at the receiver"). | Follow |
 | Report polymorphism, so Truffle splits | [Reporting Polymorphism](https://www.graalvm.org/latest/graalvm-as-a-platform/language-implementation-framework/splitting/ReportingPolymorphism/): `@ReportPolymorphism`, or `Node.reportPolymorphicSpecialize()`; *"Reporting only on Megamorphic Cases"* | A call site's cache reports when it goes megamorphic (`@ReportPolymorphism.Megamorphic` on `Call`'s `doIndirect`), and its first tail call's cache with `reportPolymorphicSpecialize()`, since only the site's own cache reports (M5-10, M7-01). | Follow. Reporting only megamorphic sites: measured in M7-01. Until 25.6 the annotation on an operation didn't compile in the Bytecode DSL (oracle/graal#14871), and `Call`'s cache initializer reported instead. |
-| Splitting needs `isCloningAllowed` | 25.5:splitting/Splitting.md: a target is split *"provided there are no outstanding factors preventing it such as the root node not being allowed to be split"* | Bytecode DSL roots allow cloning; `PrimitiveRootNode` doesn't (the default), as call sites run primitives in place. | Follow |
+| Splitting needs `isCloningAllowed` | 25.5:splitting/Splitting.md: a target is split *"provided there are no outstanding factors preventing it such as the root node not being allowed to be split"* | Bytecode DSL roots allow cloning; `PrimitiveRootNode` doesn't (the default), as call sites run primitives in place. Since 25.6 (GR-79412) a marked target is split when a root that calls it is prepared for compilation, not when the call runs: a site in a root that is only compiled by on-stack replacement (a loop at the top level of a program, which runs once) splits nothing (design.md D11, "25.6"). | Follow |
 | OSR for loops | [OSR](https://www.graalvm.org/latest/graalvm-as-a-platform/language-implementation-framework/OnStackReplacement/): *"Languages using standard Truffle APIs get OSR for free"*; `LoopNode` for AST loops | Bytecode loops: the DSL's bytecode OSR. The trampoline's tail calls: a `LoopNode` (#167), whose iterations also count toward its root (`LoopNode.reportLoopCount`). | Follow |
 | `OSRCompilationThreshold` | Default 100,352 | Default; a lower one as the launcher's default was measured and rejected (D17, "The JIT warm-up"). | Follow |
 
