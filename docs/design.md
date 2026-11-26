@@ -3864,7 +3864,10 @@ Each entry: the decision, why, and what was rejected.
     build's directory: Java takes it from the password database, where the
     sandbox's user has none to write, and Truffle unpacks its attach library
     under it (without it, the prelude image's run fell back to the
-    interpreter-only runtime and stopped at `engine.Compilation`).
+    interpreter-only runtime and stopped at `engine.Compilation`, and on macOS
+    native-image stopped with *"Failed to create the optimized Truffle
+    runtime"*): with `JAVA_TOOL_OPTIONS`, and for native-image's builder,
+    whose JVM gets neither that nor the rest of the environment, with `-J`.
   - *What keeps it Bazel's build.* What the steps take from the BUILD files
     is data, in `nix/packages.json`: the GraalVM archives and `launcher.cc`,
     the processors, each module path's Maven artifacts, each library's
