@@ -3538,9 +3538,19 @@ Each entry: the decision, why, and what was rejected.
     and the reproducers without a test (libgraal's instrumented
     compilations, the engine closed as the JVM exits, `ThreadDeath` in the
     generated roots) still reproduce.
-  - *Measured*: the PR (#PR) has the interleaved A/B of bench-check's
-    subset, 25.5 against 25.6, JIT and native, first iteration and steady
-    state, with an A/A pair.
+  - *Measured* (#316 has the table): bench-check's 25 cases on the JVM and
+    its 20 programs through the native launcher, first iteration and
+    steady state (bench-check's metric), with copies of `main` (25.5,
+    `7439d05`), an A/A copy of it and the branch (25.6) out of `bazel-out`,
+    interleaved in a rotating order, a fresh process per run; every run
+    started at a 1-minute load of 10 or less and stayed there (the
+    machine's other project kept it at 40-120 for hours, so the JVM had
+    two rounds and the native launcher one or two). Over the cases, the
+    median ratio 25.6/25.5 was 0.995 steady and 1.00 first on the JVM,
+    and 1.00 both natively, against A/A medians of 1.00 and 1.01: 25.6
+    moves nothing beyond the noise of single runs, `fibc` (0.90) and
+    `ctak` (0.95) on the JVM being the largest consistent changes, and the
+    splitting change costs no case. bench/thresholds.json stays as it is.
 - **Platforms and C and C++ toolchains (decided in M10-01).** C and C++ are
   built with Bazel's own rules and toolchains, and which machine runs an
   action is a property of the execution platform it lands on, not of tags on
