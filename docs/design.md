@@ -2578,6 +2578,45 @@ Each entry: the decision, why, and what was rejected.
     this change: a raised symbol 28.4 and 28.2 ms, `(car i)` caught 70.3
     and 70.7, an error 10 frames down 101.1 and 98.9, `error` 30.2 and
     30.7, `raise-continuable` 26.2 and 25.9: the same.
+- **Stack traces (M14-04).** The guest stack trace is the one an embedder
+  reads (`getPolyglotStackTrace()`, above), and the launcher prints it.
+  - *Printed:* after the `ERROR:` line of an uncaught error ("Messages"),
+    `bazel-bin/scheme` and the native launcher print the error's guest
+    frames, innermost first, one per line as `    at
+    run(user.scm:4:3)`: the frame's name, then its source's name, line and
+    column, the form in which the `ERROR:` line and Truffle's stack traces
+    name a location ("Messages", D13), or `    at <name>` for a frame
+    with no location. In a program and at the REPL alike. The frames
+    are what an embedder gets, so a spill's and a re-entered
+    continuation's are there and a procedure whose tail call raised has
+    none, and the standard libraries' are left out. So is the root
+    prompt's, `<prompt>` (D6), which is the evaluation of the whole source,
+    located at all of it, rather than a call in it. While Truffle doesn't
+    see a resumed prelude frame as internal (docs/upstream.md,
+    "Continuation roots are never internal"), the launcher also leaves out
+    a frame whose source is internal, so the printed trace has none of the
+    prelude's in any mode. A run of the same frame, as a recursion leaves,
+    is printed once, then `    ... repeated <n> more times`: a recursion
+    10,000 deep (`PromptDriver.MAX_TRACED_FRAMES`) would print as many
+    lines. An exit prints nothing, as before (its status is the process's,
+    D9); a syntax error has no frames; an interrupt prints `Interrupted`;
+    an internal error keeps its Java stack trace (above).
+  - *Why:* the location alone ("Messages") is the innermost frame. Which
+    call led there (a recursion, the frames a continuation brought back,
+    a callback through `map`) is what a user needs next, and the trace is
+    already what tools and embedders get. *Cost:* none on any path that
+    doesn't end the program: the launcher asks for the trace only when it
+    prints the error.
+  - *Rejected:* `PolyglotException.printStackTrace` (the host's frames, the
+    launcher's own among them, after the guest's); each frame as
+    `StackFrame.toString()` writes it, as GraalVM's other launchers print
+    one (`<scheme> run(../../src/user.scm:4:65-74)`: the path relative to
+    the working directory, and character offsets in the file where the
+    `ERROR:` line has a line and a column); printing only on an
+    option (no other GraalVM launcher asks for one, and an option that
+    only adds lines to an error isn't worth a name); leaving out the
+    program's `<program>` frame too, which names the top-level form the
+    error came from.
 
 ### D9. Spec traps decided up front
 
