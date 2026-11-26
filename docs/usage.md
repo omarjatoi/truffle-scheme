@@ -419,6 +419,18 @@ host's Java (`-XX:CICompilerCount=4`, where the JVM would start 12 or more),
 which start up faster and in less memory; a count given with `--vm.` or in
 `JDK_JAVA_OPTIONS` replaces it.
 
+The JVM's own output (what `--vm.XX:+PrintFlagsFinal`, `--vm.XX:+PrintCompilation`
+and the like print, and a thread dump on SIGQUIT) goes to standard error, never
+into the program's output, as the native launcher's does
+(`-XX:+DisplayVMOutputToStderr`; `--vm.XX:+DisplayVMOutputToStdout` chooses
+standard output). With no JVM options beyond the heap's and the stacks' sizes
+(`--vm.Xmx`, `--vm.Xss`, ...) and system properties, and no `--engine.` or
+`--compiler.` option, it is off: the Graal compiler writes a Java stack trace
+there when the heap fills during a compilation (design.md D17, "The VM's
+output"). Any other option turns it on, so a thread dump on SIGQUIT needs one,
+such as `--vm.XX:+DisplayVMOutputToStderr`; `jcmd <pid> Thread.print` prints
+one either way.
+
 `bazel build //:scheme` also trains an AOT cache for `bazel-bin/scheme`
 (JDK 25's `-XX:AOTCache`: the classes the launcher and the language load as
 they start, already parsed and linked), with which a hello-world program

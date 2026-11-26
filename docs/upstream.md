@@ -22,7 +22,9 @@ written on 25.6.5.1, as were the section on a context exit's stack trace (a
 missing feature, M14-03) and its test. 25.6 fixed a sixteenth, *ReportPolymorphism on an operation*
 (oracle/graal#14871, found in M5-10): its test failed on 25.6, and its
 section, test and workaround went with the upgrade (`Call`'s `doIndirect` is
-now `@ReportPolymorphism.Megamorphic`).
+now `@ReportPolymorphism.Megamorphic`). The section on a full heap during a
+libgraal compilation (M14-08's flake, libgraal's `org.graalvm.jniutils`) was
+found on 25.6.5.1.
 
 ## The reproducers are inverted tests
 
@@ -57,6 +59,7 @@ listener's filter names the tags a test chooses.
 | [Interrupting a Bytecode DSL root as it returns](#interrupting-a-bytecode-dsl-root-as-it-returns) | `UpstreamInterruptTest` | `InterruptTest`'s static initializer (`tests/scheme/test/`) |
 | [Context pre-initialization with synchronous compilation](#context-pre-initialization-with-synchronous-compilation) | `UpstreamPreinitializationDeadlockTest` | `ContextPreinitializationTest`'s child JVMs (`tests/scheme/test/`) |
 | [Instrumented compilations fail in libgraal](#instrumented-compilations-fail-in-libgraal) | `UpstreamInstrumentedBoundaryTest` | `bazel-bin/scheme` runs Graal compiled for HotSpot for it (`launcher_vm_args`, `tests/harness/harness.py`); `SchemeMain` rejects it with libgraal and in the native launcher |
+| [A full heap during a libgraal compilation](#a-full-heap-during-a-libgraal-compilation) | none (a race with the heap; the reproducer is below) | `bazel-bin/scheme`'s JVM writes its console output on standard error, and only when the options ask for it (`launcher_vm_args`, `tests/harness/harness.py`; design.md D17, "The VM's output") |
 | [MaxASTDepth on Bytecode DSL roots](#maxastdepth-on-bytecode-dsl-roots) | `UpstreamAstDepthTest` | Under `UNTRUSTED` only, which requires the limit: the compiler builds the guest's roots with `BytecodeConfig.COMPLETE` (`ProgramCompiler.generate`, `SchemeContext.materializesTags`); elsewhere the limit isn't enforced |
 | [Continuation roots are never internal](#continuation-roots-are-never-internal) | `UpstreamContinuationRootTest` | `PromptDriver.unwind` and `SchemeError.location` (`src/runtime/scheme/runtime/`) |
 | [An engine that closes as the JVM exits](#an-engine-that-closes-as-the-jvm-exits) | none (a race; the reproducer is below) | `SchemeMain`'s warm-up closes under a lock the program's thread takes before the JVM exits (`src/launcher/scheme/launcher/`) |
@@ -686,6 +689,124 @@ failed"*, status 134.
   Graal compiled for HotSpot.
 - **Actual:** every instrumented compilation fails with the `ClassCastException` above (libgraal),
   or the process dies (native image).
+
+## A full heap during a libgraal compilation
+
+**Found in** M14-08's flake: Buildkite #821 saw `//tests:memory_launcher`'s heap-deep print this
+stack trace on standard output, before the program's own output. **Test:** none. It is a race
+with the heap. Before the workaround, the launcher printed it in 20 of 100 runs of heap-deep on this
+Mac (load 120-133). The reproducer below, which uses no Scheme, printed it in 1 of 40 child JVMs.
+It is libgraal's bug (`org.graalvm.jniutils`, in GraalVM's SDK), not Truffle's API.
+
+**Upstream status** (checked 2026-11-26): no issue or pull request found for
+`JNIExceptionWrapperEntryPoints` or *"Failed to load org.graalvm.jniutils"*.
+`JNIExceptionWrapper.throwInHotSpot` and `getEntryPoints` are the same on `master`.
+
+When the HotSpot heap fills while libgraal handles a Truffle compilation's failure, libgraal prints
+a Java stack trace to HotSpot's console output. That is the process's standard output by default.
+The sequence (`TruffleCompilerImpl.doCompile`, `LibGraalTruffleEntryPoints.doCompile`):
+
+1. A compilation fails. In our case it is a retryable bailout, because the root isn't ready for
+   compilation.
+2. Handling the failure calls into HotSpot (`isSuppressedFailure` or `onCompilationFailed`, each
+   through `createStringSupplier`), and that call runs out of memory.
+3. To wrap the pending `OutOfMemoryError`, libgraal needs the HotSpot class
+   `JNIExceptionWrapperEntryPoints`. It looks the class up lazily, on the first exception it
+   wraps, and the lookup fails with the heap full: `InternalError: Failed to load
+   org.graalvm.jniutils.JNIExceptionWrapperEntryPoints`.
+4. `throwInHotSpot` can't rethrow that into HotSpot either: creating the HotSpot exception needs
+   the same class. So it calls `original.printStackTrace()`.
+5. In libgraal, that write goes through the `_log` hook HotSpot gives its isolates, to HotSpot's
+   `tty`. `-XX:+DisplayVMOutputToStderr` moves it to standard error (19 of 100 runs).
+   `-Djdk.graal.LogFile` doesn't take it, and neither does any Truffle option, since the failure's
+   own handling is what fails.
+
+```
+java.lang.InternalError: Failed to load org.graalvm.jniutils.JNIExceptionWrapperEntryPoints
+	at org.graalvm.jniutils/org.graalvm.jniutils.JNIExceptionWrapper$ExceptionHandlerContext.throwJNIExceptionWrapper(JNIExceptionWrapper.java:266)
+	at org.graalvm.jniutils/org.graalvm.jniutils.JNIExceptionWrapper$ExceptionHandler$1.handleException(JNIExceptionWrapper.java:278)
+	at org.graalvm.jniutils/org.graalvm.jniutils.JNIExceptionWrapper.wrapAndThrowPendingJNIException(JNIExceptionWrapper.java:161)
+	at org.graalvm.jniutils/org.graalvm.jniutils.JNICalls.callStaticJObject(JNICalls.java:146)
+	at LibGraalClassLoader//jdk.graal.compiler.libgraal.truffle.FromLibGraalCalls.callJObject(FromLibGraalCalls.java:81)
+	at LibGraalClassLoader//jdk.graal.compiler.libgraal.truffle.HSTruffleCompilerRuntimeGen.callCreateStringSupplier(HSTruffleCompilerRuntimeGen.java:57)
+	at LibGraalClassLoader//jdk.graal.compiler.libgraal.truffle.HSTruffleCompilerRuntime.isSuppressedFailure(HSTruffleCompilerRuntime.java:173)
+	at LibGraalClassLoader//jdk.graal.compiler.truffle.TruffleCompilerImpl.isSuppressedFailure(TruffleCompilerImpl.java:842)
+	at LibGraalClassLoader//jdk.graal.compiler.truffle.TruffleCompilerImpl.doCompile(TruffleCompilerImpl.java:248)
+	at LibGraalClassLoader//jdk.graal.compiler.truffle.TruffleCompilerImpl.doCompile(TruffleCompilerImpl.java:213)
+	at LibGraalClassLoader//jdk.graal.compiler.libgraal.truffle.LibGraalTruffleEntryPoints.doCompile(LibGraalTruffleEntryPoints.java:207)
+	Suppressed: java.lang.InternalError: Failed to load org.graalvm.jniutils.JNIExceptionWrapperEntryPoints
+		at LibGraalClassLoader//jdk.graal.compiler.libgraal.truffle.LibGraalTruffleEntryPoints.doCompile(LibGraalTruffleEntryPoints.java:213)
+```
+
+- **Expected:** nothing printed. The compilation's failure is dropped, as any other is
+  (`engine.CompilationFailureAction=Silent`), and the program gets the `OutOfMemoryError`.
+- **Actual:** the stack trace above, in the program's standard output.
+- **Where we hit it:** a Scheme procedure whose first recursion descends without end (heap-deep)
+  isn't ready for compilation (`SchemeRootNode.prepareForCompilation`, M9-01). Truffle retries
+  its compilation all the time: `--engine.TraceCompilationDetails` counted 606 retryable bailouts
+  in about 3 s. So a failure's handling is almost always running when the spilled frames fill the
+  heap.
+- **Our workaround:** `bazel-bin/scheme` starts its JVM with HotSpot's console output on standard
+  error. It also turns that output off unless the options ask for more than the heap's and stacks'
+  sizes and system properties (design.md D17, "The VM's output"; `LAUNCHER_OUTPUT_VM_ARGS` and
+  `LAUNCHER_QUIET_VM_ARGS`, `tests/harness/harness.py`). After it: 0 of 100 runs of heap-deep at
+  the same load, and `//tests:memory_launcher` passed 50 of 50 runs on the executors (`--runs_per_test=50`;
+  `main` failed 2 of 50 there, both a warm-up thread's uncaught `OutOfMemoryError`, D8). The native launcher has no libgraal: the compiler runs in the image, with no JNI
+  between them.
+
+### Issue text
+
+````markdown
+**Title:** libgraal prints a stack trace on HotSpot's console output when the heap fills during a Truffle compilation's failure handling: "Failed to load org.graalvm.jniutils.JNIExceptionWrapperEntryPoints"
+
+**Version:** GraalVM CE 25.6.5.1 (JDK 25.0.5.1), libgraal; `JNIExceptionWrapper` is unchanged on `master`
+
+When the HotSpot heap is full while libgraal handles a Truffle compilation's failure, libgraal
+prints a Java stack trace to HotSpot's `tty`, which is the process's standard output unless
+`-XX:+DisplayVMOutputToStderr` is set. The call chain:
+
+1. `TruffleCompilerImpl.doCompile` calls `isSuppressedFailure` (or `notifyCompilableOfFailure` calls
+   `onCompilationFailed`).
+2. Either one calls `createStringSupplier` in HotSpot, which throws `OutOfMemoryError`.
+3. To wrap that exception, `JNIExceptionWrapper.getEntryPoints` must load
+   `JNIExceptionWrapperEntryPoints`. It does so lazily, on the first exception it wraps, and the
+   load fails with the heap full: `InternalError("Failed to load ...")`.
+4. `throwInHotSpot` can't create the HotSpot exception either, so it calls
+   `original.printStackTrace()`.
+
+(the trace above)
+
+Reproducer: a root that is never ready for compilation, so that its compilation fails and is
+retried all the time, called until the heap is full. Run with `-XX:+UseJVMCINativeLibrary
+-Xmx64m -XX:+UseSerialGC`; about 1 run in 40 prints the trace on standard output.
+
+```java
+static final class NeverReadyRoot extends RootNode {
+    NeverReadyRoot(TruffleLanguage<?> language) { super(language); }
+    @Override public Object execute(VirtualFrame frame) { return frame.getArguments()[0]; }
+    @Override protected boolean prepareForCompilation(boolean rootCompilation, int tier, boolean lastTier) { return false; }
+}
+
+// In an entered context of any language:
+CallTarget[] targets = new CallTarget[4];
+for (int i = 0; i < targets.length; i++) {
+    targets[i] = new NeverReadyRoot(language).getCallTarget();
+}
+try {
+    List<Object> kept = new ArrayList<>();
+    for (int i = 0;; i++) {
+        kept.add(targets[i % targets.length].call(new long[16]));
+    }
+} catch (OutOfMemoryError e) {
+    System.out.println("filled");
+}
+```
+
+Two possible fixes. `getEntryPoints` could resolve the class when the isolate attaches, rather
+than on the first exception, while the heap has room. Or `throwInHotSpot` could drop (or log
+through the compiler's own logging) an exception it can't rethrow when the cause is an
+`OutOfMemoryError`, rather than print it on the VM's console output.
+````
 
 ## MaxASTDepth on Bytecode DSL roots
 
