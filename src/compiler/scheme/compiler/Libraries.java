@@ -149,8 +149,9 @@ final class Libraries {
         if (!(datum instanceof SPair p) || !(p.cdr instanceof SPair q) || parts(q.car) == null) {
             throw errors.syntaxError("invalid define-library", form);
         }
-        // Stripped of the program's scopes: a library sees only what it imports.
-        declared.put(key(q.car), new Declared(datum, dir));
+        // Stripped of the program's scopes: a library sees only what it imports. Its code keeps its
+        // positions in the program, as a library file's has (design.md D8).
+        declared.put(key(q.car), new Declared(Syntax.withoutScopes(form), dir));
     }
 
     /** Whether the library exists, for cond-expand's {@code (library name)}; doesn't load it. */

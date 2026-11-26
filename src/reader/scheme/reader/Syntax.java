@@ -135,6 +135,63 @@ public final class Syntax {
     }
 
     /**
+     * {@code o} with no scopes, on it and everything inside it, each syntax object keeping its
+     * source position: code read again from its text, as a library defined in a program is
+     * expanded with only what it imports (scheme.compiler.Libraries). Shared structure is preserved.
+     * No Java recursion (AGENTS.md rule 4).
+     */
+    @TruffleBoundary
+    public static Object withoutScopes(Object syntax) {
+        IdentityHashMap<Object, Object> copies = new IdentityHashMap<>();
+        Deque<Object[]> fills = new ArrayDeque<>();
+        Object result = unscoped(syntax, copies, fills);
+        while (!fills.isEmpty()) {
+            Object[] fill = fills.pop();
+            Object value = unscoped(fill[2], copies, fills);
+            if (fill[0] instanceof SPair pair) {
+                if ((Integer) fill[1] == 0) {
+                    pair.car = value;
+                } else {
+                    pair.cdr = value;
+                }
+            } else {
+                ((SVector) fill[0]).set((Integer) fill[1], value);
+            }
+        }
+        return result;
+    }
+
+    /** The scope-free copy of {@code o}: a syntax object at once, a pair or vector filled in later. */
+    private static Object unscoped(Object o, IdentityHashMap<Object, Object> copies, Deque<Object[]> fills) {
+        Object copy = copies.get(o);
+        if (copy != null) {
+            return copy;
+        }
+        if (o instanceof Syntax s) {
+            Object datum = s.datum;
+            while (datum instanceof Syntax inner) {
+                datum = inner.datum;
+            }
+            copy = new Syntax(unscoped(datum, copies, fills), ScopeSet.EMPTY, s.source);
+        } else if (o instanceof SPair p) {
+            SPair pair = new SPair(null, null);
+            fills.push(new Object[]{pair, 1, p.cdr});
+            fills.push(new Object[]{pair, 0, p.car});
+            copy = pair;
+        } else if (o instanceof SVector v && v.isObjects()) {
+            SVector vector = new SVector(new Object[v.length], v.immutable);
+            for (int i = v.length - 1; i >= 0; i--) {
+                fills.push(new Object[]{vector, i, v.get(i)});
+            }
+            copy = vector;
+        } else {
+            return o;
+        }
+        copies.put(o, copy);
+        return copy;
+    }
+
+    /**
      * The datum of a literal (quote's datum, a self-evaluating vector, a constant part of a
      * quasiquote template), made as {@link #toDatum(Object)} makes it but of immutable pairs and
      * vectors (R7RS §3.4, design.md D1), so even data that {@code eval} quotes is. Strings and
