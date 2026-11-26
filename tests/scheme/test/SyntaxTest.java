@@ -106,9 +106,9 @@ public class SyntaxTest {
     public void compileErrorsNameTheLine() {
         try (Context context = Context.create("scheme")) {
             PolyglotException e = assertThrows(PolyglotException.class, () -> context.eval("scheme", "(define x 1)\n\n(lambda (y y) y)"));
-            assertTrue(e.getMessage(), e.getMessage().contains("line 3"));
+            assertEquals(e.getMessage(), 3, e.getSourceLocation().getStartLine());
             PolyglotException e2 = assertThrows(PolyglotException.class, () -> context.eval("scheme", "(display 1)\n(if)"));
-            assertTrue(e2.getMessage(), e2.getMessage().contains("line 2"));
+            assertEquals(e2.getMessage(), 2, e2.getSourceLocation().getStartLine());
         }
     }
 }

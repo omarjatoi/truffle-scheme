@@ -111,15 +111,20 @@ public class SourceLocationTest {
             // A syntax error in a library names the library's file, line and column.
             Files.writeString(lib.resolve("bad.sld"), "(define-library (lib bad)\n  (import (scheme base))\n  (begin (if)))\n", StandardCharsets.UTF_8);
             PolyglotException e = error(context, Source.newBuilder(SCHEME, "(import (lib bad))", "uses-bad.scm").build());
-            assertTrue(e.getMessage(), e.getMessage().contains("bad.sld, line 3, column 10"));
+            assertEquals(e.getMessage(), "bad.sld:3:10", where(e.getSourceLocation()));
         }
+    }
+
+    /** A location as the launcher prints it (design.md D8, "Messages"). */
+    private static String where(org.graalvm.polyglot.SourceSection at) {
+        return at.getSource().getName() + ":" + at.getStartLine() + ":" + at.getStartColumn();
     }
 
     @Test
     public void syntaxErrorsNameTheFile() throws IOException {
         try (Context context = Context.create(SCHEME)) {
             PolyglotException e = error(context, Source.newBuilder(SCHEME, "(display 1)\n  (lambda (x x) x)", "dup.scm").build());
-            assertEquals(true, e.getMessage().contains("(dup.scm, line 2, column 3)"));
+            assertEquals(e.getMessage(), "dup.scm:2:3", where(e.getSourceLocation()));
         }
     }
 }

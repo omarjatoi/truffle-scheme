@@ -106,7 +106,7 @@ public class TailCallCacheTest {
 
     @Test
     public void tailCallErrorsAreRaisedAtTheCallSite() {
-        check("(define (f x) (x 1))", "(\"not a procedure: 5\" 2)",
+        check("(define (f x) (x 1))", "(\"application: not a procedure\" 2)",
                         "(list (guard (e ((error-object? e) (error-object-message e))) (f 5)) (f (lambda (y) (+ y 1))))");
         check("(define (f) (g 1 2)) (define (g x) x)", "caught", "(guard (e (#t 'caught)) (f))");
     }

@@ -69,7 +69,7 @@ public class CharStringTest {
         assertEquals("#t", write("(equal? (string #\\a #\\x1F700 #\\c) (let ((s (string #\\a #\\b #\\c))) (string-set! s 1 #\\x1F700) s))"));
         assertEquals("(\"\" \"ab\" \"bc\" (#\\b #\\c) \"abc\")", write(
                         "(list (substring \"abc\" 1 1) (substring \"abc\" 0 2) (string-copy \"abc\" 1) (string->list \"abc\" 1 3) (list->string '(#\\a #\\b #\\c)))"));
-        assertTrue(error("(string-set! \"abc\" 0 #\\x)").contains("immutable"));
+        assertTrue(error("(string-set! \"abc\" 0 #\\x)").contains("string-set!: argument 1 is not a mutable string (it is a literal): \"abc\""));
         assertTrue(error("(string-ref \"abc\" 3)").contains("string-ref"));
         assertTrue(error("(substring \"abc\" 2 1)").contains("substring"));
     }
@@ -110,7 +110,7 @@ public class CharStringTest {
                                         " (let ((s (string #\\x3bb #\\a #\\x3bb #\\b #\\c))) (string-copy! s 3 s 1 3) (string-copy! s 0 s 2 3) s))"));
         // Copying nothing into a literal changes nothing; copying something is an error.
         assertEquals("\"abc\"", write("(let ((s \"abc\")) (string-copy! s 0 \"\") s)"));
-        assertTrue(error("(string-copy! \"abc\" 0 \"x\")").contains("immutable"));
+        assertTrue(error("(string-copy! \"abc\" 0 \"x\")").contains("string-copy!: argument 1 is not a mutable string (it is a literal): \"abc\""));
     }
 
     @Test

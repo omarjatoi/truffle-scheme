@@ -217,7 +217,7 @@ final class NumberPrimitives {
                 case ABS:
                     return new Unary(x -> x instanceof Double d ? Math.abs(d) : Arithmetic.sign(Arithmetic.checkReal("abs", 1, x)) < 0 ? Arithmetic.sub(0L, x) : x);
                 case SQUARE:
-                    return new Unary(x -> Arithmetic.mul(x, x));
+                    return new Unary(x -> Arithmetic.apply("square", Arithmetic.Op.MUL, x, x, 1));
                 case QUOTIENT:
                     return new Binary((n, d) -> Arithmetic.divide("quotient", n, d, false)[0]);
                 case REMAINDER:

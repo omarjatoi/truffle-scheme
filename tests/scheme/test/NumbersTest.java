@@ -54,9 +54,12 @@ public class NumbersTest {
      */
     @Test
     public void divisionByAnExactZeroRaises() {
-        String[] errors = {"(/ 1. 0)", "(/ 0. 0)", "(/ -inf.0 0)", "(/ +nan.0 0)", "(/ 1 2. 0)", "(/ 1. 2 0 3)", "(/ 1.5+2i 0)", "(/ 3 0)", "(/ 0)", "(apply / '(1. 0))"};
-        for (String e : errors) {
-            assertEquals(e, "(\"/: division by zero\" ())", write("(guard (e ((error-object? e) (list (error-object-message e) (error-object-irritants e)))) " + e + ")"));
+        // Each with the position of its zero (design.md D8, "Messages").
+        String[][] errors = {{"(/ 1. 0)", "2"}, {"(/ 0. 0)", "2"}, {"(/ -inf.0 0)", "2"}, {"(/ +nan.0 0)", "2"}, {"(/ 1 2. 0)", "3"}, {"(/ 1. 2 0 3)", "3"}, {"(/ 1.5+2i 0)", "2"},
+                        {"(/ 3 0)", "2"}, {"(/ 0)", "1"}, {"(apply / '(1. 0))", "2"}};
+        for (String[] e : errors) {
+            assertEquals(e[0], "(\"/: argument " + e[1] + " is not a nonzero number (a division by zero)\" (0))",
+                            write("(guard (e ((error-object? e) (list (error-object-message e) (error-object-irritants e)))) " + e[0] + ")"));
         }
         assertEquals("(+inf.0 -inf.0 +nan.0 0.0 0 +inf.0 -inf.0 0.5)", write("(list (/ 1. 0.) (/ -1 0.) (/ 0 0.) (/ 0 2.) (/ 0 5) (/ 0.) (/ 1. 0.25 -0.) (/ 1 2.))"));
     }
@@ -324,8 +327,9 @@ public class NumbersTest {
             assertEquals(c[0], c[1], write("(let ((x " + c[0] + ")) (list x (magnitude x) (eqv? (magnitude x) -0.) (log x) (expt x 0.5) (expt x 2.5) (expt x -0.5) " +
                             "(expt x 0.) (expt 2. x) (expt x 3) (rationalize x 1/10) (rationalize 1/3 x) (angle x) (abs x) (sqrt x) (make-polar 2 x)))"));
         }
-        assertEquals("(\"log: not a number: a\" \"expt: not a number: a\" \"magnitude: not a number: a\")", write("(map (lambda (f) (guard (e (#t (error-object-message e))) (f 'a))) " +
-                        "(list log (lambda (x) (expt x 0.5)) magnitude))"));
+        assertEquals("(\"log: argument 1 is not a number\" \"expt: argument 1 is not a number\" \"magnitude: argument 1 is not a number\")", write(
+                        "(map (lambda (f) (guard (e (#t (error-object-message e))) (f 'a))) " +
+                                        "(list log (lambda (x) (expt x 0.5)) magnitude))"));
     }
 
     /**
@@ -367,7 +371,7 @@ public class NumbersTest {
                         {"(max -0.0 0.0)", "0.0"}, {"(max 0.0 -0.0)", "0.0"}, {"(min 0.0 -0.0)", "-0.0"}, {"(min -0.0 0.0)", "-0.0"}, {"(max -0.0 0)", "0.0"},
                         {"(min 0 -0.0)", "-0.0"}, {"(max -0. -0.)", "-0.0"}, {"(min 0. 0)", "0.0"}, {"(max -1 -0.)", "-0.0"}, {"(min 1 0 -0. 2.)", "-0.0"},
                         // exact
-                        {"(exact +nan.0)", "\"exact: not a finite number: +nan.0\""}, {"(inexact->exact -nan.0)", "\"exact: not a finite number: +nan.0\""},
+                        {"(exact +nan.0)", "\"exact: argument 1 is not a finite number\""}, {"(inexact->exact -nan.0)", "\"exact: argument 1 is not a finite number\""},
                         {"(exact -0.0)", "0"},
                         // magnitude, abs, angle
                         {"(magnitude -0.0)", "0.0"}, {"(magnitude +nan.0)", "+nan.0"}, {"(abs -0.0)", "0.0"}, {"(abs +nan.0)", "+nan.0"},
@@ -375,7 +379,7 @@ public class NumbersTest {
                         // log, sqrt, exact-integer-sqrt
                         {"(log -0.0)", "-inf.0+3.141592653589793i"}, {"(log 0.0)", "-inf.0"}, {"(log +nan.0)", "+nan.0"}, {"(log -nan.0)", "+nan.0"},
                         {"(log +nan.0 2)", "+nan.0"}, {"(sqrt -0.0)", "-0.0"}, {"(sqrt +nan.0)", "+nan.0"},
-                        {"(exact-integer-sqrt +nan.0)", "\"exact-integer-sqrt: not a non-negative exact integer: +nan.0\""},
+                        {"(exact-integer-sqrt +nan.0)", "\"exact-integer-sqrt: argument 1 is not a non-negative exact integer\""},
                         // rounding, rationalize, make-polar
                         {"(round -0.4)", "-0.0"}, {"(truncate -0.5)", "-0.0"}, {"(ceiling -0.5)", "-0.0"}, {"(round -0.0)", "-0.0"}, {"(floor +nan.0)", "+nan.0"},
                         {"(rationalize +nan.0 1)", "+nan.0"}, {"(rationalize 1 +nan.0)", "+nan.0"}, {"(make-polar +nan.0 0)", "+nan.0"},

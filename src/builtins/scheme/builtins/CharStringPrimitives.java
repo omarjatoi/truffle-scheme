@@ -279,9 +279,15 @@ final class CharStringPrimitives {
     static SString mutableStringArg(String who, int position, Object value) {
         SString s = stringArg(who, position, value);
         if (s.isImmutable()) {
-            throw ControlPrimitives.notA(who, position, "mutable string (it is a literal)", s);
+            throw immutable(who, position, s);
         }
         return s;
+    }
+
+    /** A literal string changed (R7RS §3.4, design.md D1); changing none of it is no error. */
+    @TruffleBoundary
+    static SchemeError immutable(String who, int position, SString s) {
+        return ControlPrimitives.notA(who, position, "mutable string (it is a literal)", s);
     }
 
     /** An index argument {@code value}, which must be an exact integer in {@code [min, max]}. */
@@ -746,13 +752,16 @@ final class CharStringPrimitives {
     static final class StringCopyInto extends PrimitiveNode {
         @Override
         public Object invoke(Object[] args) {
-            SString to = mutableStringArg("string-copy!", 1, args[1]);
+            SString to = stringArg("string-copy!", 1, args[1]);
             int at = indexArg("string-copy!", 2, args[2], 0, to.length());
             SString from = stringArg("string-copy!", 3, args[3]);
             int start = args.length > 4 ? indexArg("string-copy!", 4, args[4], 0, from.length()) : 0;
             int end = args.length > 5 ? indexArg("string-copy!", 5, args[5], start, from.length()) : from.length();
             if (end - start > to.length() - at) {
                 throw tooShort(to, args[2], end - start);
+            }
+            if (to.isImmutable() && end > start) {
+                throw immutable("string-copy!", 1, to);
             }
             copy(to, at, from, start, end);
             return SConstant.UNSPECIFIED;
@@ -773,10 +782,13 @@ final class CharStringPrimitives {
     static final class StringFill extends PrimitiveNode {
         @Override
         public Object invoke(Object[] args) {
-            SString s = mutableStringArg("string-fill!", 1, args[1]);
+            SString s = stringArg("string-fill!", 1, args[1]);
             int fill = charArg("string-fill!", 2, args[2]).codePoint;
             int start = args.length > 3 ? indexArg("string-fill!", 3, args[3], 0, s.length()) : 0;
             int end = args.length > 4 ? indexArg("string-fill!", 4, args[4], start, s.length()) : s.length();
+            if (s.isImmutable() && end > start) {
+                throw immutable("string-fill!", 1, s);
+            }
             fill(s, fill, start, end);
             return SConstant.UNSPECIFIED;
         }

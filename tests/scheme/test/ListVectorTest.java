@@ -136,15 +136,15 @@ public class ListVectorTest {
     public void circularListsRaise() {
         String[] procedures = {"length", "reverse", "list-copy", "list->vector", "list->string"};
         for (String procedure : procedures) {
-            assertEquals(procedure, "(\"" + procedure + ": not a proper list\" #t)", raisesOnCircular("(" + procedure + " c)"));
+            assertEquals(procedure, "(\"" + procedure + ": argument 1 is not a proper list\" #t)", raisesOnCircular("(" + procedure + " c)"));
         }
-        assertEquals("(\"append: not a proper list\" #t)", raisesOnCircular("(append '(0) c '(4))"));
-        assertEquals("(\"apply: not a proper list\" #t)", raisesOnCircular("(apply + 0 c)"));
+        assertEquals("(\"append: argument 2 is not a proper list\" #t)", raisesOnCircular("(append '(0) c '(4))"));
+        assertEquals("(\"apply: argument 3 is not a proper list\" #t)", raisesOnCircular("(apply + 0 c)"));
         // Without the element, memq and friends would walk a circular list forever.
         for (String procedure : new String[]{"memq", "memv", "member"}) {
-            assertEquals(procedure, "(\"" + procedure + ": not a proper list\" #t)", raisesOnCircular("(" + procedure + " 4 c)"));
+            assertEquals(procedure, "(\"" + procedure + ": argument 2 is not a proper list\" #t)", raisesOnCircular("(" + procedure + " 4 c)"));
         }
-        assertEquals("(\"member: not a proper list\" #t)", raisesOnCircular("(member 4 c =)"));
+        assertEquals("(\"member: argument 2 is not a proper list\" #t)", raisesOnCircular("(member 4 c =)"));
         for (String procedure : new String[]{"assq", "assv", "assoc"}) {
             assertEquals(procedure, "#t", write(circular("(guard (e ((error-object? e) (eq? (car (error-object-irritants e)) a))) (" + procedure + " 3 a))")));
         }
@@ -163,8 +163,8 @@ public class ListVectorTest {
         assertEquals("(2 (3 1 2 3 1 2 3 1) #f)", write(circular(
                         "(list (list-ref c 100) (let loop ((l (list-tail c 101)) (n 8) (acc '())) (if (= n 0) (reverse acc) (loop (cdr l) (- n 1) (cons (car l) acc)))) (list? c))")));
         // A cycle that starts further in, and a long one.
-        assertEquals("(\"length: not a proper list\" #t)", raisesOnCircular("(let ((l (list 0 1 2 3 4 5 6 7 8 9))) (set-cdr! (list-tail l 9) (list-tail l 4)) (set! c l) (length l))"));
-        assertEquals("(\"reverse: not a proper list\" #t)", raisesOnCircular("(let ((l (make-list 100000 0))) (set-cdr! (list-tail l 99999) l) (set! c l) (reverse l))"));
+        assertEquals("(\"length: argument 1 is not a proper list\" #t)", raisesOnCircular("(let ((l (list 0 1 2 3 4 5 6 7 8 9))) (set-cdr! (list-tail l 9) (list-tail l 4)) (set! c l) (length l))"));
+        assertEquals("(\"reverse: argument 1 is not a proper list\" #t)", raisesOnCircular("(let ((l (make-list 100000 0))) (set-cdr! (list-tail l 99999) l) (set! c l) (reverse l))"));
         // An improper list is still an error, and proper ones work as before.
         assertEquals("error", raises("(length '(1 2 . 3))"));
         assertEquals("error", raises("(reverse '(1 . 2))"));
@@ -189,36 +189,36 @@ public class ListVectorTest {
     @Test
     public void improperListsRaise() {
         for (String procedure : new String[]{"memq", "memv", "member"}) {
-            assertEquals(procedure, "(\"" + procedure + ": not a proper list\" ((a b . c)))", raisesWith("(" + procedure + " 'z '(a b . c))"));
-            assertEquals(procedure, "(\"" + procedure + ": not a proper list\" (x))", raisesWith("(" + procedure + " 'z 'x)"));
+            assertEquals(procedure, "(\"" + procedure + ": argument 2 is not a proper list\" ((a b . c)))", raisesWith("(" + procedure + " 'z '(a b . c))"));
+            assertEquals(procedure, "(\"" + procedure + ": argument 2 is not a proper list\" (x))", raisesWith("(" + procedure + " 'z 'x)"));
             assertEquals(procedure, "(b . c)", write("(" + procedure + " 'b '(a b . c))"));
             assertEquals(procedure, "#f", write("(" + procedure + " 'z '())"));
         }
         for (String procedure : new String[]{"assq", "assv", "assoc"}) {
-            assertEquals(procedure, "(\"" + procedure + ": not a proper list\" (((a . 1) (b . 2) . c)))", raisesWith("(" + procedure + " 'z '((a . 1) (b . 2) . c))"));
-            assertEquals(procedure, "(\"" + procedure + ": not a proper list\" (5))", raisesWith("(" + procedure + " 'z 5)"));
+            assertEquals(procedure, "(\"" + procedure + ": argument 2 is not a proper list\" (((a . 1) (b . 2) . c)))", raisesWith("(" + procedure + " 'z '((a . 1) (b . 2) . c))"));
+            assertEquals(procedure, "(\"" + procedure + ": argument 2 is not a proper list\" (5))", raisesWith("(" + procedure + " 'z 5)"));
             assertEquals(procedure, "(b . 2)", write("(" + procedure + " 'b '((a . 1) (b . 2) . c))"));
         }
         // With a predicate, member and assoc are a Scheme loop (lists-vectors.scm).
-        assertEquals("(\"member: not a proper list\" ((1 2 . 3)))", raisesWith("(member 5 '(1 2 . 3) =)"));
+        assertEquals("(\"member: argument 2 is not a proper list\" ((1 2 . 3)))", raisesWith("(member 5 '(1 2 . 3) =)"));
         assertEquals("(2 . 3)", write("(member 2.0 '(1 2 . 3) =)"));
-        assertEquals("(\"assoc: not a proper list\" (((1 . a) . 3)))", raisesWith("(assoc 5 '((1 . a) . 3) =)"));
+        assertEquals("(\"assoc: argument 2 is not a proper list\" (((1 . a) . 3)))", raisesWith("(assoc 5 '((1 . a) . 3) =)"));
         assertEquals("(1 . a)", write("(assoc 1.0 '((1 . a) . 3) =)"));
         // A call the compiler turns into comparisons with each datum (a quoted proper list, plan.md
         // M8-05, M9-05) is unaffected; with a quoted improper list it calls the primitive, which raises.
         assertEquals("((b c) (b . 2) #f #f)", write("(let ((k 'b) (z 'z)) (list (memq k '(a b c)) (assv k '((a . 1) (b . 2))) (memv z '(a b c)) (assq z '((a . 1)))))"));
-        assertEquals("(\"memv: not a proper list\" ((a b . c)))", raisesWith("(let ((k 'z)) (memv k '(a b . c)))"));
-        assertEquals("(\"assq: not a proper list\" (((a . 1) . c)))", raisesWith("(let ((k 'z)) (assq k '((a . 1) . c)))"));
+        assertEquals("(\"memv: argument 2 is not a proper list\" ((a b . c)))", raisesWith("(let ((k 'z)) (memv k '(a b . c)))"));
+        assertEquals("(\"assq: argument 2 is not a proper list\" (((a . 1) . c)))", raisesWith("(let ((k 'z)) (assq k '((a . 1) . c)))"));
         // map and for-each, with one list and with several: the irritant is the list whose tail the
         // walk reached.
-        assertEquals("(\"map: not a proper list\" (((1) (2) . 3)))", raisesWith("(map car '((1) (2) . 3))"));
-        assertEquals("(\"map: not a proper list\" (5))", raisesWith("(map car 5)"));
-        assertEquals("(\"map: not a proper list\" ((10 20 . 30)))", raisesWith("(map + '(1 2 3) '(10 20 . 30))"));
-        assertEquals("(\"map: not a proper list\" ((1 . 2)))", raisesWith("(map + '(1 . 2) '(10 20 30))"));
-        assertEquals("(\"map: not a proper list\" ((a b . c)))", raisesWith("(map list '(1 2) '(a b . c))"));
-        assertEquals("(\"for-each: not a proper list\" (((1) . 3)))", raisesWith("(for-each car '((1) . 3))"));
-        assertEquals("(\"for-each: not a proper list\" (x))", raisesWith("(for-each car 'x)"));
-        assertEquals("(\"for-each: not a proper list\" ((10 . 30)))", raisesWith("(for-each + '(1 2 3) '(10 . 30))"));
+        assertEquals("(\"map: argument 2 is not a proper list\" (((1) (2) . 3)))", raisesWith("(map car '((1) (2) . 3))"));
+        assertEquals("(\"map: argument 2 is not a proper list\" (5))", raisesWith("(map car 5)"));
+        assertEquals("(\"map: argument 3 is not a proper list\" ((10 20 . 30)))", raisesWith("(map + '(1 2 3) '(10 20 . 30))"));
+        assertEquals("(\"map: argument 2 is not a proper list\" ((1 . 2)))", raisesWith("(map + '(1 . 2) '(10 20 30))"));
+        assertEquals("(\"map: argument 3 is not a proper list\" ((a b . c)))", raisesWith("(map list '(1 2) '(a b . c))"));
+        assertEquals("(\"for-each: argument 2 is not a proper list\" (((1) . 3)))", raisesWith("(for-each car '((1) . 3))"));
+        assertEquals("(\"for-each: argument 2 is not a proper list\" (x))", raisesWith("(for-each car 'x)"));
+        assertEquals("(\"for-each: argument 3 is not a proper list\" ((10 . 30)))", raisesWith("(for-each + '(1 2 3) '(10 . 30))"));
         // f has run for the elements before the tail, in order.
         assertEquals("(2 1)", write("(let ((acc '())) (guard (e (#t acc)) (for-each (lambda (x) (set! acc (cons x acc))) '(1 2 . 3))))"));
         // The shortest list ends first: the other's improper tail is never reached.
@@ -237,7 +237,7 @@ public class ListVectorTest {
         assertEquals("#0=(1 2 3 . #0#)", write(circular("(guard (e (#t (car (error-object-irritants e)))) (length c))")));
         try (Context context = Context.create("scheme")) {
             PolyglotException e = assertThrows(PolyglotException.class, () -> context.eval("scheme", circular("(length c)")));
-            assertTrue(e.getMessage(), e.getMessage().contains("length: not a proper list #0=(1 2 3 . #0#)"));
+            assertTrue(e.getMessage(), e.getMessage().contains("length: argument 1 is not a proper list: #0=(1 2 3 . #0#)"));
         }
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         try (Context context = Context.newBuilder("scheme").out(out).build()) {
@@ -251,9 +251,9 @@ public class ListVectorTest {
         return write("(guard (e ((error-object? e) (error-object-message e))) " + expr + ")");
     }
 
-    private static final String SET_CAR = "\"set-car!: pair is immutable (a literal)\"";
-    private static final String SET_CDR = "\"set-cdr!: pair is immutable (a literal)\"";
-    private static final String LIST_SET = "\"list-set!: pair is immutable (a literal)\"";
+    private static final String SET_CAR = "\"set-car!: argument 1 is not a mutable pair (it is a literal's)\"";
+    private static final String SET_CDR = "\"set-cdr!: argument 1 is not a mutable pair (it is a literal's)\"";
+    private static final String LIST_SET = "\"list-set!: argument 1 is not a mutable list (it is a literal's)\"";
 
     /**
      * R7RS §3.4: "literal constants ... are immutable ... it is an error to attempt to store a new
@@ -323,7 +323,7 @@ public class ListVectorTest {
      */
     @Test
     public void callSitesTakeBothKindsOfPairs() {
-        assertEquals("(6 6 6 6 #t #t (9 2 3) \"set-car!: pair is immutable (a literal)\" 3 3 (2 3) (b . 2))", write("""
+        assertEquals("(6 6 6 6 #t #t (9 2 3) \"set-car!: argument 1 is not a mutable pair (it is a literal's)\" 3 3 (2 3) (b . 2))", write("""
                         (let ()
                           (define (sum l) (if (pair? l) (+ (car l) (sum (cdr l))) 0))
                           (define (bump! p) (set-car! p 9) p)

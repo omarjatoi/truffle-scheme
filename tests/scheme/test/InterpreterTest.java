@@ -110,8 +110,8 @@ public class InterpreterTest {
         }
         assertEquals("(41 (2 3))", run("(define (f" + params + ") (+ a1 a40)) (define (g a . r) r) (write (list (f" + args + ") (g 1 2 3)))"));
         // Arity errors, with the expected and actual counts.
-        assertTrue(error("(define (f a b) a) (f 1)").contains("expected 2, got 1"));
-        assertTrue(error("(define (f a b) a) (f 1 2 3)").contains("expected 2, got 3"));
+        assertTrue(error("(define (f a b) a) (f 1)").contains("f: expected 2 arguments, got 1"));
+        assertTrue(error("(define (f a b) a) (f 1 2 3)").contains("f: expected 2 arguments, got 3"));
     }
 
     /**

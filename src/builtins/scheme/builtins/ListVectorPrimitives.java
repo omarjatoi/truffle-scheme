@@ -439,7 +439,8 @@ final class ListVectorPrimitives {
         public Object invoke(Object[] args) {
             String who = op == TAIL ? "list-tail" : op == REF ? "list-ref" : "list-set!";
             if (!(args[2] instanceof Long k) || k < 0) {
-                throw ControlPrimitives.notA(who, 2, "non-negative exact integer", args[2]);
+                // A bignum is beyond every list: out of range, as a fixnum past its end is.
+                throw args[2] instanceof SBigInteger b && b.value.signum() > 0 ? outOfRange(who, b, args[1], op != TAIL) : ControlPrimitives.notA(who, 2, "non-negative exact integer", args[2]);
             }
             Object tail = tail(who, args[1], k, op != TAIL);
             if (op == TAIL) {
@@ -453,7 +454,7 @@ final class ListVectorPrimitives {
                 return p.car;
             }
             if (p instanceof LiteralPair) {
-                throw immutablePair(who, 1, args[1]);
+                throw SchemeError.argument(who, 1, "mutable list (it is a literal's)", args[1]);
             }
             p.car = args[3];
             return SConstant.UNSPECIFIED;
@@ -473,14 +474,22 @@ final class ListVectorPrimitives {
         }
 
         /**
-         * The index, argument 2, is beyond the list's pairs: the list has fewer than {@code k} (it
-         * isn't circular), so counting them ends.
+         * The index, argument 2, is beyond the list's pairs: a fixnum's walk ended before it, and a
+         * bignum is beyond any list. The count stops at a cycle (Floyd's check, as {@link Length}
+         * does), which only a bignum's list can have.
          */
         @TruffleBoundary
-        private static SchemeError outOfRange(String who, long k, Object list, boolean element) {
+        private static SchemeError outOfRange(String who, Object k, Object list, boolean element) {
             long pairs = 0;
+            Object slow = list;
             for (SPair p = SPair.asPair(list); p != null; p = SPair.asPair(p.cdr)) {
                 pairs++;
+                if ((pairs & 1) == 0) {
+                    slow = ((SPair) slow).cdr;
+                    if (slow == p.cdr) {
+                        return SchemeError.argument(who, 2, "fixnum index", k);
+                    }
+                }
             }
             return SchemeError.argument(who, 2, SchemeError.index(0, element ? pairs - 1 : pairs), k);
         }
