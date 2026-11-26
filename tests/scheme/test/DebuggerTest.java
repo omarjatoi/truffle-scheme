@@ -293,7 +293,7 @@ public class DebuggerTest {
 
     // Called by map with two lists; its body, line 2, calls only primitives (see PROGRAM).
     private static final String MAPPED = """
-                    (define (pair-up x y)
+                    (define (pair-up x y . more)
                       (car (cons x y)))
                     """;
 
@@ -331,11 +331,12 @@ public class DebuggerTest {
             })) {
                 session.setSteppingFilter(SuspensionFilter.newBuilder().includeInternal(true).build());
                 session.install(Breakpoint.newBuilder(source.getURI()).lineIs(2).build());
-                assertEquals("(1 2)", context.eval(SCHEME, "(map pair-up '(1 2) '(3 4))").toString());
+                // Three lists: map's loop for more than two keeps them in ls (lists-vectors.scm).
+                assertEquals("(1 2)", context.eval(SCHEME, "(map pair-up '(1 2) '(3 4) '(5 6))").toString());
             }
         }
         assertTrue(values.toString(), values.size() >= 6);
-        assertEquals(List.of("map", "((1 3) #t #t)", "only-interactive is unbound", "map", "((2 4) #t #t)", "only-interactive is unbound"), values.subList(0, 6));
+        assertEquals(List.of("map", "((1 3 5) #t #t)", "only-interactive is unbound", "map", "((2 4 6) #t #t)", "only-interactive is unbound"), values.subList(0, 6));
     }
 
     // Called from code evaluated in an environment; its body, line 2, calls only primitives.
