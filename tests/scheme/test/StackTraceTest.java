@@ -1,288 +1,202 @@
 package scheme.test;
 
+import static org.junit.Assert.assertEquals;
+
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
 import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.PolyglotException;
 import org.graalvm.polyglot.Source;
 import org.graalvm.polyglot.SourceSection;
 import org.graalvm.polyglot.io.IOAccess;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 
+import scheme.launcher.SchemeMain;
 import scheme.runtime.SchemeLanguage;
 
-/** Discovery: prints each case's trace and location. */
+/**
+ * M14-04: the guest stack trace and the location of an error, an exit and an emergency exit for
+ * each way a frame can be off the Java stack or in the prelude (design.md D8, "Stack traces"). Each
+ * case is a program in {@code tests/traces}, run with each raiser in place of {@code RAISE}: through
+ * the embedder's {@code PolyglotException} and through the launcher's printed trace, in every mode.
+ * The results are compared with {@code tests/traces/expected}: one file for the modes without
+ * torture (jit, compile), one for both tortures, whose frames all wait on the heap.
+ * {@code //tests:stack_traces_native} runs the same cases through the native launcher.
+ */
 public class StackTraceTest {
+
+    @Rule public TemporaryFolder folder = new TemporaryFolder();
 
     private static final String SCHEME = "scheme";
 
-    static Map<String, String> cases() {
-        Map<String, String> c = new LinkedHashMap<>();
-        c.put("plain", """
-                        (define (f) (list @))
-                        (define (g) (list (f)))
-                        (g)
-                        """);
-        c.put("spill", """
-                        (define (down n)
-                          (if (= n 0)
-                              (list @)
-                              (+ 1 (down (- n 1)))))
-                        (down 30)
-                        """);
-        c.put("reentry-once", """
-                        (define k #f)
-                        (define count 0)
-                        (define (f)
-                          (call/cc (lambda (c) (set! k c)))
-                          (set! count (+ count 1))
-                          (list (if (= count 2) @ count)))
-                        (define (g) (list (f)))
-                        (g)
-                        (if (< count 2) (k #f))
-                        """);
-        c.put("reentry-twice", """
-                        (define k #f)
-                        (define count 0)
-                        (define (f)
-                          (call/cc (lambda (c) (set! k c)))
-                          (set! count (+ count 1))
-                          (list (if (= count 3) @ count)))
-                        (define (g) (list (f)))
-                        (g)
-                        (if (< count 3) (k #f))
-                        """);
-        c.put("reentry-inner", """
-                        (define k #f)
-                        (define (f)
-                          (list (call/cc (lambda (c) (set! k c) 1))))
-                        (define (g) (list (f)))
-                        (define (h) (list (g)))
-                        (h)
-                        (define (go) (list (k @)))
-                        (go)
-                        """);
-        c.put("guard-reraise", """
-                        (define (f)
-                          (list (guard (e ((string? e) 'no))
-                                  (list @))))
-                        (define (g) (list (f)))
-                        (g)
-                        """);
-        c.put("wind-before", """
-                        (define (f)
-                          (list (dynamic-wind (lambda () (list @)) (lambda () 1) (lambda () 2))))
-                        (define (g) (list (f)))
-                        (g)
-                        """);
-        c.put("wind-thunk", """
-                        (define (f)
-                          (list (dynamic-wind (lambda () 0) (lambda () (list @)) (lambda () 2))))
-                        (define (g) (list (f)))
-                        (g)
-                        """);
-        c.put("wind-after", """
-                        (define (f)
-                          (list (dynamic-wind (lambda () 0) (lambda () 1) (lambda () (list @)))))
-                        (define (g) (list (f)))
-                        (g)
-                        """);
-        c.put("handler-raise", """
-                        (define (f)
-                          (list (with-exception-handler
-                                  (lambda (e) (list @))
-                                  (lambda () (list (raise 'c))))))
-                        (define (g) (list (f)))
-                        (g)
-                        """);
-        c.put("handler-continuable", """
-                        (define (f)
-                          (list (with-exception-handler
-                                  (lambda (e) (list @))
-                                  (lambda () (list (raise-continuable 'c))))))
-                        (define (g) (list (f)))
-                        (g)
-                        """);
-        c.put("handler-intrinsic", """
-                        (define (f)
-                          (list (with-exception-handler
-                                  (lambda (e) (list @))
-                                  (lambda () (list (car 'y))))))
-                        (define (g) (list (f)))
-                        (g)
-                        """);
-        c.put("callcc-receiver", """
-                        (define (f)
-                          (list (call/cc (lambda (k) (list @)))))
-                        (define (g) (list (f)))
-                        (g)
-                        """);
-        c.put("callcc-escape", """
-                        (define (f)
-                          (list (call/cc (lambda (k) (k 1)))))
-                        (define (g) (list (f) @))
-                        (g)
-                        """);
-        c.put("map", """
-                        (define (f)
-                          (list (map (lambda (x) (list @)) '(1))))
-                        (define (g) (list (f)))
-                        (g)
-                        """);
-        c.put("for-each", """
-                        (define (f)
-                          (list (for-each (lambda (x) (list @)) '(1))))
-                        (define (g) (list (f)))
-                        (g)
-                        """);
-        c.put("apply", """
-                        (define (f)
-                          (list (apply (lambda (x) (list @)) '(1))))
-                        (define (g) (list (f)))
-                        (g)
-                        """);
-        c.put("cwv-producer", """
-                        (define (f)
-                          (list (call-with-values (lambda () (list @)) list)))
-                        (define (g) (list (f)))
-                        (g)
-                        """);
-        c.put("cwv-consumer", """
-                        (define (f)
-                          (list (call-with-values (lambda () 1) (lambda (x) (list @)))))
-                        (define (g) (list (f)))
-                        (g)
-                        """);
-        c.put("parameterize", """
-                        (define p (make-parameter 0))
-                        (define (f)
-                          (list (parameterize ((p 1)) (list @))))
-                        (define (g) (list (f)))
-                        (g)
-                        """);
-        c.put("converter", """
-                        (define p (make-parameter 0 (lambda (x) (if (= x 1) (list @) x))))
-                        (define (f)
-                          (list (parameterize ((p 1)) 0)))
-                        (define (g) (list (f)))
-                        (g)
-                        """);
-        c.put("eval", """
-                        (define (h) (list @))
-                        (define (f)
-                          (list (eval (list h) (environment '(scheme base)))))
-                        (define (g) (list (f)))
-                        (g)
-                        """);
-        c.put("eval-datum", """
-                        (define (f)
-                          (list (eval '(list @) (environment '(scheme base) '(scheme process-context)))))
-                        (define (g) (list (f)))
-                        (g)
-                        """);
-        c.put("load", """
-                        (define (f)
-                          (list (load "LOADED")))
-                        (define (g) (list (f)))
-                        (g)
-                        """);
-        c.put("library", """
-                        (define-library (test body)
-                          (import (scheme base) (scheme process-context))
-                          (begin
-                            (define (h) (list @))
-                            (list (h))))
-                        (import (test body))
-                        """);
-        c.put("library-file", """
-                        (import (scheme base) (test file))
-                        """);
-        c.put("after-replaces", """
-                        (define (f)
-                          (list (dynamic-wind (lambda () 0) (lambda () (list (car 'first))) (lambda () (list @)))))
-                        (define (g) (list (f)))
-                        (g)
-                        """);
-        c.put("trampoline", """
-                        (define (f)
-                          (list (apply PRIM (list ARG))))
-                        (define (g) (list (f)))
-                        (g)
-                        """);
-        c.put("tail-caller", """
-                        (define (leave) @)
-                        (define (f) (list (leave)))
-                        (define (g) (list (f)))
-                        (g)
-                        """);
-        return c;
+    static final String[] CASES = {
+                    "plain", "spill", "reentry-once", "reentry-twice", "reentry-inner", "callcc-receiver", "callcc-escape", "guard-reraise",
+                    "wind-before", "wind-thunk", "wind-after", "handler-raise", "handler-continuable", "handler-intrinsic", "map", "for-each",
+                    "apply", "cwv-producer", "cwv-consumer", "parameterize", "converter", "eval", "eval-datum", "load", "library",
+                    "library-file", "after-replaces", "trampoline", "tail-caller",
+    };
+
+    /**
+     * What replaces {@code RAISE}, and {@code PRIM} and {@code ARG} (the procedure and its argument,
+     * for {@code (apply PRIM (list ARG))}): a primitive's error, a raise, an exit, an emergency exit.
+     */
+    static final String[][] RAISERS = {
+                    {"error", "(car 'x)", "car", "'x"},
+                    {"raise", "(raise 'boom)", "raise", "'boom"},
+                    {"exit", "(exit 3)", "exit", "3"},
+                    {"emergency-exit", "(emergency-exit 3)", "emergency-exit", "3"},
+    };
+
+    private static final boolean TORTURE = SchemeLanguage.constant(SchemeLanguage.TORTURE) != SchemeLanguage.Torture.OFF;
+
+    private static String resource(String path) throws IOException {
+        try (InputStream in = StackTraceTest.class.getResourceAsStream("/traces/" + path)) {
+            if (in == null) {
+                throw new IOException("missing test resource traces/" + path);
+            }
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        }
     }
 
-    static final String[][] RAISERS = {{"error", "(car 'x)", "car", "'x"}, {"raise", "(raise 'boom)", "raise", "'boom"}, {"exit", "(exit 3)", "exit", "3"}, {"emergency", "(emergency-exit 3)", "emergency-exit", "3"}};
+    /** A case's program, written with a raiser, and the launcher options its header asks for. */
+    private record Program(Path file, List<String> options) {
+    }
 
-    static String frames(PolyglotException e) {
+    private Program write(String name, String[] raiser) throws IOException {
+        Path dir = folder.newFolder(name + "-" + raiser[0]).toPath();
+        String text = resource(name + ".scm");
+        List<String> options = new ArrayList<>();
+        for (String line : text.lines().toList()) {
+            if (line.startsWith("; options: ")) {
+                for (String option : line.substring("; options: ".length()).split(" ")) {
+                    options.add(option.replace("DIR", dir.toString()));
+                }
+            } else if (line.startsWith("; files: ")) {
+                for (String file : line.substring("; files: ".length()).split(" ")) {
+                    Path to = dir.resolve(file);
+                    Files.createDirectories(to.getParent());
+                    Files.writeString(to, substitute(resource(name + "/" + file), raiser, dir), StandardCharsets.UTF_8);
+                }
+            }
+        }
+        Path file = dir.resolve(name + ".scm");
+        Files.writeString(file, substitute(text, raiser, dir), StandardCharsets.UTF_8);
+        return new Program(file, options);
+    }
+
+    private static String substitute(String text, String[] raiser, Path dir) {
+        return text.replace("RAISE", raiser[1]).replace("PRIM", raiser[2]).replace("ARG", raiser[3]).replace("DIR", dir.toString());
+    }
+
+    /** {@code PolyglotException}'s view: what it is, its location and its guest frames. */
+    private static String embedder(Program program) throws IOException {
+        Context.Builder builder = Context.newBuilder(SCHEME).out(new ByteArrayOutputStream()).err(new ByteArrayOutputStream()).allowIO(IOAccess.ALL);
+        for (int i = 0; i < program.options().size(); i++) {
+            String option = program.options().get(i);
+            if (option.equals("--experimental-options")) {
+                builder.allowExperimentalOptions(true);
+            } else if (option.equals("-I")) {
+                builder.option("scheme.LibraryPath", program.options().get(++i));
+            } else {
+                String[] nameValue = option.substring(2).split("=", 2);
+                builder.option(nameValue[0], nameValue[1]);
+            }
+        }
+        try (Context context = builder.build()) {
+            context.eval(Source.newBuilder(SCHEME, program.file().toFile()).build());
+            return "no exception";
+        } catch (PolyglotException e) {
+            return (e.isExit() ? "exit " + e.getExitStatus() : "error") + " at " + at(e.getSourceLocation()) + " | " + frames(e);
+        }
+    }
+
+    private static String at(SourceSection s) {
+        return s == null ? "none" : s.getSource().getName() + ":" + s.getStartLine() + " " + s.getCharacters().toString().replaceAll("\\s+", " ");
+    }
+
+    /**
+     * The guest frames, innermost first, as {@code name file:line} ({@code ?} without a location),
+     * {@code ~} before a frame whose source is internal (a prelude frame running resumed, which
+     * Truffle shows: docs/upstream.md, "Continuation roots are never internal"), and a run of the
+     * same frame once, with {@code xN}.
+     */
+    private static String frames(PolyglotException e) {
         List<String> frames = new ArrayList<>();
+        String previous = null;
+        int count = 0;
         for (PolyglotException.StackFrame frame : e.getPolyglotStackTrace()) {
             if (!frame.isGuestFrame()) {
                 continue;
             }
             SourceSection at = frame.getSourceLocation();
             String internal = at != null && at.getSource().isInternal() ? "~" : "";
-            frames.add(internal + frame.getRootName() + " " + (at == null ? "?" : at.getSource().getName() + ":" + at.getStartLine()));
+            String text = internal + frame.getRootName() + " " + (at == null ? "?" : at.getSource().getName() + ":" + at.getStartLine());
+            if (text.equals(previous)) {
+                count++;
+                continue;
+            }
+            if (previous != null) {
+                frames.add(previous + (count > 1 ? " x" + count : ""));
+            }
+            previous = text;
+            count = 1;
+        }
+        if (previous != null) {
+            frames.add(previous + (count > 1 ? " x" + count : ""));
         }
         return String.join(", ", frames);
     }
 
-    static String at(SourceSection s) {
-        return s == null ? "none" : s.getSource().getName() + ":" + s.getStartLine() + " " + s.getCharacters();
+    /** The launcher's view (design.md D8, "Stack traces"): its status and the trace it prints. */
+    private static String printed(Program program) {
+        List<String> args = new ArrayList<>(program.options());
+        args.add(program.file().toString());
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int status = SchemeMain.run(args.toArray(String[]::new), new ByteArrayInputStream(new byte[0]), out, err);
+        StringBuilder text = new StringBuilder("status " + status);
+        // The message line is M14-07's ("Messages"); the trace is what follows it.
+        for (String line : err.toString(StandardCharsets.UTF_8).lines().toList()) {
+            if (line.startsWith("    ")) {
+                text.append('\n').append(line);
+            }
+        }
+        return text.toString();
+    }
+
+    private void check(String kind, boolean launcher) throws IOException {
+        StringBuilder actual = new StringBuilder();
+        for (String name : CASES) {
+            for (String[] raiser : RAISERS) {
+                Program program = write(name, raiser);
+                actual.append(name).append(' ').append(raiser[0]).append(": ").append(launcher ? printed(program) : embedder(program)).append('\n');
+            }
+        }
+        String file = "expected/" + kind + (TORTURE ? "-torture" : "") + ".txt";
+        String expected = resource(file);
+        if (!expected.equals(actual.toString())) {
+            System.out.println("=== tests/traces/" + file + " would be:\n" + actual + "=== end");
+        }
+        assertEquals("tests/traces/" + file + " (the test's output has the whole file)", expected, actual.toString());
     }
 
     @Test
-    public void discover() throws IOException {
-        Path dir = Files.createTempDirectory("traces");
-        StringBuilder out = new StringBuilder();
-        out.append("MODE torture=").append(SchemeLanguage.constant(SchemeLanguage.TORTURE)).append('\n');
-        for (Map.Entry<String, String> c : cases().entrySet()) {
-            for (String[] r : RAISERS) {
-                String text = c.getValue().replace("@", r[1]).replace("PRIM", r[2]).replace("ARG", r[3]);
-                if (c.getKey().equals("load")) {
-                    Path loaded = dir.resolve("loaded-" + r[0] + ".scm");
-                    Files.writeString(loaded, "(define (h) (list " + r[1] + "))\n(list (h))\n", StandardCharsets.UTF_8);
-                    text = text.replace("LOADED", loaded.toString());
-                }
-                Context.Builder builder = Context.newBuilder(SCHEME).out(new ByteArrayOutputStream()).err(new ByteArrayOutputStream()).allowIO(IOAccess.ALL).allowExperimentalOptions(true);
-                if (c.getKey().equals("library-file")) {
-                    Files.createDirectories(dir.resolve(r[0] + "/test"));
-                    Files.writeString(dir.resolve(r[0] + "/test/file.sld"), """
-                                    (define-library (test file)
-                                      (import (scheme base) (scheme process-context))
-                                      (begin
-                                        (define (h) (list @))
-                                        (list (h))))
-                                    """.replace("@", r[1]), StandardCharsets.UTF_8);
-                    builder.option("scheme.LibraryPath", dir.resolve(r[0]).toString());
-                }
-                if (c.getKey().equals("spill")) {
-                    builder.option("scheme.SpillDepth", "5");
-                }
-                String name = c.getKey() + "-" + r[0] + ".scm";
-                out.append(name).append(": ");
-                try (Context context = builder.build()) {
-                    context.eval(Source.newBuilder(SCHEME, text, name).buildLiteral());
-                    out.append("NO EXCEPTION\n");
-                } catch (PolyglotException e) {
-                    out.append(e.isExit() ? "exit " + e.getExitStatus() : "error " + e.getMessage()).append(" | at ").append(at(e.getSourceLocation()).replace('\n', ' ')).append(" | ").append(frames(e)).append('\n');
-                }
-            }
-        }
-        System.out.println(out);
+    public void embeddersTrace() throws IOException {
+        check("embedder", false);
+    }
+
+    @Test
+    public void launchersPrintedTrace() throws IOException {
+        check("printed", true);
     }
 }

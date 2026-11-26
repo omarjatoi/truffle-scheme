@@ -113,6 +113,7 @@ unit_tests(
     # The files that these read as resources: the vendored suite's, the primitives' former registry.
     resources = {
         "PrimitiveRegistryTest": ["scheme/test/primitives.txt"],
+        "StackTraceTest": glob(["traces/**"]),
         "SuiteReadSyntaxTest": glob(["r7rs/**"]),
         "SyntaxRulesTest": glob(["r7rs/**"]),
     },

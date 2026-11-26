@@ -1,0 +1,319 @@
+plain error: status 70
+    at f(plain.scm:3:19)
+    at g(plain.scm:4:19)
+    at <program>(plain.scm:5:1)
+plain raise: status 70
+    at f(plain.scm:3:19)
+    at g(plain.scm:4:19)
+    at <program>(plain.scm:5:1)
+plain exit: status 3
+plain emergency-exit: status 3
+spill error: status 64
+spill raise: status 64
+spill exit: status 64
+spill emergency-exit: status 64
+reentry-once error: status 70
+    at f(reentry-once.scm:8:25)
+    at g(reentry-once.scm:9:19)
+    at <program>(reentry-once.scm:10:1)
+reentry-once raise: status 70
+    at f(reentry-once.scm:8:25)
+    at g(reentry-once.scm:9:19)
+    at <program>(reentry-once.scm:10:1)
+reentry-once exit: status 3
+reentry-once emergency-exit: status 3
+reentry-twice error: status 70
+    at f(reentry-twice.scm:8:25)
+    at g(reentry-twice.scm:9:19)
+    at <program>(reentry-twice.scm:10:1)
+reentry-twice raise: status 70
+    at f(reentry-twice.scm:8:25)
+    at g(reentry-twice.scm:9:19)
+    at <program>(reentry-twice.scm:10:1)
+reentry-twice exit: status 3
+reentry-twice emergency-exit: status 3
+reentry-inner error: status 70
+    at go(reentry-inner.scm:9:23)
+    at <program>(reentry-inner.scm:10:1)
+reentry-inner raise: status 70
+    at go(reentry-inner.scm:9:23)
+    at <program>(reentry-inner.scm:10:1)
+reentry-inner exit: status 3
+reentry-inner emergency-exit: status 3
+callcc-receiver error: status 70
+    at <lambda@callcc-receiver.scm:4:18>(callcc-receiver.scm:4:36)
+    at call/cc
+    at f(callcc-receiver.scm:4:9)
+    at g(callcc-receiver.scm:5:19)
+    at <program>(callcc-receiver.scm:6:1)
+callcc-receiver raise: status 70
+    at <lambda@callcc-receiver.scm:4:18>(callcc-receiver.scm:4:36)
+    at call/cc
+    at f(callcc-receiver.scm:4:9)
+    at g(callcc-receiver.scm:5:19)
+    at <program>(callcc-receiver.scm:6:1)
+callcc-receiver exit: status 3
+callcc-receiver emergency-exit: status 3
+callcc-escape error: status 70
+    at g(callcc-escape.scm:5:23)
+    at <program>(callcc-escape.scm:6:1)
+callcc-escape raise: status 70
+    at g(callcc-escape.scm:5:23)
+    at <program>(callcc-escape.scm:6:1)
+callcc-escape exit: status 3
+callcc-escape emergency-exit: status 3
+guard-reraise error: status 70
+    at %call-with-prompt
+    at f(guard-reraise.scm:4:9)
+    at g(guard-reraise.scm:6:19)
+    at <program>(guard-reraise.scm:7:1)
+guard-reraise raise: status 70
+    at <lambda@guard-reraise.scm:4:9>(guard-reraise.scm:5:17)
+    at %call-with-prompt
+    at f(guard-reraise.scm:4:9)
+    at g(guard-reraise.scm:6:19)
+    at <program>(guard-reraise.scm:7:1)
+guard-reraise exit: status 3
+guard-reraise emergency-exit: status 3
+wind-before error: status 70
+    at <lambda@wind-before.scm:4:23>(wind-before.scm:4:40)
+    at f(wind-before.scm:4:9)
+    at g(wind-before.scm:5:19)
+    at <program>(wind-before.scm:6:1)
+wind-before raise: status 70
+    at <lambda@wind-before.scm:4:23>(wind-before.scm:4:40)
+    at f(wind-before.scm:4:9)
+    at g(wind-before.scm:5:19)
+    at <program>(wind-before.scm:6:1)
+wind-before exit: status 3
+wind-before emergency-exit: status 3
+wind-thunk error: status 70
+    at <lambda@wind-thunk.scm:4:37>(wind-thunk.scm:4:54)
+    at f(wind-thunk.scm:4:9)
+    at g(wind-thunk.scm:5:19)
+    at <program>(wind-thunk.scm:6:1)
+wind-thunk raise: status 70
+    at <lambda@wind-thunk.scm:4:37>(wind-thunk.scm:4:54)
+    at f(wind-thunk.scm:4:9)
+    at g(wind-thunk.scm:5:19)
+    at <program>(wind-thunk.scm:6:1)
+wind-thunk exit: status 3
+wind-thunk emergency-exit: status 3
+wind-after error: status 70
+    at <lambda@wind-after.scm:4:51>(wind-after.scm:4:68)
+    at f(wind-after.scm:4:9)
+    at g(wind-after.scm:5:19)
+    at <program>(wind-after.scm:6:1)
+wind-after raise: status 70
+    at <lambda@wind-after.scm:4:51>(wind-after.scm:4:68)
+    at f(wind-after.scm:4:9)
+    at g(wind-after.scm:5:19)
+    at <program>(wind-after.scm:6:1)
+wind-after exit: status 3
+wind-after emergency-exit: status 3
+handler-raise error: status 70
+    at <lambda@handler-raise.scm:5:11>(handler-raise.scm:5:29)
+    at <lambda@handler-raise.scm:6:11>(handler-raise.scm:6:28)
+    at f(handler-raise.scm:4:9)
+    at g(handler-raise.scm:7:19)
+    at <program>(handler-raise.scm:8:1)
+handler-raise raise: status 70
+    at <lambda@handler-raise.scm:5:11>(handler-raise.scm:5:29)
+    at <lambda@handler-raise.scm:6:11>(handler-raise.scm:6:28)
+    at f(handler-raise.scm:4:9)
+    at g(handler-raise.scm:7:19)
+    at <program>(handler-raise.scm:8:1)
+handler-raise exit: status 3
+handler-raise emergency-exit: status 3
+handler-continuable error: status 70
+    at <lambda@handler-continuable.scm:5:11>(handler-continuable.scm:5:29)
+    at <lambda@handler-continuable.scm:6:11>(handler-continuable.scm:6:28)
+    at f(handler-continuable.scm:4:9)
+    at g(handler-continuable.scm:7:19)
+    at <program>(handler-continuable.scm:8:1)
+handler-continuable raise: status 70
+    at <lambda@handler-continuable.scm:5:11>(handler-continuable.scm:5:29)
+    at <lambda@handler-continuable.scm:6:11>(handler-continuable.scm:6:28)
+    at f(handler-continuable.scm:4:9)
+    at g(handler-continuable.scm:7:19)
+    at <program>(handler-continuable.scm:8:1)
+handler-continuable exit: status 3
+handler-continuable emergency-exit: status 3
+handler-intrinsic error: status 70
+    at <lambda@handler-intrinsic.scm:5:11>(handler-intrinsic.scm:5:29)
+    at <lambda@handler-intrinsic.scm:6:11>(handler-intrinsic.scm:6:28)
+    at f(handler-intrinsic.scm:4:9)
+    at g(handler-intrinsic.scm:7:19)
+    at <program>(handler-intrinsic.scm:8:1)
+handler-intrinsic raise: status 70
+    at <lambda@handler-intrinsic.scm:5:11>(handler-intrinsic.scm:5:29)
+    at <lambda@handler-intrinsic.scm:6:11>(handler-intrinsic.scm:6:28)
+    at f(handler-intrinsic.scm:4:9)
+    at g(handler-intrinsic.scm:7:19)
+    at <program>(handler-intrinsic.scm:8:1)
+handler-intrinsic exit: status 3
+handler-intrinsic emergency-exit: status 3
+map error: status 70
+    at <lambda@map.scm:4:14>(map.scm:4:32)
+    at f(map.scm:4:9)
+    at g(map.scm:5:19)
+    at <program>(map.scm:6:1)
+map raise: status 70
+    at <lambda@map.scm:4:14>(map.scm:4:32)
+    at f(map.scm:4:9)
+    at g(map.scm:5:19)
+    at <program>(map.scm:6:1)
+map exit: status 3
+map emergency-exit: status 3
+for-each error: status 70
+    at <lambda@for-each.scm:4:19>(for-each.scm:4:37)
+    at f(for-each.scm:4:9)
+    at g(for-each.scm:5:19)
+    at <program>(for-each.scm:6:1)
+for-each raise: status 70
+    at <lambda@for-each.scm:4:19>(for-each.scm:4:37)
+    at f(for-each.scm:4:9)
+    at g(for-each.scm:5:19)
+    at <program>(for-each.scm:6:1)
+for-each exit: status 3
+for-each emergency-exit: status 3
+apply error: status 70
+    at <lambda@apply.scm:4:16>(apply.scm:4:34)
+    at f(apply.scm:4:9)
+    at g(apply.scm:5:19)
+    at <program>(apply.scm:6:1)
+apply raise: status 70
+    at <lambda@apply.scm:4:16>(apply.scm:4:34)
+    at f(apply.scm:4:9)
+    at g(apply.scm:5:19)
+    at <program>(apply.scm:6:1)
+apply exit: status 3
+apply emergency-exit: status 3
+cwv-producer error: status 70
+    at <lambda@cwv-producer.scm:4:27>(cwv-producer.scm:4:44)
+    at f(cwv-producer.scm:4:9)
+    at g(cwv-producer.scm:5:19)
+    at <program>(cwv-producer.scm:6:1)
+cwv-producer raise: status 70
+    at <lambda@cwv-producer.scm:4:27>(cwv-producer.scm:4:44)
+    at f(cwv-producer.scm:4:9)
+    at g(cwv-producer.scm:5:19)
+    at <program>(cwv-producer.scm:6:1)
+cwv-producer exit: status 3
+cwv-producer emergency-exit: status 3
+cwv-consumer error: status 70
+    at <lambda@cwv-consumer.scm:4:41>(cwv-consumer.scm:4:59)
+    at f(cwv-consumer.scm:4:9)
+    at g(cwv-consumer.scm:5:19)
+    at <program>(cwv-consumer.scm:6:1)
+cwv-consumer raise: status 70
+    at <lambda@cwv-consumer.scm:4:41>(cwv-consumer.scm:4:59)
+    at f(cwv-consumer.scm:4:9)
+    at g(cwv-consumer.scm:5:19)
+    at <program>(cwv-consumer.scm:6:1)
+cwv-consumer exit: status 3
+cwv-consumer emergency-exit: status 3
+parameterize error: status 70
+    at <lambda@parameterize.scm:5:9>(parameterize.scm:5:37)
+    at f(parameterize.scm:5:9)
+    at g(parameterize.scm:6:19)
+    at <program>(parameterize.scm:7:1)
+parameterize raise: status 70
+    at <lambda@parameterize.scm:5:9>(parameterize.scm:5:37)
+    at f(parameterize.scm:5:9)
+    at g(parameterize.scm:6:19)
+    at <program>(parameterize.scm:7:1)
+parameterize exit: status 3
+parameterize emergency-exit: status 3
+converter error: status 70
+    at <lambda@converter.scm:3:29>(converter.scm:3:59)
+    at f(converter.scm:5:9)
+    at g(converter.scm:6:19)
+    at <program>(converter.scm:7:1)
+converter raise: status 70
+    at <lambda@converter.scm:3:29>(converter.scm:3:59)
+    at f(converter.scm:5:9)
+    at g(converter.scm:6:19)
+    at <program>(converter.scm:7:1)
+converter exit: status 3
+converter emergency-exit: status 3
+eval error: status 70
+    at h(eval.scm:3:19)
+    at f(eval.scm:5:9)
+    at g(eval.scm:6:19)
+    at <program>(eval.scm:7:1)
+eval raise: status 70
+    at h(eval.scm:3:19)
+    at f(eval.scm:5:9)
+    at g(eval.scm:6:19)
+    at <program>(eval.scm:7:1)
+eval exit: status 3
+eval emergency-exit: status 3
+eval-datum error: status 70
+    at eval(eval-datum.scm:4:9)
+    at f(eval-datum.scm:4:9)
+    at g(eval-datum.scm:5:19)
+    at <program>(eval-datum.scm:6:1)
+eval-datum raise: status 70
+    at eval(eval-datum.scm:4:9)
+    at f(eval-datum.scm:4:9)
+    at g(eval-datum.scm:5:19)
+    at <program>(eval-datum.scm:6:1)
+eval-datum exit: status 3
+eval-datum emergency-exit: status 3
+load error: status 70
+    at h(loaded.scm:1:19)
+    at load(loaded.scm:2:7)
+    at f(load.scm:5:9)
+    at g(load.scm:6:19)
+    at <program>(load.scm:7:1)
+load raise: status 70
+    at h(loaded.scm:1:19)
+    at load(loaded.scm:2:7)
+    at f(load.scm:5:9)
+    at g(load.scm:6:19)
+    at <program>(load.scm:7:1)
+load exit: status 3
+load emergency-exit: status 3
+library error: status 70
+    at h
+    at <program>
+library raise: status 70
+    at h
+    at <program>
+library exit: status 3
+library emergency-exit: status 3
+library-file error: status 70
+    at h(file.sld:4:23)
+    at <program>(file.sld:5:11)
+library-file raise: status 70
+    at h(file.sld:4:23)
+    at <program>(file.sld:5:11)
+library-file exit: status 3
+library-file emergency-exit: status 3
+after-replaces error: status 70
+    at <lambda@after-replaces.scm:4:69>(after-replaces.scm:4:86)
+after-replaces raise: status 70
+    at <lambda@after-replaces.scm:4:69>(after-replaces.scm:4:86)
+after-replaces exit: status 3
+after-replaces emergency-exit: status 3
+trampoline error: status 70
+    at f(trampoline.scm:4:9)
+    at g(trampoline.scm:5:19)
+    at <program>(trampoline.scm:6:1)
+trampoline raise: status 70
+    at f(trampoline.scm:4:9)
+    at g(trampoline.scm:5:19)
+    at <program>(trampoline.scm:6:1)
+trampoline exit: status 3
+trampoline emergency-exit: status 3
+tail-caller error: status 70
+    at f(tail-caller.scm:4:19)
+    at g(tail-caller.scm:5:19)
+    at <program>(tail-caller.scm:6:1)
+tail-caller raise: status 70
+    at f(tail-caller.scm:4:19)
+    at g(tail-caller.scm:5:19)
+    at <program>(tail-caller.scm:6:1)
+tail-caller exit: status 3
+tail-caller emergency-exit: status 3
