@@ -3717,6 +3717,67 @@ Each entry: the decision, why, and what was rejected.
   every action can run on another machine. `nix develop .#bench`
   adds the other R7RS implementations for the comparative benchmark report;
   CI's steps use `nix develop .#ci`, which has only `bazel`.
+- **Nix packages (decided in M14-13).** The flake's packages `scheme` (the
+  launcher on the JVM, `bazel-bin/scheme`'s) and `scheme-native` (the
+  native launcher, `bazel-bin/scheme-native`'s) are built in Nix's sandbox
+  **without Bazel**: `nix/scheme.nix` repeats Bazel's few steps on the
+  flake's GraalVM, which is the release `bazel/graalvm.bzl` pins, from the
+  same archives. The maintainer's call (2026-11-21): the flake's package
+  outputs only (`nix build`, `nix run`, `nix profile add`), with no CI step
+  or release pipeline.
+  - *The steps.* Each Maven jar is a fixed-output `fetchurl` of the URL and
+    sha256 in `maven_install.json`, the lock file Bazel's rules_jvm_external
+    reads, at evaluation time: the packages have no hash of their own to
+    update when the lock file moves. `javac` compiles the six libraries of
+    the two modules in their BUILD files' order, with the Truffle DSL's
+    processors where Bazel runs them; the prelude image is written as
+    `//:prelude` writes it; `bazel/ModuleJar.java` makes `scheme.jar` and
+    `scheme.launcher.jar` from the libraries' jars; and the AOT cache is
+    trained by the script Bazel's action runs too (`bazel/aot-cache.sh`), on
+    the store paths the launcher runs from, whose modification time the store
+    fixes at 1, so the cache and its stamp stay valid where they are
+    installed. The launcher is `bazel-bin/scheme`'s Python launcher
+    (`tests/harness/scheme.py`) with a manifest naming those paths.
+    `scheme-native` is native-image's shared library with `//:schemevm`'s
+    options, and the pinned release's `launcher.cc` (its tag, at
+    `bazel/graalvm.bzl`'s sha256) compiled with `//:scheme-native`'s flags by
+    the C++ compiler of Nix's stdenv.
+  - *What keeps it Bazel's build.* What the steps take from the BUILD files
+    is data, in `nix/packages.json`: the GraalVM archives and `launcher.cc`,
+    the processors, each module path's Maven artifacts, each library's
+    sources, resources and processor, the module descriptors and the native
+    image's options. `//tests:nix`, a lint test, compares each with
+    `bazel/graalvm.bzl`, `MODULE.bazel`'s `TRUFFLE_VERSION` and the BUILD
+    files (read as Python syntax), and `flake.nix` takes its GraalVM from
+    there and pins no sha256 of its own: a change to the Bazel build that the
+    packages would miss fails `bazel test //...`, though CI runs no Nix. Not
+    compared: javac's lint options (lint is Bazel's: the packages' javac
+    reports warnings and fails only on errors) and `native_library`'s fixed
+    native-image options, which `nix/scheme.nix` repeats.
+  - *Checked.* `nix flake check` runs docs/usage.md's Nix blocks (`<!--
+    readme: run nix -->`, which `//tests:readme` skips) with `nix` a shim
+    that runs the packages, and a section of chibi-scheme's suite through
+    each launcher, every test passing.
+  - *Rejected: Bazel inside the derivation*, with its repositories fetched
+    by a fixed-output derivation (`bazel vendor`, or nixpkgs'
+    `buildBazelPackage`). It would build exactly what `bazel build` does,
+    but in the sandbox: (1) bazelisk can't download Bazel, and nixpkgs'
+    Bazel 9 is 9.2.0, not `.bazelversion`'s 9.3.2; (2) the repositories'
+    derivation needs a sha256 per platform, updated by hand on every change
+    to `MODULE.bazel` or the lock files, with no CI to say when one is stale,
+    and it is only as stable as the vendored trees' bytes; (3) on Linux the
+    programs Bazel downloads are linked for an FHS system's loader, which the
+    sandbox lacks: GraalVM's `java` from the pinned aarch64 archive, run in
+    the sandbox, fails with *"cannot execute: required file not found"*
+    (there is no `/lib` or `/lib64`), and rules_python's Python and the Java
+    toolchain's prebuilt tools would too, so each needs patching or an
+    override with Nix's; (4) on macOS the repository's C++ toolchain is
+    `apple_support`'s Xcode one, which a sandboxed build doesn't have.
+    *Wrapping Bazel's output* (`bazel-bin` as an input, `--impure`): not
+    reproducible, and not buildable from the flake alone. nixpkgs'
+    `buildGraalvmNativeImage`: it runs `native-image -jar` on a jar, and the
+    native launcher is a shared library from a module path behind GraalVM's
+    thin launcher (D17, "VM options").
 - **Other versions** (the `bazel_dep`s, `.bazelversion`, the Maven
   artifacts other than GraalVM's, chibi-scheme's source, rules_python's
   Python) move to a new release only once it is at least two weeks old, a
