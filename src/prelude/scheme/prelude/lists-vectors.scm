@@ -44,36 +44,58 @@
 ;; Their loops call f, so they stay procedures of their own (not loops of map's root, plan.md M7-02),
 ;; small enough for Truffle to split them for each caller, so that each copy's call of f sees one
 ;; procedure. Each is named after the procedure it is the loop of: stack traces, the debugger,
-;; profilers and TraceSplitting show it as map or for-each.
+;; profilers and TraceSplitting show it as map or for-each. Two lists have a loop of their own,
+;; which calls f with two arguments, without apply's list and argument array for each element
+;; (bench/README.md, "Where the slowest programs spend their time": matrix).
 (define (map f l . ls)
-  (if (null? ls)
-      (begin
-        (%some-finite "map: every list is circular" l '())
-        (let map ((rest l) (acc '()))
-          (if (pair? rest)
-              (map (cdr rest) (cons (f (car rest)) acc))
-              (if (null? rest) (reverse acc) (%not-a-proper-list "map" 2 l)))))
-      (let ((lists (cons l ls)))
-        (%some-finite "map: every list is circular" l ls)
-        (let map ((ls lists) (acc '()))
-          (if (%all-pairs? ls)
-              (map (%cdrs ls) (cons (apply f (%cars ls)) acc))
-              (begin (%proper-tails "map" ls lists 2) (reverse acc)))))))
+  (cond ((null? ls)
+         (%some-finite "map: every list is circular" l '())
+         (let map ((rest l) (acc '()))
+           (if (pair? rest)
+               (map (cdr rest) (cons (f (car rest)) acc))
+               (if (null? rest) (reverse acc) (%not-a-proper-list "map" 2 l)))))
+        ((null? (cdr ls))
+         (%some-finite "map: every list is circular" l ls)
+         (let ((l2 (car ls)))
+           (let map ((a l) (b l2) (acc '()))
+             (if (if (pair? a) (pair? b) #f)
+                 (map (cdr a) (cdr b) (cons (f (car a) (car b)) acc))
+                 (begin (%proper-tails "map" (list a b) (list l l2) 2) (reverse acc))))))
+        (else (%map-lists f l ls))))
+
+;; Three or more lists: apply for each element. A procedure of its own, so that map stays within
+;; Truffle's splitting limit (CallSiteTest).
+(define (%map-lists f l ls)
+  (let ((lists (cons l ls)))
+    (%some-finite "map: every list is circular" l ls)
+    (let map ((ls lists) (acc '()))
+      (if (%all-pairs? ls)
+          (map (%cdrs ls) (cons (apply f (%cars ls)) acc))
+          (begin (%proper-tails "map" ls lists 2) (reverse acc))))))
 
 (define (for-each f l . ls)
-  (if (null? ls)
-      (begin
-        (%some-finite "for-each: every list is circular" l '())
-        (let for-each ((rest l))
-          (if (pair? rest)
-              (begin (f (car rest)) (for-each (cdr rest)))
-              (if (not (null? rest)) (%not-a-proper-list "for-each" 2 l)))))
-      (let ((lists (cons l ls)))
-        (%some-finite "for-each: every list is circular" l ls)
-        (let for-each ((ls lists))
-          (if (%all-pairs? ls)
-              (begin (apply f (%cars ls)) (for-each (%cdrs ls)))
-              (%proper-tails "for-each" ls lists 2))))))
+  (cond ((null? ls)
+         (%some-finite "for-each: every list is circular" l '())
+         (let for-each ((rest l))
+           (if (pair? rest)
+               (begin (f (car rest)) (for-each (cdr rest)))
+               (if (not (null? rest)) (%not-a-proper-list "for-each" 2 l)))))
+        ((null? (cdr ls))
+         (%some-finite "for-each: every list is circular" l ls)
+         (let ((l2 (car ls)))
+           (let for-each ((a l) (b l2))
+             (if (if (pair? a) (pair? b) #f)
+                 (begin (f (car a) (car b)) (for-each (cdr a) (cdr b)))
+                 (%proper-tails "for-each" (list a b) (list l l2) 2)))))
+        (else (%for-each-lists f l ls))))
+
+(define (%for-each-lists f l ls)
+  (let ((lists (cons l ls)))
+    (%some-finite "for-each: every list is circular" l ls)
+    (let for-each ((ls lists))
+      (if (%all-pairs? ls)
+          (begin (apply f (%cars ls)) (for-each (%cdrs ls)))
+          (%proper-tails "for-each" ls lists 2)))))
 
 ;; member and assoc take an optional equivalence predicate, which they call in a non-tail position,
 ;; so they live here (D5). The predicate gets the key first and the element second (R7RS §6.4).

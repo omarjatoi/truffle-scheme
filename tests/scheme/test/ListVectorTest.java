@@ -117,6 +117,27 @@ public class ListVectorTest {
                                         "(set! results (cons v results)) (if (= (length results) 1) (k 3)) (reverse results)))"));
     }
 
+    /**
+     * map and for-each have a loop for one list, one for two (M13-08: no apply for each element) and
+     * one for more; each stops at the shortest list, calls f in order, and builds a fresh list, so
+     * re-entering a continuation captured in f doesn't change an earlier result (R7RS §6.10).
+     */
+    @Test
+    public void mapAndForEachByListCount() {
+        assertEquals("((2 3) (11 22) (111 222) (1111 2222))",
+                        write("(list (map (lambda (x) (+ x 1)) '(1 2)) (map + '(1 2) '(10 20 30)) (map + '(1 2 3) '(10 20) '(100 200 300)) (map + '(1 2) '(10 20) '(100 200) '(1000 2000)))"));
+        assertEquals("(() () ())", write("(list (map + '() '(1)) (map + '(1) '()) (map + '(1) '(2) '()))"));
+        assertEquals("((1 a) (2 b) (3 c))", write("(let ((acc '())) (for-each (lambda (x y) (set! acc (cons (list x y) acc))) '(1 2 3) '(a b c d)) (reverse acc))"));
+        assertEquals("((1 a x) (2 b y))", write("(let ((acc '())) (for-each (lambda (x y z) (set! acc (cons (list x y z) acc))) '(1 2 3) '(a b) '(x y z)) (reverse acc))"));
+        assertEquals("(\"map: argument 4 is not a proper list\" ((a b . c)))", raisesWith("(map list '(1 2) '(x y) '(a b . c))"));
+        assertEquals("(\"for-each: argument 2 is not a proper list\" ((1 . 2)))", raisesWith("(for-each list '(1 . 2) '(a b c))"));
+        assertEquals("error", raises("(map car '(1) '(2))"));
+        String reentry = "(let ((k #f) (results '())) (let ((v %s)) (set! results (cons v results)) (if (= (length results) 1) (k 30)) (reverse results)))";
+        assertEquals("((1 20) (1 30))", write(String.format(reentry, "(map (lambda (x) (if (= x 2) (call/cc (lambda (c) (set! k c) 20)) x)) '(1 2))")));
+        assertEquals("((11 20) (11 30))", write(String.format(reentry, "(map (lambda (x y) (if (= x 2) (call/cc (lambda (c) (set! k c) 20)) (+ x y))) '(1 2) '(10 20))")));
+        assertEquals("((111 20) (111 30))", write(String.format(reentry, "(map (lambda (x y z) (if (= x 2) (call/cc (lambda (c) (set! k c) 20)) (+ x y z))) '(1 2) '(10 20) '(100 200))")));
+    }
+
     /** A circular list (1 2 3 1 2 3 ...) bound to c, and a circular alist bound to a, around expr. */
     private static String circular(String expr) {
         return "(let ((c (list 1 2 3)) (a (list (cons 1 'one) (cons 2 'two)))) (set-cdr! (cddr c) c) (set-cdr! (cdr a) a) " + expr + ")";
