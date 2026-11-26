@@ -163,6 +163,105 @@ public class ToolsTest {
         }
     }
 
+    // Reads and writes of a global, of a parameter in its procedure and captured in a closure
+    // (boxed, as it is assigned), of a fixed letrec* variable in its own lambda (the running
+    // closure), and of or's temporary, which no code the user wrote can refer to.
+    private static final String VARIABLES = """
+                    (import (scheme base) (scheme write))
+                    (define g 1)
+                    (define (counter n)
+                      (lambda ()
+                        (set! n (+ n g))
+                        n))
+                    (define c (counter 10))
+                    (set! g 2)
+                    (display (c))
+                    (define (self) (letrec ((f (lambda () f))) (f)))
+                    (display (procedure? (self)))
+                    (display (or #f g))
+                    """;
+
+    /**
+     * M13-14 (design.md D13, "Variables' reads and writes"): every read of a variable the user's
+     * code can name is tagged {@code ReadVariableTag}, and every assignment and top-level definition
+     * {@code WriteVariableTag}, with a node object that names the variable, as Truffle's tags ask.
+     * A compiler temporary or a macro's own variable has no tag.
+     */
+    @Test
+    public void instrumentsSeeVariablesByName() {
+        try (Context context = Context.newBuilder(SCHEME).out(new ByteArrayOutputStream()).build()) {
+            VariableRecorder recorder = context.getEngine().getInstruments().get(VariableRecorder.ID).lookup(VariableRecorder.class);
+            context.eval(Source.newBuilder(SCHEME, VARIABLES, "variables.scm").buildLiteral());
+            Set<String> events = new TreeSet<>(recorder.events);
+            Set<String> expected = new TreeSet<>(List.of(
+                            "write g 2:1 (define g 1)",
+                            "write counter 3:10 counter",
+                            "write n 5:5 (set! n (+ n g))",
+                            "read n 5:16 n = 10",
+                            "read g 5:18 g = 2",
+                            "read n 6:5 n = 12",
+                            "read counter 7:12 counter = #<procedure counter>",
+                            "write c 7:1 (define c (counter 10))",
+                            "write g 8:1 (set! g 2)",
+                            "read display 9:2 display = #<procedure display>",
+                            "read c 9:11 c = #<procedure>",
+                            "write self 10:10 self",
+                            "read f 10:39 f = #<procedure f>",
+                            "read f 10:45 f = #<procedure f>",
+                            "read display 11:2 display = #<procedure display>",
+                            "read procedure? 11:11 procedure? = #<procedure procedure?>",
+                            "read self 11:23 self = #<procedure self>",
+                            "read display 12:2 display = #<procedure display>",
+                            "read g 12:17 g = 2"));
+            assertEquals(expected, events);
+            // Every one of them loads with its name, before it runs.
+            Set<String> loaded = new TreeSet<>(recorder.loaded);
+            for (String event : expected) {
+                String node = event.contains(" = ") ? event.substring(0, event.indexOf(" = ")) : event;
+                assertTrue(node + " in " + loaded, loaded.contains(node));
+            }
+        }
+    }
+
+    /**
+     * A variable's reads and writes keep their names in frames a continuation resumes: {@code v}'s
+     * assignment takes the value of a {@code call/cc} whose continuation is re-entered twice, each
+     * time in a copy of the frame (AGENTS.md rule 3), and under {@code //tests:unit_torture} at
+     * every non-tail call too.
+     */
+    @Test
+    public void variablesKeepTheirNamesInResumedFrames() {
+        Source source = Source.newBuilder(SCHEME, """
+                        (import (scheme base) (scheme write))
+                        (define k #f)
+                        (define n 0)
+                        (define (f)
+                          (let ((v 0))
+                            (set! v (call/cc (lambda (c) (set! k c) 1)))
+                            v))
+                        (define r (f))
+                        (set! n (+ n 1))
+                        (if (< n 3) (k (+ n 10)))
+                        (display r)
+                        """, "resumed.scm").buildLiteral();
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try (Context context = Context.newBuilder(SCHEME).out(out).build()) {
+            VariableRecorder recorder = context.getEngine().getInstruments().get(VariableRecorder.ID).lookup(VariableRecorder.class);
+            context.eval(source);
+            assertEquals("12", out.toString());
+            List<String> events = recorder.events;
+            for (String event : List.of("read c 6:42 c = #<procedure continuation>", "write k 6:34 (set! k c)", "write n 9:1 (set! n (+ n 1))", "read n 10:19 n = 2")) {
+                assertTrue(event + " in " + events, events.contains(event));
+            }
+            // The assignment of v returns once with each value, and v is read once after each.
+            String write = "write v 6:5 (set! v (call/cc (lambda (c) (set! k c) 1)))";
+            assertEquals(events.toString(), 3, events.stream().filter(write::equals).count());
+            assertEquals(events.toString(), 3, events.stream().filter(e -> e.startsWith("write r 8:1 ")).count());
+            List<String> reads = events.stream().filter(e -> e.startsWith("read v ")).toList();
+            assertEquals(List.of("read v 7:5 v = 1", "read v 7:5 v = 11", "read v 7:5 v = 12"), reads);
+        }
+    }
+
     /**
      * M7-07: the language reports the Scheme objects it allocates to an allocation listener (what
      * {@code --memtracer} attaches), with an estimate of their size.

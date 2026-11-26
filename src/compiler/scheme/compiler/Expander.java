@@ -854,12 +854,21 @@ public final class Expander {
             Object d = Syntax.e(form);
             if (d instanceof SSymbol) {
                 Object binding = resolve(form);
+                Expr reference;
                 if (binding instanceof Var v) {
-                    return reference(v, lambda, form);
+                    reference = reference(v, lambda, form);
                 } else if (binding instanceof GlobalCell cell) {
-                    return new Ast.GlobalRef(cell);
+                    reference = new Ast.GlobalRef(cell);
+                } else {
+                    throw syntax("syntax keyword used as an expression", form);
                 }
-                throw syntax("syntax keyword used as an expression", form);
+                // A macro's use that expands to a reference ((or x) to x) is located at the
+                // identifier, where tools show the read of its variable (design.md D13, "Variables'
+                // reads and writes"); else at the use, as every expansion is.
+                if (form != step.form()) {
+                    reference.source = sourceOf(form);
+                }
+                return reference;
             }
             if (!(d instanceof SPair p)) {
                 if (d == SConstant.EMPTY_LIST) {

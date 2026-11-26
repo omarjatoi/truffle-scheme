@@ -32,8 +32,10 @@ import scheme.runtime.value.SClosure;
 
 // DebuggerTags.AlwaysHalt: every debugger session (DAP, the Chrome inspector) installs an AlwaysHalt
 // breakpoint, and the Bytecode DSL rejects a tag the language doesn't provide. No node carries it.
+// ReadVariableTag and WriteVariableTag: reads and writes of the variables the user's code names, with
+// node objects that name them (design.md D13, "Variables' reads and writes").
 @ProvidedTags({DebuggerTags.AlwaysHalt.class, StandardTags.RootTag.class, StandardTags.RootBodyTag.class, StandardTags.StatementTag.class, StandardTags.CallTag.class,
-                StandardTags.ExpressionTag.class})
+                StandardTags.ExpressionTag.class, StandardTags.ReadVariableTag.class, StandardTags.WriteVariableTag.class})
 // SandboxPolicy.UNTRUSTED, the strictest: the language reaches no host resource but through the Env,
 // reaches no host object and enters a context on one thread, so every policy can use it; under
 // ISOLATED and UNTRUSTED it runs in a polyglot isolate, the library //:scheme_isolate carries
