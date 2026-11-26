@@ -1,11 +1,11 @@
 package scheme.test;
 
-import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
-import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -98,8 +98,8 @@ public class StackTraceTest {
         return text.replace("RAISE", raiser[1]).replace("PRIM", raiser[2]).replace("ARG", raiser[3]).replace("DIR", dir.toString());
     }
 
-    /** {@code PolyglotException}'s view: what it is, its location and its guest frames. */
-    private static String embedder(Program program) throws IOException {
+    /** The case's run: its exception, or null if it ended. */
+    private static PolyglotException run(Program program) throws IOException {
         Context.Builder builder = Context.newBuilder(SCHEME).out(new ByteArrayOutputStream()).err(new ByteArrayOutputStream()).allowIO(IOAccess.ALL);
         for (int i = 0; i < program.options().size(); i++) {
             String option = program.options().get(i);
@@ -114,10 +114,18 @@ public class StackTraceTest {
         }
         try (Context context = builder.build()) {
             context.eval(Source.newBuilder(SCHEME, program.file().toFile()).build());
-            return "no exception";
+            return null;
         } catch (PolyglotException e) {
-            return (e.isExit() ? "exit " + e.getExitStatus() : "error") + " at " + at(e.getSourceLocation()) + " | " + frames(e);
+            return e;
         }
+    }
+
+    /** {@code PolyglotException}'s view: what it is, its location and its guest frames. */
+    private static String embedder(PolyglotException e) {
+        if (e == null) {
+            return "no exception";
+        }
+        return (e.isExit() ? "exit " + e.getExitStatus() : "error") + " at " + at(e.getSourceLocation()) + " | " + frames(e);
     }
 
     private static String at(SourceSection s) {
@@ -157,46 +165,54 @@ public class StackTraceTest {
         return String.join(", ", frames);
     }
 
-    /** The launcher's view (design.md D8, "Stack traces"): its status and the trace it prints. */
-    private static String printed(Program program) {
-        List<String> args = new ArrayList<>(program.options());
-        args.add(program.file().toString());
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        ByteArrayOutputStream err = new ByteArrayOutputStream();
-        int status = SchemeMain.run(args.toArray(String[]::new), new ByteArrayInputStream(new byte[0]), out, err);
-        StringBuilder text = new StringBuilder("status " + status);
-        // The message line is M14-07's ("Messages"); the trace is what follows it.
-        for (String line : err.toString(StandardCharsets.UTF_8).lines().toList()) {
-            if (line.startsWith("    ")) {
-                text.append('\n').append(line);
-            }
+    /**
+     * The launcher's view (design.md D8, "Stack traces"): its exit status and the trace it prints
+     * after the message, which is M14-07's ("Messages"), with the launcher's own code.
+     */
+    private static String printed(PolyglotException e) {
+        if (e == null) {
+            return "status 0";
+        }
+        if (e.isExit()) {
+            return "status " + e.getExitStatus();
+        }
+        ByteArrayOutputStream trace = new ByteArrayOutputStream();
+        SchemeMain.printStackTrace(e, new PrintStream(trace, true, StandardCharsets.UTF_8));
+        StringBuilder text = new StringBuilder("status " + SchemeMain.EXIT_UNCAUGHT_ERROR);
+        for (String line : trace.toString(StandardCharsets.UTF_8).lines().toList()) {
+            text.append('\n').append(line);
         }
         return text.toString();
     }
 
-    private void check(String kind, boolean launcher) throws IOException {
-        StringBuilder actual = new StringBuilder();
+    /**
+     * Every case with every raiser, through the embedder and the launcher's printing, against
+     * {@code tests/traces/expected}: on a difference, the test's output has each file as it would
+     * be. {@code //tests:stack_traces} checks the same printed traces through the launcher's own
+     * process, and {@code //tests:stack_traces_native} through the native launcher's.
+     */
+    @Test
+    public void tracesAreTheExpectedOnes() throws IOException {
+        StringBuilder embedder = new StringBuilder();
+        StringBuilder printed = new StringBuilder();
         for (String name : CASES) {
             for (String[] raiser : RAISERS) {
-                Program program = write(name, raiser);
-                actual.append(name).append(' ').append(raiser[0]).append(": ").append(launcher ? printed(program) : embedder(program)).append('\n');
+                PolyglotException e = run(write(name, raiser));
+                embedder.append(name).append(' ').append(raiser[0]).append(": ").append(embedder(e)).append('\n');
+                printed.append(name).append(' ').append(raiser[0]).append(": ").append(printed(e)).append('\n');
             }
         }
+        boolean embedderSame = compare("embedder", embedder.toString());
+        boolean printedSame = compare("printed", printed.toString());
+        assertTrue("tests/traces/expected differs: the test's output has each file as it would be", embedderSame && printedSame);
+    }
+
+    private static boolean compare(String kind, String actual) throws IOException {
         String file = "expected/" + kind + (TORTURE ? "-torture" : "") + ".txt";
-        String expected = resource(file);
-        if (!expected.equals(actual.toString())) {
-            System.out.println("=== tests/traces/" + file + " would be:\n" + actual + "=== end");
+        if (resource(file).equals(actual)) {
+            return true;
         }
-        assertEquals("tests/traces/" + file + " (the test's output has the whole file)", expected, actual.toString());
-    }
-
-    @Test
-    public void embeddersTrace() throws IOException {
-        check("embedder", false);
-    }
-
-    @Test
-    public void launchersPrintedTrace() throws IOException {
-        check("printed", true);
+        System.out.println("=== tests/traces/" + file + " would be:\n" + actual + "=== end");
+        return false;
     }
 }

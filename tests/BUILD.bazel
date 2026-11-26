@@ -594,6 +594,40 @@ harness_test(
     size = "small",
 )
 
+# design.md D8 "Stack traces" (plan.md M14-04): tests/traces's cases through the launcher's printed
+# trace, as StackTraceTest has it in the JUnit modes; `stack_traces_native` through the native
+# launcher, interpreted, compiled at once and with the JIT, only when named, like the other native tests.
+_STACK_TRACES_DATA = glob(["traces/**"])
+
+harness_test(
+    name = "stack_traces",
+    check = "stack_traces",
+    args = [
+        "--launcher=$(rlocationpath //:scheme)",
+        "--expected=$(rlocationpath :traces/expected/printed.txt)",
+    ],
+    data = _STACK_TRACES_DATA + ["//:scheme"],
+    size = "medium",
+    tags = ["cpu:2"],
+)
+
+harness_test(
+    name = "stack_traces_native",
+    check = "stack_traces",
+    args = [
+        "--launcher=$(rlocationpath //:scheme-native)",
+        "--native",
+        "--expected=$(rlocationpath :traces/expected/printed.txt)",
+        "--modes=jit,interpreter,compile",
+    ],
+    data = _STACK_TRACES_DATA + ["//:scheme-native"],
+    size = "large",
+    tags = [
+        "cpu:2",
+        "manual",
+    ],
+)
+
 # design.md D17 "The launcher's JVM": its collector, compiler threads and AOT cache, unless its JVM
 # options (its --vm. options among them) say otherwise; "VM options"; "Options" (Graal compiled for
 # HotSpot with the compiler's instrumentation).
