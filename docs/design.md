@@ -3853,7 +3853,18 @@ Each entry: the decision, why, and what was rejected.
     `scheme-native` is native-image's shared library with `//:schemevm`'s
     options, and the pinned release's `launcher.cc` (its tag, at
     `bazel/graalvm.bzl`'s sha256) compiled with `//:scheme-native`'s flags by
-    the C++ compiler of Nix's stdenv.
+    the C++ compiler of Nix's stdenv. native-image is the release's
+    (`lib/svm/bin/native-image`), not nixpkgs' wrapper of it, which on Linux
+    adds glibc's static libraries to `-H:CLibraryPath`: 25.6's native-image
+    wants a symbol manifest beside each static library there, and stopped
+    with *"Missing static library symbol manifest
+    .../glibc-2.44-57-static/lib/libutil.a.symbols"*. The wrapper's `-E`
+    options, which pass stdenv's `NIX_` variables to the image builder for
+    the C compiler's wrapper, are kept. The builds set `user.home` to the
+    build's directory: Java takes it from the password database, where the
+    sandbox's user has none to write, and Truffle unpacks its attach library
+    under it (without it, the prelude image's run fell back to the
+    interpreter-only runtime and stopped at `engine.Compilation`).
   - *What keeps it Bazel's build.* What the steps take from the BUILD files
     is data, in `nix/packages.json`: the GraalVM archives and `launcher.cc`,
     the processors, each module path's Maven artifacts, each library's
