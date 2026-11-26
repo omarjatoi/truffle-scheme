@@ -1875,50 +1875,55 @@ Each entry: the decision, why, and what was rejected.
       `quotient`'s division and 28% in `exact-integer-sqrt`; `chudnovsky`'s
       24% and 11%, the rest mostly our generic arithmetic (`Arithmetic.real`
       and `apply`, `SBigInteger.normalize`) on its many small products.
-    - **Thresholds**, measured (Apple M3 Max, GraalVM 25.5's JIT, a loop of
+    - **Thresholds**, measured (Apple M3 Max, GraalVM 25.6's JIT, a loop of
       `divideAndRemainder` against ours on random operands, a 1-minute load
-      of 7.6; ours over the JDK's, by divisor × quotient 32-bit digits):
-      6×6 1.31, 8×8 0.91, 16×16 0.49, 26×26 0.39, 52×52 0.28, 76×76 0.26;
-      past the JDK's thresholds, where it is subquadratic, 80×80 0.45,
-      104×52 0.47, 128×128 0.41, 256×256 0.64, 400×400 0.95, 640×640 1.36;
-      and small quotients, where the conversions dominate, 8×4 1.16, 11×5
-      1.06, 16×4 0.93, 52×2 1.29, 52×8 0.55. So ours takes a divisor and a
-      quotient of 8 digits or more, and past the JDK's thresholds divisors of
-      up to 256; the JDK divides the rest. `NumbersTest` checks the results
-      against `divideAndRemainder` on random operands of both signs at and
-      around each threshold, and on operands that make the rare steps happen
-      (it fails with the add-back left out).
+      of 2.1 to 2.3; ours over the JDK's, by divisor × quotient 32-bit
+      digits): 6×6 1.08, 8×8 1.00, 16×16 0.60, 26×26 0.39, 52×52 0.30,
+      76×76 0.26; past the JDK's thresholds, where it is subquadratic, 80×80
+      0.43, 104×52 0.46, 128×128 0.41, 256×256 0.66, 400×400 0.95, 640×640
+      1.34; and small quotients, where the conversions dominate, 8×4 1.80,
+      11×5 1.30, 16×4 0.96, 52×2 1.42, 52×8 0.62 (GraalVM 25.5's, at a load
+      of 7.6, within 0.1 of these but 8×8 0.91 and 8×4 1.16). So ours takes
+      a divisor and a quotient of 8 digits or more, and past the JDK's
+      thresholds divisors of up to 256; the JDK divides the rest.
+      `NumbersTest` checks the results against `divideAndRemainder` on
+      random operands of both signs at and around each threshold, and on
+      operands that make the rare steps happen (it fails with the add-back
+      left out).
     - **Small methods.** The quotient digit's estimate, the multiply and
       subtract and the add-back are methods of their own, as the JDK's
-      `mulsub` and `divadd` are. With the loops in one method, the JVM's
-      host compiler first ran them in the bytecode interpreter until
-      on-stack replacement, and the add-back's first time in compiled code
-      sent the division back there: `pi`'s third and fourth iterations took
-      116 and 107 ms against 22 at the tenth, and its first 142 to 152
-      against main's 112 to 129; `chudnovsky`'s steady state was 1.1 to 1.2
-      times main's over 10 iterations. Small methods are compiled once called often enough.
-    - **Measured** (interleaved: main `ec70c8d`, this change, and a second
-      copy of each, A/A; 6 rounds of fresh processes, 25 iterations each, at
-      the report's counts, `pi` 10 and `chudnovsky` 100; the median over
-      processes of the first iteration and of the median of the last 10; a
-      1-minute load of 3.9 to 9.2, sampled before and after each run, none
-      left out; ms, main and its copy → this change and its copy):
+      `mulsub` and `divadd` are. With the loops in one method (GraalVM
+      25.5), the JVM's host compiler first ran them in the bytecode
+      interpreter until on-stack replacement, and the add-back's first time
+      in compiled code sent the division back there: `pi`'s third and fourth
+      iterations took 116 and 107 ms against 22 at the tenth, and its first
+      142 to 152 against main's 112 to 129; `chudnovsky`'s steady state was
+      1.1 to 1.2 times main's over 10 iterations. Small methods are compiled
+      once called often enough.
+    - **Measured** on GraalVM 25.6 (interleaved: main `92cac7a`, this
+      change, and a second copy of each, A/A; 8 rounds of fresh processes,
+      25 iterations each, at the report's counts, `pi` 10 and `chudnovsky`
+      100; the median over processes of the first iteration and of the
+      median of the last 10; a 1-minute load of 2.3 to 5.2, sampled before
+      and after each run, none left out; ms, main and its copy → this change
+      and its copy):
 
       | | `pi` first | `pi` steady | `chudnovsky` first | `chudnovsky` steady |
       |---|--:|--:|--:|--:|
-      | JIT | 116, 129 → 135, 144 | 28.9, 29.7 → 19.0, 19.1 | 184, 188 → 180, 179 | 16.4, 17.5 → 15.2, 14.7 |
-      | Native | 39.1, 40.1 → 31.9, 32.2 | 32.7, 32.5 → 25.4, 25.3 | 46.4, 44.8 → 42.4, 42.5 | 22.9, 22.9 → 20.6, 20.7 |
+      | JIT | 113, 114 → 112, 113 | 28.5, 28.3 → 18.3, 18.4 | 169, 167 → 167, 169 | 16.3, 16.3 → 14.8, 15.1 |
+      | Native | 38.1, 37.8 → 27.9, 28.1 | 31.9, 31.9 → 23.0, 23.0 | 43.4, 43.4 → 41.0, 41.0 | 22.6, 22.7 → 19.8, 19.9 |
 
-      `pi` takes 0.65 times as long in the JIT's steady state and 0.78
-      natively (0.81 natively in its first run); `chudnovsky` 0.88 and 0.90.
-      The JIT's first run of `pi` was 1.1 times as long here, as far apart
-      as the A/A pair; in 8 rounds of 10 iterations at a load of 3.2 to 6.9
-      it was 122 and 112 → 121 and 117 ms (that set's steady states, the
-      median of iterations 2-10, 35.7 → 33.1: not yet steady). The square
-      roots are untouched, and now the larger part of `pi`: in JFR's
-      samples after the change, 37% in `exact-integer-sqrt` and 33% in the
-      division, 14% of it the multiply and subtract and 11% the conversions
-      to and from digits.
+      `pi` takes 0.65 times as long in the JIT's steady state and 0.72
+      natively, and 0.74 natively in its first run; `chudnovsky` 0.92, 0.88
+      and 0.94. The JIT's first runs are unchanged: the interpreter's, until
+      Truffle has compiled the program. On GraalVM 25.5 (main `ec70c8d`, 6
+      rounds at a load of 3.9 to 9.2) the steady states moved alike: `pi`
+      28.9 → 19.0 ms with the JIT and 32.7 → 25.4 natively, `chudnovsky`
+      16.4 → 15.2 and 22.9 → 20.6. The square roots are untouched, and now
+      the larger part of `pi`: in JFR's samples after the change (25.5), 37%
+      in `exact-integer-sqrt` and 33% in the division (of the samples, 14%
+      in the multiply and subtract and 11% in the conversions to and from
+      digits).
     - *Rejected:* a Newton reciprocal or Burnikel-Ziegler below the JDK's
       thresholds: at these sizes `BigInteger.multiply` is schoolbook too
       (Karatsuba from 80 digits), so a reciprocal costs more than one

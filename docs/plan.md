@@ -2050,10 +2050,10 @@ interleaved A/B runs.
     digits (`ArithmeticDivision`) for divisors and quotients of 8 32-bit
     digits or more, and past the JDK's Burnikel-Ziegler thresholds for
     divisors of up to 256; `pi`'s 552 multi-digit divisions a run have
-    divisors of 6 to 104 digits, `chudnovsky`'s 10 of 10 to 76. `pi` 0.65
-    times as long in the JIT's steady state (28.9 → 19.0 ms at the report's
-    count) and 0.78 natively, `chudnovsky` 0.88 and 0.90; first runs
-    natively 0.81 and 0.93, on the JVM within the A/A pairs' spread.
+    divisors of 6 to 104 digits, `chudnovsky`'s 10 of 10 to 76. On GraalVM
+    25.6, `pi` 0.65 times as long in the JIT's steady state (28.4 → 18.4 ms
+    at the report's count) and 0.72 natively, `chudnovsky` 0.92 and 0.88;
+    first runs natively 0.74 and 0.94, on the JVM unchanged.
     `exact-integer-sqrt` stays the JDK's: a Karatsuba square root on this
     division is faster only past 104 digits (a follow-up).
 - [x] **M13-07 · What got slower over M12**

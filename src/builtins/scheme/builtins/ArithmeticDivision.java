@@ -31,8 +31,8 @@ final class ArithmeticDivision {
     /**
      * The smallest divisor and quotient, in 32-bit digits (the JDK's), that this division takes:
      * below either, the conversions to and from 64-bit digits cost more than the division saves
-     * (design.md D1, "Integer division": at 8 and 8 it takes 0.9 times the JDK's time, at 16 and 16
-     * 0.5, at 52 and 52 0.3; at 6 and 6 1.3, at 8 and 4 1.2, and at 52 and 2 1.3).
+     * (design.md D1, "Integer division": at 8 and 8 it takes as long as the JDK's, at 16 and 16 0.6
+     * times as long, at 52 and 52 0.3; at 8 and 4 1.8 times, and at 52 and 2 1.4).
      */
     static final int MIN_DIVISOR_INTS = 8;
     static final int MIN_QUOTIENT_INTS = 8;
@@ -40,8 +40,8 @@ final class ArithmeticDivision {
     /**
      * The JDK's Burnikel-Ziegler thresholds ({@code BigInteger.BURNIKEL_ZIEGLER_THRESHOLD} and
      * {@code _OFFSET}, in 32-bit digits): a divisor of 80 digits and a dividend of 40 more. Past
-     * both, the JDK's division is subquadratic, and this one, quadratic, still takes 0.45 times its
-     * time at 80 digits and 0.65 at 256, but 0.95 at 400 and 1.35 at 640: it takes divisors of up to
+     * both, the JDK's division is subquadratic, and this one, quadratic, still takes 0.43 times its
+     * time at 80 digits and 0.66 at 256, but 0.95 at 400 and 1.34 at 640: it takes divisors of up to
      * {@link #MAX_BZ_DIVISOR_INTS} there.
      */
     static final int JDK_BZ_THRESHOLD = 80;

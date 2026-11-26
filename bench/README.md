@@ -446,8 +446,8 @@ is M11's report's, to its two decimals. In seconds, first iteration / steady sta
   native launcher's is 0.038.
   Since M13-06, `quotient` divides by algorithm D on 64-bit digits
   (design.md D1, "Integer division"): the steady state takes 0.65 times as
-  long with the JIT and 0.78 natively, and `exact-integer-sqrt`, the JDK's,
-  is now the larger part.
+  long with the JIT and 0.72 natively (GraalVM 25.6), and
+  `exact-integer-sqrt`, the JDK's, is now the larger part.
 - `chudnovsky`: likewise `java.math` (55% of the samples, half of it
   division), and 36% our arithmetic behind its boundaries
   (`Arithmetic.real` and `apply`, `SBigInteger.normalize`) and the
@@ -455,7 +455,7 @@ is M11's report's, to its two decimals. In seconds, first iteration / steady sta
   state, and the native launcher's 0.044: the JVM's first iteration
   interprets until the arithmetic is compiled, where the native image's
   interpreter is compiled ahead of time.
-  M13-06's division: 0.88 times as long in the JIT's steady state, 0.90
+  M13-06's division: 0.92 times as long in the JIT's steady state, 0.88
   natively.
 - `compiler`, `dynamic` and `matrix`, first iterations: the interpreter's,
   until the many procedures they run are compiled. `compiler` makes 748
