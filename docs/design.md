@@ -2369,6 +2369,99 @@ Each entry: the decision, why, and what was rejected.
 - An uncaught `raise` at top level prints a message and exits with a nonzero
   status. Differential tests compare stdout and the exit status, never the
   wording of error messages.
+- **Messages: one form (M14-07).** R7RS leaves an error's wording to the
+  implementation, and no suite or differential test compares it (above), so
+  nothing held it to a form until M14-07. Every error the implementation
+  makes now says which procedure or form, which argument, what it expected
+  and what it got, and where, in this form:
+  - *An error object, as `error` makes one* (R7RS §6.11): the message is
+    `<who>: <what is wrong>`, and the irritants are the data it is about.
+    `<who>` is the procedure as the program calls it (the public name when
+    a prelude procedure calls a primitive for it: `newline`, not
+    `%write-char` or `write-char`), or the syntactic keyword. The message
+    never repeats an irritant, so `error-object-message` is a sentence and
+    `error-object-irritants` the values: R7RS §6.11's own example,
+    `(error "null-list?: argument out of domain" l)`, and what D9's
+    circular lists already did (the list is the irritant, `eq?` to the
+    argument).
+  - *An argument:* `<who>: argument <n> is not <what it expected>`, the
+    argument the irritant: `car: argument 1 is not a pair: 1`,
+    `vector-ref: argument 2 is not an index from 0 to 1: 5`, `/: argument
+    2 is not a nonzero number: 0`. `<n>` counts the call's arguments from
+    1 (through `apply` too), and out of range is the same form with the
+    range. An argument whose element is wrong (`list->string` of a list
+    with a non-character) is `<who>: argument <n> has an element that is
+    not <what>`, the element the irritant.
+  - *A call:* `<who>: expected <n> arguments, got <m>` (`1 argument`; `at
+    least`, `<n> to <m>`), `<who>` the procedure's name or, for an anonymous
+    one, the name tools give it (`<lambda@file.scm:3:5>`, D13); a call of
+    something that isn't a procedure is `application: not a procedure`,
+    the value the irritant.
+  - *What isn't one procedure's or form's use:* `unbound variable: foo`
+    (the symbol the irritant), and an uncaught `raise` of a non-condition,
+    `uncaught exception: <obj written>` (the guest object is the raised
+    object itself, D10).
+  - *Syntax errors,* from the reader and the expander (D13, D18): the
+    message is `syntax error: <what is wrong>`, the form, when there is one,
+    the irritant (`syntax error: if takes 2 or 3 subforms: (if)`), and the
+    location is the form's or, from the reader, the line and column where
+    the datum went wrong. `read` at run time raises a read error, `read:
+    <what is wrong> at line <l>, column <c>`: a port has no source section,
+    so the position, in the port's text, is in the message.
+  - *Printed* (the launcher; `PolyglotException.getMessage()` and
+    `getExceptionMessage`, D10): the message, then `: ` and each irritant
+    written (`write`), separated by spaces; a message that ends with `:`
+    already (`(error "bad input:" 42)`) gets only the space.
+  - *Where* is not in the message: it is the error's source location
+    (D13): a syntax error's form, otherwise the innermost frame that isn't
+    internal (above, "Errors as Truffle exceptions"), what an embedder reads
+    with `getSourceLocation()`. The launcher prints `ERROR: <file>:<line>:
+    <column>: <printed message>` (`file` the source's name), the form in
+    which Truffle's stack traces name a location (`even?(lib.scm:12:3)`,
+    D13), or `ERROR: <printed message>` when there is none (an `eval` of a
+    datum has no source). An error object has no location of its own, so
+    the one that `eval` or `load` raises for a syntax error (R7RS §6.12,
+    D13) starts its message with the form's, in that form, when the form
+    has one (a file `load` reads has, `eval`'s datum has not); one from
+    `syntax-error` keeps the message and irritants it was given.
+  - *Options:* the launcher's and the language's option errors are
+    `<option> ...: <why>` with the value given, as M10-04 made them
+    (docs/usage.md, "Options"); they already follow the form and stay.
+  - *Cost:* none on a fast path. A message is built on the error path,
+    behind a boundary, and an argument's position is a constant at the
+    site that checks it.
+  - *The audit (M14-07) found,* before this: (1) a primitive's error named
+    it and the value, but not the argument's position, with the value in
+    the message rather than the irritants (but for D9's lists and the file
+    errors), in a dozen phrasings (`not a valid index (0 to 2): 10`, `index
+    5 out of range for (1 2)`, `end 1 is before start 2`, `5 is out of
+    range [0, 1]`, `not a integer`), some under another procedure's name
+    (`(newline 1)` was `write-char`'s error), and `expected 1 arguments`;
+    (2) a procedure's arity error, `wrong number of arguments: expected 1,
+    got 0`, and `not a procedure: 1` named no procedure; (3) the prelude's
+    `error` calls (`map`, `for-each`, `member`, `assoc`) named no
+    position, and `%error` (`case-lambda`'s) wrote its irritants into the
+    message as well, so they printed twice; (4) the expander's errors named
+    the form and put its location in the message, `(t.scm, line 1, column
+    1)`, where the launcher printed none for a run-time error; a
+    `define-record-type` whose constructor names a field the type hasn't
+    is an error when the definition runs (D18), worded
+    `define-record-type: x is not a field of point`; (5) the reader gave a
+    line and no column, as `syntax error: unexpected end of input (line 2)
+    (t.scm)` in program text and `unexpected ')' (line 1)`, naming no
+    procedure, from `read`; (6) the options' errors followed the form.
+    Left as they are: a prelude procedure that takes a procedure
+    (`dynamic-wind`, `call-with-values`, `vector-map`, ...) doesn't check
+    it, so a wrong one is the call's `application: not a procedure`,
+    located at the program's call of the prelude procedure.
+  - *Checked by:* `PrimitiveRegistryTest` calls every primitive in the
+    registry (a %-primitive through the public procedure that calls it)
+    with arguments that are each of a wrong type or out of range in turn,
+    and checks the message names it, the argument's position and the
+    value; `SyntaxErrorLoadTest` has the reader's and the expander's
+    errors with their locations; docs/usage.md shows the launcher's output
+    for a raised non-condition, an error object with irritants and a
+    syntax error, in a block `//tests:readme` runs.
 - **An uncaught error runs the after-thunks it skips (M7-06).** When an
   error no handler catches leaves a root prompt (a program, a REPL input, a
   library body, an embedder's call, D10), the prompt first runs the
@@ -3852,8 +3945,9 @@ Each entry: the decision, why, and what was rejected.
   type: syntax errors from the reader and expander are `PARSE_ERROR`, and
   input that merely stops early is incomplete source, so a REPL can ask for
   more; `exit` is `EXIT`; everything else is `RUNTIME_ERROR`. Each has its
-  source location. Syntax errors name the file as well as the line and
-  column. Message wording stays outside conformance (D8).
+  source location, which names the file, line and column, and which the
+  launcher prints before the message (D8, "Messages"). Message wording
+  stays outside conformance (D8).
 - **Tools.** The generated bytecode carries Truffle's standard
   instrumentation tags with `enableTagInstrumentation`, so the debugger
   (DAP, the Chrome inspector), the profilers and other instruments work on
