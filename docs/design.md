@@ -3778,10 +3778,9 @@ Each entry: the decision, why, and what was rejected.
     expression of a body sequence, a lambda's, `let`'s or `letrec*`'s body
     of one expression (so a step goes from a let's bindings to its body),
     each top-level form, a top-level definition at its form. Call: every
-    call. Expression: every expression in value position. No
-    `ReadVariableTag` or `WriteVariableTag`: their users are the Language
-    Server and Insight's `readVariables`/`writeVariables`, neither of which
-    is among the tools here.
+    call. Expression: every expression in value position. Read and write of
+    a variable: a reference, and a `set!` or a top-level definition, of a
+    variable the user's code names ("Variables' reads and writes", below).
   - *Every tagged node has a location.* `StandardTags` asks that a tagged
     node have a source section if its root has one, and Truffle's debugger
     warns of one without (*"Nodes tagged with standard tags should have a
@@ -3992,6 +3991,81 @@ Each entry: the decision, why, and what was rejected.
       the original frames to end them (rule 3: the continuation may yet be
       reinstated); a frame slot for a frame's identity (a slot in every
       frame, where the arguments array is one already).
+  - *Variables' reads and writes (M13-14).* Every reference to a variable
+    the user's code names is tagged `ReadVariableTag`, and every `set!` of
+    one and every top-level definition `WriteVariableTag`, each with a node
+    object whose one member, `readVariableName` or `writeVariableName`, is
+    the variable's name, as `StandardTags` asks of both. Until Truffle 25.6
+    a Bytecode DSL root couldn't give a tagged node a node object, so the
+    tags would have had no names; 25.6's
+    `BytecodeRootNode.getInstrumentationNodeObject(TagTreeNode)` is the hook
+    (its javadoc names these two tags), and `SchemeRootNode` implements it.
+    - *Who uses them.* Not the debugger: at 25.6.5.1, Truffle's debugger
+      API, the DAP server and the Chrome inspector neither filter on either
+      tag nor read a node object, but a `TryBlockTag`'s (neither tag is in
+      the debugger API's sources or the two tools' jars;
+      `BreakpointExceptionFilter` reads a try block's `catches`). Their users
+      are the Language Server (`StandardTags`: documentHighlight, hover,
+      definition and references), Insight and an embedder's own
+      instruments, none of which `bazel-bin/scheme` ships (D17). What the
+      tags give them is the variable at each read and write, its name and
+      the value read; and, before anything else, a language that doesn't
+      fail: an instrument whose filter names a tag the language doesn't
+      provide makes the Bytecode DSL's generated `prepareForInstrumentation`
+      throw, in every root it visits (*"Invalid tag specified. Tag
+      '...StandardTags$WriteVariableTag' not provided by language"*, so
+      `Context.eval` failed as soon as one was attached), which is why
+      `DebuggerTags.AlwaysHalt` is provided though no node carries it.
+    - *Which variables.* A local that a frame's scope shows (M6-05: not a
+      macro's own variable, a compiler temporary or a `%` internal), a
+      captured variable, the running closure as its fixed letrec* variable
+      (D2), and a global that isn't one of the runtime's `%` internals.
+      Only where the reference or the form has a location of its own in its
+      root's source: a reference in the template of a library's macro has
+      none (`CodeGenerator.usable`), so `list` in a library macro's
+      expansion is no read at the macro's use. A macro's use that expands to
+      a bare reference (`(or x)` to `x`) is located at the identifier, where
+      it was at the use, as the rest of an expansion is: else `or`'s last
+      operand, whose use `(or x)` is in the prelude's template, had no
+      location in the program.
+      Not writes: the bindings of `let`, `letrec*`, an internal definition
+      and a procedure's parameters, which initialize a variable and are no
+      form of their own (the core AST keeps no section for a binding's
+      identifier). A read's node is the identifier; a write's is its `set!`
+      or `define` form, whose name is a string, which `WriteVariableTag`
+      takes to mean the variable is at the node's section. A read in value
+      position is one node with its `ExpressionTag`.
+    - *Names found when asked.* Nothing stores them: the hook reads the
+      instructions the tag encloses, when a tool asks for the node object
+      (Truffle keeps it per event context). A read encloses only the
+      variable's load (a local, the running closure then `LoadCaptured` for
+      a captured variable, the running closure itself, or a global's
+      `GlobalRef`, with a box's `BoxRef`); a write's own operation is its
+      last `GlobalSet`, `GlobalDefine` or `BoxSet`, after its value's
+      instructions, which can assign other variables: a global's cell has
+      the name, and a box's load is the write's first instruction. A local's
+      name is the bytecode's local name, a captured variable's and the
+      running closure's the root's names that scopes use (M6-05). Which
+      other tags are among the instructions depends on what tools asked for,
+      so the hook doesn't rely on them.
+    - *What it costs.* Nothing without a tool that asks for them: the
+      compiler makes the builder calls, but the Bytecode DSL's builder
+      emits nothing for a tag the root's configuration doesn't hold
+      (`beginTag` returns at once), so the bytecode, and the interpreter's,
+      the JIT's and the native image's code, are what they were. A tool that
+      asks for other tags (the debugger, coverage, the profilers) doesn't get
+      these. The compiler tests each located expression once more. Under
+      `UNTRUSTED`, where the guest's roots are built with their tags (D10,
+      "`sandbox.MaxASTDepth` under `UNTRUSTED`"), they are built with every
+      tag but these two, so that the sandbox's interpreter runs no more tag
+      instructions and `MaxASTDepth` measures the depth it did; a tool there
+      that asks for them still gets them.
+    - *Rejected:* a side table of names per root, built with its code (in
+      every root and the prelude image, for a tool that may never attach);
+      the identifier's text in the source section (a macro's use, `|a b|`,
+      `#!fold-case`); the tags without node objects (`StandardTags` requires
+      the name, and the Language Server can't do without it); not providing
+      them (an instrument that asks for them fails the language, above).
 - **Logging.** The language logs through Truffle (`TruffleLogger`), so
   `--log.scheme.level=FINE` (the launcher), `-Dpolyglot.log.scheme.level=FINE`
   or `Context.Builder.option("log.scheme.level", "FINE")` turns it on, and
