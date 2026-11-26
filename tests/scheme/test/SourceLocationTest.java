@@ -483,6 +483,7 @@ public class SourceLocationTest {
                         (import (scheme base) (lib mac))
                         (define-record-type point (make-point x) point? (x point-x))
                         (do ((i 0 (+ i 1))) ((= i 1)) (first-of '(1)))
+                        (first-of '(2))
                         (define (f y)
                           (do ((i 0 (+ i 1))) ((= i 1)) (first-of y))
                           (first-of y))
@@ -497,7 +498,7 @@ public class SourceLocationTest {
             // helper's error, called from the template in do's loop in f: helper's frame in the
             // library, the loop's at the use.
             assertEquals(e.getMessage(), "mac.sld:5:30", where(e.getSourceLocation()));
-            assertEquals(List.of("helper mac.sld:5:30", "<lambda@main.scm:5:3> main.scm:5:33", "f main.scm:5:3", "<program> main.scm:7:1"), frames(e));
+            assertEquals(List.of("helper mac.sld:5:30", "<lambda@main.scm:6:3> main.scm:6:33", "f main.scm:6:3", "<program> main.scm:8:1"), frames(e));
         }
     }
 
