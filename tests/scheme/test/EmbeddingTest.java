@@ -873,6 +873,33 @@ public class EmbeddingTest {
         }
     }
 
+    /**
+     * {@code call/cc} and {@code guard}'s prompt ({@code %call-with-prompt}) are the standard
+     * libraries' procedures, hand-written roots with no source: internal, like the prelude's frames,
+     * so the trace and the location skip them as they skip {@code map}'s (design.md D8).
+     */
+    @Test
+    public void promptsAreInternalFrames() {
+        try (Context context = context()) {
+            PolyglotException e = error(context, source("receiver.scm", """
+                            (define (f)
+                              (list (call/cc (lambda (k) (list (car 'x))))))
+                            (f)
+                            """));
+            assertEquals(List.of("<lambda@receiver.scm:2:18> 2", "f 2", "<program> 3", "<prompt> 1"), guestFrames(e));
+            // A guard that no clause matches re-raises from where the raise was: the body's frame,
+            // in the guard's prompt.
+            e = error(context, source("guard.scm", """
+                            (define (f)
+                              (list (guard (e ((string? e) 'no))
+                                      (list (raise 'boom)))))
+                            (f)
+                            """));
+            assertEquals("guard.scm:3 (raise 'boom)", at(e.getSourceLocation()));
+            assertEquals(List.of("<lambda@guard.scm:2:9> 3", "f 2", "<program> 4", "<prompt> 1"), guestFrames(e));
+        }
+    }
+
     /** The exit a program ends with, from a context of its own (an exit closes it). */
     private static PolyglotException exit(String name, String text) {
         return exit(Context.newBuilder(SCHEME).out(new ByteArrayOutputStream()), name, text);
