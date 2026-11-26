@@ -2209,6 +2209,278 @@ native launcher.
 
 ## M14 · Memory, errors and robustness
 
+What M13's "Not here" left for M14, and the follow-ups of M13's PRs
+(#304-#322) that belong to it: the JIT launcher's peak memory (M12's
+report, `docs/benchmarks.md` at `21be262a34b8`: a median peak RSS of 954
+MB against the native launcher's 189, where the median program keeps 7 MB
+alive) and the collector's policy for large heaps (M12-04); error messages;
+stack traces through continuations and the prelude (#283's follow-up: an
+`exit`'s trace under a prompt's pending frames); source locations in
+macro-expanded code, and bindings that tools don't see as writes (#320);
+`prepareForInstrumentation`'s rejection of tags a language doesn't provide
+(#320), as a docs/upstream.md entry; Truffle's detailed assertions in the
+local harness's compile and torture runs (#321); long differential-fuzzing
+campaigns (tests/fuzz/README.md), which first need the fuzzer to run the
+native launcher; what a program that runs out of memory gets (no decision
+in design.md D8 yet); and Nix packages, as the flake's package outputs only
+(no CI or release pipeline, the maintainer's call). The JIT and the native
+launcher come first (design.md's preamble): a memory cut that costs their
+first runs or steady state says so, measured, and design.md D17 says why
+it is taken. An option takes effect or fails with a clear error (M10-04).
+Not here: performance follow-ups (#319's `exact-integer-sqrt` in `pi`,
+#313's entry per procedure, #322's `peval` under the typed calls, #312's
+inlining budget, #306's re-run of a report outlier), and the accuracy of
+`exp` and `log` near overflow and |z| = 1 (#309), later milestones'; file
+ports' sticky end (#308), a decision of its own; SRFIs, and the launcher
+skipping a script's `#!` line (#302), M15's; threads, M16's; R7RS-large (no
+`(scheme list)`, no `syntax-case`); build and test plumbing (path mapping,
+#286; a test case per conformance test, #281; an unpacked isolate library,
+#290; Bazel 9.3.3 after 2026-12-03); and the CI image (#232), the
+maintainer's. Upstream issues are never filed or commented on from here:
+docs/upstream.md only. Benchmarks are local (bench/README.md: the load
+rule, `-Xmx2g`, the serial collector), and fuzzing campaigns and memory
+measurements don't run on this machine while a benchmark measures.
+
+- [ ] **M14-01 · Where the JIT launcher's memory goes** *(early)*
+  - M12's report: the JIT's median peak RSS is 954 MB (`fib` 832, `tak`
+    843, `earley` 2,472, `nboyer` 2,511), the native launcher's 189, and
+    the median program keeps 7 MB alive (the report's live heap). D17
+    ("The launcher's JVM: memory and start-up") measured a hello-world
+    program (about 65 MB of heap, 70 MB of the JVM's own, a libgraal
+    isolate per JVMCI compiler thread outside both) and one benchmark
+    (`fib`: 630 MB of young generation touched of a 760 MB footprint), and
+    rejected a smaller young generation (`paraffins` 3.3-4.1 times as
+    slow) and a default maximum heap. On the report's 128 GB machine the
+    initial heap is a 64th of the memory, 2 GB, so the serial collector's
+    young generation is about 680 MB at the report's `-Xmx2g` as without
+    a maximum.
+  - What is ours, to tell apart from the JVM's and the collector's sizing:
+    the language's allocation before the first collection (argument
+    arrays, `TailCall`s, boxes, spilled frames), its classes, code cache
+    and metaspace, the Truffle compilations' memory (compiler threads,
+    libgraal isolates, graphs kept for inlining and splitting), the
+    prelude image's restore, and the AOT cache's mapping.
+  - **Done when** design.md D17 records, for the report's programs at its
+    counts (JIT and native launcher, `-Xmx2g` and no maximum, as a user
+    runs it), where the peak RSS goes: the heap's touched and live parts
+    (GC logs), the JVM's regions (`-XX:NativeMemoryTracking=summary`),
+    libgraal's isolates and the rest outside NMT (`vmmap --summary`, or
+    `/proc/<pid>/smaps` on Linux), for the median program and for
+    `earley`, `nboyer`, `mperm` and `paraffins`; each region classed as
+    ours or the JVM's sizing; and the candidates for M14-02 listed with
+    what each would save, measured or estimated from those numbers. No code
+    changes are needed.
+- [ ] **M14-02 · Cutting the JIT launcher's memory**
+  - Depends on M14-01. Candidates, each with what GraalVM offers first:
+    fewer libgraal isolates or Truffle compiler threads
+    (`--engine.CompilerThreads`, `-XX:JVMCIThreadsPerNativeLibraryRuntime`),
+    what the language allocates as it starts and before a program's first
+    collection, what M14-01 finds the language keeps (classes, code, graphs
+    kept after compilation), and the collector's sizing and policy where
+    M14-01 brings new evidence against D17's rejections (a smaller young
+    generation, a default maximum heap). The collector for large heaps
+    belongs here too (M12-04): D17 recommends `BySpaceAndTime` for the
+    native launcher and G1 for `nboyer`, as flags; whether a launcher
+    should choose either itself is a decision.
+  - A launcher default gives way to the user's option, as the collector
+    and the AOT cache do (D17, "Which JVM options it takes"), and
+    `//tests:launcher_vm` checks that it does.
+  - **Done when** each candidate is measured (peak RSS, first iteration and
+    steady state, the report's programs at its counts, JIT and native
+    launcher, interleaved with an A/A pair) and kept, or recorded in D17
+    with its numbers; the report's median peak RSS before (M13's exit
+    report) and after (the `bench-report` memory table, JIT and native,
+    on the same machine); a kept change that costs
+    the JIT's or the native launcher's first runs or steady state says
+    why in D17; `bench-check` passes (re-measured if a threshold is left
+    far too loose).
+- [ ] **M14-03 · An exit's stack trace under a prompt's pending frames** *(early)*
+  - #283's follow-up: an exit's guest stack trace (Truffle's, for its
+    `ThreadDeath`) doesn't include a prompt's pending frames, where an
+    error's does through `PromptDriver.unwind`: under torture,
+    `getPolyglotStackTrace()` for `(list (exit n))` is `exit ?, <prompt>
+    1`, not `run 2, <program> 3`. `EmbeddingTest` asserts the trace only
+    outside torture (`if (!TORTURE)`). D8 ("`exit` and `emergency-exit`
+    are Truffle's") already locates an exit through the pending frames.
+  - **Done when** an exit's and an emergency exit's traces have a spill's
+    and torture's pending frames in the order an error's has, and
+    `EmbeddingTest` asserts the trace in every mode (the `!TORTURE`
+    condition gone), or D8 records why Truffle's exit can't carry them
+    (with a docs/upstream.md entry and an inverted reproducer if it is a
+    Truffle limitation); every torture mode passes.
+- [ ] **M14-04 · Stack traces through continuations and the prelude**
+  - Depends on M14-03. An audit of the guest stack trace and the location
+    of an error, an `exit` and an `emergency-exit` for each way a frame
+    can be off the Java stack or in the prelude: a spill, a capture and
+    its re-entry (once and twice), a `guard` that re-raises after no
+    clause matched (its continuation reinstated), `dynamic-wind`'s
+    thunks, `with-exception-handler` and `raise-continuable` handlers, the
+    prelude's `map`, `for-each`, `apply`, `call-with-values`, `parameterize`
+    and its converters, `eval`, `load`, a library's body, an error from an
+    after-thunk that replaces another (D8), a primitive a trampoline runs,
+    and a tail call's caller. D8 records today's known gap: a prelude frame
+    running resumed shows in the trace (docs/upstream.md, "Continuation
+    roots are never internal").
+  - **Done when** design.md D8 has a table of each case with its trace and
+    location, interpreted, compiled, under both tortures and through the
+    native launcher's printed trace; a test per case (`EmbeddingTest` or
+    a class of its own) in every JUnit mode; what differs from the same
+    program without continuations is fixed or recorded in D8 with its
+    reason.
+- [ ] **M14-05 · Source locations in macro-expanded code** *(early)*
+  - D13 locates an expansion's code at the macro's use, a bare reference
+    at its identifier (M13-14), and code from a library macro's template
+    not at all (`CodeGenerator.usable`, docs/upstream.md "Nested root
+    source sections"). Nothing lists what an error, a stack trace, a
+    breakpoint, a step or coverage gets in code from a user's macro, a
+    library's (the prelude's `do`, `case`, `guard`, `parameterize`,
+    `define-record-type`, `delay`), nested or recursive macros, a macro
+    that defines a macro or a procedure, and an operand passed through a
+    template.
+  - **Done when** design.md D13 has a table of those cases, each with the
+    location of an error raised in it, its frame in the guest stack trace,
+    and the statement a line breakpoint and a step stop at; a
+    `SourceLocationTest` (or `DebuggerTest`) case for each; what is
+    wrong (no location where the user wrote the code, or the wrong one)
+    is fixed or recorded in D13 with its reason; the bytecode without tools
+    unchanged (`CallSiteTest`'s budget, the prelude image's size); every
+    tools test passes.
+- [ ] **M14-06 · Bindings and parameters as writes for tools**
+  - Depends on M14-05. #320's follow-up: `let`, `letrec*` and
+    internal-definition bindings, and a procedure's parameters, aren't
+    `WriteVariableTag`s, since the core AST keeps no source section for a
+    binding's identifier (D13, "Variables' reads and writes"). The
+    Language Server's "definition" and "references" would want them.
+  - **Done when** design.md D13 records whether the core AST keeps a
+    binding's identifier's section (in a PR of its own if it changes the
+    decision), and if it does, each binding is a write at its identifier
+    with the node object naming it, in a `ToolsTest` case per binding
+    form, compiled and under both tortures; the bytecode without tools
+    and the prelude image unchanged (or the image's growth measured and
+    recorded); every tools test passes.
+- [ ] **M14-07 · Error messages** *(early)*
+  - D8 leaves the wording outside conformance, and nothing checks it: a
+    primitive's `SchemeError`, the prelude's `error` calls, the expander's
+    syntax errors (a macro use no `syntax-rules` clause matches, a bad
+    `define-record-type`, a library not found), the reader's, and the
+    launcher's and the language options' errors (M10-04: an option takes
+    effect or fails with a clear error). An audit first: each says which
+    procedure or form, which argument, what it expected and what it got,
+    and where (file, line and column), in one form.
+  - D8 records the form first, in a PR of its own; then the fixes, a PR per
+    area where they would run in parallel (AGENTS.md "Areas").
+  - **Done when** D8 records the form and the audit's findings; a test
+    calls every primitive in the registry with an argument of a wrong type
+    (and, where it has one, out of range) and checks that the message
+    names the primitive and the argument's position and value, as
+    `PrimitiveRegistryTest` walks the registry; the expander's and the
+    reader's errors each have a `SyntaxErrorLoadTest` (or similar) case
+    with the message and its location; the launcher's uncaught-error
+    output for a raised non-condition, an error object with irritants and
+    a syntax error is in docs/usage.md, in a block `//tests:readme` runs;
+    no differential or conformance test changes state.
+- [ ] **M14-08 · Running out of memory** *(early)*
+  - D8 never converts an internal Java exception, and says nothing of an
+    `OutOfMemoryError`, which isn't a bug: a program that keeps allocating,
+    `(make-vector (expt 10 10))`, a string or bytevector past Java's array
+    limit, a bignum past `BigInteger`'s range, or a deep non-tail
+    recursion whose spilled frames fill the heap. R7RS §1.3.2: an
+    implementation *"must report"* a violation of an implementation
+    restriction. Truffle has `sandbox.MaxHeapMemory` for `UNTRUSTED`
+    (D10), and an embedder gets a `PolyglotException` for a resource
+    exhausted.
+  - **Done when** design.md D8 records what each case gets (a Scheme error
+    where the size can be checked before allocating, and otherwise what
+    the launcher and an embedder see); a test per case under a small heap
+    (`//tests:space`'s JVM limits, or a JUnit test in a child JVM), on the
+    JVM launcher and through the native launcher, each ending with a
+    message and a nonzero exit status, not a Java stack trace; the
+    context still usable afterwards where D8 says it is (a REPL, an
+    embedder's next call).
+- [ ] **M14-09 · Tags the language doesn't provide, in docs/upstream.md** *(early)*
+  - #320's follow-up: the Bytecode DSL's generated
+    `prepareForInstrumentation` throws for any tag the language doesn't
+    provide (*"Invalid tag specified. Tag '...' not provided by
+    language"*), in every root it visits, so an instrument whose filter
+    names such a tag (`TryBlockTag` for us) fails `Context.eval`; it is
+    why the language provides `DebuggerTags.AlwaysHalt` and the variable
+    tags (D13). #320 takes it for a Truffle bug; the entry says what
+    Truffle's documentation promises for such a filter. Also the libgraal
+    entry's missing inverted test
+    (docs/upstream.md, "Instrumented compilations fail in libgraal": *"an
+    inverted test needs `UpstreamRoot` to call a `@TruffleBoundary`
+    method"*).
+  - **Done when** docs/upstream.md has the entry in its format (found in,
+    the issue text ready to paste, the upstream status line with its
+    date, the table's row naming the workaround), with an inverted
+    reproducer on `UpstreamLanguage` (`tests/scheme/test/upstream/`) that
+    passes while the bug is there; the libgraal entry has its inverted
+    test, or says why it stays a launcher command; no issue is filed or
+    commented on.
+- [ ] **M14-10 · Truffle's detailed assertions in the local harness** *(early)*
+  - #321's follow-up: `bazel run //:r7rs -- test --compile`, `--torture`
+    and `--torture-owned` (tests/harness/harness.py's `COMPILE_VM_ARGS`,
+    `TORTURE_VM_ARGS`), and the fuzzer's modes, which use them, don't
+    get the `-ea -Dtruffle.DetailedAssertions=true` that the Bazel compile
+    and torture tests have had since M13-13. `launcher_options` maps only
+    `-Dpolyglot.*` arguments for the native launcher, so the assertions
+    have to be kept apart from those lists.
+  - **Done when** the harness's compile and torture runs, and the
+    fuzzer's, pass the assertions on the JVM and leave them out for the
+    native launcher, with a test of the command lines (a Python test of
+    harness.py, or `//tests:tools`); AGENTS.md's "Commands" and
+    tests/fuzz/README.md say so.
+- [ ] **M14-11 · The fuzzer through the native launcher**
+  - Depends on M14-10. tests/fuzz's modes are `interp`, `compile`,
+    `torture` and `torture-owned`, all on the JVM; M14's exit wants
+    campaigns through the native launcher too, as
+    `//tests:conformance_native` runs it (with
+    `--vm.XX:+AbortVMOnCompilationFailure`, M13-13).
+  - **Done when** `fuzz --mode native` runs the programs through
+    `bazel-bin/scheme-native` or a launcher named on the command line,
+    with the options `//tests:conformance_native` gives it, and minimises
+    its mismatches as the other modes do; a fixed seed's
+    programs run through it in a test of its own beside
+    `//tests/fuzz:fuzz_smoke`, `manual` as the other native tests are
+    (tests/BUILD.bazel: only when named); README.md documents the mode.
+- [ ] **M14-12 · Long fuzzing campaigns**
+  - Depends on M14-10 and M14-11. The fuzzer's one campaign so far was
+    #230's, as it landed: about 26,000 programs interpreted and 3,000 to
+    4,000 in each other mode, with no difference of ours; `fuzz_smoke`
+    runs 300 a commit. M14's exit wants long ones in every mode.
+    Campaigns run on the executors (sharded, as a `manual` test) or here
+    when no benchmark measures.
+  - **Done when** each mode (`interp`, `compile`, `torture`,
+    `torture-owned`, native) has run at least 50,000 programs over at
+    least 5 seeds, and one seed with deeper programs and more cases
+    (`--depth`, `--cases`); tests/fuzz/README.md records each campaign
+    (seeds, counts, options, commit, wall time, mismatches found); each
+    mismatch is fixed with a test first (the minimised program in
+    `tests/diff/` when chibi-scheme is right) or is a row of chibi's
+    departures with R7RS's text (D19); the seeds that found them run clean
+    again afterwards.
+- [ ] **M14-13 · Nix packages for the launcher and the native launcher** *(early)*
+  - The maintainer's call (2026-11-21): Nix packages, as the flake's
+    package outputs only, with no CI or release pipeline. A derivation
+    builds in Nix's sandbox, without the network that Bazel's downloads
+    (GraalVM, the Maven artifacts, the rules) need, so how the flake builds
+    them is a decision: Bazel inside the derivation with its repositories
+    fetched by a fixed-output derivation (`bazel vendor`), the jars from
+    `maven_install.json`'s pinned URLs and sha256s with the flake's GraalVM
+    and no Bazel, or something else. The flake's GraalVM is the release
+    Bazel pins (D11, "Nix"), and they move together (AGENTS.md "Never").
+  - A design.md D11 decision first, in a PR of its own, with the options
+    tried.
+  - **Done when** the decision is recorded; `nix build .#scheme` and `nix
+    build .#scheme-native` build on this Mac (aarch64-darwin) and on Linux
+    (x86_64-linux, and aarch64-linux if a builder is at hand; else D11 says
+    what was checked), and `nix run .#scheme -- hello.scm` and the native
+    package's executable run docs/usage.md's hello-world and a conformance
+    section; `nix flake check` passes; docs/usage.md says how to install
+    them (`nix profile install`); the packages' GraalVM is the one
+    `bazel/graalvm.bzl` pins, checked by a lint test (today only a comment
+    says the sha256s agree); no CI step or release pipeline is added.
+
 **Exit:** the JIT launcher's peak memory (a median of 954 MB in M12's
 report, against the native launcher's 189) is measured where it goes, and
 what is ours is cut, with the report's median peak RSS before and after; an
