@@ -20,15 +20,16 @@ let
     ];
   };
 
-  # `nix` as the documents run it, for the packages this check depends on: `nix build` and `nix
-  # profile install` have nothing left to do, and `nix run .#<package> -- ...` runs the package.
+  # `nix` as the documents run it, for the packages this check depends on: `nix build`, `nix
+  # profile add` and `nix flake check` (this check) have nothing left to do, and `nix run
+  # .#<package> -- ...` runs the package.
   nixShim = pkgs.writeShellScriptBin "nix" ''
     case "$1 $2" in
-    "build "* | "profile add" | "profile install") exit 0 ;;
+    "build "* | "profile add" | "flake check") exit 0 ;;
     "run .#scheme") shift 3; exec ${scheme.scheme}/bin/scheme "$@" ;;
     "run .#scheme-native") shift 3; exec ${scheme.scheme-native}/bin/scheme-native "$@" ;;
     esac
-    echo "the flake's readme check runs only \`nix build\`, \`nix profile install\` and \`nix run .#<package> --\`, not: nix $*" >&2
+    echo "the flake's readme check runs only \`nix build\`, \`nix profile add\`, \`nix flake check\` and \`nix run .#<package> --\`, not: nix $*" >&2
     exit 1
   '';
 

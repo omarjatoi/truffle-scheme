@@ -2459,7 +2459,7 @@ measurements don't run on this machine while a benchmark measures.
     `tests/diff/` when chibi-scheme is right) or is a row of chibi's
     departures with R7RS's text (D19); the seeds that found them run clean
     again afterwards.
-- [ ] **M14-13 · Nix packages for the launcher and the native launcher** *(early)*
+- [x] **M14-13 · Nix packages for the launcher and the native launcher** *(early)*
   - The maintainer's call (2026-11-21): Nix packages, as the flake's
     package outputs only, with no CI or release pipeline. A derivation
     builds in Nix's sandbox, without the network that Bazel's downloads

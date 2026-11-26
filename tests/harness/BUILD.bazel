@@ -11,6 +11,7 @@ exports_files([
     "check_launcher_vm.py",
     "check_launcher_vm_native.py",
     "check_memory.py",
+    "check_nix.py",
     "check_polyglot_native.py",
     "check_readme.py",
     "check_rules.py",

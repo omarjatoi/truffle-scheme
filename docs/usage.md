@@ -924,8 +924,13 @@ exit status 3
 Hello, world! Arguments: ()
 ```
 
-`nix flake check` runs this section's blocks, with the packages it builds,
-and a section of chibi-scheme's suite through each launcher.
+The flake's checks run this section's blocks, with the packages they build,
+and a section of chibi-scheme's suite through each launcher:
+
+<!-- readme: run nix -->
+```sh
+nix flake check
+```
 
 ## Performance
 
