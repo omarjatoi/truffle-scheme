@@ -121,13 +121,50 @@ to 255, and 1 for `#f` or anything else, an integer outside 0–255 among
 them), 0 when it ends, 70 after an uncaught error (whose message goes to
 stderr), 66 if the file can't be read and 64 for a malformed `-I`.
 
+After an uncaught error's message comes its stack trace, innermost call
+first (design.md D8, "Stack traces"): each frame's procedure (`<program>`
+for a top-level form), with the file, line and column of where it was.
+The standard libraries' frames are left out (`map`'s, here), and a run of
+the same frame is printed once:
+
+<!-- readme: run -->
+```sh
+bazel-bin/scheme docs/examples/trace.scm 2>&1 || echo "exit status $?"
+```
+
+<!-- readme: output -->
+```text
+ERROR: ...
+    at <lambda@trace.scm:4:8>(trace.scm:4:28)
+    at down(trace.scm:8:13)
+    at down(trace.scm:9:12)
+    ... repeated 2 more times
+    at <program>(trace.scm:11:1)
+exit status 70
+```
+
+<!-- readme: file docs/examples/trace.scm -->
+```scheme
+(import (scheme base))
+
+(define (check items)
+  (map (lambda (item) (+ 1 (car item))) items))
+
+(define (down n)
+  (if (= n 0)
+      (list (check '((1) 2)))
+      (+ 1 (down (- n 1)))))
+
+(down 3)
+```
+
 ### The REPL
 
 With no file, `bazel-bin/scheme` starts a REPL in the interaction environment, which
 imports every standard library. It reads until an input is complete, so a
 definition can span lines, and writes the values of each form of an input
 with `write`, one per line, as each form completes (a line can hold several).
-An error prints `ERROR: ...` on stderr, and the REPL goes on. Scheme code it
+An error prints `ERROR: ...` and its stack trace on stderr, and the REPL goes on. Scheme code it
 runs reads the same input: `(read-line)` reads the line after it. It ends at
 end of input (Ctrl-D) or on `(exit)`.
 

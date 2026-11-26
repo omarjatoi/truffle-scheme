@@ -25,6 +25,7 @@ import org.graalvm.polyglot.Engine;
 import org.graalvm.polyglot.EnvironmentAccess;
 import org.graalvm.polyglot.PolyglotException;
 import org.graalvm.polyglot.Source;
+import org.graalvm.polyglot.SourceSection;
 import org.graalvm.polyglot.Value;
 import org.graalvm.polyglot.io.IOAccess;
 
@@ -982,6 +983,45 @@ public final class SchemeMain extends AbstractLanguageLauncher {
             e.printStackTrace(errors);
         } else {
             errors.println("ERROR: " + e.getMessage());
+            printStackTrace(e, errors);
+        }
+    }
+
+    /** The root prompt's frame (design.md D6): the evaluation of the whole source, not a call in it. */
+    private static final String ROOT_PROMPT = "<prompt>";
+
+    /**
+     * An uncaught error's guest stack trace (design.md D8, "Stack traces"): its guest frames,
+     * innermost first, each as {@code name(file:line:column)} (the source's name, as the
+     * {@code ERROR:} line names a location), but for the root prompt's and
+     * any whose source is internal (a prelude frame running resumed, which Truffle doesn't see as
+     * internal: docs/upstream.md, "Continuation roots are never internal"). A run of the same frame
+     * is printed once, then how many more times it came.
+     */
+    static void printStackTrace(PolyglotException e, PrintStream errors) {
+        String previous = null;
+        int repeated = 0;
+        for (PolyglotException.StackFrame frame : e.getPolyglotStackTrace()) {
+            SourceSection at = frame.getSourceLocation();
+            if (!frame.isGuestFrame() || ROOT_PROMPT.equals(frame.getRootName()) || at != null && at.getSource().isInternal()) {
+                continue;
+            }
+            String line = "    at " + frame.getRootName() + (at == null ? "" : "(" + at.getSource().getName() + ":" + at.getStartLine() + ":" + at.getStartColumn() + ")");
+            if (line.equals(previous)) {
+                repeated++;
+                continue;
+            }
+            printRepeated(repeated, errors);
+            errors.println(line);
+            previous = line;
+            repeated = 0;
+        }
+        printRepeated(repeated, errors);
+    }
+
+    private static void printRepeated(int repeated, PrintStream errors) {
+        if (repeated > 0) {
+            errors.println("    ... repeated " + repeated + " more time" + (repeated == 1 ? "" : "s"));
         }
     }
 }
