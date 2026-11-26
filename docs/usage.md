@@ -693,19 +693,34 @@ x86-64.
 The collector's run-time options are the executable's `--vm.` options,
 before the program: `--vm.Xmx512m`, `--vm.Xms`, `--vm.Xmn`,
 `--vm.XX:+PrintGC`, and G1's (`--vm.XX:MaxGCPauseMillis=`, ...) in a G1
-executable. `--vm.XX:PrintFlags=` lists the ones an executable takes.
+executable. `--vm.XX:PrintFlags=` lists the ones an executable takes, and
+`--vm.XX:+PrintFlagsFinal` lists them with the values this run starts with
+and where each came from (`{default}`, `{build-time}`, `{command line}`), on
+standard error before the program runs (GraalVM 25.6). A value a subsystem
+computes as it starts isn't there: a `MaxHeapSize` of 0 is the collector's
+default maximum.
 
 <!-- readme: run native -->
 ```sh
 bazel-bin/scheme-native --vm.Xmx512m docs/examples/hello.scm
 bazel-bin/scheme-native --vm.Xms1g --vm.XX:InitialCollectionPolicy=BySpaceAndTime docs/examples/hello.scm
+bazel-bin/scheme-native --vm.Xmx512m --vm.XX:+PrintFlagsFinal docs/examples/hello.scm 2>&1 | grep -E 'MaxHeapSize|Hello'
 ```
 
 <!-- readme: output -->
 ```text
 Hello, world! Arguments: ()
 Hello, world! Arguments: ()
+     intx MaxHeapSize ... = 536870912 ... {native image} {command line}
+Hello, world! Arguments: ()
 ```
+
+The Graal JIT in the executable is silent when a compilation fails, as it is
+on the JVM: the code stays in the interpreter. `--vm.XX:+AbortVMOnCompilationFailure`
+(GraalVM 25.6) makes such a failure end the process instead, after a second
+attempt that writes the compiler's graphs to `graal_dumps/` (`--vm.XX:DumpPath=`
+moves them); a bailout, which the compiler gives up on without an error, still
+doesn't. The native tests run with it (`//tests:launcher_vm_native` checks both).
 
 The serial collector's default policy suits programs that keep little alive,
 and lets programs that keep hundreds of MB alive spend most of their time

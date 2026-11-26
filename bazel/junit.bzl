@@ -14,12 +14,13 @@ _UNIT_MODES = {
         "-Dpolyglot.engine.CompileImmediately=true",
         "-Dpolyglot.engine.BackgroundCompilation=false",
         "-Dpolyglot.engine.CompilationFailureAction=Throw",
+        "-Dtruffle.DetailedAssertions=true",
     ], "large", []),
     # Torture (the constant option scheme.Torture, design.md D17 "Constant options").
-    "torture": (["-Dpolyglot.scheme.Torture=shared"], "medium", ["cpu:2"]),
+    "torture": (["-Dpolyglot.scheme.Torture=shared", "-Dtruffle.DetailedAssertions=true"], "medium", ["cpu:2"]),
     # Torture whose captures stay owned, so the frames are resumed in place (design.md "Owned
     # segments"); what a continuation reaches is still copied and checked.
-    "torture_owned": (["-Dpolyglot.scheme.Torture=owned"], "medium", ["cpu:2"]),
+    "torture_owned": (["-Dpolyglot.scheme.Torture=owned", "-Dtruffle.DetailedAssertions=true"], "medium", ["cpu:2"]),
 }
 
 def unit_tests(name, tests, support, kinds, resources = {}, extra_srcs = {}):
