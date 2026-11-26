@@ -99,6 +99,7 @@ unit_tests(
         "UpstreamAstDepthTest": "upstream",
         "UpstreamAsyncStacksTest": "upstream",
         "UpstreamContinuationRootTest": "upstream",
+        "UpstreamExitStackTraceTest": "upstream",
         "UpstreamHoistedNullGuardTest": "upstream",
         "UpstreamInstrumentedBoundaryTest": "upstream",
         "UpstreamInterruptTest": "upstream",

@@ -2294,7 +2294,7 @@ measurements don't run on this machine while a benchmark measures.
     the JIT's or the native launcher's first runs or steady state says
     why in D17; `bench-check` passes (re-measured if a threshold is left
     far too loose).
-- [ ] **M14-03 · An exit's stack trace under a prompt's pending frames** *(early)*
+- [x] **M14-03 · An exit's stack trace under a prompt's pending frames** *(early)*
   - #283's follow-up: an exit's guest stack trace (Truffle's, for its
     `ThreadDeath`) doesn't include a prompt's pending frames, where an
     error's does through `PromptDriver.unwind`: under torture,

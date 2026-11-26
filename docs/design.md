@@ -2446,7 +2446,28 @@ Each entry: the decision, why, and what was rejected.
     (its asynchronous stack: a spill's, and every frame under torture) where
     the prompt's driver is. `EmbeddingTest` checks `exit`, `emergency-exit`,
     a primitive a trampoline runs (`apply`'s tail call), a tail call's
-    caller, and a spill. `Context.interrupt` and `close(true)` (and the
+    caller, and a spill. **Its stack trace has only the frames on the Java
+    stack (M14-03)**, not a prompt's pending frames, as an error's has: under
+    torture, `(list (exit n))` in `run` has `exit ?, <prompt> 1` (the
+    prelude's `exit`, running resumed), where outside it the trace is
+    `run 2, <program> 3, <prompt> 1`, and a spill's pending frames are
+    missing the same way. Truffle's exit exception (`closeExited`'s, a
+    `ThreadDeath`, not an `AbstractTruffleException`) gets its whole trace
+    by walking the Java stack the first time it leaves a call target, and
+    the call targets it leaves after that add nothing, so `PromptDriver.unwind`'s
+    way (throwing the exception through each pending frame's call target)
+    can't give it the frames. Nor can anything else here: a language can't
+    attach frames to Truffle's exception or have the walk ask for a root's
+    asynchronous frames; calling `closeExited` only after a guest exception
+    has unwound through the frames would give the exit the trace of where it
+    is called then, the outermost frames; and putting the pending frames on
+    the Java stack for the walk means calling through their call targets
+    nested, a Java recursion as deep as the trace (AGENTS.md rule 4; up to
+    `PromptDriver.MAX_TRACED_FRAMES`, 10,000), with the frames already above
+    the prompt still before them, out of order. docs/upstream.md ("A context
+    exit's stack trace is the Java stack's") has the feature request and its
+    inverted test, `UpstreamExitStackTraceTest`; `EmbeddingTest` asserts
+    each mode's trace. `Context.interrupt` and `close(true)` (and the
     resource limits that cancel) are Truffle's too: not `SchemeError`s, so
     no prompt runs Scheme code for them (no handler, no after-thunk; an
     interrupted context goes on with the dynamic environment it had before
