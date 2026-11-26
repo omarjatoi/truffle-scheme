@@ -2582,10 +2582,11 @@ Each entry: the decision, why, and what was rejected.
   reads (`getPolyglotStackTrace()`, above), and the launcher prints it.
   - *Printed:* after the `ERROR:` line of an uncaught error ("Messages"),
     `bazel-bin/scheme` and the native launcher print the error's guest
-    frames, innermost first, one per line as `    at <scheme>
-    run(user.scm:4:3-12)`: Truffle's `StackFrame.toString()`, the form in
-    which GraalVM's other launchers print a guest error, and in which D13's
-    tools name a location. In a program and at the REPL alike. The frames
+    frames, innermost first, one per line as `    at
+    run(user.scm:4:3)`: the frame's name, then its source's name, line and
+    column, the form in which the `ERROR:` line and Truffle's stack traces
+    name a location ("Messages", D13), or `    at <name>` for a frame
+    with no location. In a program and at the REPL alike. The frames
     are what an embedder gets, so a spill's and a re-entered
     continuation's are there and a procedure whose tail call raised has
     none, and the standard libraries' are left out. So is the root
@@ -2607,7 +2608,11 @@ Each entry: the decision, why, and what was rejected.
     doesn't end the program: the launcher asks for the trace only when it
     prints the error.
   - *Rejected:* `PolyglotException.printStackTrace` (the host's frames, the
-    launcher's own among them, after the guest's); printing only on an
+    launcher's own among them, after the guest's); each frame as
+    `StackFrame.toString()` writes it, as GraalVM's other launchers print
+    one (`<scheme> run(../../src/user.scm:4:65-74)`: the path relative to
+    the working directory, and character offsets in the file where the
+    `ERROR:` line has a line and a column); printing only on an
     option (no other GraalVM launcher asks for one, and an option that
     only adds lines to an error isn't worth a name); leaving out the
     program's `<program>` frame too, which names the top-level form the
