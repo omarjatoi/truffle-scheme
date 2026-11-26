@@ -109,6 +109,52 @@ public class SyntaxErrorLoadTest {
                                  (eval '(simple-let (((a . b) 1)) a) (interaction-environment))))"""));
     }
 
+    // ------------------------------------------------------------------------------------------
+    // Messages and locations (design.md D8, "Messages", plan.md M14-07)
+
+    /** A program's syntax error as the launcher prints it: {@code file:line:column: message}. */
+    private static String described(String program) {
+        PolyglotException e = error(program);
+        assertTrue(e.getMessage(), e.isSyntaxError());
+        SourceSection at = e.getSourceLocation();
+        return at.getSource().getName() + ":" + at.getStartLine() + ":" + at.getStartColumn() + ": " + e.getMessage();
+    }
+
+    @Test
+    public void expanderErrorsNameTheFormAndWhereItIs() {
+        // A macro use that no syntax-rules clause matches, at the use.
+        assertEquals("prog.scm:2:3: syntax error: no syntax-rules pattern matches: (two 1)", described("(define-syntax two (syntax-rules () ((_ a b) (list a b))))\n  (two 1)"));
+        // A define-record-type that isn't one.
+        assertEquals("prog.scm:2:1: syntax error: no syntax-rules pattern matches: (define-record-type point)", described("(display 1)\n(define-record-type point)"));
+        // A library that isn't found, at the import.
+        assertEquals("prog.scm:1:1: syntax error: library not found: (no such library)", described("(import (scheme base) (no such library))"));
+        // A core form's.
+        assertEquals("prog.scm:3:5: syntax error: if takes 2 or 3 subforms: (if)", described("(define (f x)\n  (display x)\n    (if))"));
+    }
+
+    @Test
+    public void readerErrorsNameTheLineAndColumn() {
+        assertEquals("prog.scm:2:3: syntax error: unexpected ')'", described("(display 1)\n  )"));
+        // A string or a datum that doesn't end is located where it starts; the end of the text, where it ran out.
+        assertEquals("prog.scm:1:10: syntax error: unterminated string", described("(display \"abc)\n"));
+        assertEquals("prog.scm:2:4: syntax error: invalid syntax #<foo>", described("(display 1)\n   #<foo>"));
+        PolyglotException e = error("(display (+ 1 2)");
+        assertTrue(e.isIncompleteSource());
+        assertEquals("prog.scm:1:17: syntax error: unexpected end of input", described("(display (+ 1 2)"));
+        // read at run time: a port has no source section, so its position is in the message.
+        assertEquals("(\"read: datum expected after '.' at line 2, column 7\" #t)", run("""
+                        (write (guard (e ((error-object? e) (list (error-object-message e) (read-error? e))))
+                                 (read (open-input-string "(1\\n  2 . )"))))"""));
+    }
+
+    @Test
+    public void loadsSyntaxErrorStartsWithItsLocation() throws IOException {
+        // An error object has no location of its own: the message has the form's (design.md D8).
+        String bad = file("bad.scm", "(define z 1)\n  (if)\n");
+        assertEquals("(\"bad.scm:2:3: syntax error: if takes 2 or 3 subforms\" ((if)))", run("(write (guard (e ((error-object? e) (list (error-object-message e) (error-object-irritants e)))) (load " +
+                        bad + ")))"));
+    }
+
     @Test
     public void syntaxErrorCanBeShadowed() {
         assertEquals("(1 2)", run("(let ((syntax-error list)) (write (syntax-error 1 2)))"));

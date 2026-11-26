@@ -2358,7 +2358,7 @@ measurements don't run on this machine while a benchmark measures.
     form, compiled and under both tortures; the bytecode without tools
     and the prelude image unchanged (or the image's growth measured and
     recorded); every tools test passes.
-- [ ] **M14-07 · Error messages** *(early)*
+- [x] **M14-07 · Error messages** *(early)*
   - D8 leaves the wording outside conformance, and nothing checks it: a
     primitive's `SchemeError`, the prelude's `error` calls, the expander's
     syntax errors (a macro use no `syntax-rules` clause matches, a bad

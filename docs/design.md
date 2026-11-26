@@ -2453,7 +2453,12 @@ Each entry: the decision, why, and what was rejected.
     Left as they are: a prelude procedure that takes a procedure
     (`dynamic-wind`, `call-with-values`, `vector-map`, ...) doesn't check
     it, so a wrong one is the call's `application: not a procedure`,
-    located at the program's call of the prelude procedure.
+    located at the program's call of the prelude procedure. And an unbound
+    variable's error, and a call's of a non-procedure, are thrown out of
+    the frame they happen in and raised in its caller's (a global read stores
+    no bytecode index), so they are located at the call of the
+    procedure they are in, and at a program's top level, which nothing
+    called, nowhere: the launcher prints them without a location.
   - *Checked by:* `PrimitiveRegistryTest` calls every primitive in the
     registry (a %-primitive through the public procedure that calls it)
     with arguments that are each of a wrong type or out of range in turn,
@@ -2724,7 +2729,7 @@ Each entry: the decision, why, and what was rejected.
   expected is an error (§1.3.2: *"it is an error for a procedure to be
   passed an argument of a type that the procedure is not explicitly
   specified to handle ... Implementations may signal an error"*). We signal
-  `"<who>: not a proper list"` with the list as the irritant (which `write`
+  `"<who>: argument <n> is not a proper list"` with the list as the irritant (D8, "Messages"; which `write`
   prints with datum labels), instead of looping forever, from `length`,
   `reverse`, `list-copy`, `append` (all but the last argument),
   `list->vector`, `list->string`, `apply`, and `memq`, `memv`, `member`,

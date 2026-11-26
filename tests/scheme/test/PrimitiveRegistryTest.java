@@ -26,6 +26,7 @@ import org.graalvm.polyglot.PolyglotAccess;
 import org.graalvm.polyglot.proxy.ProxyArray;
 import org.graalvm.polyglot.proxy.ProxyExecutable;
 import org.graalvm.polyglot.proxy.ProxyObject;
+import org.junit.Assume;
 import org.junit.Test;
 
 import scheme.runtime.BuiltinLibrary;
@@ -460,6 +461,13 @@ public class PrimitiveRegistryTest {
 
     @Test
     public void everyPrimitiveNamesItsArgumentInItsErrors() {
+        // Not compiled immediately: the driver's calls of every primitive, through one apply and one
+        // thunk call, are megamorphic sites over hundreds of procedures and argument types, which
+        // compiling at once recompiles until Truffle's deoptimization cycle detection fails the
+        // compilation ("Deopt taken too many times", as design.md "Inline caches for tail calls, and splitting"
+        // found of a conformance section's test thunks); the messages are made behind boundaries,
+        // the same compiled or not. The JIT and both tortures run it.
+        Assume.assumeFalse("compiled immediately", Boolean.getBoolean("polyglot.engine.CompileImmediately"));
         Map<String, String> calls = new LinkedHashMap<>();
         Map<String, String> reasons = new HashMap<>();
         for (String line : CALLS.split("\n")) {
@@ -485,7 +493,7 @@ public class PrimitiveRegistryTest {
         try (Context context = Context.newBuilder(SCHEME).out(new ByteArrayOutputStream()).err(new ByteArrayOutputStream()).allowPolyglotAccess(PolyglotAccess.ALL).build()) {
             context.getPolyglotBindings().putMember("array", ProxyArray.fromArray(1, 2, 3));
             Map<String, Object> members = new HashMap<>();
-            members.put("f", (ProxyExecutable) arguments -> 1);
+            members.put("f", (ProxyExecutable) arguments -> arguments.length);
             context.getPolyglotBindings().putMember("object", ProxyObject.fromMap(members));
             // In the interaction environment, where the thunks are evaluated: text that starts with
             // an import is a program of its own (design.md D15).
