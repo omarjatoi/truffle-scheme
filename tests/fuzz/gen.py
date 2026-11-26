@@ -1042,6 +1042,11 @@ class Gen:
         """abs of a flonum that isn't -0.0, by adding 0.0: chibi-scheme's (abs -0.0) is -0.0."""
         return ['abs', ['+', self.expr(FLO, d, env), '0.0']]
 
+    def not_nan(self, e):
+        """The flonum expression e, or 0.5 where its value is a NaN."""
+        x = self.fresh('x')
+        return ['let', [[x, e]], ['if', ['nan?', x], '0.5', x]]
+
     def small_rat(self, d, env):
         """An exact rational whose numerator and denominator are flonums too: chibi-scheme's
         inexact of a bignum isn't always the nearest flonum (291803963674569850706 gives
@@ -1280,6 +1285,10 @@ class Gen:
         def arith(t, d, env):
             op = self.pick(['+', '-', '*', 'max', 'min'])
             e = [op] + self.args([FLO] * self.r.randint(1, 3), d, env)
+            if op in ('max', 'min'):
+                # No NaN among the arguments: chibi-scheme's (max 1. +nan.0) is 1.0, and R7RS
+                # 6.2.4 says an operation with a NaN operand returns a NaN (README.md's table).
+                e = [op] + [self.not_nan(a) for a in e[1:]]
             # Plus 0.0, which makes -0.0 0.0: R7RS doesn't say which of -0.0 and 0.0 max and min
             # return; chibi-scheme returns the first, ours what IEEE 754-2019's maximum and minimum do.
             return ['+', e, '0.0'] if op in ('max', 'min') else e

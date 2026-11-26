@@ -33,7 +33,9 @@ MODES = {
 DEFAULT_NATIVE = join('bazel-bin', 'scheme-native')
 
 # A run that prints more than this, or takes longer, says nothing about either implementation: the
-# generator made a program too big to be useful, and the program is skipped.
+# generator made a program too big to be useful, and the program is skipped. Ours may get longer
+# (--timeout): compiling each procedure at once under the detailed assertions can take a file of
+# programs minutes on a loaded machine.
 MAX_OUTPUT = 1 << 20
 CHIBI_TIMEOUT = 30
 OURS_TIMEOUT = 120
@@ -84,8 +86,9 @@ class Runner:
     """Runs program files under chibi (cached by content) and under ours, in one mode: on the JVM
     (runtime, a harness.Runtime) or through the native launcher (native, its path)."""
 
-    def __init__(self, chibi, runtime, workdir, native=None):
+    def __init__(self, chibi, runtime, workdir, native=None, timeout=OURS_TIMEOUT):
         self.chibi = chibi
+        self.timeout = timeout
         self.runtime = runtime
         self.native = native
         self.workdir = workdir
@@ -124,7 +127,7 @@ class Runner:
 
     def run_ours(self, text, mode):
         _, path = self.write(text)
-        return _run(self.command(path, mode), OURS_TIMEOUT)
+        return _run(self.command(path, mode), self.timeout)
 
 
 _CRASH = re.compile(r'\b(?:[a-z_$][\w$]*\.)+[A-Z][\w$]*(?:Exception|Error)\b')
@@ -198,15 +201,28 @@ def text_of(forms, note=''):
 _DRIFT = [re.compile(p) for p in (r'#<', r'nan\.0', r'[+-](?:[\d./]*(?:e[+-]?\d+)?|inf\.0|nan\.0)i(?![\w.])')]
 
 
+# An inexact zero, which ours may write where chibi-scheme writes an exact 0: the product of an
+# exact 0 and a flonum, which R7RS 6.2.2 leaves open (README.md). The minimiser's constant 0 in
+# place of a flonum makes one, so a smaller program whose only differences are these is another
+# difference, not the original's.
+_INEXACT_ZERO = re.compile(r'(?<![\w.#\\|])-?0\.0(?![\w.])')
+
+
+def only_zero_exactness(chibi, ours):
+    """Whether stdout differs, and only where ours writes 0.0 or -0.0 and chibi-scheme 0."""
+    return chibi != ours and _INEXACT_ZERO.sub('0', ours) == chibi
+
+
 class Reducer:
     """Delta debugging: a smaller program is kept if it differs in the same way (`signature`) and
-    shows nothing the original didn't (_DRIFT)."""
+    shows nothing the original didn't (_DRIFT, only_zero_exactness)."""
 
-    def __init__(self, runner, mode, target, jobs, budget, original=''):
+    def __init__(self, runner, mode, target, jobs, budget, original='', zero_exactness=False):
         self.runner, self.mode, self.target, self.jobs = runner, mode, target, jobs
         self.budget = budget
         self.tests = 0
         self.allowed = {p.pattern for p in _DRIFT if p.search(original)}
+        self.zero_exactness = zero_exactness  # the original differs only so
 
     def drifted(self, out):
         return any(p.pattern not in self.allowed and p.search(out) for p in _DRIFT)
@@ -219,7 +235,9 @@ class Reducer:
             if chibi.rc in ('timeout', 'too-much-output') or self.drifted(chibi.out):
                 return False
             ours = self.runner.run_ours(text, self.mode)
-            return not self.drifted(ours.out) and signature(chibi, ours) == self.target
+            return (not self.drifted(ours.out)
+                    and (self.zero_exactness or not only_zero_exactness(chibi.out, ours.out))
+                    and signature(chibi, ours) == self.target)
         self.tests += len(candidates)
         if len(candidates) == 1 or self.jobs == 1:
             return [test(c) for c in candidates]
@@ -348,12 +366,12 @@ def _delete(tree, path):
 # ---------------------------------------------------------------------------
 
 def fuzz(chibi, runtime, seed, count, modes, start=0, batch=10, jobs=4, depth=5, cases=8, out=None,
-         minimize=True, budget=400, log=harness.log, native=None):
+         minimize=True, budget=400, log=harness.log, native=None, timeout=OURS_TIMEOUT):
     """Runs `count` programs from `start` in each mode; returns the mismatches as
     [(mode, first program, file, minimised file or None, description)]. `native`: the native
-    launcher's path, for the `native` mode."""
+    launcher's path, for the `native` mode; `timeout`: the seconds ours may take for a file."""
     out = out or join(tempfile.gettempdir(), 'r7rs-fuzz')
-    runner = Runner(chibi, runtime, join(out, 'work'), native)
+    runner = Runner(chibi, runtime, join(out, 'work'), native, timeout)
     files = [(s, min(batch, start + count - s)) for s in range(start, start + count, batch)]
     texts, ends = {}, {}
     for s, n in files:
@@ -407,9 +425,13 @@ def fuzz(chibi, runtime, seed, count, modes, start=0, batch=10, jobs=4, depth=5,
             fh.write(texts[s])
         reduced_path = None
         description = describe(chibi, ours)
-        if minimize:
+        if minimize and ours.rc == 'timeout':
+            # Each smaller program could take as long: rerun it with a longer --timeout first.
+            log(f'[{mode}] a timeout, not minimised: {path}')
+        elif minimize:
             target = signature(chibi, ours)
-            reducer = Reducer(runner, mode, target, jobs, budget, chibi.out + ours.out)
+            reducer = Reducer(runner, mode, target, jobs, budget, chibi.out + ours.out,
+                              only_zero_exactness(chibi.out, ours.out))
             forms = reducer.reduce(batch_forms(seed, s, n, depth, cases), first_line(chibi.out, ours.out))
             reduced_path = join(out, f'{mode}-{seed}-{s}.min.scm')
             text = text_of(forms, f'minimised from {path} ({reducer.tests} runs), {mode}')
@@ -443,6 +465,7 @@ def main_args(parser):
     parser.add_argument('--out', help='where to save programs that differ (default: $TMPDIR/r7rs-fuzz)')
     parser.add_argument('--no-minimize', dest='minimize', action='store_false')
     parser.add_argument('--budget', type=int, default=400, help='runs the minimiser may spend per mismatch')
+    parser.add_argument('--timeout', type=int, default=OURS_TIMEOUT, help='seconds ours may take for a file')
     parser.add_argument('--print', dest='print_only', action='store_true',
                         help='print the programs instead of running them')
 
@@ -474,8 +497,9 @@ def run_command(o, chibi, runtime):
     native = native_launcher(o.native) if 'native' in modes else None
     if native:
         harness.log(f'native: {native}')
-    out =os.path.abspath(o.out) if o.out else None
+    out = os.path.abspath(o.out) if o.out else None
     results, _ = fuzz(chibi, runtime, o.seed, o.count, modes, start=o.start, batch=o.batch, jobs=o.jobs,
-                      depth=o.depth, cases=o.cases, out=out, minimize=o.minimize, budget=o.budget, native=native)
+                      depth=o.depth, cases=o.cases, out=out, minimize=o.minimize, budget=o.budget, native=native,
+                      timeout=o.timeout)
     if results:
         harness.fail(f'{len(results)} files differ: ' + ' '.join(r[3] or r[2] for r in results))

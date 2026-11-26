@@ -42,6 +42,7 @@ def main():
     parser.add_argument('--depth', type=int, default=5)
     parser.add_argument('--cases', type=int, default=8)
     parser.add_argument('--mode', default='interp')
+    parser.add_argument('--timeout', type=int, default=fuzz.OURS_TIMEOUT, help='seconds ours may take for a file')
     parser.add_argument('--minimize', action='store_true', help='minimise the programs that differ')
     o = parser.parse_args()
     modes = o.mode.split(',')
@@ -55,13 +56,16 @@ def main():
     options = f'--seed {o.seed} --start {start} --count {count} --batch {o.batch} --depth {o.depth} --cases {o.cases}'
     harness.log(f'fuzz {options} --mode {o.mode}')
     results, stats = fuzz.fuzz(harness.rlocation(o.chibi), runtime, o.seed, count, modes, start=start, batch=o.batch,
-                               jobs=4, depth=o.depth, cases=o.cases, out=out, minimize=o.minimize, native=native)
+                               jobs=4, depth=o.depth, cases=o.cases, out=out, minimize=o.minimize, native=native,
+                               timeout=o.timeout)
     problems = [f'{m}: {s["chibi-error"]} files chibi-scheme failed, {s["skipped"]} skipped'
                 for m, s in stats.items() if s['chibi-error'] or s['skipped']]
-    problems += [f'{mode}: {path} differs{f" (minimised: {reduced})" if reduced else ""}:\n{description}'
-                 for mode, _, path, reduced, description in results]
+    problems += [f'{mode}: {path} differs{f" (minimised: {reduced})" if reduced else ""}; again with '
+                 f'`bazel run //:r7rs -- fuzz --seed {o.seed} --start {s} --count {o.batch} --batch {o.batch} '
+                 f'--depth {o.depth} --cases {o.cases} --mode {mode}`:\n{description}'
+                 for mode, s, path, reduced, description in results]
     harness.check(not problems, '\n'.join(problems) + '\n(the programs are in the test\'s outputs: '
-                  'bazel-testlogs/tests/fuzz/<test>/[shard_n_of_m/]test.outputs)')
+                  'bazel-testlogs/tests/fuzz/<test>/[shard_n_of_m/]test.outputs, when they are downloaded)')
     harness.log(f'{count} programs the same under chibi-scheme and ours ({o.mode}, {options})')
 
 
