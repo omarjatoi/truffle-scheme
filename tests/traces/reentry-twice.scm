@@ -1,0 +1,11 @@
+; The same continuation re-entered twice.
+(import (scheme base) (scheme eval) (scheme load) (scheme process-context))
+(define k #f)
+(define count 0)
+(define (f)
+  (call/cc (lambda (c) (set! k c)))
+  (set! count (+ count 1))
+  (list (if (= count 3) RAISE count)))
+(define (g) (list (f)))
+(g)
+(if (< count 3) (k #f))

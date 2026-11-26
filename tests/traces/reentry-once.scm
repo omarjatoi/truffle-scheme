@@ -1,0 +1,11 @@
+; A continuation re-entered once after its call returned: f's and g's frames come from it.
+(import (scheme base) (scheme eval) (scheme load) (scheme process-context))
+(define k #f)
+(define count 0)
+(define (f)
+  (call/cc (lambda (c) (set! k c)))
+  (set! count (+ count 1))
+  (list (if (= count 2) RAISE count)))
+(define (g) (list (f)))
+(g)
+(if (< count 2) (k #f))
