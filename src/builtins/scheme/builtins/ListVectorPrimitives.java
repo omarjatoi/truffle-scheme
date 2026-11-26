@@ -611,7 +611,7 @@ final class ListVectorPrimitives {
                 if (alist) {
                     SPair entry = SPair.asPair(p.car);
                     if (entry == null) {
-                        throw Lists.notAPair(who, p.car);
+                        throw SchemeError.element(who, 2, "pair", p.car);
                     }
                     y = entry.car;
                 } else {
@@ -624,12 +624,12 @@ final class ListVectorPrimitives {
                 if ((++n & 1) == 0) {
                     slow = ((SPair) slow).cdr;
                     if (slow == rest) {
-                        throw Lists.notAProperList(who, list);
+                        throw Lists.notAProperList(who, 2, list);
                     }
                 }
             }
             if (rest != SConstant.EMPTY_LIST) {
-                throw Lists.notAProperList(who, list);
+                throw Lists.notAProperList(who, 2, list);
             }
             return false;
         }
