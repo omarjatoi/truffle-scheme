@@ -43,7 +43,7 @@ public class TypedCallTest {
         Context.Builder builder = Context.newBuilder(SCHEME).allowExperimentalOptions(true).allowHostAccess(HostAccess.ALL).out(new ByteArrayOutputStream());
         builder.option("engine.Compilation", "false");
         try (Context context = builder.build()) {
-            context.getBindings(SCHEME).putMember("probe", (ProxyExecutable) args -> {
+            context.getBindings(SCHEME).putMember("probe", (ProxyExecutable) _ -> {
                 stacks.add(Thread.currentThread().getStackTrace());
                 return 0;
             });
