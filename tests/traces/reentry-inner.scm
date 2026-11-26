@@ -1,0 +1,10 @@
+; Invoking a continuation: the error is in k's argument, before the jump.
+(import (scheme base) (scheme eval) (scheme load) (scheme process-context))
+(define k #f)
+(define (f)
+  (list (call/cc (lambda (c) (set! k c) 1))))
+(define (g) (list (f)))
+(define (h) (list (g)))
+(h)
+(define (go) (list (k RAISE)))
+(go)

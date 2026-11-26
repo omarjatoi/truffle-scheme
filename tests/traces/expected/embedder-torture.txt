@@ -1,0 +1,116 @@
+plain error: error at plain.scm:3 (car 'x) | f plain.scm:3, g plain.scm:4, <program> plain.scm:5, <prompt> plain.scm:1
+plain raise: error at plain.scm:3 (raise 'boom) | f plain.scm:3, g plain.scm:4, <program> plain.scm:5, <prompt> plain.scm:1
+plain exit: exit 3 at plain.scm:3 (exit 3) | exit ?, <prompt> plain.scm:1
+plain emergency-exit: exit 3 at plain.scm:3 (emergency-exit 3) | f ?, g plain.scm:4, <program> plain.scm:5, <prompt> plain.scm:1
+spill error: error at spill.scm:6 (car 'x) | down spill.scm:6, down spill.scm:7 x30, <program> spill.scm:8, <prompt> spill.scm:1
+spill raise: error at spill.scm:6 (raise 'boom) | down spill.scm:6, down spill.scm:7 x30, <program> spill.scm:8, <prompt> spill.scm:1
+spill exit: exit 3 at spill.scm:6 (exit 3) | exit ?, <prompt> spill.scm:1
+spill emergency-exit: exit 3 at spill.scm:6 (emergency-exit 3) | down ?, down spill.scm:7, <prompt> spill.scm:1
+reentry-once error: error at reentry-once.scm:8 (car 'x) | f reentry-once.scm:8, g reentry-once.scm:9, <program> reentry-once.scm:10, <prompt> reentry-once.scm:1
+reentry-once raise: error at reentry-once.scm:8 (raise 'boom) | f reentry-once.scm:8, g reentry-once.scm:9, <program> reentry-once.scm:10, <prompt> reentry-once.scm:1
+reentry-once exit: exit 3 at reentry-once.scm:8 (exit 3) | exit ?, <prompt> reentry-once.scm:1
+reentry-once emergency-exit: exit 3 at reentry-once.scm:8 (emergency-exit 3) | f ?, <prompt> reentry-once.scm:1
+reentry-twice error: error at reentry-twice.scm:8 (car 'x) | f reentry-twice.scm:8, g reentry-twice.scm:9, <program> reentry-twice.scm:10, <prompt> reentry-twice.scm:1
+reentry-twice raise: error at reentry-twice.scm:8 (raise 'boom) | f reentry-twice.scm:8, g reentry-twice.scm:9, <program> reentry-twice.scm:10, <prompt> reentry-twice.scm:1
+reentry-twice exit: exit 3 at reentry-twice.scm:8 (exit 3) | exit ?, <prompt> reentry-twice.scm:1
+reentry-twice emergency-exit: exit 3 at reentry-twice.scm:8 (emergency-exit 3) | f ?, <prompt> reentry-twice.scm:1
+reentry-inner error: error at reentry-inner.scm:9 (car 'x) | go reentry-inner.scm:9, <program> reentry-inner.scm:10, <prompt> reentry-inner.scm:1
+reentry-inner raise: error at reentry-inner.scm:9 (raise 'boom) | go reentry-inner.scm:9, <program> reentry-inner.scm:10, <prompt> reentry-inner.scm:1
+reentry-inner exit: exit 3 at reentry-inner.scm:9 (exit 3) | exit ?, <prompt> reentry-inner.scm:1
+reentry-inner emergency-exit: exit 3 at reentry-inner.scm:9 (emergency-exit 3) | go ?, <program> reentry-inner.scm:10, <prompt> reentry-inner.scm:1
+callcc-receiver error: error at callcc-receiver.scm:4 (car 'x) | <lambda@callcc-receiver.scm:4:18> callcc-receiver.scm:4, f callcc-receiver.scm:4, g callcc-receiver.scm:5, <program> callcc-receiver.scm:6, <prompt> callcc-receiver.scm:1
+callcc-receiver raise: error at callcc-receiver.scm:4 (raise 'boom) | <lambda@callcc-receiver.scm:4:18> callcc-receiver.scm:4, f callcc-receiver.scm:4, g callcc-receiver.scm:5, <program> callcc-receiver.scm:6, <prompt> callcc-receiver.scm:1
+callcc-receiver exit: exit 3 at callcc-receiver.scm:4 (exit 3) | exit ?, <prompt> callcc-receiver.scm:1
+callcc-receiver emergency-exit: exit 3 at callcc-receiver.scm:4 (emergency-exit 3) | <lambda@callcc-receiver.scm:4:18> ?, f callcc-receiver.scm:4, g callcc-receiver.scm:5, <program> callcc-receiver.scm:6, <prompt> callcc-receiver.scm:1
+callcc-escape error: error at callcc-escape.scm:5 (car 'x) | g callcc-escape.scm:5, <program> callcc-escape.scm:6, <prompt> callcc-escape.scm:1
+callcc-escape raise: error at callcc-escape.scm:5 (raise 'boom) | g callcc-escape.scm:5, <program> callcc-escape.scm:6, <prompt> callcc-escape.scm:1
+callcc-escape exit: exit 3 at callcc-escape.scm:5 (exit 3) | exit ?, <prompt> callcc-escape.scm:1
+callcc-escape emergency-exit: exit 3 at callcc-escape.scm:5 (emergency-exit 3) | g ?, <prompt> callcc-escape.scm:1
+guard-reraise error: error at guard-reraise.scm:4 (guard (e ((string? e) 'no)) (list (car 'x))) | f guard-reraise.scm:4, g guard-reraise.scm:6, <program> guard-reraise.scm:7, <prompt> guard-reraise.scm:1
+guard-reraise raise: error at guard-reraise.scm:5 (raise 'boom) | <lambda@guard-reraise.scm:4:9> guard-reraise.scm:5, f guard-reraise.scm:4, g guard-reraise.scm:6, <program> guard-reraise.scm:7, <prompt> guard-reraise.scm:1
+guard-reraise exit: exit 3 at guard-reraise.scm:5 (exit 3) | exit ?, <prompt> guard-reraise.scm:1
+guard-reraise emergency-exit: exit 3 at guard-reraise.scm:5 (emergency-exit 3) | <lambda@guard-reraise.scm:4:9> ?, <prompt> guard-reraise.scm:1
+wind-before error: error at wind-before.scm:4 (car 'x) | <lambda@wind-before.scm:4:23> wind-before.scm:4, f wind-before.scm:4, g wind-before.scm:5, <program> wind-before.scm:6, <prompt> wind-before.scm:1
+wind-before raise: error at wind-before.scm:4 (raise 'boom) | <lambda@wind-before.scm:4:23> wind-before.scm:4, f wind-before.scm:4, g wind-before.scm:5, <program> wind-before.scm:6, <prompt> wind-before.scm:1
+wind-before exit: exit 3 at wind-before.scm:4 (exit 3) | exit ?, <prompt> wind-before.scm:1
+wind-before emergency-exit: exit 3 at wind-before.scm:4 (emergency-exit 3) | <lambda@wind-before.scm:4:23> ?, f wind-before.scm:4, g wind-before.scm:5, <program> wind-before.scm:6, <prompt> wind-before.scm:1
+wind-thunk error: error at wind-thunk.scm:4 (car 'x) | <lambda@wind-thunk.scm:4:37> wind-thunk.scm:4, ~dynamic-wind prelude/control.scm:20, f wind-thunk.scm:4, g wind-thunk.scm:5, <program> wind-thunk.scm:6, <prompt> wind-thunk.scm:1
+wind-thunk raise: error at wind-thunk.scm:4 (raise 'boom) | <lambda@wind-thunk.scm:4:37> wind-thunk.scm:4, ~dynamic-wind prelude/control.scm:20, f wind-thunk.scm:4, g wind-thunk.scm:5, <program> wind-thunk.scm:6, <prompt> wind-thunk.scm:1
+wind-thunk exit: exit 3 at wind-thunk.scm:4 (exit 3) | exit ?, <prompt> wind-thunk.scm:1
+wind-thunk emergency-exit: exit 3 at wind-thunk.scm:4 (emergency-exit 3) | <lambda@wind-thunk.scm:4:37> ?, ~dynamic-wind prelude/control.scm:20, <prompt> wind-thunk.scm:1
+wind-after error: error at wind-after.scm:4 (car 'x) | <lambda@wind-after.scm:4:51> wind-after.scm:4, ~dynamic-wind prelude/control.scm:18, f wind-after.scm:4, g wind-after.scm:5, <program> wind-after.scm:6, <prompt> wind-after.scm:1
+wind-after raise: error at wind-after.scm:4 (raise 'boom) | <lambda@wind-after.scm:4:51> wind-after.scm:4, ~dynamic-wind prelude/control.scm:18, f wind-after.scm:4, g wind-after.scm:5, <program> wind-after.scm:6, <prompt> wind-after.scm:1
+wind-after exit: exit 3 at wind-after.scm:4 (exit 3) | exit ?, <prompt> wind-after.scm:1
+wind-after emergency-exit: exit 3 at wind-after.scm:4 (emergency-exit 3) | <lambda@wind-after.scm:4:51> ?, ~dynamic-wind prelude/control.scm:18, <prompt> wind-after.scm:1
+handler-raise error: error at handler-raise.scm:5 (car 'x) | <lambda@handler-raise.scm:5:11> handler-raise.scm:5, ~raise prelude/control.scm:123, <lambda@handler-raise.scm:6:11> handler-raise.scm:6, f handler-raise.scm:4, g handler-raise.scm:7, <program> handler-raise.scm:8, <prompt> handler-raise.scm:1
+handler-raise raise: error at handler-raise.scm:5 (raise 'boom) | <lambda@handler-raise.scm:5:11> handler-raise.scm:5, ~raise prelude/control.scm:123, <lambda@handler-raise.scm:6:11> handler-raise.scm:6, f handler-raise.scm:4, g handler-raise.scm:7, <program> handler-raise.scm:8, <prompt> handler-raise.scm:1
+handler-raise exit: exit 3 at handler-raise.scm:5 (exit 3) | exit ?, <prompt> handler-raise.scm:1
+handler-raise emergency-exit: exit 3 at handler-raise.scm:5 (emergency-exit 3) | <lambda@handler-raise.scm:5:11> ?, ~raise prelude/control.scm:123, <prompt> handler-raise.scm:1
+handler-continuable error: error at handler-continuable.scm:5 (car 'x) | <lambda@handler-continuable.scm:5:11> handler-continuable.scm:5, <lambda@handler-continuable.scm:6:11> handler-continuable.scm:6, f handler-continuable.scm:4, g handler-continuable.scm:7, <program> handler-continuable.scm:8, <prompt> handler-continuable.scm:1
+handler-continuable raise: error at handler-continuable.scm:5 (raise 'boom) | <lambda@handler-continuable.scm:5:11> handler-continuable.scm:5, <lambda@handler-continuable.scm:6:11> handler-continuable.scm:6, f handler-continuable.scm:4, g handler-continuable.scm:7, <program> handler-continuable.scm:8, <prompt> handler-continuable.scm:1
+handler-continuable exit: exit 3 at handler-continuable.scm:5 (exit 3) | exit ?, <prompt> handler-continuable.scm:1
+handler-continuable emergency-exit: exit 3 at handler-continuable.scm:5 (emergency-exit 3) | <lambda@handler-continuable.scm:5:11> ?, <prompt> handler-continuable.scm:1
+handler-intrinsic error: error at handler-intrinsic.scm:5 (car 'x) | <lambda@handler-intrinsic.scm:5:11> handler-intrinsic.scm:5, ~raise prelude/control.scm:123, f handler-intrinsic.scm:4, g handler-intrinsic.scm:7, <program> handler-intrinsic.scm:8, <prompt> handler-intrinsic.scm:1
+handler-intrinsic raise: error at handler-intrinsic.scm:5 (raise 'boom) | <lambda@handler-intrinsic.scm:5:11> handler-intrinsic.scm:5, ~raise prelude/control.scm:123, f handler-intrinsic.scm:4, g handler-intrinsic.scm:7, <program> handler-intrinsic.scm:8, <prompt> handler-intrinsic.scm:1
+handler-intrinsic exit: exit 3 at handler-intrinsic.scm:5 (exit 3) | exit ?, <prompt> handler-intrinsic.scm:1
+handler-intrinsic emergency-exit: exit 3 at handler-intrinsic.scm:5 (emergency-exit 3) | <lambda@handler-intrinsic.scm:5:11> ?, ~raise prelude/control.scm:123, <prompt> handler-intrinsic.scm:1
+map error: error at map.scm:4 (car 'x) | <lambda@map.scm:4:14> map.scm:4, f map.scm:4, g map.scm:5, <program> map.scm:6, <prompt> map.scm:1
+map raise: error at map.scm:4 (raise 'boom) | <lambda@map.scm:4:14> map.scm:4, f map.scm:4, g map.scm:5, <program> map.scm:6, <prompt> map.scm:1
+map exit: exit 3 at map.scm:4 (exit 3) | exit ?, <prompt> map.scm:1
+map emergency-exit: exit 3 at map.scm:4 (emergency-exit 3) | <lambda@map.scm:4:14> ?, <prompt> map.scm:1
+for-each error: error at for-each.scm:4 (car 'x) | <lambda@for-each.scm:4:19> for-each.scm:4, f for-each.scm:4, g for-each.scm:5, <program> for-each.scm:6, <prompt> for-each.scm:1
+for-each raise: error at for-each.scm:4 (raise 'boom) | <lambda@for-each.scm:4:19> for-each.scm:4, f for-each.scm:4, g for-each.scm:5, <program> for-each.scm:6, <prompt> for-each.scm:1
+for-each exit: exit 3 at for-each.scm:4 (exit 3) | exit ?, <prompt> for-each.scm:1
+for-each emergency-exit: exit 3 at for-each.scm:4 (emergency-exit 3) | <lambda@for-each.scm:4:19> ?, <prompt> for-each.scm:1
+apply error: error at apply.scm:4 (car 'x) | <lambda@apply.scm:4:16> apply.scm:4, f apply.scm:4, g apply.scm:5, <program> apply.scm:6, <prompt> apply.scm:1
+apply raise: error at apply.scm:4 (raise 'boom) | <lambda@apply.scm:4:16> apply.scm:4, f apply.scm:4, g apply.scm:5, <program> apply.scm:6, <prompt> apply.scm:1
+apply exit: exit 3 at apply.scm:4 (exit 3) | exit ?, <prompt> apply.scm:1
+apply emergency-exit: exit 3 at apply.scm:4 (emergency-exit 3) | <lambda@apply.scm:4:16> ?, f apply.scm:4, g apply.scm:5, <program> apply.scm:6, <prompt> apply.scm:1
+cwv-producer error: error at cwv-producer.scm:4 (car 'x) | <lambda@cwv-producer.scm:4:27> cwv-producer.scm:4, f cwv-producer.scm:4, g cwv-producer.scm:5, <program> cwv-producer.scm:6, <prompt> cwv-producer.scm:1
+cwv-producer raise: error at cwv-producer.scm:4 (raise 'boom) | <lambda@cwv-producer.scm:4:27> cwv-producer.scm:4, f cwv-producer.scm:4, g cwv-producer.scm:5, <program> cwv-producer.scm:6, <prompt> cwv-producer.scm:1
+cwv-producer exit: exit 3 at cwv-producer.scm:4 (exit 3) | exit ?, <prompt> cwv-producer.scm:1
+cwv-producer emergency-exit: exit 3 at cwv-producer.scm:4 (emergency-exit 3) | <lambda@cwv-producer.scm:4:27> ?, f cwv-producer.scm:4, g cwv-producer.scm:5, <program> cwv-producer.scm:6, <prompt> cwv-producer.scm:1
+cwv-consumer error: error at cwv-consumer.scm:4 (car 'x) | <lambda@cwv-consumer.scm:4:41> cwv-consumer.scm:4, f cwv-consumer.scm:4, g cwv-consumer.scm:5, <program> cwv-consumer.scm:6, <prompt> cwv-consumer.scm:1
+cwv-consumer raise: error at cwv-consumer.scm:4 (raise 'boom) | <lambda@cwv-consumer.scm:4:41> cwv-consumer.scm:4, f cwv-consumer.scm:4, g cwv-consumer.scm:5, <program> cwv-consumer.scm:6, <prompt> cwv-consumer.scm:1
+cwv-consumer exit: exit 3 at cwv-consumer.scm:4 (exit 3) | exit ?, <prompt> cwv-consumer.scm:1
+cwv-consumer emergency-exit: exit 3 at cwv-consumer.scm:4 (emergency-exit 3) | <lambda@cwv-consumer.scm:4:41> ?, <prompt> cwv-consumer.scm:1
+parameterize error: error at parameterize.scm:5 (car 'x) | <lambda@parameterize.scm:5:9> parameterize.scm:5, f parameterize.scm:5, g parameterize.scm:6, <program> parameterize.scm:7, <prompt> parameterize.scm:1
+parameterize raise: error at parameterize.scm:5 (raise 'boom) | <lambda@parameterize.scm:5:9> parameterize.scm:5, f parameterize.scm:5, g parameterize.scm:6, <program> parameterize.scm:7, <prompt> parameterize.scm:1
+parameterize exit: exit 3 at parameterize.scm:5 (exit 3) | exit ?, <prompt> parameterize.scm:1
+parameterize emergency-exit: exit 3 at parameterize.scm:5 (emergency-exit 3) | <lambda@parameterize.scm:5:9> ?, <prompt> parameterize.scm:1
+converter error: error at converter.scm:3 (car 'x) | <lambda@converter.scm:3:29> converter.scm:3, ~<lambda@prelude/control.scm:209:25> prelude/control.scm:211, f converter.scm:5, g converter.scm:6, <program> converter.scm:7, <prompt> converter.scm:1
+converter raise: error at converter.scm:3 (raise 'boom) | <lambda@converter.scm:3:29> converter.scm:3, ~<lambda@prelude/control.scm:209:25> prelude/control.scm:211, f converter.scm:5, g converter.scm:6, <program> converter.scm:7, <prompt> converter.scm:1
+converter exit: exit 3 at converter.scm:3 (exit 3) | exit ?, <prompt> converter.scm:1
+converter emergency-exit: exit 3 at converter.scm:3 (emergency-exit 3) | <lambda@converter.scm:3:29> ?, ~<lambda@prelude/control.scm:209:25> prelude/control.scm:211, <prompt> converter.scm:1
+eval error: error at eval.scm:3 (car 'x) | h eval.scm:3, f eval.scm:5, g eval.scm:6, <program> eval.scm:7, <prompt> eval.scm:1
+eval raise: error at eval.scm:3 (raise 'boom) | h eval.scm:3, f eval.scm:5, g eval.scm:6, <program> eval.scm:7, <prompt> eval.scm:1
+eval exit: exit 3 at eval.scm:3 (exit 3) | exit ?, <prompt> eval.scm:1
+eval emergency-exit: exit 3 at eval.scm:3 (emergency-exit 3) | h ?, f eval.scm:5, <prompt> eval.scm:1
+eval-datum error: error at eval-datum.scm:4 (eval '(list (car 'x)) (environment '(scheme base) '(scheme process-context))) | eval eval-datum.scm:4, f eval-datum.scm:4, g eval-datum.scm:5, <program> eval-datum.scm:6, <prompt> eval-datum.scm:1
+eval-datum raise: error at eval-datum.scm:4 (eval '(list (raise 'boom)) (environment '(scheme base) '(scheme process-context))) | eval eval-datum.scm:4, f eval-datum.scm:4, g eval-datum.scm:5, <program> eval-datum.scm:6, <prompt> eval-datum.scm:1
+eval-datum exit: exit 3 at eval-datum.scm:4 (eval '(list (exit 3)) (environment '(scheme base) '(scheme process-context))) | exit ?, <prompt> eval-datum.scm:1
+eval-datum emergency-exit: exit 3 at eval-datum.scm:4 (eval '(list (emergency-exit 3)) (environment '(scheme base) '(scheme process-context))) | eval ?, f eval-datum.scm:4, g eval-datum.scm:5, <program> eval-datum.scm:6, <prompt> eval-datum.scm:1
+load error: error at loaded.scm:1 (car 'x) | h loaded.scm:1, load loaded.scm:2, f load.scm:5, g load.scm:6, <program> load.scm:7, <prompt> load.scm:1
+load raise: error at loaded.scm:1 (raise 'boom) | h loaded.scm:1, load loaded.scm:2, f load.scm:5, g load.scm:6, <program> load.scm:7, <prompt> load.scm:1
+load exit: exit 3 at loaded.scm:1 (exit 3) | exit ?, <prompt> load.scm:1
+load emergency-exit: exit 3 at loaded.scm:1 (emergency-exit 3) | h ?, load loaded.scm:2, f load.scm:5, g load.scm:6, <program> load.scm:7, <prompt> load.scm:1
+library error: error at library.scm:5 (car 'x) | h library.scm:5, <program> library.scm:6, <prompt> library.scm:2
+library raise: error at library.scm:5 (raise 'boom) | h library.scm:5, <program> library.scm:6, <prompt> library.scm:2
+library exit: exit 3 at library.scm:5 (exit 3) | exit ?, <prompt> library.scm:2
+library emergency-exit: exit 3 at library.scm:5 (emergency-exit 3) | h ?, <program> library.scm:6, <prompt> library.scm:2
+library-file error: error at file.sld:4 (car 'x) | h file.sld:4, <program> file.sld:5, <prompt> file.sld:1
+library-file raise: error at file.sld:4 (raise 'boom) | h file.sld:4, <program> file.sld:5, <prompt> file.sld:1
+library-file exit: exit 3 at file.sld:4 (exit 3) | exit ?, <prompt> file.sld:1
+library-file emergency-exit: exit 3 at file.sld:4 (emergency-exit 3) | h ?, <program> file.sld:5, <prompt> file.sld:1
+after-replaces error: error at after-replaces.scm:4 (car 'x) | <lambda@after-replaces.scm:4:69> after-replaces.scm:4, ~unwind prelude/control.scm:41, <prompt> after-replaces.scm:1
+after-replaces raise: error at after-replaces.scm:4 (raise 'boom) | <lambda@after-replaces.scm:4:69> after-replaces.scm:4, ~unwind prelude/control.scm:41, <prompt> after-replaces.scm:1
+after-replaces exit: exit 3 at after-replaces.scm:4 (exit 3) | exit ?, <prompt> after-replaces.scm:1
+after-replaces emergency-exit: exit 3 at after-replaces.scm:4 (emergency-exit 3) | <lambda@after-replaces.scm:4:69> ?, ~unwind prelude/control.scm:41, <prompt> after-replaces.scm:1
+trampoline error: error at trampoline.scm:4 (apply car (list 'x)) | f trampoline.scm:4, g trampoline.scm:5, <program> trampoline.scm:6, <prompt> trampoline.scm:1
+trampoline raise: error at trampoline.scm:4 (apply raise (list 'boom)) | f trampoline.scm:4, g trampoline.scm:5, <program> trampoline.scm:6, <prompt> trampoline.scm:1
+trampoline exit: exit 3 at trampoline.scm:4 (apply exit (list 3)) | exit ?, <prompt> trampoline.scm:1
+trampoline emergency-exit: exit 3 at trampoline.scm:4 (apply emergency-exit (list 3)) | f ?, <prompt> trampoline.scm:1
+tail-caller error: error at tail-caller.scm:4 (leave) | f tail-caller.scm:4, g tail-caller.scm:5, <program> tail-caller.scm:6, <prompt> tail-caller.scm:1
+tail-caller raise: error at tail-caller.scm:4 (leave) | f tail-caller.scm:4, g tail-caller.scm:5, <program> tail-caller.scm:6, <prompt> tail-caller.scm:1
+tail-caller exit: exit 3 at tail-caller.scm:4 (leave) | exit ?, <prompt> tail-caller.scm:1
+tail-caller emergency-exit: exit 3 at tail-caller.scm:3 (emergency-exit 3) | leave ?, f tail-caller.scm:4, g tail-caller.scm:5, <program> tail-caller.scm:6, <prompt> tail-caller.scm:1

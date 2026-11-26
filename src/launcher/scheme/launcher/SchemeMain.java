@@ -1003,9 +1003,10 @@ public final class SchemeMain extends AbstractLanguageLauncher {
      * {@code ERROR:} line names a location), but for the root prompt's and
      * any whose source is internal (a prelude frame running resumed, which Truffle doesn't see as
      * internal: docs/upstream.md, "Continuation roots are never internal"). A run of the same frame
-     * is printed once, then how many more times it came.
+     * is printed once, then how many more times it came. Public for StackTraceTest, which prints an
+     * embedder's exception with it.
      */
-    static void printStackTrace(PolyglotException e, PrintStream errors) {
+    public static void printStackTrace(PolyglotException e, PrintStream errors) {
         String previous = null;
         int repeated = 0;
         for (PolyglotException.StackFrame frame : e.getPolyglotStackTrace()) {
