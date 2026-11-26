@@ -111,6 +111,16 @@ public final class EscapeRootNode extends RootNode {
         return null;
     }
 
+    /**
+     * The standard libraries' code, as the prelude's frames are (design.md D8): left out of stack
+     * traces and skipped by an error's location. A root with no source section isn't internal by
+     * default, so the trace showed it, as {@code call/cc ?}.
+     */
+    @Override
+    public boolean isInternal() {
+        return true;
+    }
+
     @Override
     public String getName() {
         return "call/cc";
