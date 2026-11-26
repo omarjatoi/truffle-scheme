@@ -214,8 +214,10 @@ in
         # wrapper adds glibc's static libraries to -H:CLibraryPath, and 25.6's native-image wants a
         # symbol manifest beside each static library there ("Missing static library symbol manifest
         # .../libutil.a.symbols"). The wrapper's other part is kept: the image builder gets the
-        # NIX_ variables that stdenv's C compiler wrapper reads (-E).
+        # NIX_ variables that stdenv's C compiler wrapper reads (-E). The image builder's JVM gets
+        # neither JAVA_TOOL_OPTIONS nor the rest of the environment: its user.home is given (-J).
         ${graalvm}/lib/svm/bin/native-image $(env | sed -n 's/^\(NIX_[A-Za-z0-9_]*\)=.*/-E\1/p') \
+          "-J-Duser.home=$TMPDIR" \
           -p "$(find ${modulePath "jars"} -name '*.jar' | sort | paste -sd: -)" \
           --add-modules=scheme.launcher -o libschemevm \
           --shared -Dorg.graalvm.launcher.class=scheme.launcher.SchemeMain \
