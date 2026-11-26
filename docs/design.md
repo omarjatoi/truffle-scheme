@@ -2767,6 +2767,31 @@ Each entry: the decision, why, and what was rejected.
     out of memory from a stack overflow, both resource exhausted and not
     cancelled, by Truffle's message for the overflow, *"Resource exhausted:
     Stack overflow"* (the error has none).
+  - *Nothing else prints.* The heap is full for every thread, and three
+    other things printed in a run that filled it, //tests:memory's flake
+    (heap-deep, 23 of 100 runs on this Mac under load, Buildkite #821 once):
+    1. libgraal's Java stack trace, on standard output, when the heap fills
+       while it handles a compilation's failure (docs/upstream.md, "A full
+       heap during a libgraal compilation"), in 20 of the 100. It writes to
+       HotSpot's console output (`tty`), which no Truffle or Graal option
+       reaches; the JVM launcher sends that to standard error and turns it
+       off unless asked for (D17, "The VM's output").
+    2. `Exception in thread "TruffleCompilerThread-n"
+       java.lang.OutOfMemoryError: Java heap space`, from the JVM's default
+       handler of an uncaught exception, in 2: a compiler thread's
+       allocation that failed. The launcher's default handler
+       (`SchemeMain.prepareForAFullHeap`) lets a thread die of an
+       `OutOfMemoryError` silently, as the program's error reports the full
+       heap, and prints any other error as the JVM does; it is the
+       process's, both launchers'. The program's thread catches its own
+       (`EvaluationThread`), and an embedder's thread is the embedder's.
+    3. `NoClassDefFoundError: Could not initialize class
+       java.lang.StackTraceElement$HashedModules`, and the framework's
+       `AbortException` with it, status 1, in 1: the full heap's exception
+       was the run's first to build a stack trace, the class's initializer
+       ran out of memory, and a class that fails to initialize can't be
+       used again. The launcher builds a stack trace as it starts
+       (`prepareForAFullHeap`), which initializes it.
   - *Under the sandbox* (D10): `UNTRUSTED`'s `sandbox.MaxHeapMemory` (what
     the context retains, a soft limit) cancels the context, which is then
     closed (`isCancelled()`). `ISOLATED`'s `engine.MaxIsolateMemory` is the
@@ -5134,7 +5159,8 @@ Each entry: the decision, why, and what was rejected.
       `--vm.XX:+UseCompactObjectHeaders` still runs without the build's
       cache ("Which JVM options it takes").
 - **The launcher's JVM: memory and start-up.** Besides the collector, the
-  JVM launcher starts its JVM with 4 host compiler threads and, for
+  JVM launcher starts its JVM with 4 host compiler threads, its own output
+  on standard error and off ("The VM's output", below) and, for
   `bazel-bin/scheme`, an AOT cache (`tests/harness/harness.py`:
   `launcher_vm_args`, `Runtime.launcher`). Each is left out when the JVM
   options (the command's, `JDK_JAVA_OPTIONS`, `JAVA_TOOL_OPTIONS`) set it
@@ -5364,6 +5390,44 @@ Each entry: the decision, why, and what was rejected.
     threads: 1.03, 1.01, 0.97 and 0.90; with 3: 1.00, 1.02, 0.95 and 0.89.
     A hello-world program took 321 ms and 233 MB against 398 ms and 342 MB
     (31 interleaved runs, the medians).
+  - *The VM's output.* HotSpot's own console output (`tty`: what
+    `-XX:+PrintFlagsFinal`, `-XX:+PrintCompilation` and the like print, a
+    thread dump on SIGQUIT, and libgraal's messages, which the compiler's
+    isolates write through the `_log` hook HotSpot gives them) goes to
+    standard output by default, into the program's output. The JVM launcher
+    starts its JVM with `-XX:+DisplayVMOutputToStderr`, so it goes to
+    standard error, where the native launcher writes its VM's
+    (`--vm.XX:+PrintFlagsFinal`); and with it off, `-XX:-DisplayVMOutput`
+    (a diagnostic flag, unlocked for it alone:
+    `-XX:+UnlockDiagnosticVMOptions -XX:-DisplayVMOutput
+    -XX:-UnlockDiagnosticVMOptions`), unless the JVM options ask for more
+    than the heap's and the stacks' sizes (`-Xmx`, `-Xms`, `-Xmn`, `-Xss`)
+    and system properties other than the compiler's (`jdk.graal.`,
+    `graal.`, `jvmci.`, `libgraal.`, `jdk.libgraal.`): any other option
+    leaves it on, so that an option never loses what it prints (M10-04's
+    rule). The stream is left to the JVM options that choose one
+    (`-XX:±DisplayVMOutputToStdout`, `-XX:±DisplayVMOutputToStderr`), and
+    each of those is an option that asks. Off, because libgraal prints a
+    Java stack trace there when the heap fills during a compilation
+    (docs/upstream.md, "A full heap during a libgraal compilation"; D8,
+    "Running out of memory"), and nothing else reaches it:
+    `jdk.graal.LogFile` doesn't (it is the isolate's `System.err`, not
+    Graal's `TTY`), nor `engine.CompilationFailureAction` (the failure's
+    own handling fails), nor a log handler (it isn't Truffle's logging).
+    What off costs: a thread dump on SIGQUIT (`kill -3`, `Ctrl-\`) prints
+    nothing; `jcmd <pid> Thread.print` still prints one, and so does
+    SIGQUIT with any option that asks (`--vm.XX:+DisplayVMOutputToStderr`).
+    The JVM's errors as it starts (*"Invalid maximum heap size"*) and a
+    crash's report aren't `tty`'s, and print as before, as do unified
+    logging (`-Xlog`, `-XX:+PrintGC`, on standard output unless it says
+    otherwise) and the JVM's warnings. The JVM still takes the AOT cache
+    with these flags. The native launcher has no `tty` and no libgraal:
+    unchanged. Rejected: only moving the output to standard error (the
+    stack trace stays, on standard error, which D8 promises a full heap's
+    report keeps free of Java stack traces); turning it off whatever the
+    options (`--vm.XX:+PrintFlagsFinal` would print nothing); and sending
+    it to a file (`-XX:+LogVMOutput -XX:LogFile=`: a file of XML per run,
+    somewhere).
   - **The primitives' registry.** An area's primitives are the constants of
     an enum in its builtins file (`NumberPrimitives.Primitive`, ...): each
     has the primitive's name, its arity and what its calls give
