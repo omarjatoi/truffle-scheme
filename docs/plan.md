@@ -2430,7 +2430,7 @@ measurements don't run on this machine while a benchmark measures.
     native launcher, with a test of the command lines (a Python test of
     harness.py, or `//tests:tools`); AGENTS.md's "Commands" and
     tests/fuzz/README.md say so.
-- [ ] **M14-11 · The fuzzer through the native launcher**
+- [x] **M14-11 · The fuzzer through the native launcher**
   - Depends on M14-10. tests/fuzz's modes are `interp`, `compile`,
     `torture` and `torture-owned`, all on the JVM; M14's exit wants
     campaigns through the native launcher too, as

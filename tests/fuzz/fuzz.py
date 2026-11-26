@@ -1,7 +1,8 @@
 """The differential fuzzer (tests/fuzz/README.md): random programs (gen.py) under chibi-scheme and
 under ours; a program whose stdout or exit status differs is minimised and saved.
 
-  bazel run //:r7rs -- fuzz [--seed N] [--count N] [--mode interp,compile,torture,torture-owned] ...
+  bazel run //:r7rs -- fuzz [--seed N] [--count N] [--mode interp,compile,torture,torture-owned,native]
+                            [--native FILE] ...
 """
 
 import concurrent.futures
@@ -18,13 +19,18 @@ from os.path import join
 import gen
 import harness
 
-# What each mode passes the JVM (harness.vm_args): the conformance tests' modes.
+# What each mode passes the JVM (harness.vm_args): the conformance tests' modes. `native` runs the
+# native launcher as //tests:conformance_native does: interpreted, with harness.native_test_options()
+# and the launcher options of vm_args(native=True), none of them a JVM option (Runner.command).
 MODES = {
     'interp': dict(compile=False, torture=False),
     'compile': dict(compile=True, torture=False),
     'torture': dict(compile=False, torture=True),
     'torture-owned': dict(compile=False, torture='owned'),
+    'native': dict(compile=False, torture=False, native=True),
 }
+# The native launcher that `--mode native` runs when --native names none: the checkout's.
+DEFAULT_NATIVE = join('bazel-bin', 'scheme-native')
 
 # A run that prints more than this, or takes longer, says nothing about either implementation: the
 # generator made a program too big to be useful, and the program is skipped.
@@ -75,11 +81,13 @@ def _run(command, timeout, env=None):
 
 
 class Runner:
-    """Runs program files under chibi (cached by content) and under ours, in one mode."""
+    """Runs program files under chibi (cached by content) and under ours, in one mode: on the JVM
+    (runtime, a harness.Runtime) or through the native launcher (native, its path)."""
 
-    def __init__(self, chibi, runtime, workdir):
+    def __init__(self, chibi, runtime, workdir, native=None):
         self.chibi = chibi
         self.runtime = runtime
+        self.native = native
         self.workdir = workdir
         self._chibi_cache = {}
         self._lock = threading.Lock()
@@ -107,10 +115,16 @@ class Runner:
             self._chibi_cache[digest] = r
         return r
 
+    def command(self, path, mode):
+        """The command line that runs the program file `path` under ours, in `mode`."""
+        if MODES[mode].get('native'):
+            options = harness.launcher_options(harness.vm_args(**MODES[mode]))
+            return [self.native] + harness.native_test_options() + options + [path]
+        return self.runtime.launcher([path], harness.vm_args(**MODES[mode]))
+
     def run_ours(self, text, mode):
         _, path = self.write(text)
-        command = self.runtime.launcher([path], harness.vm_args(**MODES[mode]))
-        return _run(command, OURS_TIMEOUT)
+        return _run(self.command(path, mode), OURS_TIMEOUT)
 
 
 _CRASH = re.compile(r'\b(?:[a-z_$][\w$]*\.)+[A-Z][\w$]*(?:Exception|Error)\b')
@@ -334,11 +348,12 @@ def _delete(tree, path):
 # ---------------------------------------------------------------------------
 
 def fuzz(chibi, runtime, seed, count, modes, start=0, batch=10, jobs=4, depth=5, cases=8, out=None,
-         minimize=True, budget=400, log=harness.log):
+         minimize=True, budget=400, log=harness.log, native=None):
     """Runs `count` programs from `start` in each mode; returns the mismatches as
-    [(mode, first program, file, minimised file or None, description)]."""
+    [(mode, first program, file, minimised file or None, description)]. `native`: the native
+    launcher's path, for the `native` mode."""
     out = out or join(tempfile.gettempdir(), 'r7rs-fuzz')
-    runner = Runner(chibi, runtime, join(out, 'work'))
+    runner = Runner(chibi, runtime, join(out, 'work'), native)
     files = [(s, min(batch, start + count - s)) for s in range(start, start + count, batch)]
     texts, ends = {}, {}
     for s, n in files:
@@ -419,7 +434,9 @@ def main_args(parser):
     parser.add_argument('--start', type=int, default=0, help='the first program\'s index')
     parser.add_argument('--mode', default='interp',
                         help='comma-separated: ' + ', '.join(MODES))
-    parser.add_argument('--batch', type=int, default=10, help='programs per file (per JVM)')
+    parser.add_argument('--native', metavar='FILE',
+                        help=f'the native launcher --mode native runs (default: the checkout\'s {DEFAULT_NATIVE})')
+    parser.add_argument('--batch', type=int, default=10, help='programs per file (per process)')
     parser.add_argument('--jobs', type=int, default=4)
     parser.add_argument('--depth', type=int, default=5)
     parser.add_argument('--cases', type=int, default=8, help='written expressions per program')
@@ -430,17 +447,35 @@ def main_args(parser):
                         help='print the programs instead of running them')
 
 
+def native_launcher(given):
+    """The native launcher for --mode native: the one --native names (`given`), else the checkout's
+    bazel-bin/scheme-native."""
+    if given:
+        path = os.path.abspath(given)
+        harness.check(os.path.isfile(path) and os.access(path, os.X_OK), f'--native {given}: no such executable')
+        return path
+    path = join(harness.workspace(), DEFAULT_NATIVE)
+    harness.check(os.path.isfile(path) and os.access(path, os.X_OK),
+                  f'--mode native: no native launcher at {path}; build it with `bazel build //:scheme-native` '
+                  '(a minute, about 3 GB), or name one with --native FILE')
+    return path
+
+
 def run_command(o, chibi, runtime):
     modes = o.mode.split(',')
     for m in modes:
         harness.check(m in MODES, f'unknown mode {m}; modes: {", ".join(MODES)}')
+    harness.check(not o.native or 'native' in modes, f'--native is for --mode native; the modes given are {o.mode}')
     if o.print_only:
         for s in range(o.start, o.start + o.count, o.batch):
             n = min(o.batch, o.start + o.count - s)
             sys.stdout.write(text_of(batch_forms(o.seed, s, n, o.depth, o.cases)))
         return
-    out = os.path.abspath(o.out) if o.out else None
+    native = native_launcher(o.native) if 'native' in modes else None
+    if native:
+        harness.log(f'native: {native}')
+    out =os.path.abspath(o.out) if o.out else None
     results, _ = fuzz(chibi, runtime, o.seed, o.count, modes, start=o.start, batch=o.batch, jobs=o.jobs,
-                      depth=o.depth, cases=o.cases, out=out, minimize=o.minimize, budget=o.budget)
+                      depth=o.depth, cases=o.cases, out=out, minimize=o.minimize, budget=o.budget, native=native)
     if results:
         harness.fail(f'{len(results)} files differ: ' + ' '.join(r[3] or r[2] for r in results))

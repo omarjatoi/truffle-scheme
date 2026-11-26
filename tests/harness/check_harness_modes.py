@@ -2,9 +2,12 @@
 and `--torture-owned`, and the fuzzer's `compile`, `torture` and `torture-owned`, start the JVM with
 Java's and Truffle's detailed assertions (harness.ASSERTION_VM_ARGS), as the Bazel compile and torture
 tests do; the interpreter's runs don't, and the native launcher's conformance runs get only the
-launcher options of the mode (launcher_options, which has no option for a JVM argument). The command
-lines are the ones each command builds, with no JVM started: subprocess.run is replaced."""
+launcher options of the mode (launcher_options, which has no option for a JVM argument), as do the
+fuzzer's `native` mode's (M14-11), whose launcher is named or found, or the command says how to get
+one. The command lines are the ones each command builds, with no JVM started: subprocess.run is
+replaced."""
 
+import argparse
 import contextlib
 import io
 import tempfile
@@ -139,13 +142,59 @@ class Fuzzer(unittest.TestCase):
         return jvm_options(command)
 
     def test_every_mode_but_the_interpreter_runs_with_the_assertions(self):
-        self.assertEqual(set(fuzz.MODES), {'interp', 'compile', 'torture', 'torture-owned'})
+        self.assertEqual(set(fuzz.MODES), {'interp', 'compile', 'torture', 'torture-owned', 'native'})
         options = self.jvm_options('interp')
         self.assertNotIn('-ea', options)
         self.assertNotIn('-Dtruffle.DetailedAssertions=true', options)
         for mode in ('compile', 'torture', 'torture-owned'):
             options = self.jvm_options(mode)
             self.assertTrue(has_assertions(options), (mode, options))
+
+    def test_native_runs_the_native_launcher_as_conformance_native_does(self):
+        # plan.md M14-11: the options _run_native gives a section that doesn't need the JIT.
+        recorder = Recorder(stop=False)
+        with tempfile.TemporaryDirectory() as workdir, mock.patch('subprocess.run', recorder):
+            fuzz.Runner('/bin/chibi-scheme', None, workdir, native='/bin/scheme-native').run_ours('(display 1)', 'native')
+        self.assertEqual(len(recorder.commands), 1)
+        command = recorder.commands[0]
+        self.assertEqual(command[0], '/bin/scheme-native')
+        self.assertTrue(command[-1].endswith('.scm'), command)
+        options = command[1:-1]
+        expected = harness.native_test_options() + harness.launcher_options(harness.vm_args(native=True))
+        self.assertEqual(options, expected)
+        self.assertIn('--vm.XX:+AbortVMOnCompilationFailure', options)
+        self.assertIn('--engine.Compilation=false', options)
+        for arg in options:
+            self.assertFalse(arg.startswith('-D') or arg == '-ea', command)
+
+    def run_command(self, *args):
+        """`fuzz` with these arguments, in a checkout with no bazel-bin: (exit status, stderr)."""
+        parser = argparse.ArgumentParser()
+        fuzz.main_args(parser)
+        o = parser.parse_args(['--count', '1'] + list(args))
+        err = io.StringIO()
+        with (tempfile.TemporaryDirectory() as checkout, mock.patch.dict('os.environ', BUILD_WORKSPACE_DIRECTORY=checkout),
+              mock.patch('subprocess.run', Recorder()), contextlib.redirect_stderr(err),
+              self.assertRaises(SystemExit) as e):
+            fuzz.run_command(o, '/bin/chibi-scheme', RUNTIME)
+        return e.exception.code, err.getvalue()
+
+    def test_native_without_a_launcher_says_how_to_build_one(self):
+        status, err = self.run_command('--mode', 'native')
+        self.assertEqual(status, 1)
+        self.assertIn('bazel-bin/scheme-native', err)
+        self.assertIn('bazel build //:scheme-native', err)
+        self.assertIn('--native FILE', err)
+
+    def test_native_option_with_a_missing_file_is_an_error(self):
+        status, err = self.run_command('--mode', 'native', '--native', '/no/such/scheme-native')
+        self.assertEqual(status, 1)
+        self.assertIn('--native /no/such/scheme-native: no such executable', err)
+
+    def test_native_option_without_native_mode_is_an_error_not_ignored(self):
+        status, err = self.run_command('--mode', 'interp,compile', '--native', '/bin/scheme-native')
+        self.assertEqual(status, 1)
+        self.assertIn('--native is for --mode native', err)
 
 
 if __name__ == '__main__':

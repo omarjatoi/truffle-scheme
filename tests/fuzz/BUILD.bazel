@@ -38,3 +38,33 @@ py_test(
     tags = ["cpu:4"],
     deps = [":fuzz"],
 )
+
+# The same seed's programs through the native launcher (//:scheme-native), as `fuzz --mode native`
+# runs them: interpreted, with //tests:conformance_native's options. Only when named, like the
+# other native tests (tests/BUILD.bazel): the launcher takes a minute and a few GB to build.
+py_test(
+    name = "fuzz_smoke_native",
+    size = "large",
+    srcs = [
+        "smoke.py",
+        "//tests/harness:run_test.py",
+    ],
+    args = [
+        "smoke",
+        "--native=$(rlocationpath //:scheme-native)",
+        "--chibi=$(rlocationpath //bazel:chibi-scheme)",
+        "--mode=native",
+        "--seed=1",
+        "--count=300",
+    ],
+    data = [
+        "//:scheme-native",
+        "//bazel:chibi-scheme",
+    ],
+    main = "//tests/harness:run_test.py",
+    tags = [
+        "cpu:4",
+        "manual",
+    ],
+    deps = [":fuzz"],
+)

@@ -6,8 +6,11 @@ whose stdout or exit status differs is minimised and saved (design.md D19).
 ```
 bazel run //:r7rs -- fuzz --seed 7 --count 2000                    # interpreted
 bazel run //:r7rs -- fuzz --seed 7 --count 500 --mode compile,torture,torture-owned
+bazel build //:scheme-native && bazel run //:r7rs -- fuzz --seed 7 --count 500 --mode native
 bazel run //:r7rs -- fuzz --seed 7 --start 130 --count 10 --print  # the programs, not run
 bazel test //tests/fuzz:fuzz_smoke                                 # a fixed seed's 300 programs
+bazel test //tests/fuzz:fuzz_smoke_native                          # the same, native (Linux, executors)
+bazel test --platforms=//bazel/platforms:macos_arm64 //tests/fuzz:fuzz_smoke_native   # native, here
 ```
 
 - **Programs** (`gen.py`) are typed expression trees over the base library and
@@ -26,7 +29,7 @@ bazel test //tests/fuzz:fuzz_smoke                                 # a fixed see
   the order of evaluation open), and never writes what R7RS leaves open
   (procedures, records, `eof`) nor relies on what chibi-scheme is known to
   get wrong (below). A difference is a bug in one of the two.
-- **Files**: `--batch` programs (default 10) share a file, one JVM. The
+- **Files**: `--batch` programs (default 10) share a file, one process. The
   saved files, `<mode>-<seed>-<start>.scm` and the minimised
   `<mode>-<seed>-<start>.min.scm`, go in `--out` (default
   `$TMPDIR/r7rs-fuzz`); `bazel run //:r7rs -- diff FILE` reruns one.
@@ -45,6 +48,20 @@ bazel test //tests/fuzz:fuzz_smoke                                 # a fixed see
   through it (`harness.vm_args(native=True)`) takes only the mode's launcher
   options. chibi-scheme runs once per file, whatever the modes. `--jobs`
   (default 4) runs files in parallel.
+- **`native`**: through the native launcher, as `//tests:conformance_native`
+  runs it: interpreted (`--engine.Compilation=false`), with
+  `--vm.XX:+AbortVMOnCompilationFailure` (`harness.native_test_options()`),
+  and nothing else. The launcher is the checkout's `bazel-bin/scheme-native`,
+  or the one `--native FILE` names; build it first (`bazel build
+  //:scheme-native`, a minute and about 3 GB), since the command doesn't, and
+  without one it stops and says so. `--native` without `--mode native` is an
+  error, not ignored. There are no native torture modes: a native image fixes
+  `scheme.Torture` when it is built (design.md D17). Its mismatches are
+  minimised and saved as the other modes' are, as `native-<seed>-<start>.scm`;
+  the native launcher has no `diff` command, so rerun one with
+  `bazel-bin/scheme-native FILE` and compare it with chibi-scheme's output.
+  `//tests/fuzz:fuzz_smoke_native` runs `fuzz_smoke`'s programs this way,
+  only when named, like the other native tests.
 
 ## Triage
 
