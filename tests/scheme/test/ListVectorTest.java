@@ -132,10 +132,10 @@ public class ListVectorTest {
         assertEquals("(\"map: argument 4 is not a proper list\" ((a b . c)))", raisesWith("(map list '(1 2) '(x y) '(a b . c))"));
         assertEquals("(\"for-each: argument 2 is not a proper list\" ((1 . 2)))", raisesWith("(for-each list '(1 . 2) '(a b c))"));
         assertEquals("error", raises("(map car '(1) '(2))"));
-        String reentry = "(let ((k #f) (results '())) (let ((v %s)) (set! results (cons v results)) (if (= (length results) 1) (k 30)) (reverse results)))";
-        assertEquals("((1 20) (1 30))", write(String.format(reentry, "(map (lambda (x) (if (= x 2) (call/cc (lambda (c) (set! k c) 20)) x)) '(1 2))")));
-        assertEquals("((11 20) (11 30))", write(String.format(reentry, "(map (lambda (x y) (if (= x 2) (call/cc (lambda (c) (set! k c) 20)) (+ x y))) '(1 2) '(10 20))")));
-        assertEquals("((111 20) (111 30))", write(String.format(reentry, "(map (lambda (x y z) (if (= x 2) (call/cc (lambda (c) (set! k c) 20)) (+ x y z))) '(1 2) '(10 20) '(100 200))")));
+        String reentry = "(let ((k #f) (results '())) (let ((v EXPR)) (set! results (cons v results)) (if (= (length results) 1) (k 30)) (reverse results)))";
+        assertEquals("((1 20) (1 30))", write(reentry.replace("EXPR", "(map (lambda (x) (if (= x 2) (call/cc (lambda (c) (set! k c) 20)) x)) '(1 2))")));
+        assertEquals("((11 20) (11 30))", write(reentry.replace("EXPR", "(map (lambda (x y) (if (= x 2) (call/cc (lambda (c) (set! k c) 20)) (+ x y))) '(1 2) '(10 20))")));
+        assertEquals("((111 20) (111 30))", write(reentry.replace("EXPR", "(map (lambda (x y z) (if (= x 2) (call/cc (lambda (c) (set! k c) 20)) (+ x y z))) '(1 2) '(10 20) '(100 200))")));
     }
 
     /** A circular list (1 2 3 1 2 3 ...) bound to c, and a circular alist bound to a, around expr. */
