@@ -5400,12 +5400,15 @@ Each entry: the decision, why, and what was rejected.
     (`--vm.XX:+PrintFlagsFinal`); and with it off, `-XX:-DisplayVMOutput`
     (a diagnostic flag, unlocked for it alone:
     `-XX:+UnlockDiagnosticVMOptions -XX:-DisplayVMOutput
-    -XX:-UnlockDiagnosticVMOptions`), unless the JVM options ask for more
-    than the heap's and the stacks' sizes (`-Xmx`, `-Xms`, `-Xmn`, `-Xss`)
-    and system properties other than the compiler's (`jdk.graal.`,
-    `graal.`, `jvmci.`, `libgraal.`, `jdk.libgraal.`): any other option
-    leaves it on, so that an option never loses what it prints (M10-04's
-    rule). The stream is left to the JVM options that choose one
+    -XX:-UnlockDiagnosticVMOptions`), unless the options ask for more than
+    the heap's and the stacks' sizes (`-Xmx`, `-Xms`, `-Xmn`, `-Xss`) and
+    system properties: any other JVM option, and any of the compiler's
+    (system properties that start with `jdk.graal.`, `graal.`, `jvmci.`,
+    `libgraal.`, `jdk.libgraal.`, `polyglot.engine.` or
+    `polyglot.compiler.`, and the launcher's `--engine.` and `--compiler.`
+    options: with `--compiler.InstrumentBoundaries`, Graal prints the
+    profile there), leaves it on, so that an option never loses what it
+    prints (M10-04's rule). The stream is left to the JVM options that choose one
     (`-XX:±DisplayVMOutputToStdout`, `-XX:±DisplayVMOutputToStderr`), and
     each of those is an option that asks. Off, because libgraal prints a
     Java stack trace there when the heap fills during a compilation
