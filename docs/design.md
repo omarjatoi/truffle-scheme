@@ -3883,7 +3883,12 @@ Each entry: the decision, why, and what was rejected.
   - *Checked.* `nix flake check` runs docs/usage.md's Nix blocks (`<!--
     readme: run nix -->`, which `//tests:readme` skips) with `nix` a shim
     that runs the packages, and a section of chibi-scheme's suite through
-    each launcher, every test passing.
+    each launcher, every test passing. Checked (2026-11-26) on this Mac
+    (aarch64-darwin), and for aarch64-linux and x86_64-linux in `nixos/nix`
+    containers with Nix's sandbox on (x86-64 under emulation: its native image
+    took 12 to 19 minutes, aarch64's 2); Determinate's Linux builder on this
+    Mac failed to start then (*"Failed to fetch Native Linux Builder guest
+    store paths"*).
   - *Rejected: Bazel inside the derivation*, with its repositories fetched
     by a fixed-output derivation (`bazel vendor`, or nixpkgs'
     `buildBazelPackage`). It would build exactly what `bazel build` does,
