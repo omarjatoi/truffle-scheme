@@ -5101,6 +5101,175 @@ Each entry: the decision, why, and what was rejected.
     of it the heap (21 interleaved runs, the medians). In a benchmark (`fib`,
     `-Xmx2g`) the young generation (630 MB touched) is most of the 760 MB
     footprint.
+  - *Where a benchmark's memory goes (M14-01).* The report's median peak
+    RSS was 954 MB (`docs/benchmarks.md` at `21be262a34b8`; `primes` and
+    `ctak` are the median), the native launcher's 189. Measured for `primes`,
+    `fib`, and the four programs that keep the most alive (`earley`,
+    `nboyer`, `mperm`, `paraffins`), at the report's counts and 3 iterations
+    in one process (`bench/postlude.scm`, as the report runs them), each
+    five ways: `bazel-bin/scheme` as a user runs it (no maximum heap, the AOT
+    cache) and with `--vm.Xmx2g`; the report's JVM (`-Xmx2g` and no AOT
+    cache: `--vm.Xshare:auto`); and `bazel-bin/scheme-native` without and
+    with `--vm.Xmx2g`. Built at `6893f7a` (GraalVM 25.6), on the report's
+    machine (Apple M3 Max, 16 cores, 128 GB), shared with other agents'
+    builds and benchmarks: the 1-minute load was 7 to 245 (9 to 170 for
+    four runs in five), which stretches
+    the times (not used here) far more than the memory. Peak RSS is
+    `wait4`'s `ru_maxrss`, as in the report (5 runs of each, the
+    median and the range).
+    Where it goes is from 2 more runs of each with Native Memory Tracking
+    (`-XX:NativeMemoryTracking=detail`), a GC log (`-Xlog:gc*`) and
+    `vmmap -w` snapshots every half a second or so (each took 1-4 s at that
+    load): every region a snapshot lists is classed by its address, as the
+    Java heap (its range from `jcmd GC.heap_info`), a region NMT reserved
+    (the map of `jcmd VM.native_memory detail`, by NMT's category), a
+    libgraal isolate (outside both: each isolate maps libgraal's image heap
+    from `libjvmcicompiler.dylib`, then reserves 32 GB of address space for
+    its own heap), malloc's zones, thread stacks, or a library's text and
+    data. The system libraries in the shared cache are left out, as
+    `ru_maxrss` leaves them out. Each run's snapshot with the most resident
+    memory came within 0.2-4.5% below its `ru_maxrss` (`fib` 6-9%, and one
+    `mperm` run 17%: their peaks last under a second). The medians of the
+    two (MB):
+
+    | Program, launcher | Peak RSS | Java heap (touched) | libgraal (isolates) | Classes | Code, GC | malloc | Libraries, stacks |
+    |---|--:|--:|--:|--:|--:|--:|--:|
+    | `primes`, JIT | 928 (910-939) | 557 | 269 (8-9) | 33 | 9 | 20 | 30 |
+    | `primes`, JIT, `-Xmx2g` | 928 (915-936) | 558 | 267 (8-9) | 32 | 7 | 18 | 30 |
+    | `primes`, report's JVM | 934 (921-945) | 554 | 265 (8-9) | 30 | 12 | 27 | 31 |
+    | `primes`, native | 154 (146-160) | 73 | 64 (1) |  |  | 2 | 15 |
+    | `primes`, native, `-Xmx2g` | 154 (144-164) | 74 | 62 (1) |  |  | 2 | 15 |
+    | `fib`, JIT | 831 (826-851) | 556 | 150 (6-8) | 32 | 6 | 16 | 28 |
+    | `fib`, JIT, `-Xmx2g` | 825 (816-837) | 557 | 161 (6-8) | 32 | 8 | 17 | 29 |
+    | `fib`, report's JVM | 838 (824-873) | 557 | 200 (8) | 30 | 12 | 25 | 29 |
+    | `fib`, native | 103 (79-109) | 55 | 31 (1) |  |  | 2 | 14 |
+    | `fib`, native, `-Xmx2g` | 91 (88-102) | 34 | 31 (1) |  |  | 2 | 14 |
+    | `earley`, JIT | 4,502 (4,453-4,633) | 3,518 | 66 (2-5) | 30 | 17 | 47 | 26 |
+    | `earley`, JIT, `-Xmx2g` | 2,348 (2,280-2,385) | 1,952 | 231 (5-9) | 33 | 12 | 54 | 29 |
+    | `earley`, report's JVM | 2,420 (2,393-2,446) | 1,962 | 176 (4-9) | 29 | 15 | 52 | 28 |
+    | `earley`, native | 3,407 (2,810-3,801) | 3,083 | 92 (1) |  |  | 11 | 14 |
+    | `earley`, native, `-Xmx2g` | 1,520 (1,433-1,631) | 1,393 | 76 (1) |  |  | 9 | 14 |
+    | `nboyer`, JIT | 2,288 (1,589-2,530) | 1,552 | 306 (7) | 28 | 9 | 50 | 27 |
+    | `nboyer`, JIT, `-Xmx2g` | 2,171 (2,082-2,387) | 1,975 | 145 (5) | 30 | 10 | 52 | 27 |
+    | `nboyer`, report's JVM | 2,206 (2,082-2,425) | 1,976 | 221 (5-6) | 31 | 15 | 57 | 28 |
+    | `nboyer`, native | 1,115 (1,021-1,245) | 1,051 | 139 (1) |  |  | 2 | 14 |
+    | `nboyer`, native, `-Xmx2g` | 1,032 (986-1,058) | 831 | 138 (1) |  |  | 2 | 14 |
+    | `mperm`, JIT | 2,666 (2,553-2,740) | 1,931 | 241 (8) | 32 | 11 | 16 | 28 |
+    | `mperm`, JIT, `-Xmx2g` | 2,094 (2,038-2,384) | 1,812 | 220 (8-9) | 30 | 10 | 53 | 28 |
+    | `mperm`, report's JVM | 2,144 (2,094-2,398) | 1,608 | 256 (8-9) | 31 | 14 | 62 | 29 |
+    | `mperm`, native | 1,374 (1,310-1,421) | 1,303 | 57 (1) |  |  | 22 | 14 |
+    | `mperm`, native, `-Xmx2g` | 1,280 (1,207-1,361) | 1,202 | 59 (1) |  |  | 26 | 14 |
+    | `paraffins`, JIT | 1,788 (1,751-1,822) | 1,222 | 295 (9) | 33 | 10 | 22 | 30 |
+    | `paraffins`, JIT, `-Xmx2g` | 1,764 (1,723-1,814) | 1,198 | 275 (8-9) | 33 | 10 | 21 | 29 |
+    | `paraffins`, report's JVM | 1,658 (1,572-1,693) | 1,082 | 271 (8-9) | 31 | 13 | 28 | 30 |
+    | `paraffins`, native | 1,404 (1,190-1,462) | 1,200 | 62 (1) |  |  | 36 | 15 |
+    | `paraffins`, native, `-Xmx2g` | 1,106 (1,060-1,170) | 1,091 | 62 (1) |  |  | 56 | 15 |
+
+    *Classes* is the AOT cache's mapping (NMT's *Shared class space*, 25-29
+    MB) and metaspace (2-4 MB) with the cache, and the JDK's CDS archive
+    (12-14) and metaspace (15-16) without it (the report's JVM): the same 30
+    MB either way. The native launcher's *Java heap* column is its isolate's
+    heap and image heap, and its *libgraal* column its compilation isolate
+    (`CompileInIsolates`, one for all its compiler threads), told apart by
+    how much of the image heap each touched (7-8 MB and 9-11).
+
+    What each part is, and whose:
+    - *The young generation: the JVM's sizing, filled by our allocation.*
+      With no `-Xms`, the initial heap is a 64th of the machine's memory, 2
+      GB here with or without `-Xmx2g`, and the serial collector's young
+      generation a third of it: 614 MB (eden 546, two survivor spaces of
+      68). A program that allocates more than eden touches all of it before
+      its first collection, and every program here did: `primes` and `fib`
+      keep 6-7 MB alive after each collection and still have 557 MB of heap
+      resident, 60-68% of their RSS. That is the machine's size, not the
+      program's: on a 16 GB machine the same JVM would start a young
+      generation of about 85 MB. How much a program allocates is ours, and
+      the JIT allocates far more than the native launcher running the same
+      code: `fib` 7.9 GB against 22 MB (`-XX:+PrintGCSummary`: no
+      collection at all), `primes` 1.9 GB against 0.8, `nboyer` 18 GB
+      against 9, `earley` 18 against 13 (the collections' before and after
+      sizes, `-Xlog:gc`). JFR's allocation samples
+      (`jdk.ObjectAllocationSample`, one run each, `-Xmx2g`) put 7.6 of
+      `fib`'s 7.7 GB in `Object[]`, the calls' argument arrays, in every
+      iteration, the compiled ones too (its collections come as often in
+      the third as in the first), and `primes`' 1.8 GB in pairs (1.1 GB,
+      the program's lists), `Object[]` (0.36) and `Long` (0.23). Why compiled code on HotSpot keeps the argument arrays that
+      the native image's doesn't wasn't found here.
+    - *The old generation: the program's, and without a maximum the serial
+      collector's growth.* At `-Xmx2g` the old generation holds what the
+      program keeps alive and what earlier iterations promoted, and a full
+      collection empties it when it fills (`earley` 2, `nboyer` and `mperm`
+      1). Without a maximum (32 GB, a quarter of the memory) the collector
+      grows the old generation instead of collecting it in full: `earley`
+      made no full collection, held 3.6 GB after its last young collection
+      (the garbage of its earlier iterations among it) and peaked at 4.5 GB
+      against 2.3; `mperm` 2.7 against 2.1. `nboyer` and `paraffins` grew
+      little (2.3 against 2.2, 1.8 either way). The native launcher's
+      `Adaptive2` policy grows its heap the same way without a maximum
+      (`earley` 3.4 GB against 1.5, `paraffins` 1.4 against 1.1).
+    - *libgraal's isolates: GraalVM's defaults.* Each thread that compiles
+      in libgraal gets an isolate of its own
+      (`JVMCIThreadsPerNativeLibraryRuntime=1`): the host's JVMCI compiler
+      threads (2-3 of the launcher's 4 host compiler threads; the rest are
+      C1's) and Truffle's compiler threads, which on 16 cores are 6
+      (`engine.CompilerThreads`' default, `min(cores / 4 + log2(log2(cores)), 16)`
+      in Truffle's `BackgroundCompileQueue`). At the peak 8-9 isolates were
+      alive in `primes`, `mperm` and `paraffins`, 6-8 in `fib`, about one
+      per such thread (`earley` and `nboyer` peak later, when fewer threads
+      compile: 2-9), each 25-40 MB: 7-8 MB of libgraal's image heap and the
+      rest its heap. They are the second largest part, 150-300 MB where the
+      peak comes while the program is still compiling, and nearly three
+      quarters of the median program's RSS outside the Java heap (269 of
+      371 MB). They are transient: Truffle's compiler threads end after 10
+      s idle (`engine.CompilerIdleDelay`), the host's JVMCI threads after 1
+      s (`JVMCICompilerIdleDelay`), and their isolates with them (`fib`'s RSS
+      fell from 842 to 659 MB once its Truffle compiler threads ended, its
+      isolates from 6 to 2). What
+      each compiles is ours (the graphs' sizes); how many there are is
+      GraalVM's.
+    - *The rest: the JVM's.* Code cache 4-6 MB resident (9-17 committed),
+      the collector's card table and other structures 3-12 MB (growing with
+      the heap), malloc 15-70 MB, of which NMT accounts for 8-19 (arenas,
+      symbols, the JVM's internals; the rest isn't attributed, and the
+      larger figures come with the larger heaps), the
+      JDK's and libgraal's libraries' text and data 25 MB, thread stacks
+      2-3 MB: 50-110 MB in all. NMT itself cost 1-2 MB. The AOT cache is
+      ours, and costs nothing: it replaces the CDS archive and most of the
+      metaspace, and halves start-up ("The AOT cache").
+
+    *Candidates for M14-02*, with what each would save, estimated from these
+    numbers (the median program, `primes`, peaked at 928 MB here):
+    1. *A smaller young generation*, the most: at 128 MB, about 430 MB of
+       the median program's 928 (its heap 557 to about 130), and as much on
+       every program that allocates more than 128 MB, at any heap size; but
+       rejected below for `paraffins`' steady state (3.3-4.1 times), so it
+       needs a size, or a policy, that `paraffins` doesn't pay for. These
+       numbers bring no new evidence against that rejection; they show that
+       the cost is the machine's memory, not the program.
+    2. *Fewer libgraal isolates*, 100-200 MB on every program that compiles:
+       `--engine.CompilerThreads=2` leaves 4 or 5 isolates of 8-9 (about
+       130 MB at 30 MB each); `-XX:JVMCIThreadsPerNativeLibraryRuntime=2`
+       to `4` shares an isolate among that many threads (3-5 isolates, about
+       120-180 MB); `=0`, one isolate, saved most (RSS 0.70 times, rejected
+       below for the first iteration's 1.41 times).
+    3. *The JIT's allocation*: if `fib`'s calls allocated what the native
+       launcher's do, it would touch tens of MB of eden instead of 546, and
+       so would the other programs that the native launcher runs without a
+       collection or nearly (`tak`, `takl`, `ntakl`, `fibfp`, `ack`, `sum`,
+       `sumfp`, `fft`, ...: about 500 MB each). It doesn't move the median
+       program (`primes` allocates 0.8 GB even natively), but it is ours,
+       and fewer collections are faster too.
+    4. *A bound on the heap's growth without a maximum*: `earley` 4.5 GB to
+       about 2.3, `mperm` 2.7 to 2.1, nothing for the others. A default
+       maximum heap is rejected below (it would fail a program that keeps
+       more alive); the new evidence is that the growth comes from the
+       serial collector's policy of growing rather than collecting in full,
+       which a soft bound might change without failing anything.
+    5. Not candidates: the AOT cache (above), the code cache, the
+       collector's structures, the libraries and the stacks, under 60 MB
+       together. On the native launcher, its compilation isolate (31-140
+       MB) is the counterpart of item 2, and its heap's growth without a
+       maximum of item 4.
   - *Compiler threads.* `-XX:CICompilerCount=4` where the JVM would start
     more (16 processors or more; it starts 3 with 4 to 7, and 4 with 8 to
     15): fewer libgraal isolates, and fewer host compilations competing with

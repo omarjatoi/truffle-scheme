@@ -2241,7 +2241,7 @@ docs/upstream.md only. Benchmarks are local (bench/README.md: the load
 rule, `-Xmx2g`, the serial collector), and fuzzing campaigns and memory
 measurements don't run on this machine while a benchmark measures.
 
-- [ ] **M14-01 · Where the JIT launcher's memory goes** *(early)*
+- [x] **M14-01 · Where the JIT launcher's memory goes** *(early)*
   - M12's report: the JIT's median peak RSS is 954 MB (`fib` 832, `tak`
     843, `earley` 2,472, `nboyer` 2,511), the native launcher's 189, and
     the median program keeps 7 MB alive (the report's live heap). D17
