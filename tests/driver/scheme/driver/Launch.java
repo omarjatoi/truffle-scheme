@@ -28,6 +28,15 @@ final class Launch {
                     "-Dpolyglot.engine.CompileImmediately=true",
                     "-Dpolyglot.engine.BackgroundCompilation=false",
                     "-Dpolyglot.engine.CompilationFailureAction=Throw");
+    /**
+     * The compile and torture modes' assertions: Java's, and Truffle's expensive ones, which since
+     * GraalVM 25.6 only {@code truffle.DetailedAssertions} turns on (GR-80770): among them, that a
+     * context reference is read with a node of its own language, and that a Bytecode DSL root's
+     * bytecode is valid each time it is built. Measured on the executors, they cost the conformance
+     * and diff tests no time beyond the runs' noise, and the space programs run in every mode a few
+     * seconds each (plan.md M13-13).
+     */
+    static final List<String> ASSERTION_VM_ARGS = List.of("-ea", "-Dtruffle.DetailedAssertions=true");
     /** Interpreter only. */
     static final List<String> INTERPRETER_VM_ARGS = List.of(
                     "-Dpolyglot.engine.AllowExperimentalOptions=true",
@@ -94,10 +103,14 @@ final class Launch {
 
     /**
      * The JVM options of a mode: interpreted unless compiled, and under {@code torture}: null (none),
-     * "torture" (every capture shared) or "torture_owned" (captures owned, resumed in place).
+     * "torture" (every capture shared) or "torture_owned" (captures owned, resumed in place). The
+     * compile and torture modes run with {@link #ASSERTION_VM_ARGS}.
      */
     static List<String> vmArgs(boolean compile, String torture) {
         List<String> args = new ArrayList<>(compile ? COMPILE_VM_ARGS : INTERPRETER_VM_ARGS);
+        if (compile || torture != null) {
+            args.addAll(ASSERTION_VM_ARGS);
+        }
         if (torture != null) {
             args.add(switch (torture) {
                 case "torture" -> TORTURE_VM_ARG;

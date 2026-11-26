@@ -6,10 +6,13 @@ it. The executable takes VM options only as `--vm.` ones; a collector (chosen wh
 built), a class path and an option the isolate would ignore are errors. Every class of option takes
 effect or fails clearly (plan.md M10-04, docs/usage.md "Options"), and so does every option in an
 argument file, `--vm.@file` (plan.md M11-03). Constant options are fixed when the image is built
-(plan.md M11-07)."""
+(plan.md M11-07). GraalVM 25.6's `--vm.XX:+PrintFlagsFinal` lists the options, and
+`--vm.XX:+AbortVMOnCompilationFailure` ends the process when a runtime compilation fails, but not
+when one bails out (plan.md M13-13)."""
 
 import argparse
 import os
+import re
 import subprocess
 import tempfile
 
@@ -268,6 +271,50 @@ def option_classes(o):
     log('--help:<topic>, --version, an unknown option, the program\'s arguments')
 
 
+# A procedure compiled at its first call (CompileImmediately, on the calling thread), which the
+# Graal compiler's CrashAt option makes fail: its name is the Truffle compilation's.
+COMPILED = """(import (scheme base) (scheme write))
+(define (compiled-at-once n) (if (= n 0) 'done (compiled-at-once (- n 1))))
+(display (compiled-at-once 10))
+"""
+
+
+def compilation_failures(o):
+    """GraalVM 25.6 (GR-80621, GR-80734): `--vm.XX:+AbortVMOnCompilationFailure`, which the other
+    native tests run the launcher with (harness.native_test_options), sets the Graal compiler's
+    CompilationFailureAction to ExitVM: a compilation that fails ends the process (after a second
+    attempt that dumps the compiler's graphs), where without it the code silently stays in the
+    interpreter; a bailout, transient or permanent (as Truffle's deoptimization-cycle detection and a
+    graph too big are), doesn't. `--vm.XX:+PrintFlagsFinal` lists the image's options, with their
+    origins."""
+    native = rlocation(o.native)
+    tmp = tempfile.mkdtemp(dir=os.environ.get('TEST_TMPDIR'))
+    program = os.path.join(tmp, 'compiled.scm')
+    with open(program, 'w', encoding='utf-8') as f:
+        f.write(COMPILED)
+    abort = ['--vm.XX:+AbortVMOnCompilationFailure', '--vm.XX:DumpPath=' + os.path.join(tmp, 'graal_dumps')]
+
+    out, err = run([native, '--vm.XX:+PrintFlagsFinal', '--vm.XX:+AbortVMOnCompilationFailure', program])
+    check(out == 'done', f'--vm.XX:+PrintFlagsFinal should run the program: {out!r}')
+    for flag in (r'bool PrintFlagsFinal += true +\{native image\} \{command line\}',
+                 r'ccstr CompilationFailureAction += ExitVM +\{native image\} \{command line\}'):
+        check(re.search(flag, err), f'--vm.XX:+PrintFlagsFinal should list {flag!r}:\n{err}')
+    log('--vm.XX:+PrintFlagsFinal lists the options; --vm.XX:+AbortVMOnCompilationFailure sets CompilationFailureAction=ExitVM')
+
+    at_once = ['--experimental-options', '--engine.CompileImmediately=true', '--engine.BackgroundCompilation=false']
+    crash = '--vm.XX:CrashAt=compiled-at-once'
+    out, _ = run([native] + at_once + [crash, program])
+    check(out == 'done', f'without the option, a failed compilation should leave the program running interpreted: {out!r}')
+    out, err = run([native] + at_once + abort + [crash, program], status=None)
+    exiting = [line for line in err.splitlines() if line.startswith('Exiting VM after retry compilation of ')]
+    check(out == '' and exiting and exiting[0].endswith('compiled-at-once'),
+          f'with --vm.XX:+AbortVMOnCompilationFailure, a failed compilation should end the process:\n{out}\n{err}')
+    for bailout in ('Bailout', 'PermanentBailout'):
+        out, err = run([native] + at_once + abort + [crash + ':' + bailout, program])
+        check(out == 'done', f'a {bailout} should leave the program running with --vm.XX:+AbortVMOnCompilationFailure: {out!r}\n{err}')
+    log('--vm.XX:+AbortVMOnCompilationFailure: a failed compilation ends the process, a bailout or permanent bailout doesn\'t')
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--native', required=True)
@@ -275,3 +322,4 @@ if __name__ == '__main__':
     launcher_vm_native(options)
     argument_files(options)
     option_classes(options)
+    compilation_failures(options)
