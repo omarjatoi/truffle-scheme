@@ -11,7 +11,7 @@ load("//bazel:jvm_test.bzl", "java_driver_test")
 def harness_test(name, check, args, data, deps = [], size = "medium", tags = []):
     """A py_test running tests/harness/check_<check>.py with these arguments, through run_test.py,
     which writes its result as JUnit XML; `deps`: the harness libraries it imports besides
-    harness.py."""
+    harness.py, by name, or other libraries by label (`//tests/fuzz`)."""
     script = "//tests/harness:check_%s.py" % check
     py_test(
         name = name,
@@ -21,7 +21,7 @@ def harness_test(name, check, args, data, deps = [], size = "medium", tags = [])
         args = ["check_" + check] + args,
         data = data,
         tags = tags,
-        deps = ["//tests/harness"] + ["//tests/harness:" + d for d in deps],
+        deps = ["//tests/harness"] + [d if d.startswith("//") else "//tests/harness:" + d for d in deps],
     )
 
 def _runtime(runtime):
