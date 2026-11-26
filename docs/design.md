@@ -234,6 +234,52 @@ follow it or deviate, with the decision below that says why.
     are no better than the others. With only the trampolines' entries
     kept, every test passed (`bazel test //...`, and `test --compile`,
     `--torture` and `--torture-owned`).
+  - *Measured and not kept: the second tail call out of the loop too
+    (M13-08).* A chain of tail calls keeps only its first request virtual:
+    the ones after it go through the loop's phi, so their argument arrays
+    are allocated and their fixnums boxed (`matrix`'s row arithmetic:
+    `coef-+`, then `reduce`, then `mod`; bench/README.md, "`compiler`,
+    `matrix` and `dynamic`"). A second cache out of the loop
+    (`Trampoline.run` calls the second tail call through a `TailCalls` of its
+    own before the loop, which doesn't report polymorphism, as the loop's
+    doesn't) kept the arrays of a chain of two virtual: `matrix`'s `fold`
+    callback compiled to 1,540 nodes instead of 1,920, with no argument
+    array left. Every test passed (`bazel test //...`, with
+    `StableWarmupTest`'s cache sizes changed to three caches). Measured with
+    the kept changes of bench/README.md as the base (A/B below, the steady
+    state / first iteration, the medians of each round's ratio):
+    `matrix` 0.86 / 1.03 on the JVM and 0.87 / 1.05 natively, but `compiler`
+    1.01 / 1.01 and 1.04 / 1.02 (its A/A pair 0.97-1.03), `dynamic` 0.99 /
+    1.04 and 0.99 / 1.05; on `bench-check`'s 20 JIT programs a geometric
+    mean of 1.00, steady state and first iteration, JIT and native, with no
+    program beyond its A/A pair's spread but `parsing`'s first iteration on
+    the JVM (1.16) and its native steady state (1.05). One program's gain
+    against a loss on the largest compilation of the three, so the loop
+    keeps one peeled call. Peeling only at sites whose tail calls come back
+    in chains would be the way back to it.
+  - *Measured and not kept: a larger inlining expansion budget (M13-07,
+    M13-08).* M13-07 found `fibc`'s last-tier compilation reaching
+    `compiler.InliningExpansionBudget` (12,000) sooner since #237, and
+    20,000 giving `fibc` back its time and costing `peval` 1.07. Measured
+    again with 16,000 and 20,000 (measured as below): `matrix` 0.97 and 0.96 of the
+    base on the JVM, 0.96 and 0.95 natively, `dynamic` 0.96 and 0.95, 0.98
+    and 0.97, but `compiler` 1.00 and 1.06 on the JVM and 1.10 and 1.18
+    natively; over `bench-check`'s
+    20 programs, 20,000 had a geometric mean of 1.01 on the JVM (`quicksort`
+    1.13, `fibc` 1.04, `parsing` 1.04) and 1.00 natively, with `fibc` 0.97
+    there. It is an engine option an embedder's engine wouldn't take from
+    the launcher, and an experimental one (`--experimental-options`), so
+    the default stays.
+  - *How these were measured.* Copies of each build (the module path's
+    jars, the native launcher and its library) and the budgets as options
+    of the base build, interleaved in a rotating order, a fresh process per
+    run, with an A/A copy of the base; the 1-minute load read at each run's
+    start and every second while it ran, and a run that passed 10 left out.
+    `compiler`, `matrix` and `dynamic` at the report's counts, 5
+    iterations, 6 rounds (249 runs kept, load 6.6-9.9); `bench-check`'s 20
+    JIT programs as it runs them (25 iterations, the median of the last 10;
+    natively the same program and input with `--vm.Xmx2g`), 3 rounds (599
+    runs kept, load 3.9-9.2).
 - **Calls Truffle doesn't inline (M13-04).** Where a callee isn't inlined
   (a recursion, the inlining budget, a megamorphic site), a tail call it
   makes comes back across the call to the trampoline that called it, as
