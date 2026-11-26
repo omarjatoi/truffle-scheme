@@ -100,11 +100,13 @@ unit_tests(
         "UpstreamAsyncStacksTest": "upstream",
         "UpstreamContinuationRootTest": "upstream",
         "UpstreamHoistedNullGuardTest": "upstream",
+        "UpstreamInstrumentedBoundaryTest": "upstream",
         "UpstreamInterruptTest": "upstream",
         "UpstreamNestedRootSourceTest": "upstream",
         "UpstreamPreinitializationDeadlockTest": "upstream",
         "UpstreamResumedBreakpointTest": "upstream",
         "UpstreamResumedEntriesTest": "upstream_tools",
+        "UpstreamUnprovidedTagTest": "upstream",
         "ValuesTest": "core",
     },
     # The files that these read as resources: the vendored suite's, the primitives' former registry.

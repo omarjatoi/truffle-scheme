@@ -9,14 +9,16 @@ status** line: what oracle/graal's issues, pull requests and `master` say
 about it, on the date given. The issue texts name the release each bug was
 found in, 25.5.5.0.3, and 25.6.5.1, which still has it.
 
-All thirteen are in Truffle 25.6.5.1 (Maven Central), on GraalVM CE 25.6.5.1
+All fourteen are in Truffle 25.6.5.1 (Maven Central), on GraalVM CE 25.6.5.1
 (JDK 25.0.5.1, `nix develop`), as they were in 25.5.5.0.3; one is Graal's
 compiler's (the guard moved out of its loop). Checked on the upgrade to 25.6
 (2026-11-25): every inverted test below still passes; the libgraal
-reproducer still fails with the same `ClassCastException`; `RaceProbe`
-printed the assertion in 11 of 24 runs (0, 100 and 200 microseconds, 8
-each); and the 25.6 DSL processor's sources still write `instanceof
-ThreadDeath`. 25.6 fixed the fourteenth, *ReportPolymorphism on an operation*
+reproducer still fails with the same `ClassCastException` (it has had its
+inverted test since M14-09); `RaceProbe` printed the assertion in 11 of 24
+runs (0, 100 and 200 microseconds, 8 each); and the 25.6 DSL processor's
+sources still write `instanceof ThreadDeath`. The section on tags the
+language doesn't provide came after the upgrade (M14-09), and its test was
+written on 25.6.5.1. 25.6 fixed a fifteenth, *ReportPolymorphism on an operation*
 (oracle/graal#14871, found in M5-10): its test failed on 25.6, and its
 section, test and workaround went with the upgrade (`Call`'s `doIndirect` is
 now `@ReportPolymorphism.Megamorphic`).
@@ -29,7 +31,7 @@ the bug is there**. It runs with every other unit test in `bazel test //...`, an
 alone with:
 
 ```
-bazel test //tests:unit_jit_UpstreamAsyncStacksTest //tests:unit_jit_UpstreamAstDepthTest //tests:unit_jit_UpstreamNestedRootSourceTest //tests:unit_jit_UpstreamInterruptTest //tests:unit_jit_UpstreamPreinitializationDeadlockTest //tests:unit_jit_UpstreamContinuationRootTest //tests:unit_jit_UpstreamResumedEntriesTest //tests:unit_jit_UpstreamResumedBreakpointTest //tests:unit_jit_UpstreamHoistedNullGuardTest
+bazel test //tests:unit_jit_UpstreamAsyncStacksTest //tests:unit_jit_UpstreamAstDepthTest //tests:unit_jit_UpstreamNestedRootSourceTest //tests:unit_jit_UpstreamInterruptTest //tests:unit_jit_UpstreamPreinitializationDeadlockTest //tests:unit_jit_UpstreamContinuationRootTest //tests:unit_jit_UpstreamResumedEntriesTest //tests:unit_jit_UpstreamResumedBreakpointTest //tests:unit_jit_UpstreamHoistedNullGuardTest //tests:unit_jit_UpstreamInstrumentedBoundaryTest //tests:unit_jit_UpstreamUnprovidedTagTest
 ```
 
 When a Truffle upgrade fixes a bug, its test fails. Then remove the
@@ -43,7 +45,8 @@ instrumentation and one trivial operation (the DSL warns if a root has none).
 The tests of yields build `UpstreamYieldRoot` (yields) and
 `UpstreamTaggedYieldRoot` (yields and tags) themselves, and
 `UpstreamResumedEntriesTest` has GraalVM's tools on its module path, which it
-drives through their options.
+drives through their options. `UpstreamTagInstrument` is an instrument whose
+listener's filter names the tags a test chooses.
 
 | Bug | Test | Our workaround |
 |---|---|---|
@@ -52,13 +55,14 @@ drives through their options.
 | [ThreadDeath in generated roots](#threaddeath-in-generated-roots) | none (a compiler warning, not behavior) | `BYTECODE_ROOT_JAVACOPTS` (`bazel/java.bzl`) |
 | [Interrupting a Bytecode DSL root as it returns](#interrupting-a-bytecode-dsl-root-as-it-returns) | `UpstreamInterruptTest` | `InterruptTest`'s static initializer (`tests/scheme/test/`) |
 | [Context pre-initialization with synchronous compilation](#context-pre-initialization-with-synchronous-compilation) | `UpstreamPreinitializationDeadlockTest` | `ContextPreinitializationTest`'s child JVMs (`tests/scheme/test/`) |
-| [Instrumented compilations fail in libgraal](#instrumented-compilations-fail-in-libgraal) | none yet (a launcher command, below) | `bazel-bin/scheme` runs Graal compiled for HotSpot for it (`launcher_vm_args`, `tests/harness/harness.py`); `SchemeMain` rejects it with libgraal and in the native launcher |
+| [Instrumented compilations fail in libgraal](#instrumented-compilations-fail-in-libgraal) | `UpstreamInstrumentedBoundaryTest` | `bazel-bin/scheme` runs Graal compiled for HotSpot for it (`launcher_vm_args`, `tests/harness/harness.py`); `SchemeMain` rejects it with libgraal and in the native launcher |
 | [MaxASTDepth on Bytecode DSL roots](#maxastdepth-on-bytecode-dsl-roots) | `UpstreamAstDepthTest` | Under `UNTRUSTED` only, which requires the limit: the compiler builds the guest's roots with `BytecodeConfig.COMPLETE` (`ProgramCompiler.generate`, `SchemeContext.materializesTags`); elsewhere the limit isn't enforced |
 | [Continuation roots are never internal](#continuation-roots-are-never-internal) | `UpstreamContinuationRootTest` | `PromptDriver.unwind` and `SchemeError.location` (`src/runtime/scheme/runtime/`) |
 | [An engine that closes as the JVM exits](#an-engine-that-closes-as-the-jvm-exits) | none (a race; the reproducer is below) | `SchemeMain`'s warm-up closes under a lock the program's thread takes before the JVM exits (`src/launcher/scheme/launcher/`) |
 | [Tools take a resumption for an entry](#tools-take-a-resumption-for-an-entry) | `UpstreamResumedEntriesTest` | none: docs/usage.md's tools table says the CPU tracer's and coverage's counts include resumed frames |
 | [A breakpoint is hit again when its frame resumes](#a-breakpoint-is-hit-again-when-its-frame-resumes) | `UpstreamResumedBreakpointTest` | none: docs/usage.md's tools table says so |
 | [A guard that can only fail is moved out of its loop](#a-guard-that-can-only-fail-is-moved-out-of-its-loop) | `UpstreamHoistedNullGuardTest` | `BoxRef`, `BoxSet`, `LoadCaptured` and `PatchCaptured` test their operand's type instead of casting it (`SchemeRootNode`, `src/runtime/scheme/runtime/`) |
+| [Tags the language doesn't provide](#tags-the-language-doesnt-provide) | `UpstreamUnprovidedTagTest` | `SchemeLanguage` provides every tag a tool we know of names: `DebuggerTags.AlwaysHalt`, which no node carries, and the variable tags (`src/runtime/scheme/runtime/SchemeLanguage.java`, design.md D13) |
 | [A resumed frame returns to what resumed it](#a-resumed-frame-returns-to-what-resumed-it) (a feature request) | `SteppingTest.aStepOutOfAFrameResumedFromTheHeapStopsInThePrompt` (Scheme) | none: docs/usage.md says to step into from the prompt |
 
 ## Nested root source sections
@@ -619,12 +623,18 @@ have `createPolyglotThreadScope` find the polyglot implementation without going 
 
 ## Instrumented compilations fail in libgraal
 
-**Found in** M10-04 (#205 saw `--compiler.InstrumentBoundaries` print nothing). **Test:** none
-yet: the reproducer below uses the launcher, and an inverted test needs `UpstreamRoot` to call a
-`@TruffleBoundary` method (a follow-up). The bug is in the Graal compiler as built into libgraal and
-into a native image, not in Truffle's API.
+**Found in** M10-04 (#205 saw `--compiler.InstrumentBoundaries` print nothing). **Test:**
+`UpstreamInstrumentedBoundaryTest` (M14-09): a `RootNode` whose loop calls a `@TruffleBoundary`
+method, compiled with `compiler.InstrumentBoundaries` in a child JVM on libgraal
+(`-XX:+UseJVMCINativeLibrary`), fails with the `ClassCastException` below; the control case, the
+same child on Graal compiled for HotSpot (`-XX:-UseJVMCINativeLibrary`), compiles it and prints
+the boundary's count. Each case needs a JVM of its own: a JVM's Truffle compiler takes the
+options of the first engine that compiles (`PartialEvaluator.initialize`), so in a JVM that has
+compiled without the option, a later engine's `compiler.InstrumentBoundaries` instruments nothing,
+and the compilation succeeds. The bug is in the Graal compiler as built into libgraal and into a
+native image, not in Truffle's API.
 
-**Upstream status** (checked 2026-11-17): no issue or pull request found for
+**Upstream status** (checked 2026-11-26): no issue or pull request found for
 `InstrumentBoundaries` with this exception.
 
 With `compiler.InstrumentBoundaries` or `compiler.InstrumentBranches` (or their deprecated
@@ -1316,4 +1326,155 @@ for (int i = 0; i < 1000; i++) {
 
 The phase could leave a guard alone when its condition is a constant (it is an unconditional
 deoptimization at its anchor), or a guard whose anchor's block is never reached in the profile.
+````
+
+## Tags the language doesn't provide
+
+**Found in** #80 (every debugger session's `DebuggerTags.AlwaysHalt`
+breakpoint, on Truffle 25.5) and M13-14 (#320, a test instrument's
+`WriteVariableTag` before the language provided it). **Test:**
+`UpstreamUnprovidedTagTest`.
+
+**Upstream status** (checked 2026-11-26): still present on `master`
+(73f49a944eff, 2026-11-26), and unreported (no issue or pull request found
+for "not provided by language", "Invalid tag specified" or
+`prepareForInstrumentation`). The generated override,
+[`createPrepareForInstrumentation`](https://github.com/oracle/graal/blob/73f49a944effcb2922a90bc51218fc4727ec6d1f/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/generator/BytecodeRootNodeElement.java#L1876-L1898),
+still adds every tag it is given, and the instrumentation handler's
+[`preVisit`](https://github.com/oracle/graal/blob/73f49a944effcb2922a90bc51218fc4727ec6d1f/truffle/src/com.oracle.truffle.api.instrumentation/src/com/oracle/truffle/api/instrumentation/InstrumentationHandler.java#L2122-L2128)
+still gives it every tag the bindings name. The issue text is ready to file.
+
+An instrument whose filter names a tag the language doesn't provide
+(`StandardTags.TryBlockTag` for `UpstreamLanguage`, and for Scheme) fails
+every Bytecode DSL root it visits, so `Context.eval` fails. So does a filter
+that names such a tag alongside one the language provides.
+
+- **Expected:** what Truffle's documentation promises for such a filter. A
+  filter `tagIs(tags)` is *"a filter for all source sections that are tagged
+  with one of the given tags"* (`SourceSectionFilter.Builder.tagIs`), and
+  only a provided tag can tag a node: *"In order for a Truffle language to
+  support a particular tag, the tag must also be marked as provided by the
+  language"* (`InstrumentableNode.hasTag`), and `Instrumenter.queryTags`
+  returns an empty set for a tag that *"was not provided by the language"*.
+  So the filter matches no node of the language, and the program runs. The
+  handler's own check, `hasTagImpl`, answers false for a tag the language
+  doesn't provide without asking the node, and an AST interpreter's
+  `materializeInstrumentableNodes`, given the same tags, materializes only
+  those it knows. `RootNode.prepareForInstrumentation`'s documentation
+  doesn't say which tags it is given.
+- **Actual:** `Context.eval` throws a `PolyglotException`, *"Invalid tag
+  specified. Tag 'com.oracle.truffle.api.instrumentation.StandardTags$TryBlockTag'
+  not provided by language 'scheme.test.upstream.UpstreamLanguage'."* (an
+  `IllegalArgumentException`). With only tags the language provides (the
+  test's control case), the program runs and the listener enters the
+  statement, and the expression in it.
+- **Cause:** before it visits a root, the handler passes
+  `prepareForInstrumentation` the union of the tags its bindings name
+  (`materializeLimitedTags`), not only those the root's language provides.
+  The Bytecode DSL's generated override adds each to a
+  `BytecodeConfig.Builder`, and the generated encoder (`getTagMask`,
+  `BytecodeConfigEncoderImplElement`) throws for any tag that isn't in the
+  language's `@ProvidedTags`. The union is the engine's, so an instrument
+  that names one language's own tag would fail the roots of every Bytecode
+  DSL language in the engine.
+- **Our workaround:** `SchemeLanguage` provides the tags the tools we know
+  of name: `DebuggerTags.AlwaysHalt`, which no node carries, since every
+  debugger session (DAP, the Chrome inspector) installs an `AlwaysHalt`
+  breakpoint, and, since M13-14, `ReadVariableTag` and `WriteVariableTag`,
+  which it also tags (design.md D13). `UpstreamLanguage` provides
+  `AlwaysHalt` for the same reason. A tool whose filter names another tag
+  Scheme doesn't provide (`TryBlockTag`, `DeclarationTag`, another
+  language's own) still fails every Scheme root it visits.
+
+### Issue text
+
+````markdown
+**Title:** Bytecode DSL: an instrument whose filter names a tag the language doesn't provide makes every root fail ("Invalid tag specified")
+
+**Version:** Truffle 25.6.5.1 (GraalVM CE 25.6.5.1, JDK 25.0.5.1), and 25.5.5.0.3; unchanged on `master` (73f49a944eff)
+
+`SourceSectionFilter.Builder.tagIs` documents a filter "for all source sections that are tagged with
+one of the given tags", and only a tag the language provides can tag a node
+(`InstrumentableNode.hasTag`, `Instrumenter.queryTags`), so a filter that names a tag a language doesn't
+provide should match none of its nodes, as in an AST interpreter. With a Bytecode DSL language, the
+program fails instead: `InstrumentationHandler`'s visitor passes `prepareForInstrumentation` every tag
+the bindings name (`materializeLimitedTags`), and the generated override adds each to a
+`BytecodeConfig.Builder`, whose generated encoder (`getTagMask`) throws `IllegalArgumentException` for a
+tag that isn't in the language's `@ProvidedTags`. A filter that also names a provided tag fails too.
+
+Reproducer: a Bytecode DSL language with tag instrumentation that provides `RootTag`, `RootBodyTag`,
+`StatementTag` and `ExpressionTag` (not `TryBlockTag`), whose program is a statement that returns 42:
+
+```java
+@GenerateBytecode(languageClass = UpstreamLanguage.class, enableTagInstrumentation = true)
+public abstract class UpstreamRoot extends RootNode implements BytecodeRootNode {
+    protected UpstreamRoot(UpstreamLanguage language, FrameDescriptor frameDescriptor) {
+        super(language, frameDescriptor);
+    }
+
+    @Operation
+    public static final class Identity {
+        @Specialization
+        static Object doObject(Object value) {
+            return value;
+        }
+    }
+}
+```
+
+```java
+// UpstreamLanguage's parse:
+Source source = request.getSource();
+return UpstreamRootGen.create(this, BytecodeConfig.WITH_SOURCE, b -> {
+    b.beginRoot();
+    b.beginSource(source);
+    b.beginSourceSection(0, source.getLength());
+    b.beginTag(StandardTags.StatementTag.class);
+    b.beginReturn();
+    b.emitLoadConstant(42);
+    b.endReturn();
+    b.endTag(StandardTags.StatementTag.class);
+    b.endSourceSection();
+    b.endSource();
+    b.endRoot();
+}).getNode(0).getCallTarget();
+```
+
+```java
+// An instrument (registered with services = TagInstrument.class) that attaches a listener for the
+// tags it is given:
+public EventBinding<?> attach(Class<?>... tags) {
+    SourceSectionFilter filter = SourceSectionFilter.newBuilder().tagIs(tags).build();
+    return env.getInstrumenter().attachExecutionEventListener(filter, new ExecutionEventListener() {
+        public void onEnter(EventContext context, VirtualFrame frame) {
+        }
+
+        public void onReturnValue(EventContext context, VirtualFrame frame, Object result) {
+        }
+
+        public void onReturnExceptional(EventContext context, VirtualFrame frame, Throwable exception) {
+        }
+    });
+}
+```
+
+```java
+try (Context context = Context.create("upstream-repro")) {
+    context.getEngine().getInstruments().get(TagInstrument.ID).lookup(TagInstrument.class).attach(StandardTags.TryBlockTag.class);
+    // Expected: 42, the listener entering nothing. Actual: PolyglotException,
+    // "java.lang.IllegalArgumentException: Invalid tag specified. Tag
+    // 'com.oracle.truffle.api.instrumentation.StandardTags$TryBlockTag' not provided by language
+    // 'scheme.test.upstream.UpstreamLanguage'."
+    context.eval("upstream-repro", "x");
+}
+// The same with attach(StatementTag.class, TryBlockTag.class). With attach(StatementTag.class),
+// the program returns 42 and the listener enters the statement.
+```
+
+Since the tags passed are the union of every binding's, one instrument that names a language-specific
+tag would break every Bytecode DSL language in the engine, and a language has to provide tags it
+never uses (`DebuggerTags.AlwaysHalt`, which every debugger session's breakpoint names) only so that
+it doesn't fail. The generated `prepareForInstrumentation` could skip the tags its language doesn't
+provide, or the handler could pass only the provided tags of the root's language, which `preVisit`
+already looks up (`getProvidedTags(root)`).
 ````

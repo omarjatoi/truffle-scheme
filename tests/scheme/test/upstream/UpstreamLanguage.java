@@ -14,7 +14,8 @@ import com.oracle.truffle.api.source.Source;
  * with nests the 42 one expression deeper: in {@code ((x))} it is in an expression in an expression
  * (UpstreamAstDepthTest). Its roots are {@link UpstreamRoot}s.
  */
-// The debugger asks every language for AlwaysHalt.
+// The debugger asks every language for AlwaysHalt, and a Bytecode DSL root fails for a tag its
+// language doesn't provide (UpstreamUnprovidedTagTest).
 @ProvidedTags({DebuggerTags.AlwaysHalt.class, StandardTags.RootTag.class, StandardTags.RootBodyTag.class, StandardTags.StatementTag.class,
                 StandardTags.ExpressionTag.class})
 @TruffleLanguage.Registration(id = UpstreamLanguage.ID, name = "Upstream reproducers")
