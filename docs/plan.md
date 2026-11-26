@@ -2397,7 +2397,7 @@ measurements don't run on this machine while a benchmark measures.
     message and a nonzero exit status, not a Java stack trace; the
     context still usable afterwards where D8 says it is (a REPL, an
     embedder's next call).
-- [ ] **M14-09 · Tags the language doesn't provide, in docs/upstream.md** *(early)*
+- [x] **M14-09 · Tags the language doesn't provide, in docs/upstream.md** *(early)*
   - #320's follow-up: the Bytecode DSL's generated
     `prepareForInstrumentation` throws for any tag the language doesn't
     provide (*"Invalid tag specified. Tag '...' not provided by
