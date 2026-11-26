@@ -1,7 +1,7 @@
 # Upstream reports
 
-Bugs in Truffle that this implementation works around or lives with, and one
-missing feature, each with a reproducer (a minimal one that doesn't use
+Bugs in Truffle that this implementation works around or lives with, and two
+missing features, each with a reproducer (a minimal one that doesn't use
 Scheme, for each bug). Filing them at
 <https://github.com/oracle/graal/issues> is a human's call: we haven't filed
 any. Each section has the issue text, ready to paste, and an **Upstream
@@ -9,7 +9,7 @@ status** line: what oracle/graal's issues, pull requests and `master` say
 about it, on the date given. The issue texts name the release each bug was
 found in, 25.5.5.0.3, and 25.6.5.1, which still has it.
 
-All fourteen are in Truffle 25.6.5.1 (Maven Central), on GraalVM CE 25.6.5.1
+All fifteen are in Truffle 25.6.5.1 (Maven Central), on GraalVM CE 25.6.5.1
 (JDK 25.0.5.1, `nix develop`), as they were in 25.5.5.0.3; one is Graal's
 compiler's (the guard moved out of its loop). Checked on the upgrade to 25.6
 (2026-11-25): every inverted test below still passes; the libgraal
@@ -18,7 +18,8 @@ inverted test since M14-09); `RaceProbe` printed the assertion in 11 of 24
 runs (0, 100 and 200 microseconds, 8 each); and the 25.6 DSL processor's
 sources still write `instanceof ThreadDeath`. The section on tags the
 language doesn't provide came after the upgrade (M14-09), and its test was
-written on 25.6.5.1. 25.6 fixed a fifteenth, *ReportPolymorphism on an operation*
+written on 25.6.5.1, as were the section on a context exit's stack trace (a
+missing feature, M14-03) and its test. 25.6 fixed a sixteenth, *ReportPolymorphism on an operation*
 (oracle/graal#14871, found in M5-10): its test failed on 25.6, and its
 section, test and workaround went with the upgrade (`Call`'s `doIndirect` is
 now `@ReportPolymorphism.Megamorphic`).
@@ -31,7 +32,7 @@ the bug is there**. It runs with every other unit test in `bazel test //...`, an
 alone with:
 
 ```
-bazel test //tests:unit_jit_UpstreamAsyncStacksTest //tests:unit_jit_UpstreamAstDepthTest //tests:unit_jit_UpstreamNestedRootSourceTest //tests:unit_jit_UpstreamInterruptTest //tests:unit_jit_UpstreamPreinitializationDeadlockTest //tests:unit_jit_UpstreamContinuationRootTest //tests:unit_jit_UpstreamResumedEntriesTest //tests:unit_jit_UpstreamResumedBreakpointTest //tests:unit_jit_UpstreamHoistedNullGuardTest //tests:unit_jit_UpstreamInstrumentedBoundaryTest //tests:unit_jit_UpstreamUnprovidedTagTest
+bazel test //tests:unit_jit_UpstreamAsyncStacksTest //tests:unit_jit_UpstreamAstDepthTest //tests:unit_jit_UpstreamNestedRootSourceTest //tests:unit_jit_UpstreamInterruptTest //tests:unit_jit_UpstreamPreinitializationDeadlockTest //tests:unit_jit_UpstreamContinuationRootTest //tests:unit_jit_UpstreamExitStackTraceTest //tests:unit_jit_UpstreamResumedEntriesTest //tests:unit_jit_UpstreamResumedBreakpointTest //tests:unit_jit_UpstreamHoistedNullGuardTest //tests:unit_jit_UpstreamInstrumentedBoundaryTest //tests:unit_jit_UpstreamUnprovidedTagTest
 ```
 
 When a Truffle upgrade fixes a bug, its test fails. Then remove the
@@ -64,6 +65,7 @@ listener's filter names the tags a test chooses.
 | [A guard that can only fail is moved out of its loop](#a-guard-that-can-only-fail-is-moved-out-of-its-loop) | `UpstreamHoistedNullGuardTest` | `BoxRef`, `BoxSet`, `LoadCaptured` and `PatchCaptured` test their operand's type instead of casting it (`SchemeRootNode`, `src/runtime/scheme/runtime/`) |
 | [Tags the language doesn't provide](#tags-the-language-doesnt-provide) | `UpstreamUnprovidedTagTest` | `SchemeLanguage` provides every tag a tool we know of names: `DebuggerTags.AlwaysHalt`, which no node carries, and the variable tags (`src/runtime/scheme/runtime/SchemeLanguage.java`, design.md D13) |
 | [A resumed frame returns to what resumed it](#a-resumed-frame-returns-to-what-resumed-it) (a feature request) | `SteppingTest.aStepOutOfAFrameResumedFromTheHeapStopsInThePrompt` (Scheme) | none: docs/usage.md says to step into from the prompt |
+| [A context exit's stack trace is the Java stack's](#a-context-exits-stack-trace-is-the-java-stacks) (a feature request) | `UpstreamExitStackTraceTest` | none: design.md D8 says an exit's trace leaves out a prompt's pending frames, and `EmbeddingTest.exitsAreLocatedAtTheProgramsCall` asserts each mode's trace, without them under torture |
 
 ## Nested root source sections
 
@@ -1477,4 +1479,97 @@ never uses (`DebuggerTags.AlwaysHalt`, which every debugger session's breakpoint
 it doesn't fail. The generated `prepareForInstrumentation` could skip the tags its language doesn't
 provide, or the handler could pass only the provided tags of the root's language, which `preVisit`
 already looks up (`getProvidedTags(root)`).
+````
+
+## A context exit's stack trace is the Java stack's
+
+**Found in** M14-03 (#283's follow-up), on 25.6.5.1. **Test:**
+`UpstreamExitStackTraceTest` (a missing feature, not a bug).
+
+**Upstream status** (checked 2026-11-26): unchanged on `master`
+(b85ed75979), and no issue or pull request found. There,
+[`TruffleStackTrace.innerAddStackFrameSlow`](https://github.com/oracle/graal/blob/b85ed7599798aad46cd2a89a7f02dc1c92203542/truffle/src/com.oracle.truffle.api/src/com/oracle/truffle/api/TruffleStackTrace.java#L386-L397)
+fills in the whole trace of a throwable that isn't an
+`AbstractTruffleException` the first time it leaves a call target, by
+walking the stack (`addFramesByStackWalking`, which doesn't ask for
+asynchronous frames), and `fillIn` returns that trace from then on. The
+issue text is ready to file as a feature request.
+
+A guest exception records each call target it leaves, lazily, so a language
+that keeps frames off the Java stack can add them to the trace by throwing
+the exception through their call targets: our prompts do, for the frames a
+spill or a continuation moved to the heap (`PromptDriver.unwind`). The
+exception `TruffleContext.closeExited` throws is Truffle's own
+(`PolyglotContextImpl.ExitException`, a `ThreadDeath`): the first call
+target it leaves walks the Java stack for its trace, and the call targets it
+leaves after that add nothing. So an exit has only the frames on the Java
+stack when it was thrown, and `PolyglotException.getPolyglotStackTrace()`
+for it leaves out the frames a prompt holds on the heap.
+
+- **Expected** (with a way for the language to do it): an exit's trace has
+  the frames it is thrown through, as a guest exception's has.
+- **Actual:** `UpstreamExitStackTraceTest` throws each through a call target
+  as it unwinds: a guest exception's frames are `leaf, rethrow, middle`, an
+  exit's `leaf, middle`. In Scheme, the trace of
+  `(define (run n) (list (exit n)))` called from the program is
+  `run 2, <program> 3, <prompt> 1`, but under torture, where `run`'s frame
+  and the program's wait on the heap, it is `exit ?, <prompt> 1` (the
+  prelude's `exit`, running resumed, then the prompt), where an error's
+  trace has `run` and `<program>`. A spill's pending frames are missing the
+  same way.
+- **Our workaround:** none for the trace: design.md D8 ("`exit` and
+  `emergency-exit` are Truffle's") says why a language can't put the frames
+  there itself, and `EmbeddingTest.exitsAreLocatedAtTheProgramsCall` asserts
+  each mode's trace, the torture modes' without the pending frames. The
+  exit's source location, which is the node the language gives
+  `closeExited`, does include them: `SchemeError.locate` reads the prompt's
+  pending frames.
+
+### Issue text
+
+````markdown
+**Title:** Let a language add frames to a context exit's stack trace, as to a guest exception's
+
+**Version:** Truffle 25.6.5.1 (GraalVM CE 25.6.5.1, JDK 25.0.5.1); unchanged on `master`
+
+A language whose frames can wait off the Java stack (a Scheme on the Bytecode DSL spills a deep
+recursion's frames to the heap and resumes them from a driver root; `RootNode.findAsynchronousFrames`
+reports them to tools) puts them in a guest exception's stack trace by throwing the exception
+through their call targets as it leaves the driver: an `AbstractTruffleException` records each
+call target it leaves (`TruffleStackTrace.addStackFrameInfo`), and the stack is walked only for
+the frames left when the trace is filled in.
+
+The exception `TruffleContext.closeExited` throws can't get them. It isn't an
+`AbstractTruffleException`, so the first call target it leaves fills in its whole trace by walking
+the Java stack (`innerAddStackFrameSlow` calls `fillIn`), and the call targets it leaves after that
+add nothing. `PolyglotException.getPolyglotStackTrace()` of an exit therefore has only the frames
+that were on the Java stack, where the same program's error has them all.
+
+Reproducer, in an entered context of any language (`env` is its `TruffleLanguage.Env`): three
+plain roots, `leaf` (which throws), `rethrow` (which throws its argument) and `middle`:
+
+```java
+// leaf, for the exit:           env.getContext().closeExited(this, 3);
+// leaf, for the guest exception: throw new AbstractTruffleException("raised", this) {};
+// rethrow:                       throw (its argument, unchecked);
+// middle:
+try {
+    leaf.call(this);
+} catch (Throwable t) {
+    try {
+        rethrow.call(this, t);   // throws t back, as a language unwinds through a pending frame
+    } catch (Throwable again) {
+        if (again != t) throw again;
+    }
+    throw t;
+}
+
+// The names of TruffleStackTrace.getStackTrace(t)'s roots, with t what middle.call() threw:
+//   the guest exception: [leaf, rethrow, middle]
+//   the exit:            [leaf, middle]; expected [leaf, rethrow, middle]
+```
+
+Either of these would do: record an exit's frames lazily as a guest exception's are (walking the
+stack only for the frames left when the trace is asked for), or have the stack walk that fills in a
+trace include each root's asynchronous frames (`findAsynchronousFrames`) after its frame.
 ````

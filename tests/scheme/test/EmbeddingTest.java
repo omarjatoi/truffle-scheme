@@ -903,11 +903,10 @@ public class EmbeddingTest {
                         """);
         assertEquals(3, e.getExitStatus());
         assertEquals("exit.scm:2 (exit n)", at(e.getSourceLocation()));
-        if (!TORTURE) {
-            // Under torture, run's frame and the program's wait on the heap, and an exit's trace
-            // (Truffle's) doesn't unwind through them as an error's does.
-            assertEquals(List.of("run 2", "<program> 3"), guestFrames(e).subList(0, 2));
-        }
+        // The trace is the frames on the Java stack (design.md D8, docs/upstream.md "A context
+        // exit's stack trace is the Java stack's"): under torture, run's frame and the program's
+        // wait on the heap, and an exit's trace (Truffle's) can't have them as an error's does.
+        assertEquals(TORTURE ? List.of("exit ?", "<prompt> 1") : List.of("run 2", "<program> 3", "<prompt> 1"), guestFrames(e));
 
         e = exit("emergency.scm", """
                         (define (run n)
@@ -945,7 +944,8 @@ public class EmbeddingTest {
         assertEquals("tail.scm:4 (leave n)", at(e.getSourceLocation()));
 
         // Deep enough to spill, so the outer frames wait on the heap. Under torture every frame
-        // does, the caller of exit's too, and the location is that pending frame's.
+        // does, the caller of exit's too, and the location is that pending frame's. The trace
+        // has only the frames on the Java stack, as above: two of down's 31.
         Context.Builder spilling = Context.newBuilder(SCHEME).out(new ByteArrayOutputStream()).allowExperimentalOptions(true).option("scheme.SpillDepth", "5");
         e = exit(spilling, "deep.scm", """
                         (define (down n)
@@ -956,6 +956,7 @@ public class EmbeddingTest {
                         """);
         assertEquals(8, e.getExitStatus());
         assertEquals("deep.scm:3 (exit 8)", at(e.getSourceLocation()));
+        assertEquals(TORTURE ? List.of("exit ?", "<prompt> 1") : List.of("down 3", "down 4", "<prompt> 1"), guestFrames(e));
     }
 
     /**
