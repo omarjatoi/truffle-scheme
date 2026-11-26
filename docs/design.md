@@ -2617,6 +2617,98 @@ Each entry: the decision, why, and what was rejected.
     only adds lines to an error isn't worth a name); leaving out the
     program's `<program>` frame too, which names the top-level form the
     error came from.
+- **Running out of memory (M14-08).** R7RS §1.3.2: *"an implementation may
+  report a violation of an implementation restriction if it does not have
+  enough storage to run a program, or if an arithmetic operation would
+  produce an exact number that is too large for the implementation to
+  represent"*, and *"implementations are encouraged to report violations of
+  implementation restrictions"* (the phrase is "may report", not "must";
+  §6.2.3 says the same of exact numbers and of an exact constant the
+  implementation *"cannot represent as an exact number"*). Neither is a bug,
+  so neither is an internal error (above). What each case gets depends on
+  whether its size is known before anything is allocated:
+  - *A size past a limit of the implementation is a Scheme error*, of kind
+    `OTHER` (a read error from the reader), raised before allocating, which
+    handlers see like the §6 audit's errors (D9): a vector, string or
+    bytevector longer than a Java array can be (`Integer.MAX_VALUE - 8`:
+    `make-vector`, `make-string`, `make-bytevector`, and the appends'
+    totals, as before); and an exact number past BigInteger's range, 2^31
+    bits or more. `expt` finds its result's size from the base's
+    numerator and denominator before multiplying (at least (bits(x) − 1)·|e|
+    + 1, and at least |e|·log2 |x| from x's top 53 bits), where `(expt 3
+    1500000000)` squared its way toward BigInteger's internal error (a
+    chain of squarings to a billion bits: `(expt 2 1100000000)`, within the
+    range, hadn't finished after 120 s on this Mac); `+`, `-`,
+    `*` and `/` turn into the error the `ArithmeticException` BigInteger
+    throws for such a result, which it checks before allocating it; and
+    exact decimal notation whose power of ten is past the range
+    (`#e1e-1000000000`, `#e1e1000000000`), read by the reader or by
+    `string->number`, is the error, where BigInteger's `ArithmeticException`
+    and BigDecimal's `NumberFormatException` (an exponent past an `int`)
+    were internal errors with a Java stack trace. `string->number` raises
+    instead of returning `#f`: the string is a number's valid notation, and
+    §6.2.3 allows reporting it or an inexact value, which would lose it
+    silently. Inexact notation is an infinity or a zero, as before.
+  - *A heap that fills is the VM's `OutOfMemoryError`, and stays
+    Truffle's.* Truffle turns it, as it does a `StackOverflowError`, into a
+    `PolyglotException` whose `isResourceExhausted()` is true
+    (`PolyglotException`'s Javadoc: *"if host runtime throws
+    OutOfMemoryError or StackOverflowError, then they will be translated to
+    a PolyglotException that return true for isResourceExhausted()"*): a
+    guest exception, neither internal nor cancelled, with the error's
+    message (HotSpot's `Java heap space`, or `failed reallocation of scalar
+    replaced objects` from a deoptimization; the native image's
+    `Garbage-collected heap size exceeded. Consider increasing the maximum
+    Java heap size, for example with '-Xmx'.`). That is: a program that
+    keeps what it allocates, a length an array can have but the heap can't
+    hold (`(make-vector 100000000 0)` in 64 MB), a buffer that can't grow (a
+    string port's), and a non-tail recursion without end, whose frames
+    spill to the heap until it is full ("Stack-depth spill": Scheme's depth
+    is bounded by the heap, never by the Java stack). As for the resource
+    limits that cancel (above), it isn't a `SchemeError`, so no prompt runs
+    Scheme code for it: no handler sees it and no after-thunk runs. The
+    root prompt leaves the dynamic environment as it found it
+    (`PromptRootNode`), and the frames that held the heap are gone with the
+    call, so the context goes on: the REPL reads its next input, and an
+    embedder's next call runs with the parameters and handlers of before.
+  - *The launcher* prints `ERROR: out of memory: the heap is full
+    (--vm.Xmx<size> sets its maximum)`, then the guest frames as for an
+    uncaught error ("Stack traces", above; never a Java stack trace), and
+    exits with the uncaught error's status, 70; the REPL prints them and
+    goes on. The VM's message names the
+    VM's own option (the native image's says `-Xmx`, which the native
+    launcher takes as `--vm.Xmx`, D17) or the place the allocation failed,
+    so the launcher's says what to do instead (M10-04's rule). It tells an
+    out of memory from a stack overflow, both resource exhausted and not
+    cancelled, by Truffle's message for the overflow, *"Resource exhausted:
+    Stack overflow"* (the error has none).
+  - *Under the sandbox* (D10): `UNTRUSTED`'s `sandbox.MaxHeapMemory` (what
+    the context retains, a soft limit) cancels the context, which is then
+    closed (`isCancelled()`). `ISOLATED`'s `engine.MaxIsolateMemory` is the
+    isolate's heap, a hard limit: a program that fills it runs out of memory
+    in the isolate as on the host's heap, resource exhausted and not
+    cancelled, and the context goes on.
+  - *Rejected:* turning the `OutOfMemoryError` into a Scheme error that
+    handlers see, as GraalPy turns it into a `MemoryError` (its Bytecode DSL
+    root's `interceptInternalException`, whose Javadoc suggests the same for
+    a `StackOverflowError`). Any allocation can throw it: in a primitive half
+    done, in the runtime's own structures (a spill's frames, a capture's
+    segments, a class loading), as "Stack-depth spill" found of a
+    `StackOverflowError` when it rejected catching one; a handler runs
+    without unwinding (R7RS §6.11), so `with-exception-handler`'s would run
+    on the full heap; and Truffle's resource exhausted is what an embedder
+    already tests for. Rejected too: checking a length against the heap's
+    free space before allocating (`Runtime.freeMemory()` is a guess until a
+    collection, and allocations elsewhere change it), and a heap limit of
+    the language's own (the VM's is `--vm.Xmx`, D17; the sandbox's above).
+  - *Checked by:* `OutOfMemoryTest` (each size past a limit, as an error a
+    handler catches; the heap's cases in a child JVM with a 64 MB heap: the
+    embedder's exception, no handler or after-thunk run, the next call's
+    dynamic environment and a deep recursion after it), `SandboxTest.Isolated`
+    (the isolate's heap), and `//tests:memory` and `//tests:memory_native`
+    (tests/memory's programs through each launcher under `--vm.Xmx64m`, as
+    programs and as the REPL's input: a message and status 70, never a Java
+    stack trace, and the REPL goes on).
 
 ### D9. Spec traps decided up front
 
