@@ -2105,6 +2105,41 @@ interleaved A/B runs.
     does; every torture mode passes; a loop of caught raises, JIT and
     native, first runs and steady state, unchanged or faster (interleaved
     A/B), and `bench-check` passes.
+- [x] **M13-10 · Calls that name the callee's root class**
+  - #316's first feature to adopt: Truffle 25.6 (GR-72833) adds
+    `DirectCallNode.call(Class<? extends RootNode>, int, Object[])`,
+    `IndirectCallNode.call(RootNode, int, Object[])` and
+    `RootNode.call(Node, int, Object[])`. While the callee isn't compiled,
+    such a call runs its root in the caller's host frame
+    (`OptimizedCallTarget.callRoot`) instead of going through the call
+    target's boundary stub and profiled entry. With the root's class known,
+    the host compiler can also call the root's `execute` directly. That
+    helps the interpreter's calls, most of all in the native launcher's
+    first iterations, whose interpreter is compiled ahead of time once.
+    Partial evaluation sees the same call, so compiled code shouldn't
+    change.
+  - Where: `Call.doDirect`/`doIndirect`, the trampolines' caches,
+    `PromptDriver`'s resumes, `PromptRootNode`'s body. Risks: a site that
+    calls roots of several classes (closures, called primitives, escape and
+    prompt procedures) needs the untyped call for the others; the
+    root-taking overloads throw for a root without a call target; and the
+    call path's `@InliningCutoff` (M10-02) has to stay.
+  - **Done when** a test shows each site entering an interpreted callee
+    through the typed call; every torture mode passes; the JVM and the
+    native launcher, first iterations and steady state, are measured
+    against `main` with an A/A pair, interleaved; and the change is kept if
+    it helps, or recorded in design.md as measured and not kept.
+  - Done (design.md "Calls that name the callee's root class"): measured
+    and not kept. Every site used the typed calls, and a test showed each
+    one entering its callee through `callRoot`. Every test and torture mode
+    passed. 3 interleaved rounds with an A/A pair ran bench-check's cases
+    plus `sboyer` and `graphs`, at a peak load of 1.6-9.9 with no run left
+    out. The median of the per-round ratios to `main` over all cases was
+    1.00-1.01 for the JVM and the native launcher, first iterations and
+    steady state, against the A/A pair's 0.98-1.00. `peval`'s steady state
+    got worse: 1.46 on the JVM (in 2 of 3 rounds) and 1.07 natively. No
+    code changed; the prototype is on the branch
+    `M13-10-call-root-class-prototype`.
 - [x] **M13-13 · The tests, with what GraalVM 25.6 adds**
   - #316's "Features to adopt" 4, 5 and 7, and its follow-up: 25.6's
     native image takes `-XX:+AbortVMOnCompilationFailure` (GR-80621), so

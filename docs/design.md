@@ -342,6 +342,80 @@ follow it or deviate, with the decision below that says why.
     `cpstak` 82.5 / 76.6 / 76.6, `deriv` 1.9 / 2.1 / 2.0. `cpstak`'s are the
     arrays and closures that cross its trampoline loop's back edge (M12-05),
     which none of these touches.
+- **Calls that name the callee's root class: measured and not kept
+  (M13-10).** Truffle 25.6 (GR-72833) adds
+  `DirectCallNode.call(Class<? extends RootNode>, int, Object[])`,
+  `IndirectCallNode.call(RootNode, int, Object[])` and
+  `RootNode.call(Node, int, Object[])`. While the callee isn't compiled,
+  such a call (`OptimizedCallTarget.callRoot`) runs the callee's root in the
+  caller's host frame instead of going through the call target's boundary
+  stub (`callBoundary`) and its profiled entry (`profiledPERoot`). With the
+  root's class known, the host compiler can also call the root's `execute`
+  directly. A compiled callee is called as before.
+  - *What was built.* Every site that calls a procedure or resumes a frame
+    used them (branch `M13-10-call-root-class-prototype`). `Call.doDirect`
+    passed `SchemeRootNodeGen.class` and the call's `$bytecodeIndex`, and
+    `doIndirect` passed the root cast to `SchemeRootNodeGen`; each cache
+    entry kept a flag for whether its target was a procedure's root, and
+    called any other root untyped (a called primitive, an escape or prompt
+    procedure). The trampolines' caches and `PromptRootNode`'s body did the
+    same with an index of -1. `PromptDriver`'s resumes used
+    `ContinuationRootNode.class`, because the DSL's continuation root class
+    is private to `SchemeRootNodeGen`, and they made sure the root had its
+    call target first, since a root without one makes the typed overloads
+    throw. The call path's `@InliningCutoff` stayed (`HostInliningCutoffTest`).
+    A test that recorded the Java stack from a host function the program
+    called showed each site entering its interpreted callee through
+    `callRoot` and not `callBoundary`. Every test passed, and so did
+    `test --compile`, `--torture` and `--torture-owned`.
+  - *Measured.* The prototype (`604864a`) was interleaved with `main`
+    (`92cac7a`) and an A/A copy of it, each build copied out of `bazel-out`,
+    over 3 rounds in a rotating order with a fresh process per run.
+    Bench-check's code ran its 25 cases plus `sboyer` (input 4) and `graphs`
+    (10 and 8 iterations). The native launcher ran the same programs with
+    `--vm.Xmx2g`. Steady state is bench-check's metric, the median after the
+    warm-up; first is iteration 1. The load was sampled during every run and
+    peaked at 1.6 to 9.9: no run was left out, and 3 were retried. The table
+    gives `main`'s medians in ms and the medians of the per-round ratios to
+    it, steady / first:
+
+    | | JIT: `main` | A/A | typed | Native: `main` | A/A | typed |
+    |---|--:|--:|--:|--:|--:|--:|
+    | `fib` | 39.0 / 189.1 | 1.01 / 0.99 | 1.01 / 1.00 | 22.9 / 45.2 | 1.00 / 1.00 | 1.00 / 0.99 |
+    | `tak` | 54.0 / 321.4 | 0.97 / 0.94 | 1.02 / 0.93 | 26.2 / 90.8 | 1.01 / 1.01 | 0.99 / 1.01 |
+    | `cpstak` | 97.2 / 310.9 | 1.00 / 0.91 | 1.00 / 1.05 | 99.9 / 164.0 | 1.00 / 1.01 | 1.00 / 1.01 |
+    | `deriv` | 94.0 / 453.6 | 1.00 / 0.96 | 0.99 / 0.96 | 114.0 / 287.5 | 1.00 / 1.01 | 1.00 / 1.04 |
+    | `peval` | 98.8 / 648.9 | 0.98 / 0.98 | 1.46 / 0.98 | 97.0 / 397.5 | 1.00 / 1.00 | 1.07 / 1.04 |
+    | `ctak` | 86.8 / 263.5 | 1.00 / 1.00 | 1.01 / 1.00 | 92.0 / 153.2 | 1.00 / 1.01 | 1.00 / 1.03 |
+    | `fibc` | 53.6 / 219.4 | 1.00 / 1.00 | 1.01 / 1.01 | 50.1 / 111.7 | 1.01 / 0.99 | 1.00 / 1.00 |
+    | `sboyer` | 634.6 / 1086.0 | 1.00 / 0.98 | 1.01 / 1.00 | 738.5 / 1090.6 | 1.01 / 1.00 | 1.02 / 1.01 |
+    | `graphs` | 4382 / 4996 | 0.99 / 0.95 | 1.00 / 0.98 | 4807 / 4762 | 1.01 / 1.01 | 1.01 / 1.01 |
+    | `fib-interpreter` | 80.7 / 182.3 | 1.00 / 0.98 | 0.96 / 1.03 | | | |
+    | `tak-interpreter` | 50.1 / 157.3 | 0.98 / 1.01 | 0.97 / 1.04 | | | |
+    | `deriv-interpreter` | 80.1 / 198.9 | 1.04 / 0.97 | 0.96 / 1.01 | | | |
+    | median of all cases | | 1.00 / 0.98 | 1.01 / 1.00 | | 1.00 / 1.00 | 1.00 / 1.01 |
+
+    Nothing got faster beyond the A/A pair's noise: not the native
+    launcher's first iterations, where the gain was expected, nor the calls
+    Truffle doesn't inline (`sboyer`, `graphs`). Only the JVM's
+    interpreter-only cases moved, by 0.96-0.97 in steady state, and their
+    first iterations went the other way. `peval`'s steady state got worse
+    in 2 of 3 rounds on the JVM (164 and 146 ms against 92-106 for both
+    copies of `main`), and natively by 1.03-1.10 in each round. So the
+    compiled code didn't stay the same. A likely cause, not checked: in
+    compiled code a typed call goes through `callRoot`'s
+    `call(location, bci, args)`, which profiles exceptions in the call
+    target, shared by all its callers, where the untyped call profiles them
+    in the call node.
+  - *Why so little.* An interpreted call of ours does much more than
+    Truffle's entry: the stack budget, the first descent's bookkeeping, the
+    hand-off of the arguments, the trampoline, and the capture check after
+    it ("The interpreter's first runs", M10-02). The stub and the profiled
+    entry that the typed call skips are a small part of that. Most calls in
+    the native launcher's first iterations are also already into compiled
+    code, which a typed call reaches the old way. The explicit bytecode
+    index saves only a stack walk's read of the frame, and nothing reads it
+    on a hot path.
 - **Rare paths stay out of compiled code (M7-01).** The spill at the depth
   limit (below) is behind a branch profile: a site that has never spilled
   compiles without it. It was about two thirds of every non-tail call site's
@@ -3604,8 +3678,9 @@ Each entry: the decision, why, and what was rejected.
       call passes its arguments as one `Object[]` (`Trampoline`,
       `SchemeRootNode.Call`, `FrameEvalNode`, `SClosure`'s interop call,
       `PromptRootNode`, `ProgramCompiler`), or a frame and a value with no
-      `int` before them (`PromptDriver`'s resumes, `Ending`). Using them is
-      a follow-up (the PR's "Features to adopt").
+      `int` before them (`PromptDriver`'s resumes, `Ending`). Calling by the
+      root's class was measured and not kept (M13-10, "Calls that name the
+      callee's root class").
     - *`SandboxPolicy.UNTRUSTED` checks static objects* (GR-81694): records
       under `UNTRUSTED` (docs/graalvm-configuration.md, Sandboxing).
       `SandboxTest.Isolated` now runs a record under both policies.
