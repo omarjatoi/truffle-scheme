@@ -325,14 +325,15 @@ public final class Trampoline extends Node {
                         @Cached("procedure.callTarget") RootCallTarget cachedTarget,
                         @Cached("inPlace(cachedTarget)") PrimitiveSpec spec,
                         @Cached("createNode(spec)") PrimitiveNode primitive,
-                        @Cached("createCall(cachedTarget, spec)") DirectCallNode callNode) {
+                        @Cached("createCall(cachedTarget, spec)") DirectCallNode callNode,
+                        @Cached("isProcedure(cachedTarget)") boolean procedureRoot) {
             if (primitive != null) {
                 spec.checkArity(arguments.length - 1);
                 return SchemeRootNode.inPlaceResult(primitive.invoke(arguments));
             }
             // The callee's prologue releases it (SchemeRootNode.releaseArguments).
             SchemeRootNode.handOffArguments(SchemeContext.get(node), arguments);
-            return callNode.call(arguments);
+            return RootCalls.call(callNode, procedureRoot, -1, arguments);
         }
 
         @Specialization(replaces = "doDirect")
@@ -340,7 +341,7 @@ public final class Trampoline extends Node {
                         @Bind Node node,
                         @Cached("megamorphic()") IndirectCallNode callNode) {
             SchemeRootNode.handOffArguments(SchemeContext.get(node), arguments);
-            return callNode.call(procedure.callTarget, arguments);
+            return RootCalls.call(callNode, procedure.callTarget, -1, arguments);
         }
 
         /**
@@ -365,6 +366,10 @@ public final class Trampoline extends Node {
 
         static PrimitiveNode createNode(PrimitiveSpec spec) {
             return PrimitiveRootNode.createNode(spec);
+        }
+
+        static boolean isProcedure(RootCallTarget target) {
+            return RootCalls.isProcedure(target);
         }
 
         /** The call node of a target whose primitive doesn't run in place; null if it does. */

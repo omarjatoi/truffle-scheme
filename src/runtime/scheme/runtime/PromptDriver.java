@@ -717,13 +717,16 @@ final class PromptDriver extends Node {
         static Object doDirect(@SuppressWarnings("unused") ContinuationRootNode root, MaterializedFrame frame, Resumption value,
                         @Cached("root") ContinuationRootNode cachedRoot,
                         @Cached("create(cachedRoot.getCallTarget())") DirectCallNode callNode) {
-            return callNode.call(frame, value);
+            return RootCalls.resume(callNode, new Object[]{frame, value});
         }
 
         @Specialization(replaces = "doDirect")
         static Object doIndirect(ContinuationRootNode root, MaterializedFrame frame, Resumption value,
                         @Cached IndirectCallNode callNode) {
-            return callNode.call(root.getCallTarget(), frame, value);
+            // The DSL creates a continuation root without its call target, which a call by the
+            // root needs (RootCalls).
+            root.getCallTarget();
+            return RootCalls.resume(callNode, root, new Object[]{frame, value});
         }
     }
 }

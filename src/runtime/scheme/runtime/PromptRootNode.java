@@ -20,11 +20,14 @@ public final class PromptRootNode extends RootNode {
     private static final Object[] NO_ARGUMENTS = new Object[0];
 
     @Child private DirectCallNode body;
+    /** Whether the body is a procedure's root, which the body's call names (RootCalls). */
+    private final boolean procedureBody;
     @Child private PromptDriver driver;
 
     public PromptRootNode(SchemeLanguage language, CallTarget body) {
         super(language, PromptDriver.frameDescriptor());
         this.body = DirectCallNode.create(body);
+        this.procedureBody = RootCalls.isProcedure(body);
         this.driver = new PromptDriver();
     }
 
@@ -45,7 +48,7 @@ public final class PromptRootNode extends RootNode {
         try {
             Object first;
             try {
-                first = body.call(NO_ARGUMENTS);
+                first = RootCalls.call(body, procedureBody, -1, NO_ARGUMENTS);
             } catch (AbandonedFrames e) {
                 // The program's frames got an abandoning capture, in code with tools (design.md D13).
                 first = e.capture;

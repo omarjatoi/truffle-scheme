@@ -403,8 +403,10 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
                         @Shared @Cached Trampoline trampoline,
                         @Cached("procedure.callTarget") RootCallTarget cachedTarget,
                         @Cached("create(cachedTarget)") DirectCallNode callNode,
+                        @Cached("isProcedure(cachedTarget)") boolean procedureRoot,
                         @Bind SchemeRootNode caller,
                         @Bind VirtualFrame frame,
+                        @Bind("$bytecodeIndex") int bytecodeIndex,
                         @Shared @Cached InlinedBranchProfile checked,
                         @Shared @Cached InlinedBranchProfile spilled) {
             arguments[0] = procedure;
@@ -422,7 +424,7 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
             }
             Object result = null;
             try {
-                result = trampoline.run(frame, callNode.call(arguments));
+                result = trampoline.run(frame, RootCalls.call(callNode, procedureRoot, bytecodeIndex, arguments));
                 return tortured(result, cachedTarget, context);
             } catch (SchemeError e) {
                 return raiseHere(e, context, trampoline);
@@ -443,6 +445,7 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
                         @Cached IndirectCallNode callNode,
                         @Bind SchemeRootNode caller,
                         @Bind VirtualFrame frame,
+                        @Bind("$bytecodeIndex") int bytecodeIndex,
                         @Shared @Cached InlinedBranchProfile checked,
                         @Shared @Cached InlinedBranchProfile spilled) {
             arguments[0] = procedure;
@@ -460,7 +463,7 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
             }
             Object result = null;
             try {
-                result = trampoline.run(frame, callNode.call(procedure.callTarget, arguments));
+                result = trampoline.run(frame, RootCalls.call(callNode, procedure.callTarget, bytecodeIndex, arguments));
                 return tortured(result, procedure.callTarget, context);
             } catch (SchemeError e) {
                 return raiseHere(e, context, trampoline);
@@ -515,6 +518,10 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
 
         static PrimitiveSpec inPlace(RootCallTarget target) {
             return PrimitiveRootNode.inPlace(target);
+        }
+
+        static boolean isProcedure(RootCallTarget target) {
+            return RootCalls.isProcedure(target);
         }
 
         static PrimitiveNode createNode(PrimitiveSpec spec) {
