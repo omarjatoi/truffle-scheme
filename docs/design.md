@@ -1,7 +1,7 @@
 # Design
 
 R7RS-small on GraalVM Truffle, built on the Bytecode DSL. Target: GraalVM CE
-25.5 (Truffle 25.5.5.0.3), pinned by Bazel (D11).
+25.6 (Truffle 25.6.5.1), pinned by Bazel (D11).
 Hard requirement: full R7RS-small conformance, including re-entrant multi-shot
 continuations and proper tail calls.
 
@@ -3316,19 +3316,21 @@ Each entry: the decision, why, and what was rejected.
   `bazel test //...` is the whole pre-PR check; the repository's other
   commands are `bazel run //:r7rs -- <command>` (`tests/harness/main.py`).
 - **Released GraalVM, pinned by Bazel.** The JDK that compiles, runs the
-  tools and runs the tests is GraalVM CE 25.5, downloaded at a pinned sha256
-  (`bazel/graalvm.bzl`; the archives nixpkgs ships), and its Graal compiler
-  is the JIT. Truffle comes from Maven Central (`rules_jvm_external`, locked
-  in `maven_install.json`) at **exactly** that version (25.5.5.0.3): one
-  `TRUFFLE_VERSION` in `MODULE.bazel` picks both, and `//tests:versions`
-  checks the JDK's `release` file against the lock file.
+  tools and runs the tests is GraalVM CE 25.6, downloaded at a pinned sha256
+  (`bazel/graalvm.bzl`; the archives the dev shell's GraalVM is built from,
+  "Nix" below), and its Graal compiler is the JIT. Truffle comes from Maven
+  Central (`rules_jvm_external`, locked in `maven_install.json`) at
+  **exactly** that version (25.6.5.1): one `TRUFFLE_VERSION` in
+  `MODULE.bazel` picks both, and `//tests:versions` checks the JDK's
+  `release` file against the lock file.
 - **Upgrading** is made only by a task that says so (AGENTS.md "Never"):
   add the release to `bazel/graalvm.bzl` (GraalVM CE's archives, Oracle
   GraalVM's for `--//:native_graalvm=oracle`, and the release's source tag
   and its `launcher.cc`'s sha256 for the native launcher, D17), bump
-  `TRUFFLE_VERSION`, `bazel run @jvm//:pin`, and bump nixpkgs in
-  `flake.lock` (the dev shell's JDK) together. The repository rule fails,
-  naming what to add, when any of them is missing for the version.
+  `TRUFFLE_VERSION`, `bazel run @jvm//:pin` (`REPIN=1` when the artifacts
+  change), and move the dev shell's JDK (`flake.nix`, "Nix" below)
+  together. The repository rule fails, naming what to add, when any of them
+  is missing for the version. "GraalVM 25.6", below, is the first upgrade.
 - **Modules.** `java_module_jar` (`bazel/java_module.bzl`) builds the
   `scheme`, `scheme.launcher` and `scheme.test` modules, and everything runs
   with Truffle on the module path, as embedders run it.
@@ -3379,7 +3381,12 @@ Each entry: the decision, why, and what was rejected.
     class in that package but `SRecord`'s.
 - **Nix** (`flake.nix`) provides the dev shell: `bazel` (bazelisk), Python,
   `gh`, chibi-scheme and a GraalVM JDK for running and embedding outside
-  Bazel. Bazel doesn't need it: it pins its own JDK and Python, and builds
+  Bazel. The JDK is the release Bazel pins, from the same archives at the
+  same sha256s: nixpkgs' `graalvmPackages.graalvm-ce` while nixpkgs has the
+  release, and otherwise the archives themselves (`fetchurl`), unpacked by
+  the function nixpkgs builds its graalvm-ce with
+  (`graalvmPackages.buildGraalvm`), with nixpkgs left where it is ("GraalVM
+  25.6", below). Bazel doesn't need it: it pins its own JDK and Python, and builds
   the differential tests' chibi-scheme from the pinned source of the same
   release (`bazel/chibi.bzl`, with `make` and the C compiler of the
   platform the target's C toolchain runs on), so
@@ -3528,6 +3535,106 @@ Each entry: the decision, why, and what was rejected.
     library for nothing; the lint tools stay at GraalVM's ("Other
     versions", above).
 
+- **GraalVM 25.6** (25.6.5.1, released 2026-11-24, taken 2026-11-25 at the
+  maintainer's request; GraalVM's releases are pinned by this section, not
+  by "Other versions"' two weeks). `bazel/graalvm.bzl` has the CE and Oracle
+  archives of 25.6.5.1 for the three platforms (Oracle's sha256s are of the
+  archives as downloaded that day, as for 25.5); the thin launcher's
+  `launcher.cc` is byte for byte 25.5's (the same sha256 at the new tag).
+  `TRUFFLE_VERSION` moved, and the repin changed the eighteen artifacts'
+  versions and digests and nothing else (no artifact came or went).
+  - *The dev shell.* nixpkgs had no 25.6: on 2026-11-25 its `master` still
+    ships graalvm-ce 25.5.5.0.3 (its `hashes.nix`, updated 2026-11-08), so
+    no nixpkgs revision could move with the rest. `flake.nix` builds the
+    release instead: the CE archives at the sha256s `bazel/graalvm.bzl`
+    pins, through `graalvmPackages.buildGraalvm`, the function nixpkgs'
+    graalvm-ce is itself (`buildGraalvm { src = fetchurl ...; version =
+    ...; }`), so the shell's JDK is unpacked and patched exactly as
+    nixpkgs' would be, and `flake.lock` doesn't move. `nix develop -c java
+    -version` prints *"GraalVM CE 25.6.5.1+2.1"*. Rejected: waiting for
+    nixpkgs (the shell's JDK and Bazel's would differ meanwhile, against
+    "they move together"); a nixpkgs bump (none has 25.6); an
+    `overrideAttrs` of nixpkgs' graalvm-ce (its `src` and `version` come
+    from its `hashes.nix` inside the package's function, so an override
+    would replace them piecemeal, where calling the builder passes them).
+    When nixpkgs ships 25.6 (or later), the flake goes back to
+    `pkgs.graalvmPackages.graalvm-ce` with a nixpkgs bump.
+  - *What 25.6 changed for us* (its release notes and the changelogs of
+    `truffle`, `substratevm`, `sdk`, `compiler` and `tools` at the
+    `graal-25.6.5.1` tag; the last three have no 25.6 section):
+    - *Splitting moved to the caller's compilation* (GR-79412, the one
+      change marked breaking). A target marked as needing a split is now
+      cloned when a root that calls it directly is prepared for a root
+      compilation, not when the call runs in the interpreter, and that
+      preparation is then rejected once, so the copies run and profile
+      first (`splitting/Splitting.md` at the tag). On-stack replacement
+      doesn't prepare the root, so a call site in a root that runs once and
+      is compiled only by OSR, such as a program's top-level loop, splits
+      nothing any more; nor does a tail call that the site's trampoline
+      performs for a callee in such a root (a tail call is made by the
+      caller's site, "Calls and tail calls"). `CallSiteTest`,
+      `TailCallCacheTest` and `StableWarmupTest`, which check that a
+      megamorphic site's procedure is split for each caller, called the
+      callers from a top-level loop, and saw no split; they now call them
+      from a procedure the loop calls, which is compiled, and split as
+      before (every site of `map` and `for-each`, `twice` for each of its
+      callers, and still not with up to four). The Bytecode DSL's roots
+      list the operations' cached nodes for the scan themselves
+      (`visitCloneableNodes`, generated), so a `Call`'s call node and its
+      trampoline's are found; our other roots keep their call nodes as
+      children. `RootNode.cloneUninitialized` now runs without an entered
+      context: none of our roots overrides it, and `SchemeRootNode`'s
+      `prepareForCompilation` reads only its own fields.
+    - *`@ReportPolymorphism` on an operation compiles* (GR-81207,
+      oracle/graal#14871, docs/upstream.md's former section): `Call`'s
+      `doIndirect` is `@ReportPolymorphism.Megamorphic`, and the cache
+      initializer that reported in its place (`Trampoline.megamorphic`) is
+      gone with its inverted test. The trampoline's tail-call caches still
+      report themselves, since the first one reports and the others don't.
+    - *Calls by bytecode index and root type* (GR-72833): `CallTarget`,
+      `DirectCallNode`, `IndirectCallNode` and `RootNode` have overloads
+      `call(int, Object[])`, `call(Node, int, Object[])` and
+      `call(Class<? extends RootNode>, int, Object[])`, and *"recompiled
+      varargs calls may select a new overload"*. None of ours does: every
+      call passes its arguments as one `Object[]` (`Trampoline`,
+      `SchemeRootNode.Call`, `FrameEvalNode`, `SClosure`'s interop call,
+      `PromptRootNode`, `ProgramCompiler`), or a frame and a value with no
+      `int` before them (`PromptDriver`'s resumes, `Ending`). Using them is
+      a follow-up (the PR's "Features to adopt").
+    - *`SandboxPolicy.UNTRUSTED` checks static objects* (GR-81694): records
+      under `UNTRUSTED` (docs/graalvm-configuration.md, Sandboxing).
+      `SandboxTest.Isolated` now runs a record under both policies.
+    - *The Bytecode DSL* compares `float`/`double` constants by their bits
+      (GR-80881) and serializes a `finally` handler's constants once
+      (GR-80844): the prelude image is rebuilt with the build, and nothing
+      else of ours depends on either. `storeBytecodeIndexInFrame`, ours,
+      is still supported, as `BytecodeIndexMode.FRAME`. javac, with
+      warnings as errors, found no deprecation.
+    - *The native launcher's VM options*: 25.6's SubstrateVM reads
+      `-XX:+PrintFlagsFinal`, `-XX:+IgnoreUnrecognizedVMOptions` and
+      `-XX:+UnlockDiagnosticVMOptions` at run time (GR-80734, GR-80731), so
+      `--vm.XX:+PrintFlagsFinal` lists the image's options (each labelled
+      `{native image}`) where 25.5 stopped with *"Could not find option"*,
+      and `--vm.XX:+IgnoreUnrecognizedVMOptions` lets an unknown `-XX:`
+      option through, as `java` does (D17, "VM options").
+  - *docs/upstream.md*: of its fourteen entries, 25.6 fixed one, the
+    `@ReportPolymorphism` above; every other inverted test still passes,
+    and the reproducers without a test (libgraal's instrumented
+    compilations, the engine closed as the JVM exits, `ThreadDeath` in the
+    generated roots) still reproduce.
+  - *Measured* (#316 has the table): bench-check's 25 cases on the JVM and
+    its 20 programs through the native launcher, first iteration and
+    steady state (bench-check's metric), with copies of `main` (25.5,
+    `7439d05`), an A/A copy of it and the branch (25.6) out of `bazel-out`,
+    interleaved in a rotating order, a fresh process per run; every run
+    started at a 1-minute load of 10 or less and stayed there (the
+    machine's other project kept it at 40-120 for hours, so the JVM had
+    two rounds and the native launcher one or two). Over the cases, the
+    median ratio 25.6/25.5 was 0.995 steady and 1.00 first on the JVM,
+    and 1.00 both natively, against A/A medians of 1.00 and 1.01: 25.6
+    moves nothing beyond the noise of single runs, `fibc` (0.90) and
+    `ctak` (0.95) on the JVM being the largest consistent changes, and the
+    splitting change costs no case. bench/thresholds.json stays as it is.
 - **Platforms and C and C++ toolchains (decided in M10-01).** C and C++ are
   built with Bazel's own rules and toolchains, and which machine runs an
   action is a property of the execution platform it lands on, not of tags on
@@ -5023,7 +5130,11 @@ Each entry: the decision, why, and what was rejected.
     `--jvm` (`vmInitArgs.ignoreUnrecognized`), and has no other hook, so a
     clearer message would need a change to `launcher.cc`, which this project
     takes unmodified. The message names the option, and docs/usage.md says
-    the collector is chosen at build time.
+    the collector is chosen at build time. Since 25.6, SubstrateVM reads
+    `-XX:+IgnoreUnrecognizedVMOptions` at run time, so
+    `--vm.XX:+IgnoreUnrecognizedVMOptions` lets an unknown `-XX:` option
+    through, as it does `java`, and `--vm.XX:+PrintFlagsFinal` prints the
+    image's options (D11, "GraalVM 25.6").
   - *Argument files (M11-03)*: `--vm.@<file>` is GraalVM's launchers' form of
     `java`'s argument file, `@<file>`, a file of VM options in `java`'s form
     (`-Xmx1g`), separated by white space, with `#` comments, quotes and, in

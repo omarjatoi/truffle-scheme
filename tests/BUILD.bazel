@@ -102,7 +102,6 @@ unit_tests(
         "UpstreamInterruptTest": "upstream",
         "UpstreamNestedRootSourceTest": "upstream",
         "UpstreamPreinitializationDeadlockTest": "upstream",
-        "UpstreamReportPolymorphismTest": "upstream",
         "UpstreamResumedBreakpointTest": "upstream",
         "UpstreamResumedEntriesTest": "upstream_tools",
         "ValuesTest": "core",

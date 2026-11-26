@@ -158,7 +158,11 @@ public class StableWarmupTest {
         assertTrue(split.matcher(engineLog(passedDown(6), "engine.TraceSplitting", "true")).find());
     }
 
-    /** twice, called from {@code callers} procedures, each passing a lambda of its own that run tail-calls. */
+    /**
+     * twice, called from {@code callers} procedures, each passing a lambda of its own that run
+     * tail-calls. The calls are in a procedure the loop calls: Truffle 25.6 splits a callee when the
+     * root that calls it is prepared for compilation, which the loop's root, run once, never is.
+     */
     private static String passedDown(int callers) {
         StringBuilder program = new StringBuilder("(define (run f x) (f x)) (define (twice f x) (+ (run f x) (run f x)))");
         StringBuilder calls = new StringBuilder();
@@ -166,7 +170,7 @@ public class StableWarmupTest {
             program.append("(define (c").append(i).append(" x) (twice (lambda (y) (+ y ").append(i).append(")) x))");
             calls.append(" (c").append(i).append(" i)");
         }
-        return program + "(let loop ((i 0) (s 0)) (if (= i 3000) s (loop (+ i 1) (+ s" + calls + "))))";
+        return program + "(define (all i) (+" + calls + "))(let loop ((i 0) (s 0)) (if (= i 3000) s (loop (+ i 1) (+ s (all i)))))";
     }
 
     /**

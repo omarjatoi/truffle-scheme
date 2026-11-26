@@ -14,7 +14,7 @@ SCHEME_JAVACOPTS = [
 ]
 
 # For a library with a Bytecode DSL root (@GenerateBytecode): no removal warnings, and no note that
-# they're off. Truffle 25.5.5.0.3's processor writes `throwable instanceof java.lang.ThreadDeath`
+# they're off. Truffle's processor (25.5.5.0.3, 25.6.5.1) writes `throwable instanceof java.lang.ThreadDeath`
 # (deprecated for removal) into every generated root's exception handling, and suppresses only
 # "deprecation" on the class (docs/upstream.md, "ThreadDeath in generated roots").
 BYTECODE_ROOT_JAVACOPTS = SCHEME_JAVACOPTS + ["-Xlint:-removal", "-XDsuppressNotes"]

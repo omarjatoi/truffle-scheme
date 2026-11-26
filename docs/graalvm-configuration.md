@@ -15,7 +15,8 @@ pages. For each recommendation: what GraalVM says, what we do, and whether we
 deviated **by mistake** (and the PR that fixed it). It is the companion of
 [truffle-guidance.md](truffle-guidance.md), which audits the runtime against
 the partial-evaluation guidance, and has its format. Written November 2026,
-against GraalVM CE 25.5 / Truffle 25.5.5.0.3 (design.md D11).
+against GraalVM CE 25.5 / Truffle 25.5.5.0.3, and re-checked against
+GraalVM CE 25.6 / Truffle 25.6.5.1 on the upgrade (design.md D11, "25.6").
 
 ## Versions
 
@@ -42,6 +43,17 @@ changed four things this audit depends on (sdk/CHANGELOG.md, 25.1.3):
 - *"GR-73872: Added constant-option support with `ConstantOptionKey<T>`"*;
 - and 25.5's *"GR-79961: Auxiliary engine caching ... is now available in both
   Oracle GraalVM and GraalVM Community Edition."*
+
+At the `graal-25.6.5.1` tag the five pages quoted are the same as at 25.5's
+(`AuxiliaryEngineCaching.md` only rewords its `engine.CacheCompile` policies),
+and `sdk/CHANGELOG.md` has no 25.6 entry. 25.6 changes one thing here, in
+`truffle/CHANGELOG.md`: *"GR-81694: `SandboxPolicy.UNTRUSTED` now automatically
+enables `engine.ForceStaticObjectSafetyChecks`. Explicitly setting this option
+to `false` in an untrusted context is rejected."* (Sandboxing, below); and
+Native Image's (`substratevm/CHANGELOG.md`) reads `-XX:+PrintFlagsFinal`,
+`IgnoreUnrecognizedVMOptions` and `UnlockDiagnosticVMOptions` at run time now,
+which the native launcher's `--vm.` options reach (design.md D17, "VM
+options").
 
 ## What we ran
 
@@ -116,6 +128,7 @@ Sources: 25.5's `SandboxPolicy` Javadoc and the
 | A language checks the policy where it must | `Env.getSandboxPolicy()`: *"A language can use the returned sandbox policy to make language-specific verifications that the sandbox requirements are met."* | Nothing is outside the Env: `(graalvm polyglot)` (D20) checks the Env's permissions (`isPolyglotEvalAllowed`, `isPolyglotBindingsAccessAllowed`, `isHostLookupAllowed`), and no policy restricts host class lookup, so `java-type` adds no refusal of its own. Under `UNTRUSTED`, the compiler materializes the guest's tags for `sandbox.MaxASTDepth` (below). The one thread the runtime starts (`StackBudget`'s stack probe, on the first deep recursion when the stack size is unknown) runs no guest code and touches nothing outside the JVM. | Follow |
 | `ISOLATED`, `UNTRUSTED` | *"In this mode, guest and host application execute on separate virtual machine instances."*; CE needs the language's `-isolate-community` artifact | Not declared: running in a polyglot isolate needs the language built into an isolate library (packaging, below), which nothing built. | Follow, since M11-11: the language and its options declare `UNTRUSTED` (`scheme.PreludeImage` `ISOLATED`), and `//:scheme_isolate` builds the isolate library as mx builds GraalVM's, in a jar that carries it as an engine resource (design.md D10, "ISOLATED and UNTRUSTED"; docs/embedding.md). `SandboxTest.Isolated` (`//tests:unit_isolate_SandboxTest`) runs Scheme under both, and `PolyglotTest.Isolated` (`//tests:unit_isolate_PolyglotTest`) `(graalvm polyglot)`: only Scheme in the isolate, `java-type` looking classes up in the host, the bindings, host values, callbacks and errors through the isolate (D20). |
 | Resource limits | *"The ISOLATED and UNTRUSTED sandbox policies require setting certain resource limits for a context."*; statements, CPU time, output, stack frames, AST depth, heap, threads | Statement limits (`ResourceLimits` and `sandbox.MaxStatements`), CPU time, output size, interrupts and cancelling work (above; `SandboxTest` checks the first three and `close(true)`); in the isolate, every limit `UNTRUSTED` requires (`SandboxTest.Isolated`: heap, AST depth, both streams, CPU time, statements, stack frames, one thread). | Follow |
+| Static objects' safety checks under `UNTRUSTED` | 25.6: `UNTRUSTED` turns on `engine.ForceStaticObjectSafetyChecks`, and rejects it set to `false` | Records are static objects (D10, M7-04); nothing sets the option, so an untrusted context checks each record field access's shape and type, as Truffle chooses. `SandboxTest.Isolated` runs a record under both policies (`runsPrograms`). | Follow |
 | `sandbox.MaxStackFrames` | *"Specifies the maximum number of frames a context can push onto the stack."*; counted per thread at the enter and return events of `RootTag` nodes (`SandboxInstrument.FrameCounterNode`), whose `onYield` and `onResume` are `ExecutionEventNode`'s defaults, *"Delegates to `onReturnValue`"* and *"Delegates to `onEnter`"* | Counted Java frames: the Bytecode DSL reports a yield and a resume around every `@Yield` (`tag.yieldNull`, `tag.resume`), so a frame suspended on the heap left the count. Past the spill depth a recursion never reached the limit (with `scheme.SpillDepth=20`, a limit of 40 let a recursion 50 deep run). The count didn't drift: yields and resumes balance (the audit's guess that resumed frames return without entering was wrong; measured: the same deepest recursion after 1,000 re-entries). | Mistake, fixed in #240: each prompt driver reports its pending frames as enters and returns of an internal `RootTag` node (`PendingFramesNode`), so the limit counts the program's frames, on the heap too (design.md D10, "Sandboxing"). |
 | `sandbox.MaxASTDepth` | *"A limit on the maximum expression depth of a guest language function. Only instrumentable nodes count towards the limit."* | Not enforced: the instrument measures a root's depth by walking its child nodes (`SandboxInstrument.checkAstDepth`, `NodeUtil.forEachChild`), and a Bytecode DSL root's only nested nodes are the tags some instrument has asked for; the sandbox asks only for `RootTag`. | Upstream: it affects every Bytecode DSL language. docs/upstream.md, ["MaxASTDepth on Bytecode DSL roots"](upstream.md#maxastdepth-on-bytecode-dsl-roots): `UpstreamAstDepthTest` and the issue text, not filed. Worked around under `UNTRUSTED`, which requires the limit (M11-11): the compiler materializes the guest's roots' tags (`BytecodeConfig.COMPLETE`), so the walk sees them (design.md D10, "sandbox.MaxASTDepth under UNTRUSTED") |
 

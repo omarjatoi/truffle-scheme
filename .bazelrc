@@ -1,6 +1,6 @@
 # Bazel settings for every build, test and run (AGENTS.md "Commands").
 
-# --- Java: GraalVM CE 25.5 for everything (design.md D11, bazel/graalvm.bzl) ---
+# --- Java: GraalVM CE 25.6 for everything (design.md D11, bazel/graalvm.bzl) ---
 # Compile Java 25 with the GraalVM javac (bazel/toolchains), run tests and tools on the same
 # GraalVM, whose Graal compiler is the JIT the tests exercise.
 common --java_language_version=25
