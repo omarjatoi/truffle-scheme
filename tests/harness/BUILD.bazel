@@ -6,6 +6,7 @@ exports_files([
     "check_bench_gc.py",
     "check_bench_load.py",
     "check_compile_bound_native.py",
+    "check_harness_modes.py",
     "check_launcher.py",
     "check_launcher_vm.py",
     "check_launcher_vm_native.py",

@@ -2417,7 +2417,7 @@ measurements don't run on this machine while a benchmark measures.
     passes while the bug is there; the libgraal entry has its inverted
     test, or says why it stays a launcher command; no issue is filed or
     commented on.
-- [ ] **M14-10 · Truffle's detailed assertions in the local harness** *(early)*
+- [x] **M14-10 · Truffle's detailed assertions in the local harness** *(early)*
   - #321's follow-up: `bazel run //:r7rs -- test --compile`, `--torture`
     and `--torture-owned` (tests/harness/harness.py's `COMPILE_VM_ARGS`,
     `TORTURE_VM_ARGS`), and the fuzzer's modes, which use them, don't

@@ -466,6 +466,18 @@ harness_test(
     size = "small",
 )
 
+# The local commands' modes (plan.md M14-10): `bazel run //:r7rs -- test` and `fuzz` compiled and
+# under both tortures start the JVM with Java's and Truffle's detailed assertions, the interpreter's
+# runs don't, and the native launcher's runs get only launcher options. No JVM runs.
+harness_test(
+    name = "harness_modes",
+    check = "harness_modes",
+    args = [],
+    data = [],
+    deps = ["//tests/fuzz"],
+    size = "small",
+)
+
 # The load rule (bench/README.md "Thresholds"): bench-check reads the load during each benchmark,
 # --update leaves out a run whose peak passed 10, and bench-report gives the load next to its times.
 harness_test(

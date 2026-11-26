@@ -37,8 +37,14 @@ bazel test //tests/fuzz:fuzz_smoke                                 # a fixed see
   the Java exception ours crashed with) and writes nothing the original
   didn't (`#<...>`, NaNs, complex numbers), which R7RS leaves open.
 - **Modes**: `interp`, `compile` (compile at once), `torture` and
-  `torture-owned`, as the conformance tests run them. chibi-scheme runs once
-  per file, whatever the modes. `--jobs` (default 4) runs files in parallel.
+  `torture-owned`, as the conformance tests run them: all but `interp` with
+  Java's and Truffle's detailed assertions (`-ea
+  -Dtruffle.DetailedAssertions=true`, `harness.ASSERTION_VM_ARGS`), as the
+  Bazel compile and torture tests have them, so a failed one is a crash of
+  ours. They are JVM options, which the native launcher has none for: a run
+  through it (`harness.vm_args(native=True)`) takes only the mode's launcher
+  options. chibi-scheme runs once per file, whatever the modes. `--jobs`
+  (default 4) runs files in parallel.
 
 ## Triage
 

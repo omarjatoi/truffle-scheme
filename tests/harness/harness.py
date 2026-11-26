@@ -34,6 +34,11 @@ TORTURE_VM_ARGS = ['-Dpolyglot.scheme.Torture=shared']
 # Owned torture: the same, but the captured frames stay owned, so they are resumed in place
 # (design.md "Owned segments").
 TORTURE_OWNED_VM_ARGS = ['-Dpolyglot.scheme.Torture=owned']
+# The compile and torture modes' assertions, as the Bazel tests have them (tests/driver's
+# Launch.ASSERTION_VM_ARGS, bazel/junit.bzl; plan.md M13-13, M14-10): Java's, and Truffle's expensive
+# ones, which since GraalVM 25.6 only truffle.DetailedAssertions turns on (GR-80770). JVM options,
+# which the native launcher has no option for, so vm_args leaves them out for it (native=True).
+ASSERTION_VM_ARGS = ['-ea', '-Dtruffle.DetailedAssertions=true']
 # Truffle on JDK 25 uses restricted native access and sun.misc.Unsafe; so does JLine, for the
 # REPL's terminal (M7-07).
 TRUFFLE_VM_ARGS = [
@@ -247,9 +252,13 @@ def launcher_vm_args(jvm_args, env=os.environ, cpus=None, options=()):
     return args
 
 
-def vm_args(compile=False, torture=False):
-    """Interpreter only unless compile, plus torture (true, or 'owned' for owned torture)."""
+def vm_args(compile=False, torture=False, native=False):
+    """Interpreter only unless compile, plus torture (true, or 'owned' for owned torture). The
+    compile and torture modes run with ASSERTION_VM_ARGS on the JVM; for the native launcher
+    (native), only the -Dpolyglot.* arguments that launcher_options maps to its options."""
     args = list(COMPILE_VM_ARGS if compile else INTERPRETER_VM_ARGS)
+    if (compile or torture) and not native:
+        args += ASSERTION_VM_ARGS
     if torture == 'owned':
         args += TORTURE_OWNED_VM_ARGS
     elif torture:
@@ -663,7 +672,7 @@ _NATIVE_END_STATUS = 99
 def _run_native(launcher, section, compile):
     """A section through the native launcher (M6-06), as ConformanceRunner runs it: library path,
     working directory, arguments, environment; stdout and stderr together."""
-    options = launcher_options(vm_args(compile=compile or section.jit))
+    options = launcher_options(vm_args(compile=compile or section.jit, native=True))
     workdir = _temp_dir(f'r7rs-{section.suite.name}-native-')
     try:
         section.suite.make_workdir(workdir)
