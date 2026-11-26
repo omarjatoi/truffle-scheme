@@ -104,6 +104,6 @@ public final class GlobalCell {
 
     @TruffleBoundary
     private SchemeError unbound() {
-        return new SchemeError("unbound variable: " + name);
+        return SchemeError.of("unbound variable", name);
     }
 }

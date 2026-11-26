@@ -982,7 +982,7 @@ public final class SchemeMain extends AbstractLanguageLauncher {
             errors.println("INTERNAL ERROR: " + e.getMessage());
             e.printStackTrace(errors);
         } else {
-            errors.println("ERROR: " + e.getMessage());
+            errors.println("ERROR: " + where(e) + e.getMessage());
             printStackTrace(e, errors);
         }
     }
@@ -1023,5 +1023,18 @@ public final class SchemeMain extends AbstractLanguageLauncher {
         if (repeated > 0) {
             errors.println("    ... repeated " + repeated + " more time" + (repeated == 1 ? "" : "s"));
         }
+    }
+
+    /**
+     * Where a Scheme error is, {@code file:line:column: } as Truffle's stack traces name a location
+     * (design.md D8, "Messages"), or nothing: for an error with no location (an {@code eval} of a
+     * datum), and for Truffle's own (a cancellation, a resource limit).
+     */
+    private static String where(PolyglotException e) {
+        SourceSection at = e.isGuestException() && !e.isCancelled() && !e.isResourceExhausted() ? e.getSourceLocation() : null;
+        if (at == null || !at.isAvailable()) {
+            return "";
+        }
+        return at.getSource().getName() + ":" + at.getStartLine() + ":" + at.getStartColumn() + ": ";
     }
 }

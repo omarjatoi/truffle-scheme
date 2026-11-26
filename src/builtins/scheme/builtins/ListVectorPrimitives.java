@@ -10,7 +10,6 @@ import scheme.runtime.PrimitiveNode;
 import scheme.runtime.PrimitiveSpec;
 import scheme.runtime.PrimitiveSpec.Result;
 import scheme.runtime.SchemeError;
-import scheme.runtime.printer.Printer;
 import scheme.runtime.value.LiteralPair;
 import scheme.runtime.value.SBigInteger;
 import scheme.runtime.value.SChar;
@@ -207,12 +206,7 @@ final class ListVectorPrimitives {
             if (p != null) {
                 return car ? p.car : p.cdr;
             }
-            throw notAPair(name, args[1]);
-        }
-
-        @TruffleBoundary
-        private static SchemeError notAPair(String name, Object value) {
-            return new SchemeError(name + ": not a pair: " + Printer.print(value, Printer.Mode.WRITE));
+            throw Lists.notAPair(name, 1, args[1]);
         }
     }
 
@@ -238,7 +232,7 @@ final class ListVectorPrimitives {
                 return SConstant.UNSPECIFIED;
             }
             String who = car ? "set-car!" : "set-cdr!";
-            throw x instanceof LiteralPair ? immutablePair(who) : Lists.notAPair(who, x);
+            throw x instanceof LiteralPair ? immutablePair(who, 1, x) : Lists.notAPair(who, 1, x);
         }
     }
 
@@ -256,7 +250,7 @@ final class ListVectorPrimitives {
             }
             Object result = args[args.length - 1];
             for (int i = args.length - 2; i >= 1; i--) {
-                Object[] items = Lists.toArray("append", args[i]);
+                Object[] items = Lists.toArray("append", i, args[i]);
                 for (int k = items.length - 1; k >= 0; k--) {
                     result = new SPair(items[k], result);
                 }
@@ -276,7 +270,7 @@ final class ListVectorPrimitives {
     static final class ListToVector extends PrimitiveNode {
         @Override
         public Object invoke(Object[] args) {
-            return SVector.of(Lists.toArray("list->vector", args[1]), false);
+            return SVector.of(Lists.toArray("list->vector", 1, args[1]), false);
         }
     }
 
@@ -285,7 +279,7 @@ final class ListVectorPrimitives {
         @Override
         public Object invoke(Object[] args) {
             if (!(args[1] instanceof Long k) || k < 0 || k > Integer.MAX_VALUE - 8) {
-                throw ControlPrimitives.notA("make-vector", "valid vector length", args[1]);
+                throw ControlPrimitives.notA("make-vector", 1, "vector length (an exact integer from 0 to " + (Integer.MAX_VALUE - 8) + ")", args[1]);
             }
             return SVector.filled((int) (long) k, args.length > 2 ? args[2] : SConstant.UNSPECIFIED);
         }
@@ -298,7 +292,7 @@ final class ListVectorPrimitives {
             if (args[1] instanceof SVector v) {
                 return (long) v.length;
             }
-            throw ControlPrimitives.notA("vector-length", "vector", args[1]);
+            throw ControlPrimitives.notA("vector-length", 1, "vector", args[1]);
         }
     }
 
@@ -322,22 +316,27 @@ final class ListVectorPrimitives {
         }
     }
 
-    /** An index argument: an exact integer in {@code [0, bound]}. */
-    static int index(String who, Object k, int bound) {
-        if (k instanceof Long i && i >= 0 && i <= bound) {
+    /** An index argument, {@code who}'s argument number {@code position}: an exact integer in {@code [0, bound]}. */
+    static int index(String who, int position, Object k, int bound) {
+        return index(who, position, k, 0, bound);
+    }
+
+    /** An index argument in {@code [min, bound]}. */
+    static int index(String who, int position, Object k, int min, int bound) {
+        if (k instanceof Long i && i >= min && i <= bound) {
             return (int) (long) i;
         }
-        throw badIndex(who, k, bound);
+        throw badIndex(who, position, k, min, bound);
     }
 
     @TruffleBoundary
-    private static SchemeError badIndex(String who, Object k, int bound) {
-        return ControlPrimitives.notA(who, "valid index (0 to " + bound + ")", k);
+    private static SchemeError badIndex(String who, int position, Object k, int min, int bound) {
+        return SchemeError.argument(who, position, SchemeError.index(min, bound), k);
     }
 
     /** The optional {@code start} at {@code args[i]}: an index in {@code [0, length]}, 0 when absent. */
     static int start(String who, Object[] args, int i, int length) {
-        return args.length > i ? index(who, args[i], length) : 0;
+        return args.length > i ? index(who, i, args[i], length) : 0;
     }
 
     /** The optional {@code end} at {@code args[i]}: an index in {@code [start, length]}, length when absent. */
@@ -345,42 +344,34 @@ final class ListVectorPrimitives {
         if (args.length <= i) {
             return length;
         }
-        int end = index(who, args[i], length);
-        if (end < start) {
-            throw badEnd(who, end, start);
-        }
-        return end;
+        return index(who, i, args[i], start, length);
     }
 
-    @TruffleBoundary
-    private static SchemeError badEnd(String who, int end, int start) {
-        return new SchemeError(who + ": end " + end + " is before start " + start);
-    }
-
-    static SVector vector(String who, Object x) {
+    static SVector vector(String who, int position, Object x) {
         if (x instanceof SVector v) {
             return v;
         }
-        throw ControlPrimitives.notA(who, "vector", x);
+        throw ControlPrimitives.notA(who, position, "vector", x);
     }
 
-    static SVector mutableVector(String who, Object x) {
-        SVector v = vector(who, x);
+    static SVector mutableVector(String who, int position, Object x) {
+        SVector v = vector(who, position, x);
         if (v.immutable) {
-            throw immutable(who);
+            throw immutable(who, position, v);
         }
         return v;
     }
 
+    /** A literal vector stored into (R7RS §3.4, design.md D1). */
     @TruffleBoundary
-    private static SchemeError immutable(String who) {
-        return new SchemeError(who + ": vector is immutable (a literal)");
+    static SchemeError immutable(String who, int position, Object v) {
+        return SchemeError.argument(who, position, "mutable vector (it is a literal)", v);
     }
 
-    /** A literal pair's car or cdr stored into (R7RS §3.4, design.md D1). */
+    /** A literal pair's car or cdr stored into (R7RS §3.4, design.md D1), in argument {@code position}. */
     @TruffleBoundary
-    static SchemeError immutablePair(String who) {
-        return new SchemeError(who + ": pair is immutable (a literal)");
+    static SchemeError immutablePair(String who, int position, Object value) {
+        return SchemeError.argument(who, position, "mutable pair (it is a literal's)", value);
     }
 
     /** {@code (list? obj)}: #t for a proper list, #f for an improper or circular one (tortoise and hare, D9). */
@@ -417,7 +408,7 @@ final class ListVectorPrimitives {
         @Override
         public Object invoke(Object[] args) {
             if (!(args[1] instanceof Long k) || k < 0 || k > Integer.MAX_VALUE) {
-                throw ControlPrimitives.notA("make-list", "valid list length", args[1]);
+                throw ControlPrimitives.notA("make-list", 1, "list length (an exact integer from 0 to " + Integer.MAX_VALUE + ")", args[1]);
             }
             return make((int) (long) k, args.length > 2 ? args[2] : SConstant.UNSPECIFIED);
         }
@@ -448,42 +439,50 @@ final class ListVectorPrimitives {
         public Object invoke(Object[] args) {
             String who = op == TAIL ? "list-tail" : op == REF ? "list-ref" : "list-set!";
             if (!(args[2] instanceof Long k) || k < 0) {
-                throw ControlPrimitives.notA(who, "valid list index", args[2]);
+                throw ControlPrimitives.notA(who, 2, "non-negative exact integer", args[2]);
             }
-            Object tail = tail(who, args[1], k);
+            Object tail = tail(who, args[1], k, op != TAIL);
             if (op == TAIL) {
                 return tail;
             }
             SPair p = SPair.asPair(tail);
             if (p == null) {
-                throw outOfRange(who, k, args[1]);
+                throw outOfRange(who, k, args[1], op != TAIL);
             }
             if (op == REF) {
                 return p.car;
             }
             if (p instanceof LiteralPair) {
-                throw immutablePair(who);
+                throw immutablePair(who, 1, args[1]);
             }
             p.car = args[3];
             return SConstant.UNSPECIFIED;
         }
 
         @TruffleBoundary
-        private static Object tail(String who, Object list, long k) {
+        private static Object tail(String who, Object list, long k, boolean element) {
             Object rest = list;
             for (long i = 0; i < k; i++) {
                 SPair p = SPair.asPair(rest);
                 if (p == null) {
-                    throw outOfRange(who, k, list);
+                    throw outOfRange(who, k, list, element);
                 }
                 rest = p.cdr;
             }
             return rest;
         }
 
+        /**
+         * The index, argument 2, is beyond the list's pairs: the list has fewer than {@code k} (it
+         * isn't circular), so counting them ends.
+         */
         @TruffleBoundary
-        private static SchemeError outOfRange(String who, long k, Object list) {
-            return new SchemeError(who + ": index " + k + " out of range for " + Printer.print(list, Printer.Mode.WRITE));
+        private static SchemeError outOfRange(String who, long k, Object list, boolean element) {
+            long pairs = 0;
+            for (SPair p = SPair.asPair(list); p != null; p = SPair.asPair(p.cdr)) {
+                pairs++;
+            }
+            return SchemeError.argument(who, 2, SchemeError.index(0, element ? pairs - 1 : pairs), k);
         }
     }
 
@@ -508,12 +507,12 @@ final class ListVectorPrimitives {
                 if ((++n & 1) == 0) {
                     slow = ((SPair) slow).cdr;
                     if (slow == rest) {
-                        throw Lists.notAProperList("length", list);
+                        throw Lists.notAProperList("length", 1, list);
                     }
                 }
             }
             if (rest != SConstant.EMPTY_LIST) {
-                throw Lists.notAProperList("length", list);
+                throw Lists.notAProperList("length", 1, list);
             }
             return n;
         }
@@ -538,12 +537,12 @@ final class ListVectorPrimitives {
                 if ((++n & 1) == 0) {
                     slow = ((SPair) slow).cdr;
                     if (slow == rest) {
-                        throw Lists.notAProperList("reverse", list);
+                        throw Lists.notAProperList("reverse", 1, list);
                     }
                 }
             }
             if (rest != SConstant.EMPTY_LIST) {
-                throw Lists.notAProperList("reverse", list);
+                throw Lists.notAProperList("reverse", 1, list);
             }
             return result;
         }
@@ -613,7 +612,7 @@ final class ListVectorPrimitives {
                 if (alist) {
                     SPair entry = SPair.asPair(p.car);
                     if (entry == null) {
-                        throw Lists.notAPair(who, p.car);
+                        throw SchemeError.element(who, 2, "pair", p.car);
                     }
                     y = entry.car;
                 } else {
@@ -631,12 +630,12 @@ final class ListVectorPrimitives {
                 if ((++n & 1) == 0) {
                     slow = ((SPair) slow).cdr;
                     if (slow == rest) {
-                        throw Lists.notAProperList(who, list);
+                        throw Lists.notAProperList(who, 2, list);
                     }
                 }
             }
             if (rest != SConstant.EMPTY_LIST) {
-                throw Lists.notAProperList(who, list);
+                throw Lists.notAProperList(who, 2, list);
             }
             return false;
         }
@@ -705,7 +704,7 @@ final class ListVectorPrimitives {
                 if ((++n & 1) == 0) {
                     slow = ((SPair) slow).cdr;
                     if (slow == rest) {
-                        throw Lists.notAProperList("list-copy", list);
+                        throw Lists.notAProperList("list-copy", 1, list);
                     }
                 }
             }
@@ -718,7 +717,7 @@ final class ListVectorPrimitives {
     static final class VectorToList extends PrimitiveNode {
         @Override
         public Object invoke(Object[] args) {
-            SVector v = vector("vector->list", args[1]);
+            SVector v = vector("vector->list", 1, args[1]);
             int start = start("vector->list", args, 2, v.length);
             int end = end("vector->list", args, 3, start, v.length);
             return toList(v, start, end);
@@ -738,7 +737,7 @@ final class ListVectorPrimitives {
     static final class VectorToString extends PrimitiveNode {
         @Override
         public Object invoke(Object[] args) {
-            SVector v = vector("vector->string", args[1]);
+            SVector v = vector("vector->string", 1, args[1]);
             int start = start("vector->string", args, 2, v.length);
             int end = end("vector->string", args, 3, start, v.length);
             return toString(v, start, end);
@@ -750,7 +749,7 @@ final class ListVectorPrimitives {
             for (int i = start; i < end; i++) {
                 Object element = v.get(i);
                 if (!(element instanceof SChar c)) {
-                    throw ControlPrimitives.notA("vector->string", "character", element);
+                    throw SchemeError.element("vector->string", 1, "character", element);
                 }
                 result.set(i - start, c.codePoint);
             }
@@ -763,7 +762,7 @@ final class ListVectorPrimitives {
         @Override
         public Object invoke(Object[] args) {
             if (!(args[1] instanceof SString s)) {
-                throw ControlPrimitives.notA("string->vector", "string", args[1]);
+                throw ControlPrimitives.notA("string->vector", 1, "string", args[1]);
             }
             int start = start("string->vector", args, 2, s.length());
             int end = end("string->vector", args, 3, start, s.length());
@@ -784,7 +783,7 @@ final class ListVectorPrimitives {
     static final class VectorCopy extends PrimitiveNode {
         @Override
         public Object invoke(Object[] args) {
-            SVector v = vector("vector-copy", args[1]);
+            SVector v = vector("vector-copy", 1, args[1]);
             int start = start("vector-copy", args, 2, v.length);
             int end = end("vector-copy", args, 3, start, v.length);
             return v.copy(start, end);
@@ -795,21 +794,21 @@ final class ListVectorPrimitives {
     static final class VectorCopyInto extends PrimitiveNode {
         @Override
         public Object invoke(Object[] args) {
-            SVector to = mutableVector("vector-copy!", args[1]);
-            int at = index("vector-copy!", args[2], to.length);
-            SVector from = vector("vector-copy!", args[3]);
+            SVector to = mutableVector("vector-copy!", 1, args[1]);
+            int at = index("vector-copy!", 2, args[2], to.length);
+            SVector from = vector("vector-copy!", 3, args[3]);
             int start = start("vector-copy!", args, 4, from.length);
             int end = end("vector-copy!", args, 5, start, from.length);
             if (end - start > to.length - at) {
-                throw tooLong(end - start, at, to.length);
+                throw tooLong(end - start, args[2], to.length);
             }
             to.copyFrom(at, from, start, end);
             return SConstant.UNSPECIFIED;
         }
 
         @TruffleBoundary
-        private static SchemeError tooLong(int count, int at, int length) {
-            return new SchemeError("vector-copy!: " + count + " elements don't fit at index " + at + " of a vector of length " + length);
+        private static SchemeError tooLong(int count, Object at, int length) {
+            return SchemeError.argument("vector-copy!", 2, SchemeError.index(0, length - count) + ", at which the " + count + " elements fit", at);
         }
     }
 
@@ -824,10 +823,10 @@ final class ListVectorPrimitives {
         private static SVector append(Object[] args) {
             long total = 0;
             for (int i = 1; i < args.length; i++) {
-                total += vector("vector-append", args[i]).length;
+                total += vector("vector-append", i, args[i]).length;
             }
             if (total > Integer.MAX_VALUE - 8) {
-                throw new SchemeError("vector-append: result too long");
+                throw SchemeError.of("vector-append: the result is longer than the longest vector, " + (Integer.MAX_VALUE - 8) + " elements");
             }
             // The first vector's kind of storage, generalized by the first element that doesn't fit it.
             SVector result = args.length == 1 ? new SVector(new Object[0], false) : ((SVector) args[1]).blank((int) total);
@@ -845,7 +844,7 @@ final class ListVectorPrimitives {
     static final class VectorFill extends PrimitiveNode {
         @Override
         public Object invoke(Object[] args) {
-            SVector v = mutableVector("vector-fill!", args[1]);
+            SVector v = mutableVector("vector-fill!", 1, args[1]);
             int start = start("vector-fill!", args, 3, v.length);
             int end = end("vector-fill!", args, 4, start, v.length);
             v.fill(start, end, args[2]);

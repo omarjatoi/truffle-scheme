@@ -111,6 +111,7 @@ final class IoPrimitives {
         WRITE_U8("%write-u8", 2, 2),
         WRITE_BYTEVECTOR("%write-bytevector", 2, 4),
         FLUSH_OUTPUT_PORT("%flush-output-port", 1, 1),
+        NEWLINE("%newline", 1, 1),
         // The REPL's echo of each top-level form's values (design.md D17).
         REPL_WRITE("%repl-write", 1, 1);
 
@@ -230,6 +231,8 @@ final class IoPrimitives {
                     return new WriteBytevector();
                 case FLUSH_OUTPUT_PORT:
                     return new Flush();
+                case NEWLINE:
+                    return new Newline();
                 case REPL_WRITE:
                     return new ReplWrite();
             }
@@ -240,71 +243,71 @@ final class IoPrimitives {
     // ------------------------------------------------------------------------------------------
     // Argument checks
 
+    // Each takes the procedure's name and the argument's position in its call (design.md D8,
+    // "Messages"): the public procedure's, which io.scm calls the %-primitive for.
+
     /** An open port that is an input (or output) port, and binary (or textual). */
-    private static SPort port(String who, Object x, boolean input, boolean binary) {
+    private static SPort port(String who, int position, Object x, boolean input, boolean binary) {
         if (x instanceof SPort p && p.isInput() == input && p.isBinary() == binary) {
             if (!p.isOpen()) {
-                throw closed(who, p);
+                throw closed(who, position, p);
             }
             return p;
         }
-        throw notAPort(who, x, input, binary);
+        throw notAPort(who, position, x, input, binary);
     }
 
     @TruffleBoundary
-    private static SchemeError notAPort(String who, Object x, boolean input, boolean binary) {
-        return ControlPrimitives.notA(who, (binary ? "binary " : "textual ") + (input ? "input" : "output") + " port", x);
+    private static SchemeError notAPort(String who, int position, Object x, boolean input, boolean binary) {
+        return ControlPrimitives.notA(who, position, (binary ? "binary " : "textual ") + (input ? "input" : "output") + " port", x);
     }
 
-    private static SPort textualInput(String who, Object x) {
-        return port(who, x, true, false);
+    private static SPort textualInput(String who, int position, Object x) {
+        return port(who, position, x, true, false);
     }
 
-    private static SPort textualOutput(String who, Object x) {
-        return port(who, x, false, false);
+    private static SPort textualOutput(String who, int position, Object x) {
+        return port(who, position, x, false, false);
     }
 
-    private static SPort binaryInput(String who, Object x) {
-        return port(who, x, true, true);
+    private static SPort binaryInput(String who, int position, Object x) {
+        return port(who, position, x, true, true);
     }
 
-    private static SPort binaryOutput(String who, Object x) {
-        return port(who, x, false, true);
+    private static SPort binaryOutput(String who, int position, Object x) {
+        return port(who, position, x, false, true);
     }
 
     @TruffleBoundary
-    private static SchemeError closed(String who, SPort port) {
-        return new SchemeError(who + ": port is closed: " + Printer.print(port, Printer.Mode.WRITE));
+    private static SchemeError closed(String who, int position, SPort port) {
+        return ControlPrimitives.notA(who, position, "open port (it is closed)", port);
     }
 
-    /** A non-negative fixnum count or index no greater than {@code max}. */
-    private static int index(String who, Object x, int min, int max) {
+    /** A fixnum count, index or byte from {@code min} to {@code max}. */
+    private static int index(String who, int position, Object x, int min, int max) {
         if (x instanceof Long l && l >= min && l <= max) {
             return l.intValue();
         }
-        throw outOfRange(who, x, min, max);
+        throw outOfRange(who, position, x, min, max);
     }
 
     @TruffleBoundary
-    private static SchemeError outOfRange(String who, Object x, int min, int max) {
-        if (!(x instanceof Long)) {
-            return ControlPrimitives.notA(who, "exact integer", x);
-        }
-        return new SchemeError(who + ": " + x + " is out of range [" + min + ", " + max + "]");
+    private static SchemeError outOfRange(String who, int position, Object x, int min, int max) {
+        return ControlPrimitives.notA(who, position, "exact integer from " + min + " to " + max, x);
     }
 
-    private static SString string(String who, Object x) {
+    private static SString string(String who, int position, Object x) {
         if (x instanceof SString s) {
             return s;
         }
-        throw ControlPrimitives.notA(who, "string", x);
+        throw ControlPrimitives.notA(who, position, "string", x);
     }
 
-    private static SBytevector bytevector(String who, Object x) {
+    private static SBytevector bytevector(String who, int position, Object x) {
         if (x instanceof SBytevector b) {
             return b;
         }
-        throw ControlPrimitives.notA(who, "bytevector", x);
+        throw ControlPrimitives.notA(who, position, "bytevector", x);
     }
 
     @TruffleBoundary
@@ -347,7 +350,7 @@ final class IoPrimitives {
         @Override
         public Object invoke(Object[] args) {
             if (!(args[1] instanceof SPort p)) {
-                throw ControlPrimitives.notA(input ? "input-port-open?" : "output-port-open?", "port", args[1]);
+                throw ControlPrimitives.notA(input ? "input-port-open?" : "output-port-open?", 1, "port", args[1]);
             }
             return p.isOpen() && p.isInput() == input;
         }
@@ -363,7 +366,7 @@ final class IoPrimitives {
         @Override
         public Object invoke(Object[] args) {
             if (!(args[1] instanceof SPort p)) {
-                throw ControlPrimitives.notA(who, "port", args[1]);
+                throw ControlPrimitives.notA(who, 1, "port", args[1]);
             }
             p.close();
             return SConstant.UNSPECIFIED;
@@ -380,7 +383,7 @@ final class IoPrimitives {
     static final class OpenInputString extends PrimitiveNode {
         @Override
         public Object invoke(Object[] args) {
-            return open(string("open-input-string", args[1]));
+            return open(string("open-input-string", 1, args[1]));
         }
 
         @TruffleBoundary
@@ -400,7 +403,7 @@ final class IoPrimitives {
         @Override
         public Object invoke(Object[] args) {
             if (!(args[1] instanceof SPort p) || !p.isStringPort()) {
-                throw ControlPrimitives.notA("get-output-string", "string output port", args[1]);
+                throw ControlPrimitives.notA("get-output-string", 1, "string output port", args[1]);
             }
             return contents(p);
         }
@@ -414,7 +417,7 @@ final class IoPrimitives {
     static final class OpenInputBytevector extends PrimitiveNode {
         @Override
         public Object invoke(Object[] args) {
-            return open(bytevector("open-input-bytevector", args[1]));
+            return open(bytevector("open-input-bytevector", 1, args[1]));
         }
 
         @TruffleBoundary
@@ -435,7 +438,7 @@ final class IoPrimitives {
         @Override
         public Object invoke(Object[] args) {
             if (!(args[1] instanceof SPort p) || !p.isBytevectorPort()) {
-                throw ControlPrimitives.notA("get-output-bytevector", "bytevector output port", args[1]);
+                throw ControlPrimitives.notA("get-output-bytevector", 1, "bytevector output port", args[1]);
             }
             return new SBytevector(p.bytes());
         }
@@ -468,7 +471,7 @@ final class IoPrimitives {
         @Override
         public Object invoke(Object[] args) {
             String who = NAMES[mode];
-            return open(SchemeContext.get(this), who, mode, string(who, args[1]));
+            return open(SchemeContext.get(this), who, mode, string(who, 1, args[1]));
         }
 
         /**
@@ -506,7 +509,7 @@ final class IoPrimitives {
         @Override
         public Object invoke(Object[] args) {
             String who = op == EXISTS ? "file-exists?" : "delete-file";
-            return run(SchemeContext.get(this).getEnv(), op, who, string(who, args[1]));
+            return run(SchemeContext.get(this).getEnv(), op, who, string(who, 1, args[1]));
         }
 
         @TruffleBoundary
@@ -550,7 +553,7 @@ final class IoPrimitives {
     static final class Read extends PrimitiveNode {
         @Override
         public Object invoke(Object[] args) {
-            SPort port = textualInput("read", args[1]);
+            SPort port = textualInput("read", 1, args[1]);
             return read(SchemeContext.get(this), port);
         }
 
@@ -577,7 +580,7 @@ final class IoPrimitives {
 
         @Override
         public Object invoke(Object[] args) {
-            SPort port = textualInput(peek ? "peek-char" : "read-char", args[1]);
+            SPort port = textualInput(peek ? "peek-char" : "read-char", 1, args[1]);
             int c = peek ? port.peekChar() : port.readChar();
             return c < 0 ? SConstant.EOF : SChar.of(c);
         }
@@ -587,7 +590,7 @@ final class IoPrimitives {
     static final class ReadLine extends PrimitiveNode {
         @Override
         public Object invoke(Object[] args) {
-            return textualInput("read-line", args[1]).readLine();
+            return textualInput("read-line", 1, args[1]).readLine();
         }
     }
 
@@ -595,8 +598,8 @@ final class IoPrimitives {
     static final class ReadString extends PrimitiveNode {
         @Override
         public Object invoke(Object[] args) {
-            int k = index("read-string", args[1], 0, Integer.MAX_VALUE);
-            return textualInput("read-string", args[2]).readString(k);
+            int k = index("read-string", 1, args[1], 0, Integer.MAX_VALUE);
+            return textualInput("read-string", 2, args[2]).readString(k);
         }
     }
 
@@ -610,7 +613,7 @@ final class IoPrimitives {
 
         @Override
         public Object invoke(Object[] args) {
-            return port(binary ? "u8-ready?" : "char-ready?", args[1], true, binary).ready();
+            return port(binary ? "u8-ready?" : "char-ready?", 1, args[1], true, binary).ready();
         }
     }
 
@@ -624,7 +627,7 @@ final class IoPrimitives {
 
         @Override
         public Object invoke(Object[] args) {
-            SPort port = binaryInput(peek ? "peek-u8" : "read-u8", args[1]);
+            SPort port = binaryInput(peek ? "peek-u8" : "read-u8", 1, args[1]);
             int b = peek ? port.peekByte() : port.readByte();
             return b < 0 ? SConstant.EOF : (Object) (long) b;
         }
@@ -634,8 +637,8 @@ final class IoPrimitives {
     static final class ReadBytevector extends PrimitiveNode {
         @Override
         public Object invoke(Object[] args) {
-            int k = index("read-bytevector", args[1], 0, Integer.MAX_VALUE);
-            byte[] bytes = binaryInput("read-bytevector", args[2]).readBytes(k);
+            int k = index("read-bytevector", 1, args[1], 0, Integer.MAX_VALUE);
+            byte[] bytes = binaryInput("read-bytevector", 2, args[2]).readBytes(k);
             return bytes == null ? SConstant.EOF : new SBytevector(bytes);
         }
     }
@@ -644,13 +647,13 @@ final class IoPrimitives {
     static final class ReadBytevectorInto extends PrimitiveNode {
         @Override
         public Object invoke(Object[] args) {
-            SBytevector bv = bytevector("read-bytevector!", args[1]);
+            SBytevector bv = bytevector("read-bytevector!", 1, args[1]);
             if (bv.immutable) {
-                throw ControlPrimitives.notA("read-bytevector!", "mutable bytevector", bv);
+                throw ControlPrimitives.notA("read-bytevector!", 1, "mutable bytevector (it is a literal)", bv);
             }
-            SPort port = binaryInput("read-bytevector!", args[2]);
-            int end = args.length > 4 ? index("read-bytevector!", args[4], 0, bv.bytes.length) : bv.bytes.length;
-            int start = args.length > 3 ? index("read-bytevector!", args[3], 0, end) : 0;
+            SPort port = binaryInput("read-bytevector!", 2, args[2]);
+            int start = args.length > 3 ? index("read-bytevector!", 3, args[3], 0, bv.bytes.length) : 0;
+            int end = args.length > 4 ? index("read-bytevector!", 4, args[4], start, bv.bytes.length) : bv.bytes.length;
             int n = port.readBytes(bv.bytes, start, end - start);
             return n < 0 ? SConstant.EOF : (Object) (long) n;
         }
@@ -671,7 +674,7 @@ final class IoPrimitives {
 
         @Override
         public Object invoke(Object[] args) {
-            print(textualOutput(who, args[2]), mode, args[1]);
+            print(textualOutput(who, 2, args[2]), mode, args[1]);
             return SConstant.UNSPECIFIED;
         }
 
@@ -711,9 +714,9 @@ final class IoPrimitives {
         @Override
         public Object invoke(Object[] args) {
             if (!(args[1] instanceof SChar c)) {
-                throw ControlPrimitives.notA("write-char", "character", args[1]);
+                throw ControlPrimitives.notA("write-char", 1, "character", args[1]);
             }
-            write(textualOutput("write-char", args[2]), c.codePoint);
+            write(textualOutput("write-char", 2, args[2]), c.codePoint);
             return SConstant.UNSPECIFIED;
         }
 
@@ -727,10 +730,10 @@ final class IoPrimitives {
     static final class WriteString extends PrimitiveNode {
         @Override
         public Object invoke(Object[] args) {
-            SString s = string("write-string", args[1]);
-            SPort port = textualOutput("write-string", args[2]);
-            int end = args.length > 4 ? index("write-string", args[4], 0, s.length()) : s.length();
-            int start = args.length > 3 ? index("write-string", args[3], 0, end) : 0;
+            SString s = string("write-string", 1, args[1]);
+            SPort port = textualOutput("write-string", 2, args[2]);
+            int start = args.length > 3 ? index("write-string", 3, args[3], 0, s.length()) : 0;
+            int end = args.length > 4 ? index("write-string", 4, args[4], start, s.length()) : s.length();
             write(port, s, start, end);
             return SConstant.UNSPECIFIED;
         }
@@ -752,8 +755,8 @@ final class IoPrimitives {
     static final class WriteU8 extends PrimitiveNode {
         @Override
         public Object invoke(Object[] args) {
-            int b = index("write-u8", args[1], 0, 255);
-            binaryOutput("write-u8", args[2]).writeByte(b);
+            int b = index("write-u8", 1, args[1], 0, 255);
+            binaryOutput("write-u8", 2, args[2]).writeByte(b);
             return SConstant.UNSPECIFIED;
         }
     }
@@ -762,10 +765,10 @@ final class IoPrimitives {
     static final class WriteBytevector extends PrimitiveNode {
         @Override
         public Object invoke(Object[] args) {
-            SBytevector bv = bytevector("write-bytevector", args[1]);
-            SPort port = binaryOutput("write-bytevector", args[2]);
-            int end = args.length > 4 ? index("write-bytevector", args[4], 0, bv.bytes.length) : bv.bytes.length;
-            int start = args.length > 3 ? index("write-bytevector", args[3], 0, end) : 0;
+            SBytevector bv = bytevector("write-bytevector", 1, args[1]);
+            SPort port = binaryOutput("write-bytevector", 2, args[2]);
+            int start = args.length > 3 ? index("write-bytevector", 3, args[3], 0, bv.bytes.length) : 0;
+            int end = args.length > 4 ? index("write-bytevector", 4, args[4], start, bv.bytes.length) : bv.bytes.length;
             port.writeBytes(bv.bytes, start, end);
             return SConstant.UNSPECIFIED;
         }
@@ -775,12 +778,21 @@ final class IoPrimitives {
         @Override
         public Object invoke(Object[] args) {
             if (!(args[1] instanceof SPort p) || !p.isOutput()) {
-                throw ControlPrimitives.notA("flush-output-port", "output port", args[1]);
+                throw ControlPrimitives.notA("flush-output-port", 1, "output port", args[1]);
             }
             if (!p.isOpen()) {
-                throw closed("flush-output-port", p);
+                throw closed("flush-output-port", 1, p);
             }
             p.flush();
+            return SConstant.UNSPECIFIED;
+        }
+    }
+
+    /** {@code (%newline port)}: {@code newline}'s, so that its errors name it and its argument. */
+    static final class Newline extends PrimitiveNode {
+        @Override
+        public Object invoke(Object[] args) {
+            WriteChar.write(textualOutput("newline", 1, args[1]), '\n');
             return SConstant.UNSPECIFIED;
         }
     }

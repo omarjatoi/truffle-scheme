@@ -256,7 +256,7 @@ public final class ForeignNodes {
             try {
                 return incoming.execute(interop.readArrayElement(receiver, index));
             } catch (InteropException e) {
-                throw Foreign.interopError(WHO, receiver, e);
+                throw Foreign.interopError(WHO, 1, receiver, index, e);
             } catch (AbstractTruffleException e) {
                 throw Foreign.raised(e);
             } catch (StackOverflowError e) {
@@ -280,7 +280,7 @@ public final class ForeignNodes {
                 }
                 return incoming.execute(interop.readMember(receiver, memberName(names, WHO, receiver, key)));
             } catch (InteropException e) {
-                throw Foreign.interopError(WHO, receiver, e);
+                throw Foreign.interopError(WHO, 1, receiver, key, e);
             } catch (AbstractTruffleException e) {
                 throw Foreign.raised(e);
             } catch (StackOverflowError e) {
@@ -319,7 +319,7 @@ public final class ForeignNodes {
             try {
                 interop.writeArrayElement(receiver, index, value);
             } catch (InteropException e) {
-                throw Foreign.interopError(WHO, receiver, e);
+                throw Foreign.interopError(WHO, 1, receiver, index, e);
             } catch (AbstractTruffleException e) {
                 throw Foreign.raised(e);
             } catch (StackOverflowError e) {
@@ -343,7 +343,7 @@ public final class ForeignNodes {
                     interop.writeMember(receiver, memberName(names, WHO, receiver, key), value);
                 }
             } catch (InteropException e) {
-                throw Foreign.interopError(WHO, receiver, e);
+                throw Foreign.interopError(WHO, 1, receiver, key, e);
             } catch (AbstractTruffleException e) {
                 throw Foreign.raised(e);
             } catch (StackOverflowError e) {
@@ -380,7 +380,7 @@ public final class ForeignNodes {
             try {
                 return interop.hasArrayElements(receiver) ? interop.getArraySize(receiver) : interop.getHashSize(receiver);
             } catch (InteropException e) {
-                throw Foreign.interopError("foreign-length", receiver, e);
+                throw Foreign.interopError("foreign-length", 1, receiver, e);
             } catch (AbstractTruffleException e) {
                 throw Foreign.raised(e);
             } catch (StackOverflowError e) {
@@ -418,7 +418,7 @@ public final class ForeignNodes {
             try {
                 return incoming.execute(interop.invokeMember(receiver, name, foreignArguments));
             } catch (InteropException e) {
-                throw Foreign.interopError(WHO, receiver, e);
+                throw Foreign.interopError(WHO, 1, receiver, member, e);
             } catch (AbstractTruffleException e) {
                 throw Foreign.raised(e);
             } catch (StackOverflowError e) {
@@ -452,7 +452,7 @@ public final class ForeignNodes {
             try {
                 return incoming.execute(interop.instantiate(constructor, foreignArguments));
             } catch (InteropException e) {
-                throw Foreign.interopError("foreign-new", constructor, e);
+                throw Foreign.interopError("foreign-new", 1, constructor, e);
             } catch (AbstractTruffleException e) {
                 throw Foreign.raised(e);
             } catch (StackOverflowError e) {
@@ -487,7 +487,7 @@ public final class ForeignNodes {
                 }
                 return interop.isMetaInstance(type, value);
             } catch (InteropException e) {
-                throw Foreign.interopError("foreign-instance?", type, e);
+                throw Foreign.interopError("foreign-instance?", 2, type, e);
             } catch (AbstractTruffleException e) {
                 throw Foreign.raised(e);
             } catch (StackOverflowError e) {
@@ -567,7 +567,7 @@ public final class ForeignNodes {
                 }
                 return iterate(who, interop.getIterator(receiver), items, incoming);
             } catch (InteropException e) {
-                throw Foreign.interopError(who, receiver, e);
+                throw Foreign.interopError(who, 1, receiver, e);
             } catch (AbstractTruffleException e) {
                 throw Foreign.raised(e);
             } catch (StackOverflowError e) {

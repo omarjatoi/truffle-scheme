@@ -113,7 +113,7 @@ final class BytevectorPrimitives {
         public Object invoke(Object[] args) {
             byte[] bytes = new byte[args.length - 1];
             for (int i = 1; i < args.length; i++) {
-                bytes[i - 1] = toByte("bytevector", args[i]);
+                bytes[i - 1] = toByte("bytevector", i, args[i]);
             }
             return new SBytevector(bytes);
         }
@@ -124,11 +124,11 @@ final class BytevectorPrimitives {
         @Override
         public Object invoke(Object[] args) {
             if (!(args[1] instanceof Long k) || k < 0 || k > Integer.MAX_VALUE - 8) {
-                throw notA("make-bytevector", "valid bytevector length", args[1]);
+                throw notA("make-bytevector", 1, "bytevector length (an exact integer from 0 to " + (Integer.MAX_VALUE - 8) + ")", args[1]);
             }
             byte[] bytes = new byte[(int) (long) k];
             if (args.length > 2) {
-                java.util.Arrays.fill(bytes, toByte("make-bytevector", args[2]));
+                java.util.Arrays.fill(bytes, toByte("make-bytevector", 2, args[2]));
             }
             return new SBytevector(bytes);
         }
@@ -137,7 +137,7 @@ final class BytevectorPrimitives {
     static final class BytevectorLength extends PrimitiveNode {
         @Override
         public Object invoke(Object[] args) {
-            return (long) bytevector("bytevector-length", args[1]).bytes.length;
+            return (long) bytevector("bytevector-length", 1, args[1]).bytes.length;
         }
     }
 
@@ -145,7 +145,7 @@ final class BytevectorPrimitives {
     static final class BytevectorRef extends PrimitiveNode {
         @Override
         public Object invoke(Object[] args) {
-            SBytevector bv = bytevector("bytevector-u8-ref", args[1]);
+            SBytevector bv = bytevector("bytevector-u8-ref", 1, args[1]);
             return (long) (bv.bytes[index("bytevector-u8-ref", bv, args[2])] & 0xff);
         }
     }
@@ -154,9 +154,9 @@ final class BytevectorPrimitives {
     static final class BytevectorSet extends PrimitiveNode {
         @Override
         public Object invoke(Object[] args) {
-            SBytevector bv = mutable("bytevector-u8-set!", args[1]);
+            SBytevector bv = mutable("bytevector-u8-set!", 1, args[1]);
             int k = index("bytevector-u8-set!", bv, args[2]);
-            bv.bytes[k] = toByte("bytevector-u8-set!", args[3]);
+            bv.bytes[k] = toByte("bytevector-u8-set!", 3, args[3]);
             return SConstant.UNSPECIFIED;
         }
     }
@@ -165,7 +165,7 @@ final class BytevectorPrimitives {
     static final class BytevectorCopy extends PrimitiveNode {
         @Override
         public Object invoke(Object[] args) {
-            SBytevector bv = bytevector("bytevector-copy", args[1]);
+            SBytevector bv = bytevector("bytevector-copy", 1, args[1]);
             int length = bv.bytes.length;
             int start = start("bytevector-copy", args, 2, length);
             int end = end("bytevector-copy", args, 3, start, length);
@@ -181,13 +181,13 @@ final class BytevectorPrimitives {
         @Override
         public Object invoke(Object[] args) {
             String who = "bytevector-copy!";
-            SBytevector to = mutable(who, args[1]);
-            SBytevector from = bytevector(who, args[3]);
+            SBytevector to = mutable(who, 1, args[1]);
+            SBytevector from = bytevector(who, 3, args[3]);
             int start = start(who, args, 4, from.bytes.length);
             int end = end(who, args, 5, start, from.bytes.length);
             int count = end - start;
             if (!(args[2] instanceof Long at) || at < 0 || at > to.bytes.length - count) {
-                throw badIndex(who, "destination index", to.bytes.length, args[2]);
+                throw ControlPrimitives.notA(who, 2, SchemeError.index(0, to.bytes.length - count) + ", at which the " + count + " bytes fit", args[2]);
             }
             System.arraycopy(from.bytes, start, to.bytes, (int) (long) at, count);
             return SConstant.UNSPECIFIED;
@@ -205,10 +205,10 @@ final class BytevectorPrimitives {
         private static SBytevector append(Object[] args) {
             long total = 0;
             for (int i = 1; i < args.length; i++) {
-                total += bytevector("bytevector-append", args[i]).bytes.length;
+                total += bytevector("bytevector-append", i, args[i]).bytes.length;
             }
             if (total > Integer.MAX_VALUE - 8) {
-                throw new SchemeError("bytevector-append: result too long");
+                throw SchemeError.of("bytevector-append: the result is longer than the longest bytevector, " + (Integer.MAX_VALUE - 8) + " bytes");
             }
             byte[] bytes = new byte[(int) total];
             int at = 0;
@@ -226,17 +226,17 @@ final class BytevectorPrimitives {
         @Override
         public Object invoke(Object[] args) {
             String who = "utf8->string";
-            SBytevector bv = bytevector(who, args[1]);
+            SBytevector bv = bytevector(who, 1, args[1]);
             int start = start(who, args, 2, bv.bytes.length);
             int end = end(who, args, 3, start, bv.bytes.length);
-            return decode(bv.bytes, start, end);
+            return decode(bv, bv.bytes, start, end);
         }
 
         @TruffleBoundary
-        private static SString decode(byte[] bytes, int start, int end) {
+        private static SString decode(SBytevector bv, byte[] bytes, int start, int end) {
             TruffleString ts = TruffleString.fromByteArrayUncached(bytes, start, end - start, TruffleString.Encoding.UTF_8, true);
             if (!ts.isValidUncached(TruffleString.Encoding.UTF_8)) {
-                throw new SchemeError("utf8->string: not valid UTF-8");
+                throw notA("utf8->string", 1, "bytevector of UTF-8 (in the range)", bv);
             }
             return SString.of(ts.toJavaStringUncached());
         }
@@ -248,7 +248,7 @@ final class BytevectorPrimitives {
         public Object invoke(Object[] args) {
             String who = "string->utf8";
             if (!(args[1] instanceof SString s)) {
-                throw notA(who, "string", args[1]);
+                throw notA(who, 1, "string", args[1]);
             }
             int start = start(who, args, 2, s.length());
             int end = end(who, args, 3, start, s.length());
@@ -268,33 +268,36 @@ final class BytevectorPrimitives {
 
     // Shared checks. The fast paths stay in compiled code; building an error message is behind a boundary.
 
-    private static SBytevector bytevector(String who, Object value) {
+    // Each takes the procedure's name and the argument's position in its call (design.md D8, "Messages").
+
+    private static SBytevector bytevector(String who, int position, Object value) {
         if (value instanceof SBytevector bv) {
             return bv;
         }
-        throw notA(who, "bytevector", value);
+        throw notA(who, position, "bytevector", value);
     }
 
-    private static SBytevector mutable(String who, Object value) {
-        SBytevector bv = bytevector(who, value);
+    private static SBytevector mutable(String who, int position, Object value) {
+        SBytevector bv = bytevector(who, position, value);
         if (bv.immutable) {
-            throw immutable(who);
+            throw notA(who, position, "mutable bytevector (it is a literal)", bv);
         }
         return bv;
     }
 
-    private static byte toByte(String who, Object value) {
+    private static byte toByte(String who, int position, Object value) {
         if (value instanceof Long b && b >= 0 && b <= 255) {
             return (byte) (long) b;
         }
-        throw notA(who, "byte (an exact integer 0-255)", value);
+        throw notA(who, position, "byte (an exact integer from 0 to 255)", value);
     }
 
+    /** The index, argument 2. */
     private static int index(String who, SBytevector bv, Object value) {
         if (value instanceof Long k && k >= 0 && k < bv.bytes.length) {
             return (int) (long) k;
         }
-        throw badIndex(who, "index", bv.bytes.length, value);
+        throw badIndex(who, 2, value, 0, bv.bytes.length - 1);
     }
 
     /** The optional start argument at {@code args[i]}: 0 when absent. */
@@ -305,7 +308,7 @@ final class BytevectorPrimitives {
         if (args[i] instanceof Long k && k >= 0 && k <= length) {
             return (int) (long) k;
         }
-        throw badIndex(who, "start index", length, args[i]);
+        throw badIndex(who, i, args[i], 0, length);
     }
 
     /** The optional end argument at {@code args[i]}: {@code length} when absent. */
@@ -316,22 +319,17 @@ final class BytevectorPrimitives {
         if (args[i] instanceof Long k && k >= start && k <= length) {
             return (int) (long) k;
         }
-        throw badIndex(who, "end index", length, args[i]);
+        throw badIndex(who, i, args[i], start, length);
     }
 
     @TruffleBoundary
-    private static SchemeError notA(String who, String what, Object value) {
-        return ControlPrimitives.notA(who, what, value);
+    private static SchemeError notA(String who, int position, String what, Object value) {
+        return ControlPrimitives.notA(who, position, what, value);
     }
 
     /** Builds the message behind the boundary, so compiled code carries no string concatenation. */
     @TruffleBoundary
-    private static SchemeError badIndex(String who, String what, int length, Object value) {
-        return ControlPrimitives.notA(who, "valid " + what + " for length " + length, value);
-    }
-
-    @TruffleBoundary
-    private static SchemeError immutable(String who) {
-        return new SchemeError(who + ": bytevector is immutable (a literal)");
+    private static SchemeError badIndex(String who, int position, Object value, long min, long max) {
+        return SchemeError.argument(who, position, SchemeError.index(min, max), value);
     }
 }

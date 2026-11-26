@@ -123,7 +123,7 @@
           ((car handlers) obj)
           ;; The handler returned from a non-continuable raise: a secondary exception, in the
           ;; handler's dynamic environment.
-          (raise (%make-error-object "exception handler returned from a non-continuable raise" (list obj)))))))
+          (raise (%make-error-object "raise: the exception handler returned from a non-continuable raise" (list obj)))))))
 
 (define (raise-continuable obj)
   (let* ((env (%current-dynamic-env))

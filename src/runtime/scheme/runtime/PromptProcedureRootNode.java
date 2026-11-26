@@ -26,7 +26,7 @@ public final class PromptProcedureRootNode extends RootNode {
     public Object execute(VirtualFrame frame) {
         Object[] arguments = frame.getArguments();
         if (arguments.length != 3) {
-            throw SchemeRootNode.arityError(2, 2, arguments.length - 1);
+            throw SchemeRootNode.arityError(this, 2, 2, arguments.length - 1);
         }
         SchemeContext context = SchemeContext.get(this);
         // This prompt's Java frames, and its call of thunk, count toward the stack use (StackBudget).

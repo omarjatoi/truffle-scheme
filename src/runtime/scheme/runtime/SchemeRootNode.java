@@ -308,7 +308,7 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
 
     @TruffleBoundary
     static SchemeError notAProcedure(Object value) {
-        return new SchemeError("not a procedure: " + scheme.runtime.printer.Printer.print(value, scheme.runtime.printer.Printer.Mode.WRITE));
+        return SchemeError.of("application: not a procedure", value);
     }
 
     /**
@@ -733,10 +733,10 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
     @ConstantOperand(type = int.class)
     public static final class CheckArity {
         @Specialization
-        static void doCheck(int required, int max, @Bind VirtualFrame frame) {
+        static void doCheck(int required, int max, @Bind VirtualFrame frame, @Bind BytecodeNode bytecode) {
             int count = frame.getArguments().length - 1;
             if (count < required || (max >= 0 && count > max)) {
-                throw arityError(required, max, count);
+                throw arityError(bytecode.getRootNode(), required, max, count);
             }
         }
     }
@@ -770,7 +770,7 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
             CompilerAsserts.partialEvaluationConstant(n);
             CompilerAsserts.partialEvaluationConstant(boxed);
             if (arguments.length - 1 != n) {
-                throw arityError(n, n, arguments.length - 1);
+                throw arityError(bytecode.getRootNode(), n, n, arguments.length - 1);
             }
             for (int i = 0; i < n; i++) {
                 Object value = arguments[i + 1];
@@ -841,10 +841,10 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
         }
     }
 
+    /** A call of {@code procedure}'s root with the wrong number of arguments: named as tools name it. */
     @TruffleBoundary
-    static SchemeError arityError(int required, int max, int count) {
-        String expected = max < 0 ? "at least " + required : Integer.toString(required);
-        return new SchemeError("wrong number of arguments: expected " + expected + ", got " + count);
+    static SchemeError arityError(RootNode procedure, int required, int max, int count) {
+        return SchemeError.arity(procedure.getName(), required, max, count);
     }
 
     /** The arguments from {@code start} on, as a list (a rest parameter). */

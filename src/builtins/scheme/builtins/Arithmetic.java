@@ -4,10 +4,10 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.math.RoundingMode;
 
+import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 
 import scheme.runtime.SchemeError;
-import scheme.runtime.printer.Printer;
 import scheme.runtime.value.Numbers;
 import scheme.runtime.value.SBigInteger;
 import scheme.runtime.value.SComplex;
@@ -63,33 +63,41 @@ final class Arithmetic {
         return isExactInteger(x) || x instanceof Double d && Double.isFinite(d) && d == Math.rint(d);
     }
 
+    /** {@code x}, {@code who}'s argument number {@code position}, if it is a number. */
     @TruffleBoundary
-    static Object check(String who, Object x) {
+    static Object check(String who, int position, Object x) {
         if (isNumber(x)) {
             return x;
         }
-        throw notA(who, "number", x);
+        throw notA(who, position, "number", x);
     }
 
     @TruffleBoundary
-    static Object checkReal(String who, Object x) {
+    static Object checkReal(String who, int position, Object x) {
         if (isReal(x)) {
             return x;
         }
-        throw notA(who, "real number", x);
+        throw notA(who, position, "real number", x);
     }
 
     @TruffleBoundary
-    static Object checkInteger(String who, Object x) {
+    static Object checkInteger(String who, int position, Object x) {
         if (isInteger(x)) {
             return x;
         }
-        throw notA(who, "integer", x);
+        throw notA(who, position, "integer", x);
     }
 
+    /** {@code who}'s argument number {@code position} isn't {@code what} (design.md D8, "Messages"). */
     @TruffleBoundary
-    static SchemeError notA(String who, String what, Object x) {
-        return new SchemeError(who + ": not a " + what + ": " + Printer.print(x, Printer.Mode.WRITE));
+    static SchemeError notA(String who, int position, String what, Object x) {
+        return SchemeError.argument(who, position, what, x);
+    }
+
+    /** A division by zero: {@code who}'s argument number {@code position} is an exact zero. */
+    @TruffleBoundary
+    static SchemeError divisionByZero(String who, int position, Object x) {
+        return SchemeError.argument(who, position, "nonzero number (a division by zero)", x);
     }
 
     static BigInteger numerator(Object x) {
@@ -126,15 +134,18 @@ final class Arithmetic {
 
     /** The exactly equal exact number (design.md D1): a flonum becomes the rational it denotes. */
     @TruffleBoundary
-    static Object exact(String who, Object x) {
+    static Object exact(String who, int position, Object x) {
         if (x instanceof SComplex c) {
-            return SComplex.make(exact(who, c.real), exact(who, c.imag));
+            if (!Double.isFinite(flo(c.real)) || !Double.isFinite(flo(c.imag))) {
+                throw notA(who, position, "finite number", x);
+            }
+            return SComplex.make(exact(who, position, c.real), exact(who, position, c.imag));
         }
         if (!(x instanceof Double d)) {
-            return check(who, x);
+            return check(who, position, x);
         }
         if (!Double.isFinite(d)) {
-            throw notA(who, "finite number", x);
+            throw notA(who, position, "finite number", x);
         }
         return exactOfFinite(d);
     }
@@ -182,15 +193,19 @@ final class Arithmetic {
     // ------------------------------------------------------------------------------------------
     // + - * /
 
+    /**
+     * {@code a op b}, where {@code b} is {@code who}'s argument number {@code position} and
+     * {@code a} its first argument or the result of the ones before {@code b} (a fold's).
+     */
     @TruffleBoundary
-    static Object apply(String who, Op op, Object a, Object b) {
-        check(who, a);
-        check(who, b);
+    static Object apply(String who, Op op, Object a, Object b, int position) {
+        check(who, 1, a);
+        check(who, position, b);
         if (op == Op.DIV && b instanceof Long d && d == 0) {
             // R7RS §6.2.6: "It is an error if any argument of / other than the first is an exact
             // zero", whatever the others are: an inexact dividend included (design.md D9). An exact
             // zero is always the fixnum 0. The typed Div operation's flonum path never gets here.
-            throw new SchemeError(who + ": division by zero");
+            throw divisionByZero(who, position, b);
         }
         if (!(a instanceof SComplex) && !(b instanceof SComplex)) {
             return real(who, op, a, b);
@@ -352,27 +367,30 @@ final class Arithmetic {
             case MUL -> SRational.make(an.multiply(bn), ad.multiply(bd));
             case DIV -> {
                 if (bn.signum() == 0) {
-                    throw new SchemeError(who + ": division by zero");
+                    // Never: an exact zero divisor is the fixnum 0, which apply has refused.
+                    throw CompilerDirectives.shouldNotReachHere(who + ": division by zero");
                 }
                 yield SRational.make(an.multiply(bd), ad.multiply(bn));
             }
         };
     }
 
+    // Of two numbers: for a primitive's own computation, or of its two arguments, a and b.
+
     static Object add(Object a, Object b) {
-        return apply("+", Op.ADD, a, b);
+        return apply("+", Op.ADD, a, b, 2);
     }
 
     static Object sub(Object a, Object b) {
-        return apply("-", Op.SUB, a, b);
+        return apply("-", Op.SUB, a, b, 2);
     }
 
     static Object mul(Object a, Object b) {
-        return apply("*", Op.MUL, a, b);
+        return apply("*", Op.MUL, a, b, 2);
     }
 
     static Object div(Object a, Object b) {
-        return apply("/", Op.DIV, a, b);
+        return apply("/", Op.DIV, a, b, 2);
     }
 
     // ------------------------------------------------------------------------------------------
@@ -381,8 +399,14 @@ final class Arithmetic {
     /** -1, 0, 1, or {@link #UNORDERED} if either is NaN. Real numbers only. */
     @TruffleBoundary
     static int compare(String who, Object a, Object b) {
-        checkReal(who, a);
-        checkReal(who, b);
+        return compare(who, a, 1, b, 2);
+    }
+
+    /** {@link #compare}, of {@code who}'s arguments number {@code aPosition} and {@code bPosition}. */
+    @TruffleBoundary
+    static int compare(String who, Object a, int aPosition, Object b, int bPosition) {
+        checkReal(who, aPosition, a);
+        checkReal(who, bPosition, b);
         if (a instanceof Double x && b instanceof Double y) {
             return compareDoubles(x, y);
         }
@@ -440,9 +464,9 @@ final class Arithmetic {
 
     /** {@code =} on any numbers: complex numbers are equal when both parts are. */
     @TruffleBoundary
-    static boolean numericEquals(String who, Object a, Object b) {
-        check(who, a);
-        check(who, b);
+    static boolean numericEquals(String who, Object a, int aPosition, Object b, int bPosition) {
+        check(who, aPosition, a);
+        check(who, bPosition, b);
         if (a instanceof SComplex || b instanceof SComplex) {
             return compare(who, realPart(a), realPart(b)) == 0 && compare(who, imagPart(a), imagPart(b)) == 0;
         }
@@ -477,13 +501,13 @@ final class Arithmetic {
     /** {quotient, remainder} of {@code n / d}, floored or truncated. */
     @TruffleBoundary
     static Object[] divide(String who, Object n, Object d, boolean floor) {
-        checkInteger(who, n);
-        checkInteger(who, d);
+        checkInteger(who, 1, n);
+        checkInteger(who, 2, d);
         if (n instanceof Double || d instanceof Double) {
             double x = flo(n);
             double y = flo(d);
             if (y == 0) {
-                throw new SchemeError(who + ": division by zero");
+                throw notA(who, 2, "nonzero integer (a division by zero)", d);
             }
             double q = floor ? Math.floor(x / y) : (x / y < 0 ? Math.ceil(x / y) : Math.floor(x / y));
             return new Object[]{q, x - q * y};
@@ -491,7 +515,7 @@ final class Arithmetic {
         BigInteger x = numerator(n);
         BigInteger y = numerator(d);
         if (y.signum() == 0) {
-            throw new SchemeError(who + ": division by zero");
+            throw notA(who, 2, "nonzero integer (a division by zero)", d);
         }
         BigInteger[] qr = ArithmeticDivision.divideAndRemainder(x, y);
         if (floor && qr[1].signum() != 0 && qr[1].signum() != y.signum()) {
@@ -501,22 +525,22 @@ final class Arithmetic {
         return new Object[]{SBigInteger.normalize(qr[0]), SBigInteger.normalize(qr[1])};
     }
 
+    /** The gcd of {@code a}, of the arguments before, and {@code b}, argument number {@code position}. */
     @TruffleBoundary
-    static Object gcd(Object a, Object b) {
-        checkInteger("gcd", a);
-        checkInteger("gcd", b);
+    static Object gcd(Object a, Object b, int position) {
+        checkInteger("gcd", position, b);
         if (a instanceof Double || b instanceof Double) {
-            return flo(gcd(exact("gcd", a), exact("gcd", b)));
+            return flo(gcd(exact("gcd", position, a), exact("gcd", position, b), position));
         }
         return SBigInteger.normalize(numerator(a).gcd(numerator(b)));
     }
 
+    /** The lcm of {@code a}, of the arguments before, and {@code b}, argument number {@code position}. */
     @TruffleBoundary
-    static Object lcm(Object a, Object b) {
-        checkInteger("lcm", a);
-        checkInteger("lcm", b);
+    static Object lcm(Object a, Object b, int position) {
+        checkInteger("lcm", position, b);
         if (a instanceof Double || b instanceof Double) {
-            return flo(lcm(exact("lcm", a), exact("lcm", b)));
+            return flo(lcm(exact("lcm", position, a), exact("lcm", position, b), position));
         }
         BigInteger x = numerator(a).abs();
         BigInteger y = numerator(b).abs();
@@ -539,7 +563,7 @@ final class Arithmetic {
     /** floor, ceiling, truncate and round (to even): exact for exact arguments. */
     @TruffleBoundary
     static Object round(String who, Rounding mode, Object x) {
-        checkReal(who, x);
+        checkReal(who, 1, x);
         if (x instanceof Double d) {
             return switch (mode) {
                 case FLOOR -> Math.floor(d);
@@ -563,7 +587,7 @@ final class Arithmetic {
     /** {@code (- z)}: the negation, so that the sign of a zero flonum (part) flips. */
     @TruffleBoundary
     static Object negate(Object z) {
-        check("-", z);
+        check("-", 1, z);
         if (z instanceof Double d) {
             return -d;
         } else if (z instanceof SComplex c) {
@@ -575,8 +599,8 @@ final class Arithmetic {
     /** The simplest rational within {@code y} of {@code x} (R7RS §6.2.6), by the Stern–Brocot walk. */
     @TruffleBoundary
     static Object rationalize(Object x, Object y) {
-        checkReal("rationalize", x);
-        checkReal("rationalize", y);
+        checkReal("rationalize", 1, x);
+        checkReal("rationalize", 2, y);
         boolean inexact = x instanceof Double || y instanceof Double;
         if (inexact && (!Double.isFinite(flo(x)) || !Double.isFinite(flo(y)))) {
             // Every real is within an infinite y of a finite x, and 0 is the simplest; no rational is
@@ -586,8 +610,8 @@ final class Arithmetic {
             }
             return Double.isInfinite(flo(y)) ? 0.0 : flo(x);
         }
-        Object ex = exact("rationalize", x);
-        Object ey = exact("rationalize", y);
+        Object ex = exact("rationalize", 1, x);
+        Object ey = exact("rationalize", 2, y);
         if (sign(ey) < 0) {
             ey = sub(0L, ey);
         }
@@ -635,7 +659,7 @@ final class Arithmetic {
 
     @TruffleBoundary
     static Object exp(Object z) {
-        check("exp", z);
+        check("exp", 1, z);
         if (!(z instanceof SComplex)) {
             return StrictMath.exp(flo(z));
         }
@@ -644,7 +668,13 @@ final class Arithmetic {
 
     @TruffleBoundary
     static Object log(Object z) {
-        check("log", z);
+        return log(z, 1);
+    }
+
+    /** The natural log of {@code log}'s argument number {@code position}. */
+    @TruffleBoundary
+    static Object log(Object z, int position) {
+        check("log", position, z);
         if (z instanceof Double d) {
             // -0.0 is on the negative side of the branch cut: (log -0.0) is -inf.0+pi*i (R7RS
             // §6.2.6). A NaN is NaN (§6.2.4).
@@ -667,7 +697,7 @@ final class Arithmetic {
 
     @TruffleBoundary
     static Object magnitude(Object z) {
-        check("magnitude", z);
+        check("magnitude", 1, z);
         if (z instanceof Double d) {
             // "The same as abs for a real argument" (R7RS §6.2.6): (magnitude -0.0) is 0.0.
             return Math.abs(d);
@@ -687,7 +717,7 @@ final class Arithmetic {
 
     @TruffleBoundary
     static Object angle(Object z) {
-        check("angle", z);
+        check("angle", 1, z);
         if (!(z instanceof SComplex)) {
             if (z instanceof Double d) {
                 return StrictMath.atan2(0.0, d);
@@ -700,7 +730,7 @@ final class Arithmetic {
     /** sqrt: exact for exact squares (and their negatives, as exact imaginary numbers). */
     @TruffleBoundary
     static Object sqrt(Object z) {
-        check("sqrt", z);
+        check("sqrt", 1, z);
         if (isExact(z) && !(z instanceof SComplex)) {
             boolean negative = sign(z) < 0;
             Object a = negative ? sub(0L, z) : z;
@@ -750,7 +780,7 @@ final class Arithmetic {
 
     @TruffleBoundary
     static Object trig(String who, Object z) {
-        check(who, z);
+        check(who, 1, z);
         if (!(z instanceof SComplex)) {
             double x = flo(z);
             switch (who) {
@@ -809,8 +839,8 @@ final class Arithmetic {
     /** {@code (expt z1 z2)}: exact for an exact base and exact integer power. */
     @TruffleBoundary
     static Object expt(Object base, Object power) {
-        check("expt", base);
-        check("expt", power);
+        check("expt", 1, base);
+        check("expt", 2, power);
         if (isExactInteger(power) && (isExact(base) || base instanceof Double)) {
             if (base instanceof Double d) {
                 // A long's conversion and BigInteger.doubleValue both round to nearest, ties to even.
@@ -821,7 +851,7 @@ final class Arithmetic {
                 if (isExactInteger(base) && numerator(base).abs().compareTo(BigInteger.ONE) <= 0) {
                     return numerator(base).signum() == 0 ? (p.signum() > 0 ? 0L : base) : p.testBit(0) ? base : (Object) 1L;
                 }
-                throw new SchemeError("expt: exponent too large: " + p);
+                throw notA("expt", 2, "exponent from -2^31 to 2^31 - 1 (for a base other than 0, 1 or -1)", power);
             }
             int e = p.intValue();
             Object result = 1L;
@@ -833,6 +863,9 @@ final class Arithmetic {
                 if (k > 1) {
                     square = mul(square, square);
                 }
+            }
+            if (e < 0 && base instanceof Long l && l == 0) {
+                throw notA("expt", 2, "non-negative exponent of 0", power);
             }
             return e >= 0 ? result : div(1L, result);
         }
@@ -892,8 +925,8 @@ final class Arithmetic {
 
     @TruffleBoundary
     static Object makePolar(Object magnitude, Object angle) {
-        checkReal("make-polar", magnitude);
-        checkReal("make-polar", angle);
+        checkReal("make-polar", 1, magnitude);
+        checkReal("make-polar", 2, angle);
         if (isExact(angle) && sign(angle) == 0) {
             return magnitude;
         }

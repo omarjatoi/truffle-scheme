@@ -154,7 +154,7 @@ final class ControlPrimitives {
                     return new BooleanEquals();
                 case IS_PROCEDURE:
                     // A foreign executable is a procedure too (design.md D20).
-                    return new TypePredicate(x -> x instanceof SClosure || Foreign.isProcedure(x));
+                    return new TypePredicate(ControlPrimitives::isProcedure);
                 case VALUES:
                     return new Values();
                 case VALUES_TO_LIST:
@@ -162,9 +162,9 @@ final class ControlPrimitives {
                 case APPLY:
                     return new Apply();
                 case CALL_CC:
-                    return new CallCC();
+                    return new CallCC("call/cc");
                 case CALL_WITH_CURRENT_CONTINUATION:
-                    return new CallCC();
+                    return new CallCC("call-with-current-continuation");
                 case CAPTURE_TO_PROMPT:
                     return new CaptureToPrompt();
                 case TORTURE_CAPTURES:
@@ -268,7 +268,7 @@ final class ControlPrimitives {
             boolean same = true;
             for (int i = 1; i < args.length; i++) {
                 if (!(args[i] instanceof Boolean b)) {
-                    throw notA("boolean=?", "boolean", args[i]);
+                    throw notA("boolean=?", i, "boolean", args[i]);
                 }
                 same &= b.booleanValue() == (Boolean) args[1];
             }
@@ -341,7 +341,10 @@ final class ControlPrimitives {
         @TruffleBoundary
         private static TailCall tailCall(Object[] args) {
             // args: apply, proc, arg ..., list; all: proc, arg ..., the list's elements.
-            Object[] spread = Lists.toArray("apply", args[args.length - 1]);
+            if (!isProcedure(args[1])) {
+                throw notA("apply", 1, "procedure", args[1]);
+            }
+            Object[] spread = Lists.toArray("apply", args.length - 1, args[args.length - 1]);
             Object[] all = new Object[args.length - 2 + spread.length];
             all[0] = args[1];
             System.arraycopy(args, 2, all, 1, args.length - 3);
@@ -356,10 +359,24 @@ final class ControlPrimitives {
      * frame, and the prompt calls the receiver with the completed continuation.
      */
     static final class CallCC extends PrimitiveNode {
+        private final String name;
+
+        CallCC(String name) {
+            this.name = name;
+        }
+
         @Override
         public Object invoke(Object[] args) {
+            if (!isProcedure(args[1])) {
+                throw notA(name, 1, "procedure", args[1]);
+            }
             return Capture.full(args[1], SchemeContext.get(this).getDynamicEnv());
         }
+    }
+
+    /** What {@code procedure?} is true of: a closure, or a foreign executable (design.md D20). */
+    static boolean isProcedure(Object x) {
+        return x instanceof SClosure || Foreign.isProcedure(x);
     }
 
     /**
@@ -428,7 +445,7 @@ final class ControlPrimitives {
 
         @TruffleBoundary
         private static SchemeError notAContinuation(Object value) {
-            return new SchemeError("not a continuation: " + Printer.print(value, Printer.Mode.WRITE));
+            return notA("%continue", 1, "continuation", value);
         }
     }
 
@@ -490,16 +507,14 @@ final class ControlPrimitives {
 
         @TruffleBoundary
         private static SchemeError error(Object[] args) {
+            // The message and the irritants, as error makes them: the message never repeats them
+            // (design.md D8, "Messages").
             Object message = args[1] instanceof SString ? args[1] : SString.of(Printer.print(args[1], Printer.Mode.DISPLAY));
             Object irritants = SConstant.EMPTY_LIST;
             for (int i = args.length - 1; i >= 2; i--) {
                 irritants = new SPair(args[i], irritants);
             }
-            StringBuilder text = new StringBuilder(message.toString());
-            for (int i = 2; i < args.length; i++) {
-                text.append(' ').append(Printer.print(args[i], Printer.Mode.WRITE));
-            }
-            return new SchemeError(new SErrorObject(SString.of(text.toString()), irritants, SErrorObject.Kind.OTHER));
+            return new SchemeError(new SErrorObject(message, irritants, SErrorObject.Kind.OTHER));
         }
     }
 
@@ -579,7 +594,7 @@ final class ControlPrimitives {
 
         @TruffleBoundary
         private static SchemeError notDynEnv(Object value) {
-            return new SchemeError("not a dynamic environment: " + Printer.print(value, Printer.Mode.WRITE));
+            return notA("%dynamic-env", 1, "dynamic environment", value);
         }
     }
 
@@ -603,11 +618,7 @@ final class ControlPrimitives {
         private static SchemeError uncaught(Object raised) {
             String message;
             if (raised instanceof SErrorObject e) {
-                StringBuilder text = new StringBuilder(Printer.print(e.message, Printer.Mode.DISPLAY));
-                for (Object l = e.irritants; l instanceof SPair p; l = p.cdr) {
-                    text.append(' ').append(Printer.print(p.car, Printer.Mode.WRITE));
-                }
-                message = text.toString();
+                message = SchemeError.describe(e);
             } else {
                 message = "uncaught exception: " + Printer.print(raised, Printer.Mode.WRITE);
             }
@@ -652,7 +663,7 @@ final class ControlPrimitives {
                         if (Foreign.isException(x)) {
                             return op == MESSAGE ? Foreign.exceptionMessage(x) : SConstant.EMPTY_LIST;
                         }
-                        throw notA(op == MESSAGE ? "error-object-message" : "error-object-irritants", "error object", x);
+                        throw notA(op == MESSAGE ? "error-object-message" : "error-object-irritants", 1, "error object", x);
                     }
                     return op == MESSAGE ? e.message : e.irritants;
             }
@@ -691,22 +702,30 @@ final class ControlPrimitives {
         public Object invoke(Object[] args) {
             switch (op) {
                 case DONE:
-                    return promise("force", args[1]).state.done;
+                    return promise(args[1]).state.done;
                 case VALUE:
-                    return promise("force", args[1]).state.value;
+                    return promise(args[1]).state.value;
                 default:
                     // The promise a delay-force's expression returned: anything else is an error
                     // (R7RS §4.2.5).
-                    promise("delay-force", args[1]).updateInto(promise("force", args[2]));
+                    if (!(args[1] instanceof SPromise p)) {
+                        throw notAPromise(args[1]);
+                    }
+                    p.updateInto(promise(args[2]));
                     return SConstant.UNSPECIFIED;
             }
         }
 
-        private static SPromise promise(String who, Object x) {
+        private static SPromise promise(Object x) {
             if (x instanceof SPromise p) {
                 return p;
             }
-            throw notA(who, "promise", x);
+            throw notA("force", 1, "promise", x);
+        }
+
+        @TruffleBoundary
+        private static SchemeError notAPromise(Object x) {
+            return SchemeError.of("delay-force: its expression's value is not a promise", x);
         }
     }
 
@@ -719,7 +738,7 @@ final class ControlPrimitives {
 
         @TruffleBoundary
         private SRecordType make(Object name, Object fields) {
-            Object[] names = Lists.toArray("define-record-type", fields);
+            Object[] names = Lists.toArray("define-record-type", 2, fields);
             String[] strings = new String[names.length];
             for (int i = 0; i < names.length; i++) {
                 strings[i] = names[i].toString();
@@ -756,13 +775,13 @@ final class ControlPrimitives {
         @TruffleBoundary
         private SClosure make(Object[] args) {
             if (!(args[1] instanceof SRecordType type)) {
-                throw notA("define-record-type", "record type", args[1]);
+                throw notA("define-record-type", 1, "record type", args[1]);
             }
             String name = Printer.print(args[args.length - 1], Printer.Mode.DISPLAY);
             PrimitiveSpec spec;
             switch (kind) {
                 case CONSTRUCTOR: {
-                    Object[] fields = Lists.toArray("define-record-type", args[2]);
+                    Object[] fields = Lists.toArray("define-record-type", 2, args[2]);
                     StaticProperty[] given = new StaticProperty[fields.length];
                     boolean[] set = new boolean[type.fieldNames.length];
                     int unsetCount = set.length;
@@ -803,7 +822,7 @@ final class ControlPrimitives {
         private static int field(SRecordType type, Object field) {
             int i = field instanceof SSymbol ? type.fieldIndex(field.toString()) : -1;
             if (i < 0) {
-                throw new SchemeError("define-record-type: " + Printer.print(field, Printer.Mode.WRITE) + " is not a field of " + type.name);
+                throw SchemeError.of("define-record-type: not a field of " + type.name, field);
             }
             return i;
         }
@@ -900,12 +919,13 @@ final class ControlPrimitives {
 
     @TruffleBoundary
     private static SchemeError notOfType(String who, SRecordType type, Object value) {
-        return notA(who, "record of type " + type.name, value);
+        return notA(who, 1, "record of type " + type.name, value);
     }
 
+    /** {@code who}'s argument number {@code position} isn't {@code what} (design.md D8, "Messages"). */
     @TruffleBoundary
-    static SchemeError notA(String who, String what, Object value) {
-        return new SchemeError(who + ": not a " + what + ": " + Printer.print(value, Printer.Mode.WRITE));
+    static SchemeError notA(String who, int position, String what, Object value) {
+        return SchemeError.argument(who, position, what, value);
     }
 
     /**

@@ -298,8 +298,7 @@ public final class Foreign {
      */
     @TruffleBoundary
     public static SchemeError badMemberName(String who, Object receiver, Object key) {
-        return new SchemeError(new SErrorObject(SString.of(who + ": a member name is a string or a symbol"), new SPair(receiver, new SPair(key, SConstant.EMPTY_LIST)),
-                        SErrorObject.Kind.OTHER));
+        return SchemeError.argument(who, 2, "member name (a string or a symbol)", key);
     }
 
     /** A hash key as it goes out: a symbol as its name, since symbols aren't interop strings. */
@@ -366,29 +365,44 @@ public final class Foreign {
         return error;
     }
 
+    /** An interop error of a call of {@code procedure} (a foreign executable) as a Scheme error. */
+    @TruffleBoundary
+    public static SchemeError interopError(String who, Object procedure, InteropException e) {
+        return interopError(who, 0, procedure, null, e);
+    }
+
+    /** An interop error of operation {@code who} on {@code receiver}, its argument number {@code position}. */
+    @TruffleBoundary
+    public static SchemeError interopError(String who, int position, Object receiver, InteropException e) {
+        return interopError(who, position, receiver, null, e);
+    }
+
     /**
-     * An interop error of operation {@code who} on {@code receiver} as a Scheme error (design.md
-     * D8, D20): InteropLibrary asks a target language to translate each one into an error of its
-     * own.
+     * An interop error of operation {@code who} on {@code receiver}, its argument number
+     * {@code position} (0 for none), as a Scheme error (design.md D8, "Messages", D20): the
+     * argument after it, {@code key} if not null, is the member, the index or the key the receiver
+     * hasn't.
+     * InteropLibrary asks a target language to translate each one into an error of its own.
      */
     @TruffleBoundary
-    public static SchemeError interopError(String who, Object receiver, InteropException e) {
-        String message;
+    public static SchemeError interopError(String who, int position, Object receiver, Object key, InteropException e) {
+        String argument = who + ": argument " + (position + 1);
         if (e instanceof ArityException a) {
-            message = who + ": wrong number of arguments: expected " + a.getExpectedMinArity() +
-                            (a.getExpectedMaxArity() == a.getExpectedMinArity() ? "" : a.getExpectedMaxArity() < 0 ? " or more" : " to " + a.getExpectedMaxArity()) +
-                            ", got " + a.getActualArity();
-        } else if (e instanceof UnknownIdentifierException u) {
-            message = who + ": no such member: " + u.getUnknownIdentifier();
-        } else if (e instanceof InvalidArrayIndexException i) {
-            message = who + ": index out of range: " + i.getInvalidIndex();
-        } else if (e instanceof UnknownKeyException) {
-            message = who + ": no such key";
+            int min = a.getExpectedMinArity();
+            int max = a.getExpectedMaxArity();
+            String expected = max == min ? Integer.toString(min) : max < 0 ? "at least " + min : min + " to " + max;
+            return SchemeError.of(who + ": expected " + expected + " arguments, got " + a.getActualArity(), receiver);
+        } else if (e instanceof UnknownIdentifierException u && position > 0) {
+            return SchemeError.of(argument + " is not a member of argument " + position, key != null ? key : SString.of(u.getUnknownIdentifier()));
+        } else if (e instanceof InvalidArrayIndexException i && position > 0) {
+            return SchemeError.of(argument + " is not an index of argument " + position, key != null ? key : i.getInvalidIndex());
+        } else if (e instanceof UnknownKeyException && position > 0) {
+            return SchemeError.of(argument + " is not a key of argument " + position, key != null ? key : receiver);
         } else if (e instanceof UnsupportedTypeException) {
-            message = who + ": unsupported argument types" + (e.getMessage() == null ? "" : ": " + e.getMessage());
-        } else {
-            message = who + ": not supported by this foreign value";
+            return SchemeError.of(who + ": unsupported argument types" + (e.getMessage() == null ? "" : " (" + e.getMessage() + ")"), receiver);
+        } else if (position > 0) {
+            return SchemeError.argument(who, position, "value that supports " + who, receiver);
         }
-        return new SchemeError(new SErrorObject(SString.of(message), new SPair(receiver, SConstant.EMPTY_LIST), SErrorObject.Kind.OTHER));
+        return SchemeError.of(who + ": not supported by this foreign value", receiver);
     }
 }

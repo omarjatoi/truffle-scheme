@@ -120,18 +120,18 @@ final class PolyglotPrimitives {
         private static Object run(Primitive op, Object[] args) {
             switch (op) {
                 case EVAL:
-                    return Foreign.eval(name(op, args[1]), text(op, args[2]));
+                    return Foreign.eval(name(op, 1, args[1]), text(op, 2, args[2]));
                 case EVAL_FILE:
-                    return Foreign.evalFile(name(op, args[1]), text(op, args[2]));
+                    return Foreign.evalFile(name(op, 1, args[1]), text(op, 2, args[2]));
                 case LANGUAGE_AVAILABLE:
-                    return Foreign.isLanguageAvailable(name(op, args[1]));
+                    return Foreign.isLanguageAvailable(name(op, 1, args[1]));
                 case IMPORT:
-                    return Foreign.importSymbol(name(op, args[1]), args.length > 2 ? args[2] : Boolean.FALSE);
+                    return Foreign.importSymbol(name(op, 1, args[1]), args.length > 2 ? args[2] : Boolean.FALSE);
                 case EXPORT:
-                    Foreign.exportSymbol(name(op, args[1]), args[2]);
+                    Foreign.exportSymbol(name(op, 1, args[1]), args[2]);
                     return SConstant.UNSPECIFIED;
                 case JAVA_TYPE:
-                    return Foreign.javaType(text(op, args[1]));
+                    return Foreign.javaType(text(op, 1, args[1]));
                 default:
                     // The foreign-* procedures are nodes of their own (below).
                     throw new AssertionError(op);
@@ -139,18 +139,18 @@ final class PolyglotPrimitives {
         }
 
         /** A language id or a binding name: a string or a symbol. */
-        private static String name(Primitive op, Object value) {
+        private static String name(Primitive op, int position, Object value) {
             if (value instanceof SString || value instanceof SSymbol) {
                 return value.toString();
             }
-            throw ControlPrimitives.notA(op.publicName(), "string or symbol", value);
+            throw ControlPrimitives.notA(op.publicName(), position, "string or symbol", value);
         }
 
-        private static String text(Primitive op, Object value) {
+        private static String text(Primitive op, int position, Object value) {
             if (value instanceof SString) {
                 return value.toString();
             }
-            throw ControlPrimitives.notA(op.publicName(), "string", value);
+            throw ControlPrimitives.notA(op.publicName(), position, "string", value);
         }
     }
 

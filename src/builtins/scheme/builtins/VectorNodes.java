@@ -41,14 +41,16 @@ final class VectorNodes {
         return (int) k;
     }
 
+    /** The index, argument 2, is out of range. */
     @TruffleBoundary
     static SchemeError badIndex(String who, SVector v, Object k) {
-        return ControlPrimitives.notA(who, "valid index for a vector of length " + v.length, k);
+        return SchemeError.argument(who, 2, SchemeError.index(0, v.length - 1L), k);
     }
 
+    /** The vector, argument 1, is a literal's. */
     @TruffleBoundary
-    static SchemeError immutable(String who) {
-        return new SchemeError(who + ": vector is immutable (a literal)");
+    static SchemeError immutable(String who, SVector v) {
+        return ListVectorPrimitives.immutable(who, 1, v);
     }
 
     /** The error for arguments no specialization takes: a non-vector, or a non-fixnum index. */
@@ -56,7 +58,7 @@ final class VectorNodes {
         if (v instanceof SVector vector) {
             return badIndex(who, vector, k);
         }
-        return ControlPrimitives.notA(who, "vector", v);
+        return ControlPrimitives.notA(who, 1, "vector", v);
     }
 
     @GenerateInline(false)
@@ -98,7 +100,7 @@ final class VectorNodes {
             long[] a = v.longs();
             int i = index("vector-set!", v, a.length, k);
             if (v.immutable) {
-                throw immutable("vector-set!");
+                throw immutable("vector-set!", v);
             }
             a[i] = value;
             return SConstant.UNSPECIFIED;
@@ -109,7 +111,7 @@ final class VectorNodes {
             double[] a = v.doubles();
             int i = index("vector-set!", v, a.length, k);
             if (v.immutable) {
-                throw immutable("vector-set!");
+                throw immutable("vector-set!", v);
             }
             a[i] = value;
             return SConstant.UNSPECIFIED;
@@ -120,7 +122,7 @@ final class VectorNodes {
             Object[] a = v.objects();
             int i = index("vector-set!", v, a.length, k);
             if (v.immutable) {
-                throw immutable("vector-set!");
+                throw immutable("vector-set!", v);
             }
             a[i] = value;
             return SConstant.UNSPECIFIED;
@@ -131,7 +133,7 @@ final class VectorNodes {
         static Object doGeneralize(SVector v, long k, Object value) {
             int i = index("vector-set!", v, v.length, k);
             if (v.immutable) {
-                throw immutable("vector-set!");
+                throw immutable("vector-set!", v);
             }
             v.generalize()[i] = value;
             return SConstant.UNSPECIFIED;

@@ -13,10 +13,8 @@ import scheme.runtime.PrimitiveNode;
 import scheme.runtime.PrimitiveSpec;
 import scheme.runtime.PrimitiveSpec.Result;
 import scheme.runtime.SchemeContext;
-import scheme.runtime.SchemeError;
 import scheme.runtime.SchemeLanguage;
 import scheme.runtime.TailCall;
-import scheme.runtime.printer.Printer;
 import scheme.runtime.value.SClosure;
 import scheme.runtime.value.SConstant;
 import scheme.runtime.value.SEnvironment;
@@ -118,7 +116,7 @@ final class EvalPrimitives {
             } else if (args[2] instanceof SEnvironment e) {
                 environment = e;
             } else {
-                throw ControlPrimitives.notA("eval", "environment", args[2]);
+                throw ControlPrimitives.notA("eval", 2, "environment", args[2]);
             }
             return language.compiler().compileEval(language, context, args[1], environment);
         }
@@ -140,7 +138,7 @@ final class EvalPrimitives {
         @TruffleBoundary
         private SClosure compile(Object[] args) {
             if (!(args[1] instanceof SString name)) {
-                throw ControlPrimitives.notA("load", "string", args[1]);
+                throw ControlPrimitives.notA("load", 1, "string", args[1]);
             }
             SchemeLanguage language = SchemeLanguage.get(this);
             SchemeContext context = SchemeContext.get(this);
@@ -150,7 +148,7 @@ final class EvalPrimitives {
             } else if (args[2] instanceof SEnvironment e) {
                 environment = e;
             } else {
-                throw ControlPrimitives.notA("load", "environment", args[2]);
+                throw ControlPrimitives.notA("load", 2, "environment", args[2]);
             }
             Source source;
             try {
@@ -172,6 +170,11 @@ final class EvalPrimitives {
 
         @TruffleBoundary
         private Object environment(Object[] args) {
+            for (int i = 1; i < args.length; i++) {
+                if (!(args[i] instanceof SPair)) {
+                    throw ControlPrimitives.notA("environment", i, "import set", args[i]);
+                }
+            }
             return SchemeLanguage.get(this).compiler().environment(SchemeContext.get(this), java.util.Arrays.copyOfRange(args, 1, args.length), false);
         }
     }
@@ -209,7 +212,7 @@ final class EvalPrimitives {
         @TruffleBoundary
         private Object environment(Object version) {
             if (!(version instanceof Long v && v == 5)) {
-                throw new SchemeError(name + ": unsupported version (only 5 is): " + Printer.print(version, Printer.Mode.WRITE));
+                throw ControlPrimitives.notA(name, 1, "version this implementation supports (only 5 is)", version);
             }
             SchemeContext context = SchemeContext.get(this);
             Object r5rs = new SPair(context.symbols.intern("scheme"), new SPair(context.symbols.intern("r5rs"), SConstant.EMPTY_LIST));
