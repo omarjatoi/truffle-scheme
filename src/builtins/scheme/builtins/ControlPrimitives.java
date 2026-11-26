@@ -278,9 +278,27 @@ final class ControlPrimitives {
 
     /** {@code (eqv? a b)} (R7RS §6.1): eq?, or numbers of the same exactness and value, or equal characters. */
     static final class Eqv extends PrimitiveNode {
+        /**
+         * The same object, two characters and two fixnums are compared here, in compiled code, and
+         * the rest behind the boundary: a call of {@code eqv?} that the compiler can't turn into
+         * {@code eq?} (an operand that isn't a constant, as {@code compiler}'s
+         * {@code (eqv? obj char-newline)}) ran the boundary every time (bench/README.md, "Where
+         * the slowest programs spend their time").
+         */
         @Override
         public Object invoke(Object[] args) {
-            return eqv(args[1], args[2]);
+            Object a = args[1];
+            Object b = args[2];
+            if (a == b) {
+                return true;
+            }
+            if (a instanceof SChar x) {
+                return b instanceof SChar y && x.codePoint == y.codePoint;
+            }
+            if (a instanceof Long x) {
+                return b instanceof Long y && x.longValue() == y.longValue();
+            }
+            return eqv(a, b);
         }
 
         @TruffleBoundary

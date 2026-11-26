@@ -26,6 +26,21 @@ public class EqualTest {
         assertEquals("(#t #f)", write("(list (equal? 1/2 (/ 2 4)) (equal? (make-vector 2 'a) (make-vector 3 'a)))"));
     }
 
+    /**
+     * M13-08: eqv? of operands the compiler doesn't know compares the same object, characters and
+     * fixnums in compiled code, and the rest behind the primitive's boundary; the answers are R7RS
+     * §6.1's either way. Each pair is compared by one procedure, called often enough to be compiled.
+     */
+    @Test
+    public void eqvOfOperandsNotKnownToTheCompiler() {
+        String pairs = "(list (cons 'a 'a) (cons (integer->char 955) (integer->char 955)) (cons #\\a #\\b) (cons #\\a 97) (cons 97 #\\a) " +
+                        "(cons (+ 1 2) 3) (cons 3 4) (cons 2 2.0) (cons 2.0 2.0) (cons 0.0 -0.0) (cons +nan.0 +nan.0) " +
+                        "(cons (expt 10 20) (expt 10 20)) (cons 1/2 (/ 2 4)) (cons (string #\\a) (string #\\a)) (cons '() '()) (cons #t #t) (cons #t #f))";
+        assertEquals("(#t #t #f #f #f #t #f #f #t #f #t #t #t #f #t #t #f)",
+                        write("(let ((same? (lambda (p) (eqv? (car p) (cdr p)))) (ps " + pairs + ")) " +
+                                        "(let loop ((i 0) (r #f)) (if (= i 2000) r (loop (+ i 1) (map same? ps)))))"));
+    }
+
     @Test
     public void circular() {
         assertEquals("(#t #f)", write("(let ((a (list 1 2)) (b (list 1 2)) (c (list 1 3))) (set-cdr! (cdr a) a) (set-cdr! (cdr b) b) (set-cdr! (cdr c) c) (list (equal? a b) (equal? a c)))"));
