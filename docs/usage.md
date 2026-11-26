@@ -232,6 +232,14 @@ exit status 70
 (down 3)
 ```
 
+A program that fills the heap ends with `ERROR: out of memory: the heap is
+full (--vm.Xmx<size> sets its maximum)`, its stack trace and status 70; no handler or
+`dynamic-wind` after-thunk sees it, and in the REPL the next input runs. A
+size no implementation limit allows, such as `(make-vector (expt 10 10))` (past
+a Java array's length) or `(expt 3 1500000000)` (an exact integer of 2^31 bits
+or more), is an ordinary error instead, raised before anything is allocated
+(design.md D8, "Running out of memory").
+
 ### The REPL
 
 With no file, `bazel-bin/scheme` starts a REPL in the interaction environment, which

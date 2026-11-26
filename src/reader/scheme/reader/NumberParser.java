@@ -23,7 +23,25 @@ public final class NumberParser {
     private NumberParser() {
     }
 
-    /** The number {@code text} denotes, or null if it isn't valid number syntax. */
+    /**
+     * Valid syntax for an exact number that no exact number of ours can be: one whose numerator or
+     * denominator would need 2^31 bits or more, past BigInteger's range (R7RS §6.2.3: an
+     * implementation <em>"may either report a violation of an implementation restriction or it may
+     * silently represent the constant by an inexact number"</em>; design.md D8, "Running out of
+     * memory"). The reader reports it as a read error, {@code string->number} as an error.
+     */
+    public static final class Unrepresentable extends RuntimeException {
+        private static final long serialVersionUID = 1L;
+
+        Unrepresentable() {
+            super("exact number out of range (2^31 bits or more)", null, false, false);
+        }
+    }
+
+    /**
+     * The number {@code text} denotes, or null if it isn't valid number syntax; throws
+     * {@link Unrepresentable} for an exact number past the range.
+     */
     @TruffleBoundary
     public static Object parse(String text, int defaultRadix) {
         int radix = 0;
@@ -144,11 +162,18 @@ public final class NumberParser {
         }
         String decimal = (negative ? "-" : "") + normalizeExponent(u);
         if (exactness == 'e') {
-            BigDecimal bd = new BigDecimal(decimal);
-            if (bd.scale() <= 0) {
-                return SBigInteger.normalize(bd.toBigIntegerExact());
+            // The syntax is checked: BigDecimal's NumberFormatException is an exponent past an int,
+            // and BigInteger's ArithmeticException a power of ten past its range, which it reports
+            // before allocating (design.md D8, "Running out of memory").
+            try {
+                BigDecimal bd = new BigDecimal(decimal);
+                if (bd.scale() <= 0) {
+                    return SBigInteger.normalize(bd.toBigIntegerExact());
+                }
+                return SRational.make(bd.unscaledValue(), BigInteger.TEN.pow(bd.scale()));
+            } catch (NumberFormatException | ArithmeticException e) {
+                throw new Unrepresentable();
             }
-            return SRational.make(bd.unscaledValue(), BigInteger.TEN.pow(bd.scale()));
         }
         return Double.parseDouble(decimal);
     }

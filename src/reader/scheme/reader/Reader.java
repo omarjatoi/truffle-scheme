@@ -309,8 +309,17 @@ public final class Reader {
         }
     }
 
+    /** The number {@code text} denotes, or null; a read error if it is past the exact range. */
+    private Object number(String text) {
+        try {
+            return NumberParser.parse(text, 10);
+        } catch (NumberParser.Unrepresentable e) {
+            throw error(e.getMessage() + ": " + text);
+        }
+    }
+
     private Object atom(String text) {
-        Object number = NumberParser.parse(text, 10);
+        Object number = number(text);
         if (number != null) {
             return number;
         }
@@ -387,7 +396,7 @@ public final class Reader {
             default:
                 break;
         }
-        Object number = NumberParser.parse("#" + text, 10);
+        Object number = number("#" + text);
         if (number == null) {
             throw error("invalid syntax #" + text);
         }

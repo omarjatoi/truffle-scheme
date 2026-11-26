@@ -266,6 +266,39 @@ test_suite(
     ],
 )
 
+# design.md D8, "Running out of memory": tests/memory's programs under a 64 MB heap, through the JVM
+# launcher, as programs and as the REPL's input; each ends with a message and a nonzero status, not
+# a Java stack trace, and the REPL goes on. //tests:memory_native runs them through the native
+# launcher, only when named, like the other native tests. (A suite: a test named `memory` would be
+# a file where the runfiles have the directory.)
+_MEMORY_PROGRAMS = glob(["memory/*.scm"])
+
+test_suite(
+    name = "memory",
+    tests = [":memory_launcher"],
+)
+
+harness_test(
+    name = "memory_launcher",
+    check = "memory",
+    args = ["--runtime=$(rlocationpath //:launcher_runtime)"] + ["$(rlocationpath %s)" % p for p in _MEMORY_PROGRAMS],
+    data = _MEMORY_PROGRAMS + ["//:launcher_runtime"],
+    size = "large",
+    tags = ["cpu:2"],
+)
+
+harness_test(
+    name = "memory_native",
+    check = "memory",
+    args = ["--native=$(rlocationpath //:scheme-native)"] + ["$(rlocationpath %s)" % p for p in _MEMORY_PROGRAMS],
+    data = _MEMORY_PROGRAMS + ["//:scheme-native"],
+    size = "large",
+    tags = [
+        "cpu:2",
+        "manual",
+    ],
+)
+
 # The deep recursions through the native launcher (//:scheme-native), only when named: on stacks
 # from 256 KB to the launcher's 256 MB, with the JIT, and interpreted only and compiled at once on
 # two of them, none overflows the stack.

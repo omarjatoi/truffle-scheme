@@ -981,6 +981,13 @@ public final class SchemeMain extends AbstractLanguageLauncher {
             // Internal errors are bugs and are never turned into Scheme errors (design.md D8).
             errors.println("INTERNAL ERROR: " + e.getMessage());
             e.printStackTrace(errors);
+        } else if (outOfMemory(e)) {
+            // The VM's message names its own option (the native image's says '-Xmx'), or where
+            // the allocation failed (a deoptimization's "failed reallocation of scalar replaced
+            // objects"): the launcher's names the option to give it (design.md D8, "Running out of
+            // memory"); its stack trace follows, as an uncaught error's.
+            errors.println("ERROR: out of memory: the heap is full (--vm.Xmx<size> sets its maximum)");
+            printStackTrace(e, errors);
         } else {
             errors.println("ERROR: " + where(e) + e.getMessage());
             printStackTrace(e, errors);
@@ -1036,5 +1043,15 @@ public final class SchemeMain extends AbstractLanguageLauncher {
             return "";
         }
         return at.getSource().getName() + ":" + at.getStartLine() + ":" + at.getStartColumn() + ": ";
+    }
+
+    /**
+     * Whether the context ran out of heap: Truffle reports the VM's {@code OutOfMemoryError} and
+     * {@code StackOverflowError} as a resource exhausted that doesn't cancel the context (a
+     * resource limit does), the overflow as {@code "Resource exhausted: Stack overflow"} (the
+     * error has no message), and the out of memory with the error's message.
+     */
+    static boolean outOfMemory(PolyglotException e) {
+        return e.isResourceExhausted() && !e.isCancelled() && !String.valueOf(e.getMessage()).endsWith("Stack overflow");
     }
 }
