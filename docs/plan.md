@@ -2105,7 +2105,7 @@ interleaved A/B runs.
     does; every torture mode passes; a loop of caught raises, JIT and
     native, first runs and steady state, unchanged or faster (interleaved
     A/B), and `bench-check` passes.
-- [ ] **M13-13 · The tests, with what GraalVM 25.6 adds**
+- [x] **M13-13 · The tests, with what GraalVM 25.6 adds**
   - #316's "Features to adopt" 4, 5 and 7, and its follow-up: 25.6's
     native image takes `-XX:+AbortVMOnCompilationFailure` (GR-80621), so
     a runtime compilation that fails in the native launcher, which today
@@ -2126,6 +2126,23 @@ interleaved A/B runs.
     out of the test that hits it); `//tests:launcher_vm` is `medium`; and
     docs/usage.md shows `--vm.XX:+PrintFlagsFinal` for the native launcher
     in a block `//tests:readme_native` runs.
+  - Done (2026-11-26): `//tests:conformance_native` and
+    `//tests:space_native` run the launcher with
+    `--vm.XX:+AbortVMOnCompilationFailure` (the Graal compiler's
+    `CompilationFailureAction=ExitVM`), and `//tests:launcher_vm_native`
+    checks that a crash forced with `--vm.XX:CrashAt=` ends the run while
+    a bailout or a permanent bailout doesn't, so no test needs it left out
+    (`//tests:readme_native` runs the docs' commands as written, and
+    `//tests:compile_bound_native` compiles nothing at run time). The JUnit
+    compile and torture modes, and tests/driver's (conformance, diff and
+    space programs, with `-ea`, which their JVMs didn't have), run with
+    `-Dtruffle.DetailedAssertions=true`. Two interleaved rounds of the 493
+    tests it touches on the executors, before and after: no failure, and
+    each group's summed time within the rounds' spread (`unit_compile`
+    1391/1435 s before, 1378/1367 after; `conformance_compile` 483/455,
+    443/432), but the 7 space programs run in every mode, 105 → 122 s
+    (the longest 39 → 45 s, off the critical path, `unit_compile`'s
+    `SandboxTest` at about 130 s).
 
 **Exit:** every task above is done, or its note records what was measured and
 why it isn't; `docs/benchmarks.md` and `bench/thresholds.json` are regenerated
