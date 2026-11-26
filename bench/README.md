@@ -560,6 +560,99 @@ of the rounds:
   and 408 (M12-05's 0.401 → 0.414 s and 0.261 → 0.267 on the JVM were 2
   processes each).
 
+## `compiler`, `matrix` and `dynamic`
+
+M12's report had these three among the slowest in the steady state (×fastest: `compiler`
+5.8 on the JVM and 7.0 natively, `matrix` 4.3 and 5.3, `dynamic` 2.4 and 3.6), and the native
+launcher's steady state behind the JVM's on all three (plan.md M13-08). What their steady
+states run, the two changes kept, and what was measured and not kept.
+
+### What the hottest compilations do
+
+The hottest procedures are the CPU sampler's on the JVM (`--cpusampler
+--cpusampler.Delay`, past the first iterations, at the report's counts). Each one's last-tier
+compilation was read as its final schedule, as text (`--vm.Djdk.graal.Dump=Truffle:1
+--vm.Djdk.graal.PrintGraph=Disable --vm.Djdk.graal.PrintBackendCFG=true`, with
+`--vm.Djdk.graal.MethodFilter=*name*` to keep to those procedures). For each one, what is
+left in the schedule was counted: calls that weren't inlined (`OptimizedCallTarget.callBoundary`),
+calls behind a `@TruffleBoundary`, allocations (`new_instance`, `new_array`, each with its Scheme
+position and the operation that makes it) and loops.
+
+- `matrix`: `zebra`'s `_-*-` loop (24% of the samples), `zulu`'s `_-split-` (19%),
+  `make-row->func`'s `do` loop (14%), the row reduction's `fold` callback (13%) and the
+  in-row-space test's `_-*-` (10%).
+  - `_-*-` (6,800 nodes) inlines `zulu` and the continuation it is passed. Left in it: 11
+    calls, 30 argument arrays and 26 other allocations (the continuation's closure, the
+    partitions' pairs, and the arrays of the tail calls made through the trampoline's loop).
+  - `_-split-` (760 nodes) is a loop that conses. It makes 5 allocations, two of them `Long`s:
+    a fixnum argument boxed into the array of the loop's tail call.
+  - The `fold` callback (1,900 nodes) inlines `map`'s loop, the row's arithmetic (`coef-+`,
+    `coef-*`, `reduce`, `mod`) and their tail calls. `map` was given two lists, and its loop
+    for several lists called the procedure through `apply`: a list and an argument array for
+    each element, behind the boundary (`Lists.toArray`, `ArrayList`, `Apply.tailCall`), 7% of
+    the native steady state's samples.
+  - A chain of tail calls (the callback's `coef-+`, then `reduce`, then `mod`) keeps its first
+    request virtual. The later ones go through the trampoline's loop, so their arrays are
+    allocated and their fixnums boxed (design.md "Calls and tail calls").
+- `dynamic`: `ast-gen` (19%), `find!` (13%), `link!` (9%), `gen-id` (9%), and a type
+  constructor's closure (7%).
+  - `ast-gen` (14,100 nodes) is a `case` of 26 clauses over the syntax operators, each building
+    nodes and calling the type checker's constructors. Left in it: 58 calls not inlined (the
+    inlining budget), 96 instance allocations and 54 array allocations. Its variable clause
+    looks the name up with `assv` in `dynamic-top-level-env`, an association list that grows
+    with every definition read, a walk behind the primitive's boundary
+    (`ListVectorPrimitives.Member.find`).
+  - `find!` is a non-tail recursion (path compression): a call per level, not inlined past the
+    recursion depth, each with its argument array. `link!` and `gen-id` are small: pair reads
+    and writes, and `gen-id`'s global counter (a `set!` of a global, and a `Long` for each new
+    value).
+  - `equiv!` maps itself over two lists of type arguments (`(map equiv! (type-args tv1-def)
+    (type-args tv2-def))`), through `apply` too.
+- `compiler`: `declaration-value` (10%), `ofile-comment` (5%), `write-block` (5%), then a flat
+  tail. `gen-call` is 22% of the time, with its callees.
+  - `declaration-value` (590 nodes) is two nested loops over association lists, with a `memq`
+    in the inner one, compiled tight: one allocation and no calls. The time is the walk.
+  - `ofile-comment` and `write-block` write the assembly listing. `asm-display`'s `(eqv? obj
+    char-newline)` compares with a global, which the compiler can't turn into `eq?`, so it ran
+    the `eqv?` primitive's boundary each time (4 such calls in each compilation). They also call
+    `apply string-append` and `number->string`, and assign globals with `set!` (10 writes, each
+    checked against the cell's assumption).
+  - `gen-call` (18,800 nodes) keeps 151 calls not inlined and 107 argument arrays. It is the
+    largest compilation of the three programs, at the inlining budget's limit.
+
+### Kept: `map` and `for-each` over two lists, and `eqv?` in compiled code
+
+- `map` and `for-each` have a loop for two lists, which calls the procedure with two
+  arguments. Three or more lists still go through `apply`, in procedures of their own
+  (`%map-lists`, `%for-each-lists`), so that `map` stays within Truffle's splitting limit
+  (`CallSiteTest.mapAndForEachFitTheSplittingLimit`: with all three loops in it, `map` was 109
+  nodes, over the limit of 100). `ListVectorTest.mapAndForEachByListCount` checks one, two,
+  three and four lists, the shortest list, the errors and a re-entered continuation.
+- `eqv?` of operands the compiler doesn't know compares the same object, two characters and two
+  fixnums in compiled code. Everything else goes behind the boundary as before
+  (`EqualTest.eqvOfOperandsNotKnownToTheCompiler`).
+
+Measured interleaved: `main` (`92cac7a`, before the changes), an A/A copy of it, `map` alone, and
+both changes, together with the variants below. That is 6 rounds in a rotating order, one
+process per run, 5 iterations at the report's counts (`compiler` 200, `matrix` 250, `dynamic`
+50), `-Xmx2g` (the native launcher `--vm.Xmx2g`). The 1-minute load was read at the start of
+each run and every second while it ran; the 249 runs kept stayed at 6.6-9.9, and the 3 runs that
+passed 10 were left out. `main` in seconds, steady state (the best of iterations 2-5) / first
+iteration; the others the medians of each round's ratio to `main`:
+
+| | | `main` | A/A | `map` | `map`, `eqv?` |
+|---|---|--:|--:|--:|--:|
+| JIT | `compiler` | 0.307 / 1.54 | 1.03 / 1.00 | 1.01 / 0.99 | 0.97 / 1.02 |
+| JIT | `matrix` | 0.217 / 0.67 | 0.98 / 0.99 | 0.84 / 0.91 | 0.86 / 0.95 |
+| JIT | `dynamic` | 0.265 / 1.11 | 1.01 / 1.02 | 0.95 / 0.95 | 0.93 / 0.98 |
+| Native | `compiler` | 0.508 / 1.58 | 0.99 / 0.96 | 1.01 / 0.98 | 1.00 / 0.99 |
+| Native | `matrix` | 0.244 / 0.60 | 1.00 / 1.00 | 0.85 / 0.88 | 0.84 / 0.87 |
+| Native | `dynamic` | 0.396 / 1.00 | 1.00 / 0.99 | 0.86 / 0.92 | 0.85 / 0.95 |
+
+The two-list loop takes `matrix` and `dynamic` 5-16% down, JIT and native, steady state and
+first iteration. `eqv?` takes `compiler`'s steady state on the JVM from 1.01 to 0.97 (an A/A
+spread of 1.03) and changes the rest by no more than the A/A pairs.
+
 ## Polyglot
 
 `polyglot/foreign.scm` (ours) times foreign access, `(graalvm polyglot)`
