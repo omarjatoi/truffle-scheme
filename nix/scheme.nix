@@ -213,16 +213,19 @@ in
         # The release's native-image, as Bazel runs it, not nixpkgs' wrapper of it: on Linux the
         # wrapper adds glibc's static libraries to -H:CLibraryPath, and 25.6's native-image wants a
         # symbol manifest beside each static library there ("Missing static library symbol manifest
-        # .../libutil.a.symbols"). The wrapper's other part is kept: the image builder gets the
-        # NIX_ variables that stdenv's C compiler wrapper reads (-E). The image builder's JVM gets
-        # neither JAVA_TOOL_OPTIONS nor the rest of the environment: its user.home is given (-J).
-        ${graalvm}/lib/svm/bin/native-image $(env | sed -n 's/^\(NIX_[A-Za-z0-9_]*\)=.*/-E\1/p') \
+        # .../libutil.a.symbols"). The wrapper's other parts are kept: the image builder gets the
+        # variables stdenv's C compiler wrapper reads (-E), and on macOS it skips its check of the C
+        # compiler, which knows only Xcode's clang, not stdenv's LLVM one. The image builder's JVM
+        # gets neither JAVA_TOOL_OPTIONS nor the rest of the environment: its user.home is given (-J).
+        ${graalvm}/lib/svm/bin/native-image \
+          $(env | sed -n 's/^\(NIX_[A-Za-z0-9_]*\|DEVELOPER_DIR[A-Z_]*\|MACOSX_DEPLOYMENT_TARGET[A-Z_]*\)=.*/-E\1/p') \
           "-J-Duser.home=$TMPDIR" \
           -p "$(find ${modulePath "jars"} -name '*.jar' | sort | paste -sd: -)" \
           --add-modules=scheme.launcher -o libschemevm \
           --shared -Dorg.graalvm.launcher.class=scheme.launcher.SchemeMain \
           -H:+UnlockExperimentalVMOptions -H:-InitializeVM -H:+InstallExitHandlers \
-          -H:+EnforceMaxRuntimeCompileMethods -H:-UnlockExperimentalVMOptions \
+          -H:+EnforceMaxRuntimeCompileMethods ${lib.optionalString (!linux) "-H:-CheckToolchain"} \
+          -H:-UnlockExperimentalVMOptions \
           -R:+EnableSignalHandling -R:+InstallSegfaultHandler --gc=serial \
           ${lib.escapeShellArgs options}
         $CXX -std=c++17 -O3 -Werror=undef ${if linux then "-include memory" else "-ObjC++"} \
