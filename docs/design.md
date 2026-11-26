@@ -2622,6 +2622,86 @@ Each entry: the decision, why, and what was rejected.
     only adds lines to an error isn't worth a name); leaving out the
     program's `<program>` frame too, which names the top-level form the
     error came from.
+  - *The audit (M14-04):* the trace and location of an error (a primitive's,
+    `(car 'x)`, and `(raise 'boom)`), an `exit` and an `emergency-exit`,
+    for each way a frame can be off the Java stack or in the prelude. Each
+    case is a program in `tests/traces`, with `f` calling the code and `g`
+    calling `f`. `StackTraceTest` checks every case, in every JUnit mode,
+    against `tests/traces/expected`: the embedder's view (location and
+    frames) and the launcher's printed trace. `//tests:stack_traces` checks
+    the printed traces through `bazel-bin/scheme`'s process, and
+    `//tests:stack_traces_native` checks them through the native launcher's,
+    interpreted, compiled at once and with the JIT. The JUnit modes without
+    torture (the JIT in the background, and compiling at once) give the
+    same results, and so do the two tortures. In the
+    table, "as plain" means the frames down to the call are those of the
+    same program without continuations: the code's frame, `f`, `g`,
+    `<program>`. The location is the code's expression unless the row says
+    otherwise. The printed trace is the error's frames, without `<prompt>`
+    or the prelude's, in every mode and through the native launcher, except
+    where the row says otherwise.
+
+    | Case | Error: trace and location | Under both tortures | `exit` | `emergency-exit` |
+    |---|---|---|---|---|
+    | No continuations (`plain`) | as plain | the same | as plain | as plain, its own frame without a line (a) |
+    | A spill (`SpillDepth=5`, 30 deep) | the 31 frames, then `<program>` | the same | the frames on the Java stack only (b) | the same as `exit`, (a) |
+    | A capture re-entered once, and twice | as plain: `f`, `g` and `<program>` come from the continuation | the same | `f` only (b) | `f` only (b), (a) |
+    | A continuation invoked, `(k RAISE)` | the invoking frame, as plain | the same | as plain | as plain, (a) |
+    | `call/cc`'s receiver | as plain, without `call/cc`'s frame (fixed: c) | the same | as plain | as plain, (a) |
+    | After an escape through `call/cc` | as plain | the same | as plain | as plain, (a) |
+    | `guard` re-raising, no clause matched | `raise`: the body's frame, as plain (fixed: c). A primitive's error: the body's frame is missing, located at the `guard` form (d) | the same | as plain | as plain, (a) |
+    | `dynamic-wind`'s before thunk, thunk, after thunk | as plain | `dynamic-wind`'s frame shows in the embedder's trace when it runs resumed (e) | as plain | as plain, (a) |
+    | `with-exception-handler`'s handler, for `raise` and `raise-continuable` | the handler, the thunk, `f` | for `raise`, `raise`'s frame shows (e) | as plain | as plain, (a) |
+    | The handler, for a primitive's error | the handler, the thunk, `f` | the thunk's frame is missing (d), `raise`'s shows (e); printed without the thunk | as plain | as plain, (a) |
+    | `map`, `for-each`, `apply`, `call-with-values` (producer and consumer), `parameterize`'s body | the procedure, `f`: the prelude's frames are left out | the same | as plain | as plain, (a) |
+    | A parameter's converter | the converter, `f` | the prelude's lambda that calls it shows (e) | as plain | as plain, (a) |
+    | `eval`: a procedure its code calls | the procedure, `f` | the same | as plain | as plain, (a) |
+    | `eval`: its datum's own code | a frame named `eval`, located at the program's call of `eval` (a datum has no source), then `f` | the same | as plain | as plain, (a) |
+    | `load` | the loaded file's procedure, its top level as a frame named `load`, then `f` | the same | as plain | as plain, (a) |
+    | A library's body, from a file and defined in the program | the body's procedure, the body's `<program>`, located in its file or the program (fixed for a library the program defines: f) | the same | as plain | as plain, (a) |
+    | An after thunk's error replacing an uncaught one | the after thunk only: the first error has left `f` and `g`, and the thunk runs from the root prompt | `%unwind-root`'s `unwind` shows (e) | the after thunk only | the same, (a) |
+    | A primitive a trampoline runs, `(apply car (list 'x))` | `f`, located at the `apply` call | the same | as plain | as plain, (a) |
+    | A tail call's caller | `f`, located at its call of the procedure that made the tail call | the same | as plain | the procedure that made the tail call too, located at its call of `emergency-exit` (g), (a) |
+
+    Under both tortures every `exit` and `emergency-exit` has the frames on
+    the Java stack only (b): `exit ?` and `<prompt>` for `exit`, its
+    location as in the table. What differs from the same program without
+    continuations, and why:
+    - (a) `emergency-exit` runs in place in the frame that calls it (a
+      primitive that returns a value, M5-09), and Truffle's exit exception
+      isn't a Truffle exception, so the stack walk that fills its trace
+      gives the first frame no location node and no bytecode index: that
+      frame is listed with no line. An `exit` has the line, since the first
+      frame is the prelude's `exit`, which is left out, and the next has its
+      call node. The location, the exit's own node, is right. Recorded:
+      calling `emergency-exit` as a procedure would give it a frame of its
+      own (a follow-up, as it would show in the trace).
+    - (b) An exit's trace is the Java stack's (M14-03, above).
+    - (c) Fixed: `call/cc` and `guard`'s prompt (`%call-with-prompt`) are
+      hand-written roots with no source, and so weren't internal: they
+      showed as `call/cc ?` and `%call-with-prompt ?`, the second only
+      outside torture. They are internal now.
+    - (d) A primitive whose operation is in the frame (D1's intrinsics,
+      `car` here) raises its error there, and when `raise` comes back with
+      a capture (a `guard`'s handler always captures, and under torture or
+      a spill any handler's call does), the frame is abandoned with no
+      segment (`AbandonedFrame`): it can't be resumed in the middle of an
+      expression, and `raise` never returns to it. So no continuation
+      holds it, and when the error goes on from the reinstated frames,
+      that frame isn't among them. A frame kept only for traces would be
+      a kind of pending entry the driver never resumes, which every walk
+      of a continuation's segments (resuming, copying, tools' entries and
+      returns, spill logging) would have to skip. Recorded.
+    - (e) A prelude frame running resumed shows in the embedder's trace
+      (above, docs/upstream.md "Continuation roots are never internal");
+      the launcher leaves it out by its source.
+    - (f) Fixed: a library a program defines was kept as a datum, which
+      dropped its source positions with the program's scopes, so its code
+      had no location at all. It now keeps them (`Syntax.withoutScopes`).
+    - (g) A primitive in tail position runs in place in the frame that
+      called it (M5-09). An error leaves that frame for its caller, which
+      raises it, but an exit happens where the primitive runs. Recorded,
+      with (a)'s follow-up, which would also fix this.
 - **Running out of memory (M14-08).** R7RS §1.3.2: *"an implementation may
   report a violation of an implementation restriction if it does not have
   enough storage to run a program, or if an arithmetic operation would

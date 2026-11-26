@@ -2308,7 +2308,7 @@ measurements don't run on this machine while a benchmark measures.
     condition gone), or D8 records why Truffle's exit can't carry them
     (with a docs/upstream.md entry and an inverted reproducer if it is a
     Truffle limitation); every torture mode passes.
-- [ ] **M14-04 · Stack traces through continuations and the prelude**
+- [x] **M14-04 · Stack traces through continuations and the prelude**
   - Depends on M14-03. An audit of the guest stack trace and the location
     of an error, an `exit` and an `emergency-exit` for each way a frame
     can be off the Java stack or in the prelude: a spill, a capture and
