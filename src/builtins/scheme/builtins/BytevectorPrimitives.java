@@ -187,10 +187,15 @@ final class BytevectorPrimitives {
             int end = end(who, args, 5, start, from.bytes.length);
             int count = end - start;
             if (!(args[2] instanceof Long at) || at < 0 || at > to.bytes.length - count) {
-                throw ControlPrimitives.notA(who, 2, SchemeError.index(0, to.bytes.length - count) + ", at which the " + count + " bytes fit", args[2]);
+                throw tooLong(to, args[2], count);
             }
             System.arraycopy(from.bytes, start, to.bytes, (int) (long) at, count);
             return SConstant.UNSPECIFIED;
+        }
+
+        @TruffleBoundary
+        private static SchemeError tooLong(SBytevector to, Object at, int count) {
+            return ControlPrimitives.notA("bytevector-copy!", 2, SchemeError.index(0, to.bytes.length - count) + ", at which the " + count + " bytes fit", at);
         }
     }
 
