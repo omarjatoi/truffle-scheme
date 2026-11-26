@@ -213,6 +213,38 @@ public class LauncherTest {
         assertTrue(text, text.startsWith("a1\nERROR: ") && text.endsWith("\nb"));
     }
 
+    /**
+     * design.md D8, "Stack traces": an uncaught error's guest frames follow its message, innermost
+     * first, without the prelude's (map's, here) or the root prompt's; a run of the same frame is
+     * printed once. The same in every mode: under torture, the prelude's frames running resumed are
+     * left out as well.
+     */
+    @Test
+    public void anUncaughtErrorPrintsItsStackTrace() throws IOException {
+        Path program = file("trace.scm", """
+                        (import (scheme base))
+                        (define (check x)
+                          (map (lambda (y) (+ 1 (car y))) x))
+                        (define (down n)
+                          (if (= n 0)
+                              (list (check '((1) 2)))
+                              (+ 1 (down (- n 1)))))
+                        (down 30)
+                        """);
+        Result r = run("", program.toString());
+        assertEquals(r.err(), SchemeMain.EXIT_UNCAUGHT_ERROR, r.status());
+        List<String> lines = r.err().lines().toList();
+        assertEquals(r.err(), List.of(
+                        "    at <lambda@trace.scm:3:8>(trace.scm:3:25)",
+                        "    at down(trace.scm:6:13)",
+                        "    at down(trace.scm:7:12)",
+                        "    ... repeated 29 more times",
+                        "    at <program>(trace.scm:8:1)"), lines.subList(1, lines.size()));
+        // A syntax error has no frames; an exit prints nothing.
+        assertEquals(1, run("", file("bad.scm", "(if)").toString()).err().lines().count());
+        assertEquals("", run("", file("leaves.scm", "(import (scheme base) (scheme process-context)) (define (f) (list (exit 3))) (f)").toString()).err());
+    }
+
     // --- the REPL ----------------------------------------------------------------------------
 
     @Test
@@ -234,8 +266,11 @@ public class LauncherTest {
                         """);
         assertEquals(r.err(), 0, r.status());
         assertEquals("144\n(\"a\" #\\b c 1.5)\n1\n\"two\"\nhi\n81\n", r.out());
-        assertEquals(1, r.err().lines().count());
-        assertTrue(r.err(), r.err().startsWith("ERROR: ") && r.err().contains("car"));
+        // The message, then the stack trace (design.md D8, "Stack traces"): the input's top level.
+        List<String> errors = r.err().lines().toList();
+        assertEquals(r.err(), 2, errors.size());
+        assertTrue(r.err(), errors.get(0).startsWith("ERROR: ") && errors.get(0).contains("car"));
+        assertEquals("    at <program>(<repl:4>:1:1)", errors.get(1));
     }
 
     @Test
@@ -248,10 +283,12 @@ public class LauncherTest {
         assertEquals(0, r.status());
         assertEquals("next\n", r.out());
         List<String> errors = r.err().lines().toList();
-        assertEquals(r.err(), 2, errors.size());
+        assertEquals(r.err(), 4, errors.size());
         assertTrue(r.err(), errors.get(0).startsWith("ERROR: ") && errors.get(0).contains("bad thing:") && errors.get(0).contains("42") && errors.get(0).contains("\"str\"") &&
                         errors.get(0).contains("(a b)"));
-        assertTrue(r.err(), errors.get(1).startsWith("ERROR: ") && errors.get(1).contains("oops"));
+        assertEquals("    at <program>(<repl:1>:1:1)", errors.get(1));
+        assertTrue(r.err(), errors.get(2).startsWith("ERROR: ") && errors.get(2).contains("oops"));
+        assertEquals("    at <program>(<repl:2>:1:1)", errors.get(3));
     }
 
     @Test
