@@ -4244,6 +4244,59 @@ Each entry: the decision, why, and what was rejected.
   line and column, so guest stack traces read `even?(lib.scm:12:3)` instead
   of `even?(Unknown)`. `storeBytecodeIndexInFrame` keeps the location exact
   across yields (continuation capture) and in compiled code.
+- **Macros (M14-05).** Code a macro's use expands to is located at the
+  use, and the code its user wrote inside the use (an operand the template
+  passes on) where it was written. A template builds its lists afresh
+  (`SyntaxRules.instantiate`), so they have no location of their own and
+  report the section that encloses them, the use's; its identifiers and
+  constants keep the template's. Those are located in the template only if
+  it is in the file of the code around them (a user's macro in the
+  program's file); a library's template is in the library's file, so they
+  report the use too (`CodeGenerator.usable(Expr)`, `Expr.introduced`).
+  What an error, the guest stack trace, a line breakpoint and a step over
+  get, interpreted and compiled (`SourceLocationTest`, a case per row; its
+  errors and frames under both tortures too, where the debugger isn't
+  checked, "Yields and tools"):
+
+  | Code | Error and its frame | Breakpoint and step |
+  |---|---|---|
+  | A user's macro, `(my-first y)` to `(list (car y))` | At the use, in the procedure that has it | The use is one statement: a line in the macro's definition stops at the next statement after it, not in the template |
+  | An operand passed through a template, `(wrap (car y))` | Where the operand was written | The use's statement: an operand is a statement only where the template puts it in a body |
+  | Nested macros: a template that uses another macro, a use in an operand | At the outer use; at the inner use for the operand's | The outer use's statement |
+  | A recursive macro, `(my-or #f #f (list (car y)))` | Each expansion at the use, the last operand where written | Each expansion's `let` body is a statement at the use |
+  | A macro that defines a macro | The defined macro's code at its own use | As a user's macro |
+  | A macro that defines a procedure, `(def-getter get)` | The procedure's root and code at the defining use; its frames named by the user's name, `get` | A breakpoint on the defining use's line stops in the procedure too |
+  | `do` | The loop's procedure at the `do`, named by its location (`<lambda@do.scm:2:3>`); the test, steps, commands and result where written | Each command is a statement; the loop's test and next iteration are statements at the `do` |
+  | `case` | Each clause's code where written | A clause is an `if`'s branch, no statement: a breakpoint on its line stops at the `case` |
+  | `guard` | The body and the clauses are procedures located at the guard; an error in a clause where written | The body's expressions are statements; a breakpoint on a caught `raise` is hit again as its frame ends, then a step stops in the clauses, at the guard ("Ending a guard's frames for tools") |
+  | `parameterize` | The body is a procedure located at the `parameterize`; its code where written | The body's expressions are statements |
+  | `define-record-type` | Its procedures are primitives: an error is at their call | The definition is statements at the form |
+  | `delay` | The promise's procedure at the `delay`, its expression where written | The expression is no statement (an operand in the template): a breakpoint on its line stops at the enclosing statement; a step over `force` stops in the promise's procedure, at the `delay` |
+  | A library's macro (the prelude's, a user's `.sld`), at the top level or in a procedure | At the use; a procedure of the library that the template calls in its own file | Nothing of the program is in the library's file |
+
+  - *Fixed by M14-05:* code its user wrote that an expansion is as a whole
+    (`do`'s step, which `(do "step" x y)` expands to, `and`'s and `or`'s last
+    operand, a recursive macro's last) was located at the use unless it was
+    a bare reference (M13-14): a call there, and its error, now has its own
+    location (`Expander.expanded`). A library's template's identifiers and
+    constants in a program's outermost root (a top-level `do` or
+    `define-record-type`) were located in the library's file, which the
+    builder opened for them, where every nested root leaves them out
+    ("Nested root source sections", docs/upstream.md); now no root has them.
+    A procedure bound by a variable a template introduced (`do`'s `loop`) was
+    named by it in traces, the debugger and the profilers, a name the user
+    never wrote, which a frame's scope doesn't show ("Scopes, names"); it is
+    named by its location now.
+  - *Without tools nothing else changes:* the instructions are the same,
+    only the source table and the roots' names (`CallSiteTest`'s budgets;
+    the prelude image is 96 bytes larger, 325,840 against 325,744, from
+    those).
+  - *Rejected:* locating a user's template's lists in the template (with a
+    section per template pair): an error or a breakpoint in a template would
+    be at every use at once, where the use is what tells them apart, and a
+    library's could not be (the nested-root bug). Making a `case` clause or
+    `delay`'s expression a statement: statements are D13's ("Where the tags
+    sit"), and an `if`'s branch is none wherever it comes from.
 - **Errors are Truffle exceptions.** `SchemeError` stays an
   `AbstractTruffleException` (D8). Through interop it reports its exception
   type: syntax errors from the reader and expander are `PARSE_ERROR`, and
@@ -4516,12 +4569,12 @@ Each entry: the decision, why, and what was rejected.
       (D2), and a global that isn't one of the runtime's `%` internals.
       Only where the reference or the form has a location of its own in its
       root's source: a reference in the template of a library's macro has
-      none (`CodeGenerator.usable`), so `list` in a library macro's
+      none ("Macros", above), so `list` in a library macro's
       expansion is no read at the macro's use. A macro's use that expands to
       a bare reference (`(or x)` to `x`) is located at the identifier, where
-      it was at the use, as the rest of an expansion is: else `or`'s last
-      operand, whose use `(or x)` is in the prelude's template, had no
-      location in the program.
+      it was written, as other code its user wrote is ("Macros"): else
+      `or`'s last operand, whose use `(or x)` is in the prelude's template,
+      had no location in the program.
       Not writes: the bindings of `let`, `letrec*`, an internal definition
       and a procedure's parameters, which initialize a variable and are no
       form of their own (the core AST keeps no section for a binding's
@@ -4641,8 +4694,9 @@ Each entry: the decision, why, and what was rejected.
   environment's, which are immutable (and all imports). A library isn't
   closed (a macro it exports may assign its variables from another unit),
   so code evaluated in its frames may. A procedure's frames are named by its
-  binding (`define`, `let`, `letrec*`, `set!`, through a let body), else by
-  its location, `<lambda@file.scm:3:5>`; a record type's procedures are
+  binding (`define`, `let`, `letrec*`, `set!`, through a let body), if the
+  user wrote its variable (not a macro's template: `do`'s `loop`, M14-05),
+  else by its location, `<lambda@file.scm:3:5>`; a record type's procedures are
   primitives named by their bindings (D1), which have no frame when run in
   place;
   `write` still shows only binding names. A `TailCall` (what a procedure

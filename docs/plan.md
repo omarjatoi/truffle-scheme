@@ -2327,7 +2327,7 @@ measurements don't run on this machine while a benchmark measures.
     a class of its own) in every JUnit mode; what differs from the same
     program without continuations is fixed or recorded in D8 with its
     reason.
-- [ ] **M14-05 · Source locations in macro-expanded code** *(early)*
+- [x] **M14-05 · Source locations in macro-expanded code** *(early)*
   - D13 locates an expansion's code at the macro's use, a bare reference
     at its identifier (M13-14), and code from a library macro's template
     not at all (`CodeGenerator.usable`, docs/upstream.md "Nested root

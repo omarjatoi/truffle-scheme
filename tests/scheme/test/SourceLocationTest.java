@@ -23,6 +23,7 @@ import org.junit.rules.TemporaryFolder;
 import com.oracle.truffle.api.debug.Breakpoint;
 import com.oracle.truffle.api.debug.Debugger;
 import com.oracle.truffle.api.debug.DebuggerSession;
+import com.oracle.truffle.api.debug.SuspendAnchor;
 
 import scheme.launcher.SchemeMain;
 import scheme.runtime.SchemeLanguage;
@@ -142,7 +143,8 @@ public class SourceLocationTest {
      * Where {@code program}'s error is (its location's line and column), its guest frames in this
      * file (each "name line:column", innermost first, the root prompt left out), and, outside
      * torture, where a line breakpoint on {@code line} first stops and where a step over from there
-     * stops next ("none" if the program raises first). Each stop is "name line:column".
+     * stops next ("none" if the program raises first). Each stop is "name line:column", then
+     * "after" if it is after a call.
      */
     private static String expansion(String name, String program, int line) {
         Source source = Source.newBuilder(SCHEME, program, name).buildLiteral();
@@ -170,7 +172,7 @@ public class SourceLocationTest {
             try (DebuggerSession session = Debugger.find(context.getEngine()).startSession(event -> {
                 if (stops.size() < 2) {
                     com.oracle.truffle.api.source.SourceSection s = event.getSourceSection();
-                    stops.add(event.getTopStackFrame().getName() + " " + s.getStartLine() + ":" + s.getStartColumn());
+                    stops.add(event.getTopStackFrame().getName() + " " + s.getStartLine() + ":" + s.getStartColumn() + (event.getSuspendAnchor() == SuspendAnchor.AFTER ? " after" : ""));
                 }
                 if (stops.size() == 1) {
                     event.prepareStepOver(1);
@@ -413,19 +415,21 @@ public class SourceLocationTest {
 
     @Test
     public void thePreludesGuardAndParameterize() {
-        // A guard's clauses are a procedure located at the guard, as its body is.
+        // A guard's clauses are a procedure located at the guard, as its body is. The breakpoint on
+        // the caught raise is hit again as its frame ends (design.md D13, "Ending a guard's frames").
         assertExpansion("guard.scm", """
                         (define (f)
                           (guard (e (#t
                                      (list (car e))))
-                            (raise 1))
+                            (raise 1)
+                            0)
                           0)
                         (f)
                         """, 4, """
                         error 3:20
-                        frames <lambda@guard.scm:2:3> 3:20, f 2:3, <program> 6:1
+                        frames <lambda@guard.scm:2:3> 3:20, f 2:3, <program> 7:1
                         breakpoint <lambda@guard.scm:2:3> 4:5
-                        step none
+                        step <lambda@guard.scm:2:3> 4:5
                         """);
         assertExpansion("parameterize.scm", """
                         (define p (make-parameter 1))
