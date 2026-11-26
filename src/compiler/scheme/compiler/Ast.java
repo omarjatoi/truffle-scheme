@@ -65,6 +65,13 @@ final class Ast {
     abstract static class Expr {
         /** Where the form this came from is in the program text (design.md D13), or null. */
         SourceSection source;
+
+        /**
+         * Whether {@link #source} is in a macro's template (a variable or constant the template
+         * introduced): such code is located there only in the file of the code around it, else at
+         * what encloses it (design.md D13, "Macros").
+         */
+        boolean introduced;
     }
 
     static final class Const extends Expr {

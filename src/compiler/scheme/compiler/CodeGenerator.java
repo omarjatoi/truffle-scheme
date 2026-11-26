@@ -128,7 +128,7 @@ final class CodeGenerator {
     private Runnable inSection(Expr e, Supplier<Class<?>[]> tagsOf, Supplier<List<Runnable>> expansion) {
         return () -> {
             Class<?>[] tags = tagsOf.get();
-            SourceSection section = usable(e.source);
+            SourceSection section = usable(e);
             if (section == null && tags.length == 0) {
                 push(expansion.get());
                 return;
@@ -214,7 +214,7 @@ final class CodeGenerator {
         } else {
             return false;
         }
-        return !name.startsWith("%") && usable(e.source) != null;
+        return !name.startsWith("%") && usable(e) != null;
     }
 
     private State state() {
@@ -245,6 +245,32 @@ final class CodeGenerator {
             }
         }
         return false;
+    }
+
+    /**
+     * {@code e}'s source section if the builder can attach it here ({@link #usable(SourceSection)}),
+     * and, for a variable or constant a macro's template introduced, if it is in the file of the
+     * code around it: a library's template is in the library's file, which the code a use of its
+     * macro expands to isn't (design.md D13, "Macros"). Else null, and the code reports the section
+     * that encloses it, the use's. Nested roots already leave out a section in another file; this
+     * leaves it out of the outermost root too, which would otherwise open the library's file for it.
+     */
+    private SourceSection usable(Expr e) {
+        SourceSection section = usable(e.source);
+        if (section != null && e.introduced && !section.getSource().equals(openSource())) {
+            return null;
+        }
+        return section;
+    }
+
+    /** The Source the code being built is in: the innermost one open, or null. */
+    private Source openSource() {
+        for (State s : states) {
+            if (s.source != null) {
+                return s.source;
+            }
+        }
+        return null;
     }
 
     /**

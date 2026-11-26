@@ -364,6 +364,16 @@ public final class Expander {
         return false;
     }
 
+    /**
+     * The name a procedure bound to {@code v} gets for its frames (design.md D13, "Scopes, names"):
+     * the variable's, unless a macro's template introduced it, which the user never wrote and a
+     * frame's scope doesn't show ({@code do}'s {@code loop}); then null, and the procedure is
+     * named by its location.
+     */
+    private static String frameName(Var v) {
+        return v.introduced ? null : v.name.toString();
+    }
+
     private Expr reference(Var v, Lambda lambda, Object id) {
         if (v.owner != lambda) {
             v.captured = true;
@@ -466,6 +476,7 @@ public final class Expander {
                     Expr e = (Expr) result;
                     if (e.source == null) {
                         e.source = source;
+                        e.introduced = source != null && introduced(expand.form());
                     }
                     delivered = e;
                 }
@@ -856,29 +867,50 @@ public final class Expander {
                 } else {
                     throw syntax("syntax keyword used as an expression", form);
                 }
-                // A macro's use that expands to a reference ((or x) to x) is located at the
-                // identifier, where tools show the read of its variable (design.md D13, "Variables'
-                // reads and writes"); else at the use, as every expansion is.
-                if (form != step.form()) {
-                    reference.source = sourceOf(form);
-                }
-                return reference;
+                return expanded(reference, form, step);
             }
             if (!(d instanceof SPair p)) {
                 if (d == SConstant.EMPTY_LIST) {
                     throw syntax("() is not an expression", form);
                 }
-                return new Ast.Const(Syntax.toLiteral(form));
+                return expanded(new Ast.Const(Syntax.toLiteral(form)), form, step);
             }
             Object binding = isIdentifier(p.car) ? resolve(p.car) : null;
             if (binding instanceof Macro m) {
                 form = expandMacro(m, form, null);
             } else if (binding instanceof CoreForm c) {
-                return coreForm(c, form, step);
+                return expanded(coreForm(c, form, step), form, step);
             } else {
-                return new SeqLikeFrame(list(form), lambda, SeqLikeFrame.CALL);
+                return expanded(new SeqLikeFrame(list(form), lambda, SeqLikeFrame.CALL), form, step);
             }
         }
+    }
+
+    /**
+     * {@code result}, the expansion of {@code step}'s form to {@code form}, located (design.md D13,
+     * "Macros"). A macro use's expansion is located at the use ({@link #run}), unless it is as a
+     * whole a form with a location of its own: code the use's user wrote ({@code (or x)} to
+     * {@code x}, {@code do}'s step), located where it was written, which its errors and tools then
+     * show; or a variable or constant of the macro's template, located there if the template is in
+     * the use's file. A template's form from another file (a library's macro) stays at the use.
+     */
+    private static Object expanded(Object result, Object form, Expand step) {
+        SourceSection own = sourceOf(form);
+        if (form == step.form() || own == null) {
+            return result;
+        }
+        boolean introduced = introduced(form);
+        SourceSection use = sourceOf(step.form());
+        if (introduced && use != null && !use.getSource().equals(own.getSource())) {
+            return result;
+        }
+        if (result instanceof Expr e && e.source == null) {
+            e.source = own;
+            e.introduced = introduced;
+        } else if (result instanceof Frame f && f.source == null) {
+            f.source = own;
+        }
+        return result;
     }
 
     private Object coreForm(CoreForm c, Object form, Expand step) {
@@ -1172,7 +1204,7 @@ public final class Expander {
                     bindExpressions();
                     vars.add(v);
                     inits.add(def.value());
-                    names.add(symbol(id).toString());
+                    names.add(frameName(v));
                 } else if (binding == CoreForm.DEFINE_SYNTAX) {
                     Object[] def = parseDefineSyntax(form);
                     binder.bind(withoutUseSites(def[0], useSites), transformer(def[1]), form, "definition of");
@@ -1255,7 +1287,7 @@ public final class Expander {
             Object next() {
                 if (index < inits.size()) {
                     int i = index++;
-                    return new Expand(inits.get(i), lambda, vars.get(i).name.toString());
+                    return new Expand(inits.get(i), lambda, frameName(vars.get(i)));
                 }
                 if (index++ == inits.size()) {
                     return new BodyFrame(body, lambda, form);

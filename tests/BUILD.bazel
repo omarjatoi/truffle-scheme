@@ -43,6 +43,7 @@ java_library(
         "scheme/test/AllocationRecorder.java",
         "scheme/test/EventRecorder.java",
         "scheme/test/ResultProbe.java",
+        "scheme/test/SectionRecorder.java",
         "scheme/test/VariableRecorder.java",
     ],
     javacopts = SCHEME_JAVACOPTS,
