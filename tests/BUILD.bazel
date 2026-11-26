@@ -577,6 +577,44 @@ harness_test(
     tags = ["lint"],
 )
 
+# design.md D11 "Nix packages": what the flake builds its packages from without Bazel
+# (nix/packages.json) is what the Bazel build says: the GraalVM release bazel/graalvm.bzl pins, the
+# Maven artifacts, the libraries, the module descriptors and the native image's options.
+_LIBRARY_BUILDS = ["//src/%s:BUILD.bazel" % lib for lib in [
+    "builtins",
+    "compiler",
+    "launcher",
+    "prelude",
+    "reader",
+    "runtime",
+]]
+
+harness_test(
+    name = "nix",
+    check = "nix",
+    args = [
+        "--pins=$(rlocationpath //:nix/packages.json)",
+        "--lock=$(rlocationpath //:maven_install.json)",
+        "--module=$(rlocationpath //:MODULE.bazel)",
+        "--flake=$(rlocationpath //:flake.nix)",
+        "--graalvm=$(rlocationpath //bazel:graalvm.bzl)",
+        "--build=$(rlocationpath //:BUILD.bazel)",
+        "--bazel-build=$(rlocationpath //bazel:BUILD.bazel)",
+        "--library-builds",
+    ] + ["$(rlocationpath %s)" % b for b in _LIBRARY_BUILDS],
+    data = [
+        "//:BUILD.bazel",
+        "//:MODULE.bazel",
+        "//:flake.nix",
+        "//:maven_install.json",
+        "//:nix/packages.json",
+        "//bazel:BUILD.bazel",
+        "//bazel:graalvm.bzl",
+    ] + _LIBRARY_BUILDS,
+    size = "small",
+    tags = ["lint"],
+)
+
 # design.md D11 "An output directory per platform": bazel-bin/scheme runs a program, and on another
 # platform than its own, without its JDK or without its runfiles exits with one line naming the
 # command to run (bazel/launcher.bzl).

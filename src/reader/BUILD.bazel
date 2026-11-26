@@ -10,3 +10,9 @@ scheme_java_library(
         "@jvm//:org_graalvm_truffle_truffle_api",
     ],
 )
+
+# For //tests:nix, which compares nix/packages.json with it (design.md D11, "Nix packages").
+exports_files(
+    ["BUILD.bazel"],
+    visibility = ["//tests:__pkg__"],
+)

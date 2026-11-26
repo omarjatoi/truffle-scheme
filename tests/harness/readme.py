@@ -11,6 +11,9 @@ that says how CI checks it; a block without one fails the step:
 - `<!-- readme: run native -->`: the block needs GraalVM's native-image, which takes minutes and
   gigabytes, so only `//tests:readme_native` (manual) runs it, against `//:scheme-native` and
   `//:scheme_isolate_jars`.
+- `<!-- readme: run nix -->`: the block runs the flake's packages (`nix build`, `nix run`, `nix
+  profile install`), which Bazel doesn't build, so `//tests:readme` skips it and `nix flake check`
+  runs it (nix/checks.nix), with `nix` a shim that runs the packages it depends on.
 - `<!-- readme: output -->` after a run block: what the block prints on stdout (on stdout and
   stderr for a server). `...` matches any text, newlines included; trailing spaces don't count.
 - `<!-- readme: file PATH -->` or `<!-- readme: file PATH#NAME -->`: the block is the file's text,
@@ -212,7 +215,7 @@ def _blocks(root):
             elif kind == 'run':
                 if block.language != 'sh':
                     problems.append(f'{block.where()}: a run block is a ```sh block')
-                if not set(block.words()[1:]) <= {'server', 'native'}:
+                if not set(block.words()[1:]) <= {'server', 'native', 'nix'}:
                     problems.append(f'{block.where()}: unknown run option in `{block.marker}`')
                 commands.append(block.text)
             elif kind != 'file':
@@ -226,8 +229,9 @@ def _blocks(root):
     return blocks, problems
 
 
-def run(root, native=False):
-    """Checks the documents (all but native blocks, or only the native blocks). Returns the problems."""
+def run(root, native=False, nix=False):
+    """Checks the documents (all but the native and the Nix blocks, or only the native blocks, or only
+    the Nix blocks). Returns the problems."""
     blocks, problems = _blocks(root)
     for block in blocks:
         words = block.words()
@@ -235,11 +239,14 @@ def run(root, native=False):
             continue
         start = time.time()
         if words[0] == 'file':
-            if native:
+            if native or nix:
                 continue
             problem = _check_file(block, root)
         elif ('native' in words) != native:
             log(f'  {block.where()}: skipped (' + ('a native block' if not native else 'not a native block') + ')')
+            continue
+        elif ('nix' in words) != nix:
+            log(f'  {block.where()}: skipped (' + ('a Nix block: `nix flake check` runs it' if not nix else 'not a Nix block') + ')')
             continue
         elif 'server' in words:
             problem = _run_server(block, root)

@@ -1,0 +1,184 @@
+{
+  "comment": "What flake.nix builds its packages from, without Bazel (nix/scheme.nix; design.md D11, 'Nix packages'): what the Bazel build says, repeated. //tests:nix checks each entry against bazel/graalvm.bzl, MODULE.bazel and the BUILD.bazel files.",
+  "graalvm": {
+    "version": "25.6.5.1",
+    "url_prefix": "https://github.com/graalvm/graalvm-ce-builds/releases/download/graal-25.6.5.1/graalvm-community-jdk-25i6-25.0.5.1_",
+    "archives": {
+      "x86_64-linux": {
+        "suffix": "linux-x64",
+        "sha256": "d792848db26f1602f0a5cf2cd9279d9a652d32ab450d891ce616c9ca67e359d0"
+      },
+      "aarch64-linux": {
+        "suffix": "linux-aarch64",
+        "sha256": "d8e6edf0009bb5d70c6a670eb030d36aa804795427306434c0f7f63c01435307"
+      },
+      "aarch64-darwin": {
+        "suffix": "macos-aarch64",
+        "sha256": "19ef5175f18fe2a957a5ec4cc3dd263a164e88ae621cf80ee1c715ede72469f0"
+      }
+    },
+    "launcher_cc": {
+      "tag": "graal-25.6.5.1",
+      "sha256": "9c8b76ae842fc6f6552fa4c1b523463c4817e7d0d52bd041f9f1dd0e274a9951"
+    }
+  },
+  "maven": {
+    "processor": "org.graalvm.truffle:truffle-dsl-processor",
+    "processors": [
+      "TruffleProcessor",
+      "verify.VerifyTruffleProcessor",
+      "LanguageRegistrationProcessor",
+      "InstrumentRegistrationProcessor",
+      "OptionalResourceRegistrationProcessor",
+      "InstrumentableProcessor",
+      "verify.VerifyCompilationFinalProcessor",
+      "OptionProcessor"
+    ],
+    "truffle_modules": [
+      "org.graalvm.polyglot:polyglot",
+      "org.graalvm.sdk:collections",
+      "org.graalvm.sdk:jniutils",
+      "org.graalvm.sdk:nativebridge",
+      "org.graalvm.sdk:nativeimage",
+      "org.graalvm.sdk:word",
+      "org.graalvm.truffle:truffle-api",
+      "org.graalvm.truffle:truffle-compiler",
+      "org.graalvm.truffle:truffle-runtime"
+    ],
+    "launcher_modules": [
+      "org.graalvm.sdk:launcher-common",
+      "org.graalvm.shadowed:jline"
+    ],
+    "tools_modules": [
+      "org.graalvm.shadowed:json",
+      "org.graalvm.tools:chromeinspector-tool",
+      "org.graalvm.tools:coverage-tool",
+      "org.graalvm.tools:dap-tool",
+      "org.graalvm.tools:profiler-tool"
+    ]
+  },
+  "libraries": [
+    {
+      "name": "runtime",
+      "dsl": true,
+      "sources": [
+        "scheme/runtime",
+        "scheme/runtime/printer",
+        "scheme/runtime/staticobject",
+        "scheme/runtime/value"
+      ],
+      "resources": [
+        "META-INF"
+      ]
+    },
+    {
+      "name": "reader",
+      "dsl": false,
+      "sources": [
+        "scheme/reader"
+      ],
+      "resources": []
+    },
+    {
+      "name": "compiler",
+      "dsl": false,
+      "sources": [
+        "scheme/compiler"
+      ],
+      "resources": [
+        "META-INF"
+      ]
+    },
+    {
+      "name": "builtins",
+      "dsl": true,
+      "sources": [
+        "scheme/builtins"
+      ],
+      "resources": [
+        "META-INF"
+      ]
+    },
+    {
+      "name": "prelude",
+      "dsl": false,
+      "sources": [
+        "scheme/prelude"
+      ],
+      "resources": [
+        "scheme/prelude"
+      ]
+    },
+    {
+      "name": "launcher",
+      "dsl": false,
+      "sources": [
+        "scheme/launcher"
+      ],
+      "resources": []
+    }
+  ],
+  "modules": {
+    "scheme": {
+      "requires": [
+        "org.graalvm.collections",
+        "org.graalvm.jniutils",
+        "org.graalvm.nativebridge",
+        "org.graalvm.nativeimage",
+        "org.graalvm.polyglot",
+        "org.graalvm.truffle",
+        "org.graalvm.word"
+      ],
+      "exports": [
+        "scheme.compiler to scheme.test",
+        "scheme.reader to scheme.test",
+        "scheme.runtime to scheme.test",
+        "scheme.runtime.printer to scheme.test",
+        "scheme.runtime.staticobject",
+        "scheme.runtime.value to scheme.test"
+      ],
+      "uses": [
+        "scheme.runtime.BuiltinLibrary",
+        "scheme.runtime.SchemeCompiler"
+      ],
+      "libs": [
+        "builtins",
+        "compiler",
+        "prelude",
+        "reader",
+        "runtime"
+      ]
+    },
+    "scheme.launcher": {
+      "requires": [
+        "org.graalvm.collections",
+        "org.graalvm.jniutils",
+        "org.graalvm.nativebridge",
+        "org.graalvm.nativeimage",
+        "org.graalvm.polyglot",
+        "org.graalvm.truffle",
+        "org.graalvm.word",
+        "java.management",
+        "org.graalvm.launcher",
+        "org.graalvm.shadowed.jline",
+        "org.graalvm.truffle.compiler",
+        "org.graalvm.truffle.runtime",
+        "scheme"
+      ],
+      "exports": [
+        "scheme.launcher to org.graalvm.launcher, scheme.test"
+      ],
+      "uses": [],
+      "libs": [
+        "launcher"
+      ]
+    }
+  },
+  "native_options": [
+    "-Dpolyglot.image-build-time.PreinitializeContexts=scheme",
+    "--enable-native-access=org.graalvm.shadowed.jline"
+  ],
+  "native_options_x86_64_linux": [
+    "-march=compatibility"
+  ]
+}

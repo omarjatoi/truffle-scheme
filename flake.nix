@@ -1,5 +1,5 @@
 {
-  description = "R7RS-small on GraalVM Truffle: dev shell";
+  description = "R7RS-small on GraalVM Truffle: dev shell, and the launchers as packages";
 
   inputs = {
     # Determinate Systems FlakeHub, rolling (unstable) channel. Its graalvm-ce
@@ -10,28 +10,30 @@
   };
 
   outputs = { self, nixpkgs, flake-utils }:
-    flake-utils.lib.eachDefaultSystem (system:
+    let
+      # What the packages are built from (nix/scheme.nix), the GraalVM release among them.
+      pins = builtins.fromJSON (builtins.readFile ./nix/packages.json);
+    in
+    # The platforms GraalVM has a release archive for, which bazel/graalvm.bzl pins too.
+    flake-utils.lib.eachSystem (builtins.attrNames pins.graalvm.archives) (system:
       let
         pkgs = import nixpkgs { inherit system; };
         # A JDK for running and embedding the language outside Bazel (docs/usage.md,
-        # docs/embedding.md): the GraalVM release Bazel pins too (bazel/graalvm.bzl), the same
-        # archives at the same sha256s, unpacked by the builder of nixpkgs' graalvm-ce
-        # (`buildGraalvm`). nixpkgs' graalvm-ce is still 25.5 (design.md D11, "Nix"); once
-        # it ships this release, this goes back to `pkgs.graalvmPackages.graalvm-ce`.
-        graalvmVersion = "25.6.5.1";
-        graalvmArchives = {
-          "x86_64-linux" = { suffix = "linux-x64"; sha256 = "d792848db26f1602f0a5cf2cd9279d9a652d32ab450d891ce616c9ca67e359d0"; };
-          "aarch64-linux" = { suffix = "linux-aarch64"; sha256 = "d8e6edf0009bb5d70c6a670eb030d36aa804795427306434c0f7f63c01435307"; };
-          "aarch64-darwin" = { suffix = "macos-aarch64"; sha256 = "19ef5175f18fe2a957a5ec4cc3dd263a164e88ae621cf80ee1c715ede72469f0"; };
-        };
+        # docs/embedding.md), and the packages': the GraalVM release Bazel pins too
+        # (bazel/graalvm.bzl; //tests:nix checks it), the same archives at the same sha256s,
+        # unpacked by the builder of nixpkgs' graalvm-ce (`buildGraalvm`). nixpkgs' graalvm-ce is
+        # still 25.5 (design.md D11, "Nix"); once it ships this release, this goes back to
+        # `pkgs.graalvmPackages.graalvm-ce`.
         graalvm = pkgs.graalvmPackages.buildGraalvm {
-          version = graalvmVersion;
+          inherit (pins.graalvm) version;
           src = pkgs.fetchurl {
-            url = "https://github.com/graalvm/graalvm-ce-builds/releases/download/graal-${graalvmVersion}/graalvm-community-jdk-25i6-25.0.5.1_${graalvmArchives.${system}.suffix}_bin.tar.gz";
-            inherit (graalvmArchives.${system}) sha256;
+            url = "${pins.graalvm.url_prefix}${pins.graalvm.archives.${system}.suffix}_bin.tar.gz";
+            inherit (pins.graalvm.archives.${system}) sha256;
           };
-          meta.platforms = builtins.attrNames graalvmArchives;
+          meta.platforms = builtins.attrNames pins.graalvm.archives;
         };
+        # The launcher and the native launcher, built without Bazel (design.md D11, "Nix packages").
+        scheme = pkgs.callPackage ./nix/scheme.nix { inherit graalvm pins; };
         packages = [
           pkgs.bazelisk     # Bazel, at .bazelversion
           (pkgs.writeShellScriptBin "bazel" ''exec ${pkgs.bazelisk}/bin/bazelisk "$@"'')
@@ -45,6 +47,16 @@
           export JAVA_HOME="${graalvm}"
         '';
       in {
+        # `nix build .#scheme`, `nix run .#scheme -- file.scm`, `nix profile install .#scheme`
+        # (docs/usage.md, "Nix packages"); the same for `scheme-native`.
+        packages = {
+          inherit (scheme) scheme scheme-native;
+          default = scheme.scheme;
+        };
+
+        # `nix flake check`: docs/usage.md's Nix blocks, and a conformance section, through both.
+        checks = import ./nix/checks.nix { inherit pkgs scheme; };
+
         devShells.default = pkgs.mkShell { inherit packages shellHook; };
 
         # What CI's steps run (.buildkite/pipeline.yml): only Bazel. It brings the JDK, Python and

@@ -36,7 +36,8 @@ torture mode captures and re-enters a continuation at every non-tail call;
 The Nix dev shell provides Bazel, a GraalVM CE 25.6 JDK, Python and
 chibi-scheme; Bazel downloads the same GraalVM release and the Maven jars it
 builds with (design.md D11). You need Nix with flakes; from a checkout of this
-repository:
+repository (or, to run the launchers without Bazel, see [Nix
+packages](#nix-packages)):
 
 <!-- readme: run -->
 ```sh
@@ -881,6 +882,50 @@ given: it starts the JVM with the serial one unless a `--vm.` option or
 `JDK_JAVA_OPTIONS` (or `JAVA_TOOL_OPTIONS`) chooses another, such as
 `--vm.XX:+UseG1GC`, `--vm.XX:+UseParallelGC` or `--vm.XX:+UseZGC` (design.md
 D17, "The collector").
+
+## Nix packages
+
+The flake has both launchers as packages: `scheme`, the launcher on the JVM
+(`bazel-bin/scheme`'s, with GraalVM's tools and its AOT cache), and
+`scheme-native`, the native launcher. Nix builds them in its sandbox without
+Bazel, from the same GraalVM release and the same Maven jars as Bazel
+(design.md D11, "Nix packages"), for aarch64-darwin, x86_64-linux and
+aarch64-linux. The native one takes a few minutes and a few GB, as
+`bazel build //:scheme-native` does:
+
+<!-- readme: run nix -->
+```sh
+nix build .#scheme .#scheme-native
+nix run .#scheme -- docs/examples/hello.scm
+nix run .#scheme-native -- docs/examples/hello.scm Ada
+```
+
+<!-- readme: output -->
+```text
+Hello, world! Arguments: ()
+Hello, Ada! Arguments: ("Ada")
+```
+
+`nix profile add` installs them, as `scheme` and `scheme-native` on your
+`PATH` (older releases of Nix call it `profile install`). From outside a checkout,
+give the flake's URL instead of `.`:
+
+<!-- readme: run nix -->
+```sh
+nix profile add .#scheme .#scheme-native
+scheme -I docs/examples/lib docs/examples/greet.scm || echo "exit status $?"
+scheme-native docs/examples/hello.scm
+```
+
+<!-- readme: output -->
+```text
+Hello from a library, Ada!
+exit status 3
+Hello, world! Arguments: ()
+```
+
+`nix flake check` runs this section's blocks, with the packages it builds,
+and a section of chibi-scheme's suite through each launcher.
 
 ## Performance
 

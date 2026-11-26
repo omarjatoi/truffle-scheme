@@ -7,10 +7,14 @@ load("//bazel:launcher.bzl", "launcher")
 package(default_visibility = ["//visibility:public"])
 
 exports_files([
+    "BUILD.bazel",
+    "MODULE.bazel",
     "docs/examples/polyglot.scm",
     "docs/plan.md",
     "docs/usage.md",
+    "flake.nix",
     "maven_install.json",
+    "nix/packages.json",
 ])
 
 # The Truffle and GraalVM SDK modules the scheme modules require.
