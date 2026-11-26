@@ -354,25 +354,40 @@ final class Arithmetic {
         BigInteger ad = denominator(a);
         BigInteger bn = numerator(b);
         BigInteger bd = denominator(b);
-        if (ad.equals(BigInteger.ONE) && bd.equals(BigInteger.ONE) && op != Op.DIV) {
-            return SBigInteger.normalize(switch (op) {
-                case ADD -> an.add(bn);
-                case SUB -> an.subtract(bn);
-                default -> an.multiply(bn);
-            });
-        }
-        return switch (op) {
-            case ADD -> SRational.make(an.multiply(bd).add(bn.multiply(ad)), ad.multiply(bd));
-            case SUB -> SRational.make(an.multiply(bd).subtract(bn.multiply(ad)), ad.multiply(bd));
-            case MUL -> SRational.make(an.multiply(bn), ad.multiply(bd));
-            case DIV -> {
-                if (bn.signum() == 0) {
-                    // Never: an exact zero divisor is the fixnum 0, which apply has refused.
-                    throw CompilerDirectives.shouldNotReachHere(who + ": division by zero");
-                }
-                yield SRational.make(an.multiply(bd), ad.multiply(bn));
+        try {
+            if (ad.equals(BigInteger.ONE) && bd.equals(BigInteger.ONE) && op != Op.DIV) {
+                return SBigInteger.normalize(switch (op) {
+                    case ADD -> an.add(bn);
+                    case SUB -> an.subtract(bn);
+                    default -> an.multiply(bn);
+                });
             }
-        };
+            return switch (op) {
+                case ADD -> SRational.make(an.multiply(bd).add(bn.multiply(ad)), ad.multiply(bd));
+                case SUB -> SRational.make(an.multiply(bd).subtract(bn.multiply(ad)), ad.multiply(bd));
+                case MUL -> SRational.make(an.multiply(bn), ad.multiply(bd));
+                case DIV -> {
+                    if (bn.signum() == 0) {
+                        // Never: an exact zero divisor is the fixnum 0, which apply has refused.
+                        throw CompilerDirectives.shouldNotReachHere(who + ": division by zero");
+                    }
+                    yield SRational.make(an.multiply(bd), ad.multiply(bn));
+                }
+            };
+        } catch (ArithmeticException e) {
+            // BigInteger's only ArithmeticException here: a result past its range, which it
+            // reports before allocating the result (design.md D8, "Running out of memory").
+            throw outOfRange(who);
+        }
+    }
+
+    /**
+     * An exact result past BigInteger's range, 2^31 bits or more: a violation of an implementation
+     * restriction (R7RS §1.3.2), reported as an error (design.md D8, "Running out of memory").
+     */
+    @TruffleBoundary
+    static SchemeError outOfRange(String who) {
+        return SchemeError.of(who + ": exact result out of range (2^31 bits or more)");
     }
 
     // Of two numbers: for a primitive's own computation, or of its two arguments, a and b.
@@ -836,6 +851,27 @@ final class Arithmetic {
         }
     }
 
+    /**
+     * Whether x to the e, |x| >= 2, has more bits than an exact integer can (Integer.MAX_VALUE): it
+     * has floor(|e| log2 |x|) + 1, at least (bits(x) - 1) |e| + 1, exact for a power of two, and at
+     * least what log2 of x's top 53 bits gives, a little less (3 to the 1.5e9 is past the range,
+     * though (bits(3) - 1) 1.5e9 isn't).
+     */
+    private static boolean tooLong(BigInteger x, int e) {
+        BigInteger m = x.abs();
+        int bits = m.bitLength();
+        if (bits <= 1) {
+            return false;
+        }
+        long power = Math.abs((long) e);
+        if ((bits - 1) * power + 1 > Integer.MAX_VALUE) {
+            return true;
+        }
+        int shift = Math.max(0, bits - 53);
+        double log2 = shift + Math.log(m.shiftRight(shift).doubleValue()) / Math.log(2) - 1e-9;
+        return Math.floor(log2 * power) + 1 > Integer.MAX_VALUE;
+    }
+
     /** {@code (expt z1 z2)}: exact for an exact base and exact integer power. */
     @TruffleBoundary
     static Object expt(Object base, Object power) {
@@ -854,6 +890,11 @@ final class Arithmetic {
                 throw notA("expt", 2, "exponent from -2^31 to 2^31 - 1 (for a base other than 0, 1 or -1)", power);
             }
             int e = p.intValue();
+            // A result past BigInteger's range is known before multiplying, from the numerator's
+            // and the denominator's sizes (tooLong): an error, not minutes of multiplying first.
+            if (!(base instanceof SComplex) && (tooLong(numerator(base), e) || tooLong(denominator(base), e))) {
+                throw outOfRange("expt");
+            }
             Object result = 1L;
             Object square = base;
             for (int k = Math.abs(e); k > 0; k >>= 1) {

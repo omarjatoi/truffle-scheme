@@ -10,6 +10,7 @@ import scheme.reader.NumberParser;
 import scheme.runtime.PrimitiveNode;
 import scheme.runtime.PrimitiveSpec;
 import scheme.runtime.PrimitiveSpec.Result;
+import scheme.runtime.SchemeError;
 import scheme.runtime.printer.Printer;
 import scheme.runtime.value.MultipleValues;
 import scheme.runtime.value.SBigInteger;
@@ -630,7 +631,12 @@ final class NumberPrimitives {
             if (!(string instanceof SString s)) {
                 throw Arithmetic.notA("string->number", 1, "string", string);
             }
-            Object number = NumberParser.parse(s.toString(), radix("string->number", 2, radixValue));
+            Object number;
+            try {
+                number = NumberParser.parse(s.toString(), radix("string->number", 2, radixValue));
+            } catch (NumberParser.Unrepresentable e) {
+                throw SchemeError.of("string->number: argument 1 is an " + e.getMessage(), s);
+            }
             return number == null ? (Object) false : number;
         }
     }

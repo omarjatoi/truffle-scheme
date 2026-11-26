@@ -129,6 +129,7 @@ bazel test //tests:conformance            # every suite section, interpreted, co
 bazel test //tests:conformance_larceny_base   # one section (conformance_compile_..., conformance_torture_..., conformance_torture_owned_...)
 bazel test //tests:diff //tests:spec      # tests/diff vs chibi-scheme (and under both tortures); tests/spec
 bazel test //tests:space //tests:tools    # tail loop and deep recursion under -Xss256k; the tools' smoke tests
+bazel test //tests:memory                 # tests/memory under a 64 MB heap through the launcher: an error or the out-of-memory message, never a stack trace (design.md D8)
 bazel test //src/runtime:all              # one project's static checks (format, checkstyle, ecj, spotbugs)
 bazel build //:scheme                     # the launcher: bazel-bin/scheme [-I dir]... [file.scm [arg]...]
 bazel-bin/scheme --dap file.scm           # with GraalVM's tools: --inspect, --dap, --cpusampler, --memtracer
@@ -143,7 +144,7 @@ bazel test //tests/fuzz:fuzz_smoke        # a fixed seed's 300 random programs, 
 bazel run //:r7rs -- format               # format Java code (GraalVM's Eclipse formatter settings)
 bazel test //tests:readme                 # docs/usage.md's and docs/embedding.md's commands as written, and their samples
 bazel build //:scheme-native              # the native launcher, bazel-bin/scheme-native (design.md D17; a minute, ~3 GB)
-bazel test //tests:readme_native //tests:conformance_native //tests:space_native //tests:launcher_vm_native //tests:compile_bound_native   # its docs, both conformance suites, deep recursion and --vm. options through it, its bound on runtime-compiled methods (Linux, on the executors)
+bazel test //tests:readme_native //tests:conformance_native //tests:space_native //tests:memory_native //tests:launcher_vm_native //tests:compile_bound_native   # its docs, both conformance suites, deep recursion, running out of memory and --vm. options through it, its bound on runtime-compiled methods (Linux, on the executors)
 bazel test --platforms=//bazel/platforms:macos_arm64 //tests:launcher_vm_native   # a native test for this Mac, run here
 bazel run //:r7rs -- benchmark ecraven:fib         # one benchmark program, JIT (bench/README.md: options, failures)
 bazel run //:r7rs -- benchmark larceny:* --mode=*  # every program of a set, JIT and interpreter

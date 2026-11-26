@@ -419,6 +419,26 @@ public class SandboxTest {
             assertTrue(e.getMessage(), e.getMessage().contains("Maximum CPU time limit of 500ms exceeded"));
         }
 
+        /**
+         * The isolate's heap, {@code engine.MaxIsolateMemory}, is a hard limit: a program that fills
+         * it runs out of memory in the isolate, as on a host's heap (design.md D8, "Running out of
+         * memory"), and the context goes on.
+         */
+        @Test
+        public void anIsolatedContextRunsOutOfItsHeapAndGoesOn() {
+            try (Context context = isolated().build()) {
+                for (String text : new String[]{"(define (grow l) (grow (cons (make-vector 1000 0) l))) (grow '())", "(define (deep n) (+ 1 (deep (+ n 1)))) (deep 0)"}) {
+                    PolyglotException e = assertThrows(PolyglotException.class, () -> context.eval(SCHEME, text));
+                    String what = text + ": " + e + " internal " + e.isInternalError() + " cancelled " + e.isCancelled() + " guest " + e.isGuestException();
+                    assertTrue(what, e.isResourceExhausted());
+                    assertFalse(what, e.isInternalError());
+                    assertFalse(what, e.isCancelled());
+                    assertEquals("3", eval(context, "(+ 1 2)"));
+                    assertEquals("100000", eval(context, DEPTH + "(depth 100000)"));
+                }
+            }
+        }
+
         @Test
         public void anUntrustedContextRunsSchemeUnderTheLimitsItRequires() {
             try (Context context = untrusted().build()) {

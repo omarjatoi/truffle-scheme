@@ -18,6 +18,10 @@ import tempfile
 
 from harness import check, log, rlocation
 
+# What the launcher prints when the heap fills (design.md D8, "Running out of memory"): a maximum
+# heap took effect.
+OUT_OF_MEMORY = 'ERROR: out of memory: the heap is full'
+
 # A program that allocates about 130 MB and keeps none of it: it collects, and with
 # -XX:+VerboseGC the first collection prints the heap's sizes.
 GARBAGE = """(import (scheme base) (scheme write))
@@ -70,7 +74,7 @@ def launcher_vm_native(o):
     out, _ = run([native, programs['live']])
     check(out == '3000000', f'the program should run without a maximum heap: {out!r}')
     out, err = run([native, '--vm.Xmx64m', programs['live']], status=None)
-    check('heap size exceeded' in err, f'--vm.Xmx64m should bound the heap:\n{out}\n{err}')
+    check(OUT_OF_MEMORY in err, f'--vm.Xmx64m should bound the heap:\n{out}\n{err}')
     # A minimum heap and a collection policy, which only the isolate's creation can set (with a
     # young generation small enough for the program to collect).
     _, err = run([native, '--vm.XX:+VerboseGC', '--vm.Xms1g', '--vm.Xmn64m', '--vm.XX:InitialCollectionPolicy=BySpaceAndTime',
@@ -111,7 +115,7 @@ def launcher_vm_native(o):
     out, _ = run([native, '--vm.Xmx1g', programs['command-line'], '--vm.Xmx2g', 'a'])
     check(out == '("--vm.Xmx2g" "a")', f'the arguments after the file should be the program\'s: {out!r}')
     _, err = run([native, '--vm.Xmx64m', programs['live'], '--vm.Xmx2g'], status=None)
-    check('heap size exceeded' in err, f'after the relaunch, the launcher\'s --vm.Xmx64m should still bound the heap:\n{err}')
+    check(OUT_OF_MEMORY in err, f'after the relaunch, the launcher\'s --vm.Xmx64m should still bound the heap:\n{err}')
     log('the program\'s arguments left alone, -X, -XX:, -D and --vm. ones included')
 
     # What can't be: a class path; a collector, which the isolate's creation rejects as an option
@@ -172,7 +176,7 @@ def argument_files(o):
     small = arguments('small.args', '-Xmx64m\n')
     for command in ([native, small, programs['live']], [native, small, programs['live'], '--vm.Xmx2g']):
         _, err = run(command, status=None)
-        check('heap size exceeded' in err, f'{command} should bound the heap:\n{err}')
+        check(OUT_OF_MEMORY in err, f'{command} should bound the heap:\n{err}')
     # A system property, which reaches the engine (which rejects it, clearly): in quotes, with a
     # space and a #, as the C part reads it.
     prop = arguments('property.args', '"-Dpolyglot.scheme.No Such#1=1" # a comment\n')

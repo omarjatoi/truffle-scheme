@@ -2379,7 +2379,7 @@ measurements don't run on this machine while a benchmark measures.
     output for a raised non-condition, an error object with irritants and
     a syntax error is in docs/usage.md, in a block `//tests:readme` runs;
     no differential or conformance test changes state.
-- [ ] **M14-08 · Running out of memory** *(early)*
+- [x] **M14-08 · Running out of memory** *(early)*
   - D8 never converts an internal Java exception, and says nothing of an
     `OutOfMemoryError`, which isn't a bug: a program that keeps allocating,
     `(make-vector (expt 10 10))`, a string or bytevector past Java's array

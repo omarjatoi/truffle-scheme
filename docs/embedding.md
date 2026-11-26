@@ -504,6 +504,19 @@ sees through `InteropLibrary`:
 | Scheme handlers and `dynamic-wind` after-thunks | the after-thunks it leaves run first (D8) | not run | the after-thunks run, for `exit` (D9) | neither runs | neither runs |
 | The context afterwards | goes on | goes on | closed | goes on | closed |
 
+A program that fills the heap gets the JVM's (or the native image's)
+`OutOfMemoryError`, which Truffle reports as a `PolyglotException` whose
+`isResourceExhausted()` and `isGuestException()` are true, and
+`isInternalError()` and `isCancelled()` false, with the error's message (`Java
+heap space`). No Scheme handler or after-thunk runs, and the context goes on:
+the next call runs with the parameters and handlers it had before. Under
+`ISOLATED`, the isolate's heap (`engine.MaxIsolateMemory`) runs out the same
+way; under `UNTRUSTED`, `sandbox.MaxHeapMemory` cancels the context. A size
+past one of the language's limits, which it checks before allocating (a
+vector, string or bytevector longer than a Java array, an exact number of 2^31
+bits or more), is a Scheme error instead (design.md D8, "Running out of
+memory").
+
 ## Continuations across calls
 
 Continuations are re-entrant and multi-shot, from Java too. A continuation
