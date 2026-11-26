@@ -582,7 +582,56 @@ final class ListVectorPrimitives {
 
         @Override
         public Object invoke(Object[] args) {
-            return find(who, compare, alist, args[1], args[2]);
+            Object x = args[1];
+            if (compare != EQUAL) {
+                if (x instanceof SChar c) {
+                    return walk(who, alist, x, c.codePoint, args[2]);
+                }
+                if (!(x instanceof Long || x instanceof Double || x instanceof Boolean || x instanceof SBigInteger || x instanceof SRational || x instanceof SComplex)) {
+                    return walk(who, alist, x, -1, args[2]);
+                }
+            }
+            return find(who, compare, alist, x, args[2]);
+        }
+
+        /**
+         * {@link #find}'s loop for a key compared by identity ({@code codePoint} -1) or by its code
+         * point, without a boundary: compiled with the code that calls it, by the Truffle compiler,
+         * rather than ahead of time. In the native image a boundary's loop is compiled ahead of time
+         * without profiles, and {@code memq} and {@code assv} over long lists were 11-16% of
+         * {@code compiler}'s and {@code dynamic}'s native steady states (bench/README.md,
+         * "{@code compiler}, {@code matrix} and {@code dynamic}").
+         */
+        private static Object walk(String who, boolean alist, Object x, int codePoint, Object list) {
+            Object slow = list;
+            Object rest = list;
+            long n = 0;
+            for (SPair p; (p = SPair.asPair(rest)) != null;) {
+                Object y;
+                if (alist) {
+                    SPair entry = SPair.asPair(p.car);
+                    if (entry == null) {
+                        throw Lists.notAPair(who, p.car);
+                    }
+                    y = entry.car;
+                } else {
+                    y = p.car;
+                }
+                if (codePoint < 0 ? y == x : y instanceof SChar c && c.codePoint == codePoint) {
+                    return alist ? p.car : p;
+                }
+                rest = p.cdr;
+                if ((++n & 1) == 0) {
+                    slow = ((SPair) slow).cdr;
+                    if (slow == rest) {
+                        throw Lists.notAProperList(who, list);
+                    }
+                }
+            }
+            if (rest != SConstant.EMPTY_LIST) {
+                throw Lists.notAProperList(who, list);
+            }
+            return false;
         }
 
         /** How {@link #find} compares the key: {@link #same}'s generic comparison, ... */
