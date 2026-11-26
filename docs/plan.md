@@ -2105,6 +2105,27 @@ interleaved A/B runs.
     does; every torture mode passes; a loop of caught raises, JIT and
     native, first runs and steady state, unchanged or faster (interleaved
     A/B), and `bench-check` passes.
+- [ ] **M13-13 · The tests, with what GraalVM 25.6 adds**
+  - #316's "Features to adopt" 4, 5 and 7, and its follow-up: 25.6's
+    native image takes `-XX:+AbortVMOnCompilationFailure` (GR-80621), so
+    a runtime compilation that fails in the native launcher, which today
+    silently stays in the interpreter, can fail a test;
+    `-Dtruffle.DetailedAssertions=true` (GR-80770) turns on Truffle's
+    expensive assertions, which `-ea` alone no longer does; and
+    `--vm.XX:+PrintFlagsFinal` lists the native launcher's options
+    (GR-80734). `//tests:launcher_vm`, a `small` test (60 s), took 35-53 s
+    on busy executors and timed out once in #316's first build.
+  - **Done when** the native tests that run the launcher's JIT take
+    `--vm.XX:+AbortVMOnCompilationFailure`, with a test that a forced
+    compiler crash fails a run and a bailout doesn't (or the tests that
+    need a bailout to be harmless go without it, saying why); the
+    compile-mode and torture tests run with Truffle's detailed assertions
+    where the cost to CI's wall time is acceptable, measured on the
+    executors before and after, and the choice recorded with the tests
+    (a bug they find goes under the PR's follow-ups, with the option left
+    out of the test that hits it); `//tests:launcher_vm` is `medium`; and
+    docs/usage.md shows `--vm.XX:+PrintFlagsFinal` for the native launcher
+    in a block `//tests:readme_native` runs.
 
 **Exit:** every task above is done, or its note records what was measured and
 why it isn't; `docs/benchmarks.md` and `bench/thresholds.json` are regenerated
