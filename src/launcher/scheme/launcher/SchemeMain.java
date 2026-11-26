@@ -527,6 +527,7 @@ public final class SchemeMain extends AbstractLanguageLauncher {
 
     @Override
     protected void launch(Context.Builder builder) {
+        prepareForAFullHeap();
         configure(builder, libraryPath);
         if (versionAction != VersionAction.None) {
             try (Engine engine = Engine.create()) {
@@ -539,6 +540,43 @@ public final class SchemeMain extends AbstractLanguageLauncher {
         // The context is created, used and closed on the evaluation thread. An exit status is
         // thrown (AbortException), on to the framework on this thread.
         EvaluationThread.run(evaluationStackSize(), threadStack -> evaluate(builder, threadStack));
+    }
+
+    /**
+     * Readies the process for a heap that fills (design.md D8, "Running out of memory"), so that the
+     * launcher's message is all it prints, never a Java stack trace:
+     * <ul>
+     * <li>A thread that dies of an {@code OutOfMemoryError} it didn't catch (a Truffle compiler
+     * thread, the warm-up's) dies silently, where the JVM would print {@code Exception in thread ...}:
+     * the program's error is the report of the full heap, and the program's thread catches its own
+     * (EvaluationThread). Any other error a thread dies of is printed as the JVM prints it.</li>
+     * <li>The stack traces' classes are initialized now, while the heap has room: a class whose
+     * initializer runs out of memory can't be used again in the process ({@code NoClassDefFoundError}),
+     * and a full heap's {@code PolyglotException} is the first to build a stack trace in many runs
+     * ({@code StackTraceElement}'s {@code HashedModules}, which it initializes for the first frame
+     * of a module in the boot layer).</li>
+     * </ul>
+     */
+    private static void prepareForAFullHeap() {
+        Thread.UncaughtExceptionHandler previous = Thread.getDefaultUncaughtExceptionHandler();
+        Thread.setDefaultUncaughtExceptionHandler((thread, e) -> {
+            if (e instanceof OutOfMemoryError) {
+                return;
+            }
+            if (previous != null) {
+                previous.uncaughtException(thread, e);
+            } else {
+                // ThreadGroup.uncaughtException's, which defers to a default handler.
+                System.err.print("Exception in thread \"" + thread.getName() + "\" ");
+                e.printStackTrace(System.err);
+            }
+        });
+        stackDepth();
+    }
+
+    /** This thread's depth, in the frames of a stack trace: building one initializes their classes. */
+    private static int stackDepth() {
+        return new Throwable().getStackTrace().length;
     }
 
     /**

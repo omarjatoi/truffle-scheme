@@ -2779,7 +2779,9 @@ Each entry: the decision, why, and what was rejected.
     2. `Exception in thread "TruffleCompilerThread-n"
        java.lang.OutOfMemoryError: Java heap space`, from the JVM's default
        handler of an uncaught exception, in 2: a compiler thread's
-       allocation that failed. The launcher's default handler
+       allocation that failed (and `"scheme-warm-up"`'s, the warm-up's
+       thread's, in 2 of 50 runs of `//tests:memory_launcher` on the
+       executors). The launcher's default handler
        (`SchemeMain.prepareForAFullHeap`) lets a thread die of an
        `OutOfMemoryError` silently, as the program's error reports the full
        heap, and prints any other error as the JVM does; it is the

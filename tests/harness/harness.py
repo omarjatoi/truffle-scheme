@@ -74,6 +74,21 @@ _COMPILER_CHOICE = re.compile(r'^-XX:(CICompilerCount=|[+-]CICompilerCountPerCPU
 # them on (or their deprecated `--engine.` names), the JVM compiles with Graal compiled for HotSpot
 # (design.md D17, "Options"), unless the JVM options choose.
 LAUNCHER_INSTRUMENT_VM_ARGS = ['-XX:-UseJVMCINativeLibrary']
+# The VM's own console output (HotSpot's `tty`: what its -XX:+Print... options and a thread dump
+# on SIGQUIT write, and libgraal, the compiler, through it): on standard error, as the native
+# launcher's, never in the program's standard output, unless the JVM options choose a stream
+# (design.md D17, "The VM's output").
+LAUNCHER_OUTPUT_VM_ARGS = ['-XX:+DisplayVMOutputToStderr']
+_OUTPUT_CHOICE = re.compile(r'^-XX:[+-]DisplayVMOutputToStd(out|err)$')
+# And off, as the native launcher has none, unless the options ask for more than the heap's and
+# the stacks' sizes and system properties: any other JVM option, or an option of the compiler's
+# (its system properties, and the launcher's --engine. and --compiler. options, whose Graal
+# prints the instrumentation's profile there). libgraal prints a Java stack trace there when the
+# heap fills during a compilation (docs/upstream.md, "A full heap during a libgraal
+# compilation"). DisplayVMOutput is diagnostic: unlocked for it alone.
+LAUNCHER_QUIET_VM_ARGS = ['-XX:+UnlockDiagnosticVMOptions', '-XX:-DisplayVMOutput', '-XX:-UnlockDiagnosticVMOptions']
+_QUIET = re.compile(r'^(-Xm[xsn]|-Xss|-D(?!(jdk\.graal|graal|jvmci|jdk\.libgraal|libgraal|polyglot\.engine|polyglot\.compiler)\.))')
+_COMPILER_OPTION = re.compile(r'^--(engine|compiler)\.')
 _INSTRUMENT_OPTION = re.compile(r'^--(compiler|engine)\.Instrument(Boundaries|Branches)(=true)?$')
 _INSTRUMENT_PROPERTY = re.compile(r'^-Dpolyglot\.(compiler|engine)\.Instrument(Boundaries|Branches)=true$')
 _LIBGRAAL_CHOICE = re.compile(r'^-XX:[+-]UseJVMCINativeLibrary$')
@@ -240,16 +255,27 @@ def launcher_gc_vm_args(jvm_args, env=os.environ):
 
 def launcher_vm_args(jvm_args, env=os.environ, cpus=None, options=()):
     """The launcher's default JVM options that jvm_args and the environment's leave to it: the
-    collector, the compiler threads, and with the compiler's instrumentation among the launcher's
-    options (or the JVM's), Graal compiled for HotSpot."""
+    collector, the compiler threads, where the VM's output goes and whether it is on, and with the
+    compiler's instrumentation among the launcher's options (or the JVM's), Graal compiled for
+    HotSpot."""
     given = _given_vm_args(jvm_args, env)
     args = launcher_gc_vm_args(jvm_args, env)
     if (cpus or os.cpu_count() or 1) >= 16 and not any(_COMPILER_CHOICE.match(a) for a in given):
         args += LAUNCHER_COMPILER_VM_ARGS
+    if not any(_OUTPUT_CHOICE.match(a) for a in given):
+        args += LAUNCHER_OUTPUT_VM_ARGS
+    if all(_QUIET.match(a) for a in given) and not any(_COMPILER_OPTION.match(o) for o in options):
+        args += LAUNCHER_QUIET_VM_ARGS
     if ((any(_INSTRUMENT_OPTION.match(o) for o in options) or any(_INSTRUMENT_PROPERTY.match(a) for a in given))
             and not any(_LIBGRAAL_CHOICE.match(a) for a in given)):
         args += LAUNCHER_INSTRUMENT_VM_ARGS
     return args
+
+
+def _cache_options(args):
+    """The launcher's default JVM options that the AOT cache's use can depend on: all but the
+    VM's output's, which the JVM takes the cache with, on or off (//tests:launcher_vm)."""
+    return [a for a in args if a not in LAUNCHER_QUIET_VM_ARGS]
 
 
 def vm_args(compile=False, torture=False, native=False):
@@ -373,9 +399,10 @@ class Runtime:
             module_path = self.aot_module_path()
             if module_path:
                 aot = AOT_VM_ARGS + _AOT_REQUIRED_VM_ARGS + [f'-XX:AOTCache={self.aot_cache}']
-                # Those the launcher's arguments add (the instrumentation's) aren't the cache's.
+                # Those the launcher's arguments add (the instrumentation's) aren't the cache's;
+                # the VM's output, which they may leave on, doesn't matter to it.
                 checked = [a for a in given if not _AOT_TAKEN.match(a)]
-                if ((checked or defaults != launcher_vm_args(jvm_args, env))
+                if ((checked or _cache_options(defaults) != _cache_options(launcher_vm_args(jvm_args, env)))
                         and not self.aot_cache_taken(defaults + aot + jvm_args, module_path, env)):
                     module_path = None
                 else:

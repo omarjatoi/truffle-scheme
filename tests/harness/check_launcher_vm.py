@@ -1,18 +1,23 @@
 """Test: design.md D17 "The launcher's JVM": the `scheme` launcher's JVM uses the serial collector, 4
-compiler threads where the JVM would start more, and the AOT cache where it is valid and the JVM
-takes it, unless its JVM options (on the command line, its `--vm.` options, in JDK_JAVA_OPTIONS or
-in JAVA_TOOL_OPTIONS) set those themselves. Its `--vm.<option>`s are the JVM's `-<option>`s ("VM
-options"), and the launcher started with java rejects one the JVM wasn't started with. Every class of
-option takes effect or fails clearly (plan.md M10-04, docs/usage.md "Options"), and so does every
-option in an argument file, `--vm.@file` (plan.md M11-03), and every constant option (plan.md M11-07)."""
+compiler threads where the JVM would start more, the AOT cache where it is valid and the JVM takes
+it, and its own output on standard error, off unless its JVM options ask for more than sizes and
+system properties ("The VM's output"), unless its JVM options (on the command line, its `--vm.`
+options, in JDK_JAVA_OPTIONS or in JAVA_TOOL_OPTIONS) set those themselves. Its `--vm.<option>`s
+are the JVM's `-<option>`s ("VM options"), and the launcher started with java rejects one the JVM
+wasn't started with. Every class of option takes effect or fails clearly (plan.md M10-04,
+docs/usage.md "Options"), and so does every option in an argument file, `--vm.@file` (plan.md
+M11-03), and every constant option (plan.md M11-07)."""
 
 import argparse
 import os
 import re
+import signal
 import subprocess
 import tempfile
+import time
 
-from harness import (AOT_VM_ARGS, LAUNCHER_COMPILER_VM_ARGS, LAUNCHER_GC_VM_ARGS, LAUNCHER_INSTRUMENT_VM_ARGS, LAUNCHER_MAIN, Runtime,
+from harness import (AOT_VM_ARGS, LAUNCHER_COMPILER_VM_ARGS, LAUNCHER_GC_VM_ARGS, LAUNCHER_INSTRUMENT_VM_ARGS, LAUNCHER_MAIN,
+                     LAUNCHER_OUTPUT_VM_ARGS, LAUNCHER_QUIET_VM_ARGS, Runtime,
                      check, launcher_vm_args, log, rlocation, split_vm_options)
 
 _FLAG = re.compile(r'^\s*\S+\s+(\w+)\s+:?=\s+(\S*)\s+\{[^}]*\}\s+\{([^}]*)\}')
@@ -34,6 +39,43 @@ def execute(command, env, status=0):
                        text=True, encoding='utf-8', errors='replace', timeout=120)
     check(p.returncode != 0 if status is None else p.returncode == status, f'{command} exited with {p.returncode}:\n{p.stdout}')
     return p.stdout
+
+
+def _clean_env():
+    return {k: v for k, v in os.environ.items() if k not in ('JDK_JAVA_OPTIONS', 'JAVA_TOOL_OPTIONS')}
+
+
+def output_of(runtime, args):
+    """The launcher's standard output and standard error, apart, with these arguments; it must exit
+    with 0."""
+    env = _clean_env()
+    command = runtime.launcher(args, (), env)
+    p = subprocess.run(command, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                       encoding='utf-8', errors='replace', timeout=120)
+    check(p.returncode == 0, f'{command} exited with {p.returncode}:\n{p.stdout}\n{p.stderr}')
+    return p.stdout, p.stderr
+
+
+def thread_dump(runtime, args):
+    """The REPL's standard output and standard error with these arguments, sent SIGQUIT (which asks
+    HotSpot for a thread dump) once it has evaluated a first input."""
+    env = _clean_env()
+    command = runtime.launcher(args, (), env)
+    p = subprocess.Popen(command, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        p.stdin.write(b'(display "ready")(newline)(flush-output-port)\n')
+        p.stdin.flush()
+        first = p.stdout.readline()
+        check(first == b'ready\n', f'the REPL should evaluate its first input: {first!r}')
+        p.send_signal(signal.SIGQUIT)
+        # The dump is printed by the JVM's signal thread; it has 2 s before the input ends.
+        time.sleep(2)
+        out, err = p.communicate(b'(display "done")(newline)\n', timeout=120)
+    finally:
+        if p.poll() is None:
+            p.kill()
+    check(p.returncode == 0 and out == b'done\n', f'{command} should go on after SIGQUIT: {p.returncode} {out!r} {err!r}')
+    return out.decode('utf-8', 'replace'), err.decode('utf-8', 'replace')
 
 
 def flags(runtime, jvm_args=(), jdk_java_options=None, args=()):
@@ -69,6 +111,35 @@ def launcher_vm(o):
     check(flags(runtime, ['-XX:CICompilerCount=2'])['CICompilerCount'][0] == '2', '-XX:CICompilerCount should set the count')
     log('serial collector, compiler threads; the JVM options replace each')
 
+    # The VM's output ("The VM's output"): on standard error, unless the JVM options choose a
+    # stream; and off, unless they ask for more than the heap's and stacks' sizes and system
+    # properties other than the compiler's.
+    def output(jvm_args, env=None, options=()):
+        args = launcher_vm_args(jvm_args, env or {}, options=options)
+        return LAUNCHER_OUTPUT_VM_ARGS[0] in args, all(a in args for a in LAUNCHER_QUIET_VM_ARGS)
+
+    check(output([]) == (True, True), 'with no JVM options, the VM\'s output should be off, and on standard error')
+    check(output(['-Xmx64m', '-Xms8m', '-Xmn4m', '-Xss2m', '-Dname=value', '-Dpolyglot.scheme.BufferOutput=false'], options=['--log.level=FINE']) == (True, True),
+          'sizes and system properties should leave the VM\'s output off')
+    for asks in (['-XX:+PrintFlagsFinal'], ['-Xmx64m', '-XX:+UseG1GC'], ['-Djdk.graal.PrintCompilation=true'], ['-Djvmci.Compiler=graal'], ['-ea'],
+                 ['-Xlog:gc'], ['-Dpolyglot.engine.TraceCompilation=true'], ['-Dpolyglot.compiler.InstrumentBoundaries=true']):
+        check(output(asks) == (True, False), f'{asks} should turn the VM\'s output on, on standard error')
+    for asks in (['--engine.TraceCompilation'], ['--compiler.InstrumentBoundaries']):
+        check(output([], options=asks) == (True, False), f'{asks} should turn the VM\'s output on, on standard error')
+    check(output([], {'JDK_JAVA_OPTIONS': '-XX:+PrintCompilation'}) == (True, False), 'an -XX: option in JDK_JAVA_OPTIONS should turn it on')
+    check(output([], {'JAVA_TOOL_OPTIONS': '-Xcheck:jni'}) == (True, False), 'an option in JAVA_TOOL_OPTIONS should turn it on')
+    for stream in ('-XX:+DisplayVMOutputToStdout', '-XX:-DisplayVMOutputToStderr', '-XX:+DisplayVMOutputToStderr'):
+        check(output([stream]) == (False, False), f'{stream} should choose the stream, and turn the output on')
+    # In the JVM: -XX:+PrintFlagsFinal prints on standard error; with no options, a thread dump
+    # (SIGQUIT) prints nothing, and with one that asks, it prints on standard error.
+    out, err = output_of(runtime, ['--vm.XX:+PrintFlagsFinal', '--version'])
+    check(' DisplayVMOutputToStderr ' in err and 'UseSerialGC' not in out, f'-XX:+PrintFlagsFinal should print on standard error:\n{out}')
+    out, err = thread_dump(runtime, [])
+    check('Full thread dump' not in out + err, f'with no JVM options, a thread dump should print nothing:\n{out}\n{err}')
+    out, err = thread_dump(runtime, ['--vm.XX:+DisplayVMOutputToStderr'])
+    check('Full thread dump' in err and 'Full thread dump' not in out, f'a thread dump should print on standard error:\n{out}\n{err}')
+    log('the VM\'s output: on standard error; off unless the JVM options ask; a thread dump, -XX:+PrintFlagsFinal')
+
     # The AOT cache: used where it was made (bazel-bin/scheme), and not with a stale stamp. Where it
     # was made elsewhere (an executor's action), the launcher leaves it out.
     aot = Runtime.from_manifest(o.aot_runtime)
@@ -83,6 +154,9 @@ def launcher_vm(o):
         check(any(a.startswith('-XX:AOTCache=') for a in command), f'a valid AOT cache should be used: {command}')
         check(re.search(r'scheme\.launcher\.SchemeMain source: shared objects file', out) and '[error]' not in out,
               f'the launcher\'s classes should come from the AOT cache:\n{out[-3000:]}')
+        out, command = run(aot, ['--version'])
+        check(any(a.startswith('-XX:AOTCache=') for a in command) and '-XX:-DisplayVMOutput' in command,
+              f'with no JVM options, the JVM should take the AOT cache with its output off: {command}\n{out}')
         log('AOT cache: valid here, used')
     else:
         check(not any('AOTCache' in a for a in command), f'a stale AOT cache should be left out: {command}')
@@ -234,7 +308,8 @@ def argument_files(o):
           'a --vm.@file before the program file should be java\'s @file')
     # 256 MB is a multiple of every heap alignment (aligned_heap), so HotSpot keeps it as given.
     choices = arguments('choices.args','# The collector, the heap, the compiler threads.\n-XX:+UseG1GC "-Xmx256m"\n-XX:CICompilerCount=2\n')
-    check(launcher_vm_args(['@' + choices], {}, cpus=16) == [], f'the launcher\'s defaults should give way to the options in {choices}')
+    check(launcher_vm_args(['@' + choices], {}, cpus=16) == LAUNCHER_OUTPUT_VM_ARGS,
+          f'the launcher\'s defaults should give way to the options in {choices}, but for the VM\'s output\'s stream')
     runtime = Runtime.from_manifest(o.runtime)
     f = flags(runtime, args=['--vm.@' + choices])
     check(collector(f) == ['G1'], f'-XX:+UseG1GC in an argument file should replace the serial collector, not {collector(f)}')
