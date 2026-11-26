@@ -139,8 +139,9 @@ bazel run //:r7rs -- test --compile       # Graal JIT, compile immediately (also
 bazel run //:r7rs -- status               # regenerate the status block in docs/plan.md
 bazel run //:r7rs -- conformance-report   # the conformance tests' last results, a table per suite
 bazel run //:r7rs -- diff path/to/file.scm   # run under chibi and under us; compare stdout + exit status
-bazel run //:r7rs -- fuzz --seed 7 --count 2000   # random programs vs chibi (--mode interp,compile,torture,...; all but interp with those assertions); minimises mismatches (tests/fuzz/README.md)
+bazel run //:r7rs -- fuzz --seed 7 --count 2000   # random programs vs chibi (--mode interp,compile,torture,...; all but interp with those assertions; native: bazel-bin/scheme-native or --native FILE); minimises mismatches (tests/fuzz/README.md)
 bazel test //tests/fuzz:fuzz_smoke        # a fixed seed's 300 random programs, interpreted, vs chibi
+bazel test //tests/fuzz:fuzz_smoke_native # the same programs through the native launcher (manual, as the native tests are)
 bazel run //:r7rs -- format               # format Java code (GraalVM's Eclipse formatter settings)
 bazel test //tests:readme                 # docs/usage.md's and docs/embedding.md's commands as written, and their samples
 bazel build //:scheme-native              # the native launcher, bazel-bin/scheme-native (design.md D17; a minute, ~3 GB)
