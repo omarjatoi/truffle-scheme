@@ -6718,6 +6718,61 @@ Each entry: the decision, why, and what was rejected.
       GraalVM's native-image only, "The native image's collector").
       Oracle GraalVM's profile-guided optimization (`--pgo`) and
       ML-inferred profiles are also Oracle-only, and weren't tried.
+    - *`compiler`, `matrix` and `dynamic` (M13-08).* M12's report had
+      the native launcher's steady state behind the JVM's on all three
+      (`compiler` 0.66 against 0.55 s, `matrix` 0.34 against 0.27,
+      `dynamic` 0.43 against 0.29). Each was profiled as `parsing` was
+      (M12-04, above): macOS's `sample` of the steady state (iterations 5
+      to 12 of 40 at the report's counts) on an executable whose library
+      keeps its symbols, the native launcher's `--vm.XX:+PrintGC` against
+      the JVM's `-Xlog:gc`, and `--vm.XX:+TraceCodeCache` and
+      `--engine.TraceCompilation` for the compilations; on a quiet machine
+      (a 1-minute load of 6.3 to 8.2). The share of the evaluation thread's
+      samples, natively:
+
+      | | Runtime-compiled code | `memq`, `assv` (`Member.find`) | Collection | `map`'s and `apply`'s lists | Waiting on the VM's mutex | Other code behind boundaries |
+      |---|--:|--:|--:|--:|--:|--:|
+      | `compiler` | 59% | 11% | 5% | 3% | 3% | 20% |
+      | `matrix` | 77% | | 2% | 9% | | 12% |
+      | `dynamic` | 29% | 16% | 12% | 6% | 7% | 29% (the reader 17%) |
+
+      - *`memq` and `assv`.* `dynamic` looks every variable up with `assv`
+        in an association list that grows with each definition read
+        (`dynamic-top-level-env`), and `compiler` walks its declarations
+        and environments with `memq` and `assq`; `dynamic` also reads its
+        input file in each iteration, with the reader behind boundaries. The primitives' loop
+        (`ListVectorPrimitives.Member.find`, behind a `@TruffleBoundary`)
+        is compiled ahead of time in the native image, without the
+        profile and inlining HotSpot gives it on the JVM. A key compared
+        by identity or by its code point (`memq`, `assq`, and `memv` and
+        `assv` of anything but a number) is now walked by a loop without a
+        boundary, which the Truffle compiler compiles with its caller,
+        natively as on the JVM; `equal?`'s and numbers' walks stay behind
+        the boundary. MEMBER_RESULT
+      - *The collector.* With the serial collector's default policy
+        (`Adaptive2`, "Not changed: the collector, ...", above) the native
+        launcher collected 116 times in 10 iterations of `dynamic` (558 ms
+        of pauses) against the JVM's 12 (146 ms), and 227 times in
+        `compiler` (454 ms) against 16 (287 ms); `matrix` 126 (91 ms)
+        against 24 (100 ms). M12-04 measured the policies on `dynamic` (above), whose time was the same under each, so the default stays.
+      - *`map`'s and `apply`'s lists.* `map` over two lists called its
+        procedure with `apply` (`Lists.toArray`, an `ArrayList`,
+        `Apply.tailCall`, and the circular-list check): 9% of `matrix`'s
+        native steady state, and `equiv!`'s in `dynamic`. `map`
+        and `for-each` now have a loop for two lists (bench/README.md,
+        "`compiler`, `matrix` and `dynamic`"), which takes `matrix`'s
+        native steady state from 0.244 to 0.204 s and `dynamic`'s from
+        0.396 to 0.343.
+      - *The rest.* `matrix`'s native gap after that is in runtime-compiled
+        code (0.204 s against the JVM's 0.183), with `reverse` (3%) and
+        `make-vector`'s fill (3%) behind boundaries. `compiler` is still
+        compiling at its tenth iteration natively (0.39 s, the JVM's 0.26):
+        958 code installations in 5 iterations, and its largest
+        compilations (`gen-call`, 18,800 nodes) take longer to arrive.
+        The waits on the VM's mutex are the evaluation thread stopped at
+        safepoints, for collections and installed code; under load they
+        grew to 12-31% of the samples, which is why these profiles were
+        taken on a quiet machine.
   - **Rejected: a 1 GB minimum heap for the native launcher (#189).** The
     image was built for a while with `-R:MinHeapSize=1g`, a default for the
     executable's minimum heap that its own `-Xms` or `-XX:MinHeapSize=`
