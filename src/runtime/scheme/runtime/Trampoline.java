@@ -159,18 +159,6 @@ public final class Trampoline extends Node {
         return new Trampoline();
     }
 
-    /**
-     * Called when the enclosing {@code Call} site goes megamorphic: reports it, so Truffle can split
-     * the procedure the site is in for each of its callers, and makes the site's call node. (A
-     * workaround for a Truffle 25.5 bug: {@code scheme.test.upstream.UpstreamReportPolymorphismTest},
-     * docs/upstream.md#reportpolymorphism-on-an-operation.)
-     */
-    @NeverDefault
-    IndirectCallNode megamorphic() {
-        reportPolymorphicSpecialize();
-        return IndirectCallNode.create();
-    }
-
     private TailCallLoop body() {
         return (TailCallLoop) loop.getRepeatingNode();
     }

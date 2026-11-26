@@ -6,12 +6,20 @@ Scheme, for each bug). Filing them at
 <https://github.com/oracle/graal/issues> is a human's call: we haven't filed
 any. Each section has the issue text, ready to paste, and an **Upstream
 status** line: what oracle/graal's issues, pull requests and `master` say
-about it, on the date given. The newest release is still 25.5.5.0.3;
-`master` is 25.6.0-dev.
+about it, on the date given. The issue texts name the release each bug was
+found in, 25.5.5.0.3, and 25.6.5.1, which still has it.
 
-All fourteen are in Truffle 25.5.5.0.3 (Maven Central), on GraalVM CE 25.5.5.0.3
-(JDK 25.0.5.0.3, `nix develop`); one is Graal's compiler's (the guard moved
-out of its loop).
+All thirteen are in Truffle 25.6.5.1 (Maven Central), on GraalVM CE 25.6.5.1
+(JDK 25.0.5.1, `nix develop`), as they were in 25.5.5.0.3; one is Graal's
+compiler's (the guard moved out of its loop). Checked on the upgrade to 25.6
+(2026-11-25): every inverted test below still passes; the libgraal
+reproducer still fails with the same `ClassCastException`; `RaceProbe`
+printed the assertion in 11 of 24 runs (0, 100 and 200 microseconds, 8
+each); and the 25.6 DSL processor's sources still write `instanceof
+ThreadDeath`. 25.6 fixed the fourteenth, *ReportPolymorphism on an operation*
+(oracle/graal#14871, found in M5-10): its test failed on 25.6, and its
+section, test and workaround went with the upgrade (`Call`'s `doIndirect` is
+now `@ReportPolymorphism.Megamorphic`).
 
 ## The reproducers are inverted tests
 
@@ -21,7 +29,7 @@ the bug is there**. It runs with every other unit test in `bazel test //...`, an
 alone with:
 
 ```
-bazel test //tests:unit_jit_UpstreamAsyncStacksTest //tests:unit_jit_UpstreamAstDepthTest //tests:unit_jit_UpstreamNestedRootSourceTest //tests:unit_jit_UpstreamReportPolymorphismTest //tests:unit_jit_UpstreamInterruptTest //tests:unit_jit_UpstreamPreinitializationDeadlockTest //tests:unit_jit_UpstreamContinuationRootTest //tests:unit_jit_UpstreamResumedEntriesTest //tests:unit_jit_UpstreamResumedBreakpointTest //tests:unit_jit_UpstreamHoistedNullGuardTest
+bazel test //tests:unit_jit_UpstreamAsyncStacksTest //tests:unit_jit_UpstreamAstDepthTest //tests:unit_jit_UpstreamNestedRootSourceTest //tests:unit_jit_UpstreamInterruptTest //tests:unit_jit_UpstreamPreinitializationDeadlockTest //tests:unit_jit_UpstreamContinuationRootTest //tests:unit_jit_UpstreamResumedEntriesTest //tests:unit_jit_UpstreamResumedBreakpointTest //tests:unit_jit_UpstreamHoistedNullGuardTest
 ```
 
 When a Truffle upgrade fixes a bug, its test fails. Then remove the
@@ -41,7 +49,6 @@ drives through their options.
 |---|---|---|
 | [Nested root source sections](#nested-root-source-sections) | `UpstreamNestedRootSourceTest` | `CodeGenerator.usable` (`src/compiler/scheme/compiler/CodeGenerator.java`) |
 | [Empty asynchronous stacks](#empty-asynchronous-stacks) | `UpstreamAsyncStacksTest` | `DebuggerTest.frameNames`, `SpilledFramesTest.everyFrameOnceAtEveryLevelDownAndBackUp` and `describe` (`tests/scheme/test/`) |
-| [ReportPolymorphism on an operation](#reportpolymorphism-on-an-operation) | `UpstreamReportPolymorphismTest` | `SchemeRootNode.Call`'s cache initializer `Trampoline.megamorphic` (`src/runtime/scheme/runtime/`) |
 | [ThreadDeath in generated roots](#threaddeath-in-generated-roots) | none (a compiler warning, not behavior) | `BYTECODE_ROOT_JAVACOPTS` (`bazel/java.bzl`) |
 | [Interrupting a Bytecode DSL root as it returns](#interrupting-a-bytecode-dsl-root-as-it-returns) | `UpstreamInterruptTest` | `InterruptTest`'s static initializer (`tests/scheme/test/`) |
 | [Context pre-initialization with synchronous compilation](#context-pre-initialization-with-synchronous-compilation) | `UpstreamPreinitializationDeadlockTest` | `ContextPreinitializationTest`'s child JVMs (`tests/scheme/test/`) |
@@ -90,7 +97,7 @@ itself.
 ````markdown
 **Title:** Bytecode DSL: a nested root's source sections are attributed to the outermost open Source
 
-**Version:** Truffle 25.5.5.0.3 (GraalVM CE 25.5.5.0.3, JDK 25.0.5.0.3)
+**Version:** Truffle 25.6.5.1 (GraalVM CE 25.6.5.1, JDK 25.0.5.1), and 25.5.5.0.3
 
 A root built while another root is being built (`beginRoot` inside another root's body)
 gets its source sections in the outermost enclosing `Source`, not in the `Source` it
@@ -226,7 +233,7 @@ but whose iterator throws `IndexOutOfBoundsException` from its first
 ````markdown
 **Title:** Debugger: iterating an empty `SuspendedEvent.getAsynchronousStacks()` throws IndexOutOfBoundsException
 
-**Version:** Truffle 25.5.5.0.3 (GraalVM CE 25.5.5.0.3, JDK 25.0.5.0.3)
+**Version:** Truffle 25.6.5.1 (GraalVM CE 25.6.5.1, JDK 25.0.5.1), and 25.5.5.0.3
 
 When no frame of a suspended program has an asynchronous stack (the common case:
 `RootNode.findAsynchronousFrames` returns null), `SuspendedEvent.getAsynchronousStacks()`
@@ -275,133 +282,6 @@ don't. Testing `size >= 0` instead of `size > 0` would fix it. `DebugException.g
 builds the same list class.
 ````
 
-## ReportPolymorphism on an operation
-
-**Found in** M5-10 (#92). **Test:** `UpstreamReportPolymorphismTest`.
-
-**Upstream status** (checked 2026-11-17): **fixed on `master`**, not yet
-released. Someone else reported it as
-[oracle/graal#14871](https://github.com/oracle/graal/issues/14871) (a
-regression since 25.1: 25.0 compiles it); GR-81207,
-[oracle/graal#14872](https://github.com/oracle/graal/pull/14872), fixed it in
-[`a9cfb3d`](https://github.com/oracle/graal/commit/a9cfb3d93e9d1e4fb3d910804ecb24089144ff22)
-(2026-11-06), with megamorphic-only reporting covered too. It's in the
-25.6.0-dev snapshots, not in 25.5.5.0.3, and the CHANGELOG doesn't mention
-it. Don't file our issue text. On the upgrade to 25.6, this test fails:
-then put `@ReportPolymorphism.Megamorphic` on `Call` and drop the workaround.
-
-`@ReportPolymorphism` on a Bytecode DSL operation makes the DSL generate code
-that doesn't compile. In the operation's generated node,
-`checkForPolymorphicSpecialize` reads the bytecode array `$bc` and the
-bytecode index `$bci` to get the operation's state, but neither is a field or
-a parameter there.
-
-The reproducer can't be part of the build, so the test runs `javac` on it, with
-the DSL processor (the test runner passes its path as `-Dr7rs.truffle.dslProcessor`,
-in `bazel/jvm_test.bzl`) and Truffle's jars from the test JVM's module
-path: once as it is, and once without `@ReportPolymorphism`, which compiles.
-
-- **Expected:** it compiles, like the same source without the annotation.
-- **Actual:** 2 errors, `cannot find symbol` for `$bc` and for `$bci`, in
-  `PolyRootGen.java`.
-- **Our workaround:** `SchemeRootNode.Call` reports polymorphism itself: its
-  `doIndirect` cache initializer calls `trampoline.megamorphic()`, which calls
-  `reportPolymorphicSpecialize()` when the site goes megamorphic (since M7-01 a
-  site reports only then, as `@ReportPolymorphism.Megamorphic` would).
-  `Trampoline`'s tail-call caches, plain DSL nodes, report the same way.
-
-### Issue text
-
-````markdown
-**Title:** Bytecode DSL: `@ReportPolymorphism` on an `@Operation` generates code that doesn't compile (`$bc`, `$bci` not found)
-
-**Version:** Truffle 25.5.5.0.3 (GraalVM CE 25.5.5.0.3, JDK 25.0.5.0.3)
-
-`@ReportPolymorphism` on a Bytecode DSL operation with two specializations generates an
-operation node whose `checkForPolymorphicSpecialize` doesn't compile. Without the annotation,
-the same source compiles.
-
-Reproducer (compile with `truffle-api` on the class path and `truffle-dsl-processor` on the
-processor path):
-
-```java
-package repro;
-
-import com.oracle.truffle.api.TruffleLanguage;
-import com.oracle.truffle.api.bytecode.BytecodeRootNode;
-import com.oracle.truffle.api.bytecode.GenerateBytecode;
-import com.oracle.truffle.api.bytecode.Operation;
-import com.oracle.truffle.api.dsl.ReportPolymorphism;
-import com.oracle.truffle.api.dsl.Specialization;
-import com.oracle.truffle.api.frame.FrameDescriptor;
-import com.oracle.truffle.api.nodes.RootNode;
-
-@GenerateBytecode(languageClass = PolyRoot.Lang.class)
-public abstract class PolyRoot extends RootNode implements BytecodeRootNode {
-
-    protected PolyRoot(Lang language, FrameDescriptor frameDescriptor) {
-        super(language, frameDescriptor);
-    }
-
-    public abstract static class Lang extends TruffleLanguage<Object> {
-    }
-
-    @Operation
-    @ReportPolymorphism
-    public static final class Describe {
-        @Specialization
-        static String doInt(int value) {
-            return "int";
-        }
-
-        @Specialization
-        static String doString(String value) {
-            return "string";
-        }
-    }
-}
-```
-
-```
-repro/PolyRootGen.java:10487: error: cannot find symbol
-            int state_0 = Short.toUnsignedInt(BYTES.getShort($bc, $bci + 2 /* imm state_0 */));
-                                                             ^
-  symbol:   variable $bc
-  location: class Describe_Node
-repro/PolyRootGen.java:10487: error: cannot find symbol
-            int state_0 = Short.toUnsignedInt(BYTES.getShort($bc, $bci + 2 /* imm state_0 */));
-                                                                  ^
-  symbol:   variable $bci
-  location: class Describe_Node
-2 errors
-```
-
-The generated code:
-
-```java
-            } finally {
-                if (oldState_0 != 0) {
-                    checkForPolymorphicSpecialize(oldState_0);
-                }
-            }
-        }
-
-        private void checkForPolymorphicSpecialize(int oldState_0) {
-            int state_0 = Short.toUnsignedInt(BYTES.getShort($bc, $bci + 2 /* imm state_0 */));
-            int newState_0 = state_0;
-            if (((oldState_0 ^ newState_0) != 0)) {
-                this.reportPolymorphicSpecialize();
-            }
-        }
-```
-
-`executeAndSpecialize` has `$bc` and `$bci` as parameters, but doesn't pass them to
-`checkForPolymorphicSpecialize`, which reads the operation's state from the bytecode.
-
-The errors are the same when a specialization has cached state (`@Cached IndirectCallNode call`
-added to `doInt`), where the operation's node isn't a shared singleton.
-````
-
 ## ThreadDeath in generated roots
 
 **Found in** #131. **Test:** none. It's a compiler warning, not behavior, and
@@ -446,7 +326,7 @@ removal warnings.
 ````markdown
 **Title:** Bytecode DSL: generated roots use `java.lang.ThreadDeath` without suppressing `removal` warnings
 
-**Version:** Truffle 25.5.5.0.3 (GraalVM CE 25.5.5.0.3, JDK 25.0.5.0.3)
+**Version:** Truffle 25.6.5.1 (GraalVM CE 25.6.5.1, JDK 25.0.5.1), and 25.5.5.0.3
 
 Compiling any `@GenerateBytecode` root with javac's default lint settings warns on the
 generated code, because it tests `throwable instanceof java.lang.ThreadDeath` (deprecated for
@@ -545,7 +425,7 @@ asserts it isn't one.
 ````markdown
 **Title:** Bytecode DSL: `Context.interrupt` landing at a root's return poll fails `findBytecodeIndex`'s assertion
 
-**Version:** Truffle 25.5.5.0.3 (GraalVM CE 25.5.5.0.3, JDK 25.0.5.0.3)
+**Version:** Truffle 25.6.5.1 (GraalVM CE 25.6.5.1, JDK 25.0.5.1), and 25.5.5.0.3
 
 `OptimizedCallTarget.executeRootNode` polls a safepoint after the root returns, with the root
 node as the location. When `Context.interrupt` lands at that poll in a `@GenerateBytecode`
@@ -665,7 +545,7 @@ does at build time: `Engine$ImplHolder`'s class initializer calls
 ````markdown
 **Title:** HotSpot: context pre-initialization deadlocks with `engine.BackgroundCompilation=false`
 
-**Version:** Truffle 25.5.5.0.3 (GraalVM CE 25.5.5.0.3, JDK 25.0.5.0.3), on Linux x86_64 and macOS aarch64
+**Version:** Truffle 25.6.5.1 (GraalVM CE 25.6.5.1, JDK 25.0.5.1), and 25.5.5.0.3, on Linux x86_64 and macOS aarch64
 
 On HotSpot, setting `polyglot.image-build-time.PreinitializeContexts` makes the first use of the
 polyglot API pre-initialize a context (`Engine$ImplHolder.<clinit>` →
@@ -849,7 +729,7 @@ runs.
 ````markdown
 **Title:** Sandbox: `sandbox.MaxASTDepth` isn't enforced on Bytecode DSL roots unless another instrument has materialized their tags
 
-**Version:** Truffle 25.5.5.0.3 (GraalVM CE 25.5.5.0.3, JDK 25.0.5.0.3); `SandboxInstrument.java` is unchanged on `master`
+**Version:** Truffle 25.6.5.1 (GraalVM CE 25.6.5.1, JDK 25.0.5.1), and 25.5.5.0.3; `SandboxInstrument.java` is unchanged on `master`
 
 `sandbox.MaxASTDepth` measures a root's depth when the root's `RootTag` is first instrumented:
 `SandboxInstrument.checkAstDepth` walks the root's children with `NodeUtil.forEachChild` and counts
@@ -979,7 +859,7 @@ root's own source section, and a continuation root has none.
 ````markdown
 **Title:** Bytecode DSL: a continuation root isn't internal when its source root is
 
-**Version:** Truffle 25.5.5.0.3 (GraalVM CE 25.5.5.0.3, JDK 25.0.5.0.3); the generator is unchanged on `master`
+**Version:** Truffle 25.6.5.1 (GraalVM CE 25.6.5.1, JDK 25.0.5.1), and 25.5.5.0.3; the generator is unchanged on `master`
 
 The generated `ContinuationRootNodeImpl` delegates `getName`, `findBytecodeIndex` and
 `translateStackTraceElement` to its source root, but not `isInternal`. `RootNode.isInternal()`
@@ -1085,7 +965,7 @@ flushed whether or not anything was logged.
 ````markdown
 **Title:** `onVMShutdown` flushes the log handler of an engine closed after the shutdown hook started: "AssertionError: The log handler is closed."
 
-**Version:** Truffle 25.5.5.0.3 (GraalVM CE 25.5.5.0.3, JDK 25.0.5.0.3); `Engine.EngineShutDownHook` and `PolyglotEngineImpl.onVMShutdown` are unchanged on `master`
+**Version:** Truffle 25.6.5.1 (GraalVM CE 25.6.5.1, JDK 25.0.5.1), and 25.5.5.0.3; `Engine.EngineShutDownHook` and `PolyglotEngineImpl.onVMShutdown` are unchanged on `master`
 
 `Engine.EngineShutDownHook` copies `ENGINES`, then calls `onVMShutdown` on each engine of the copy, which
 flushes `logHandler` if it isn't null. When another thread closes one of those engines in between,
@@ -1167,7 +1047,7 @@ a tool that counts `onEnter` counts each resumption as one more entry.
 ````markdown
 **Title:** CPU tracer and coverage: a Bytecode DSL frame that yields and is resumed counts as two entries
 
-**Version:** Truffle 25.5.5.0.3 (GraalVM CE 25.5.5.0.3, JDK 25.0.5.0.3); unchanged on `master`
+**Version:** Truffle 25.6.5.1 (GraalVM CE 25.6.5.1, JDK 25.0.5.1), and 25.5.5.0.3; unchanged on `master`
 
 `ExecutionEventNode.onResume` calls `onEnter` by default, and `onYield` calls `onReturnValue`. The
 CPU tracer's `CPUTracer.CounterNode` and the coverage tool's `CountingCoverageNode` override
@@ -1245,7 +1125,7 @@ such a statement stops at the next one; the breakpoint doesn't.
 ````markdown
 **Title:** Debugger: a breakpoint is hit again when a Bytecode DSL frame resumes inside its statement
 
-**Version:** Truffle 25.5.5.0.3 (GraalVM CE 25.5.5.0.3, JDK 25.0.5.0.3); unchanged on `master`
+**Version:** Truffle 25.6.5.1 (GraalVM CE 25.6.5.1, JDK 25.0.5.1), and 25.5.5.0.3; unchanged on `master`
 
 `Breakpoint.BreakpointBeforeNode` overrides `onEnter` only, and `ExecutionEventNode.onResume` calls
 `onEnter`, so when a frame yields inside a statement that has a breakpoint and is resumed, the
@@ -1310,7 +1190,7 @@ its call's value.
 ````markdown
 **Title:** Debugger: let a language say which frame a resumed frame returns to
 
-**Version:** Truffle 25.5.5.0.3 (GraalVM CE 25.5.5.0.3, JDK 25.0.5.0.3); unchanged on `master`
+**Version:** Truffle 25.6.5.1 (GraalVM CE 25.6.5.1, JDK 25.0.5.1), and 25.5.5.0.3; unchanged on `master`
 
 A Scheme on the Bytecode DSL moves frames off the Java stack by yielding them (a deep recursion is
 spilled to the heap; a continuation's frames are captured), and a driver root resumes them later,
@@ -1381,7 +1261,7 @@ it fails the first time the compiled code gets there.
 ````markdown
 **Title:** SpeculativeGuardMovementPhase moves a guard whose condition is a constant contradiction out of its loop, so the code always deoptimizes
 
-**Version:** GraalVM CE 25.5.5.0.3 (JDK 25.0.5.0.3), Truffle 25.5.5.0.3; the phase is unchanged in this respect on `master` (5111498cce6e)
+**Version:** GraalVM CE 25.6.5.1 (JDK 25.0.5.1), Truffle 25.6.5.1, and 25.5.5.0.3; the phase is unchanged in this respect on `master` (5111498cce6e)
 
 In a Truffle compilation, a `checkcast` of a value that no profile says is never null becomes a
 branch for null, and a field read of the cast value then has, on that branch, a null-check

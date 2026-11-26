@@ -150,9 +150,9 @@ public final class SchemeMain extends AbstractLanguageLauncher {
     private static final String PROFILING_OPTION = "engine.Profiling";
     /**
      * The compiler's instrumentation, which prints its profile as the process ends. On the JVM,
-     * GraalVM 25.5's compiler in libgraal fails every compilation it instruments (a
+     * GraalVM's compiler in libgraal (25.5 and 25.6) fails every compilation it instruments (a
      * ClassCastException, docs/upstream.md), and the native launcher's crashes; Graal compiled
-     * for HotSpot ({@code -XX:-UseJVMCINativeLibrary}) instruments them. 25.5 still takes them as
+     * for HotSpot ({@code -XX:-UseJVMCINativeLibrary}) instruments them. 25.6 still takes them as
      * {@code engine.} options, deprecated.
      */
     private static final List<String> INSTRUMENT_OPTIONS = List.of("compiler.InstrumentBoundaries", "compiler.InstrumentBranches", "engine.InstrumentBoundaries",
@@ -487,7 +487,7 @@ public final class SchemeMain extends AbstractLanguageLauncher {
                     throw abort("--" + instrument + ": the native launcher's compiler fails with it (GraalVM 25.5, docs/upstream.md); the JVM launcher, bazel-bin/scheme, takes it",
                                     EXIT_INVALID_OPTION);
                 } else if (libgraal()) {
-                    throw abort("--" + instrument + ": GraalVM 25.5's compiler in libgraal fails every compilation it instruments (docs/upstream.md), so it would print nothing; " +
+                    throw abort("--" + instrument + ": GraalVM's compiler in libgraal (25.5 and 25.6) fails every compilation it instruments (docs/upstream.md), so it would print nothing; " +
                                     "run java with -XX:-UseJVMCINativeLibrary, as bazel-bin/scheme does with this option", EXIT_INVALID_OPTION);
                 }
             }
