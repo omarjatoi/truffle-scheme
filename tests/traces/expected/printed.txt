@@ -8,10 +8,18 @@ plain raise: status 70
     at <program>(plain.scm:5:1)
 plain exit: status 3
 plain emergency-exit: status 3
-spill error: status 64
-spill raise: status 64
-spill exit: status 64
-spill emergency-exit: status 64
+spill error: status 70
+    at down(spill.scm:6:13)
+    at down(spill.scm:7:12)
+    ... repeated 29 more times
+    at <program>(spill.scm:8:1)
+spill raise: status 70
+    at down(spill.scm:6:13)
+    at down(spill.scm:7:12)
+    ... repeated 29 more times
+    at <program>(spill.scm:8:1)
+spill exit: status 3
+spill emergency-exit: status 3
 reentry-once error: status 70
     at f(reentry-once.scm:8:25)
     at g(reentry-once.scm:9:19)
@@ -42,13 +50,11 @@ reentry-inner exit: status 3
 reentry-inner emergency-exit: status 3
 callcc-receiver error: status 70
     at <lambda@callcc-receiver.scm:4:18>(callcc-receiver.scm:4:36)
-    at call/cc
     at f(callcc-receiver.scm:4:9)
     at g(callcc-receiver.scm:5:19)
     at <program>(callcc-receiver.scm:6:1)
 callcc-receiver raise: status 70
     at <lambda@callcc-receiver.scm:4:18>(callcc-receiver.scm:4:36)
-    at call/cc
     at f(callcc-receiver.scm:4:9)
     at g(callcc-receiver.scm:5:19)
     at <program>(callcc-receiver.scm:6:1)
@@ -63,13 +69,11 @@ callcc-escape raise: status 70
 callcc-escape exit: status 3
 callcc-escape emergency-exit: status 3
 guard-reraise error: status 70
-    at %call-with-prompt
     at f(guard-reraise.scm:4:9)
     at g(guard-reraise.scm:6:19)
     at <program>(guard-reraise.scm:7:1)
 guard-reraise raise: status 70
     at <lambda@guard-reraise.scm:4:9>(guard-reraise.scm:5:17)
-    at %call-with-prompt
     at f(guard-reraise.scm:4:9)
     at g(guard-reraise.scm:6:19)
     at <program>(guard-reraise.scm:7:1)
@@ -276,11 +280,11 @@ load raise: status 70
 load exit: status 3
 load emergency-exit: status 3
 library error: status 70
-    at h
-    at <program>
+    at h(library.scm:5:23)
+    at <program>(library.scm:6:11)
 library raise: status 70
-    at h
-    at <program>
+    at h(library.scm:5:23)
+    at <program>(library.scm:6:11)
 library exit: status 3
 library emergency-exit: status 3
 library-file error: status 70

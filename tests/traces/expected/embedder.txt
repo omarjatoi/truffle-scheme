@@ -18,18 +18,18 @@ reentry-inner error: error at reentry-inner.scm:9 (car 'x) | go reentry-inner.sc
 reentry-inner raise: error at reentry-inner.scm:9 (raise 'boom) | go reentry-inner.scm:9, <program> reentry-inner.scm:10, <prompt> reentry-inner.scm:1
 reentry-inner exit: exit 3 at reentry-inner.scm:9 (exit 3) | go reentry-inner.scm:9, <program> reentry-inner.scm:10, <prompt> reentry-inner.scm:1
 reentry-inner emergency-exit: exit 3 at reentry-inner.scm:9 (emergency-exit 3) | go ?, <program> reentry-inner.scm:10, <prompt> reentry-inner.scm:1
-callcc-receiver error: error at callcc-receiver.scm:4 (car 'x) | <lambda@callcc-receiver.scm:4:18> callcc-receiver.scm:4, call/cc ?, f callcc-receiver.scm:4, g callcc-receiver.scm:5, <program> callcc-receiver.scm:6, <prompt> callcc-receiver.scm:1
-callcc-receiver raise: error at callcc-receiver.scm:4 (raise 'boom) | <lambda@callcc-receiver.scm:4:18> callcc-receiver.scm:4, call/cc ?, f callcc-receiver.scm:4, g callcc-receiver.scm:5, <program> callcc-receiver.scm:6, <prompt> callcc-receiver.scm:1
-callcc-receiver exit: exit 3 at callcc-receiver.scm:4 (exit 3) | <lambda@callcc-receiver.scm:4:18> callcc-receiver.scm:4, call/cc ?, f callcc-receiver.scm:4, g callcc-receiver.scm:5, <program> callcc-receiver.scm:6, <prompt> callcc-receiver.scm:1
-callcc-receiver emergency-exit: exit 3 at callcc-receiver.scm:4 (emergency-exit 3) | <lambda@callcc-receiver.scm:4:18> ?, call/cc ?, f callcc-receiver.scm:4, g callcc-receiver.scm:5, <program> callcc-receiver.scm:6, <prompt> callcc-receiver.scm:1
+callcc-receiver error: error at callcc-receiver.scm:4 (car 'x) | <lambda@callcc-receiver.scm:4:18> callcc-receiver.scm:4, f callcc-receiver.scm:4, g callcc-receiver.scm:5, <program> callcc-receiver.scm:6, <prompt> callcc-receiver.scm:1
+callcc-receiver raise: error at callcc-receiver.scm:4 (raise 'boom) | <lambda@callcc-receiver.scm:4:18> callcc-receiver.scm:4, f callcc-receiver.scm:4, g callcc-receiver.scm:5, <program> callcc-receiver.scm:6, <prompt> callcc-receiver.scm:1
+callcc-receiver exit: exit 3 at callcc-receiver.scm:4 (exit 3) | <lambda@callcc-receiver.scm:4:18> callcc-receiver.scm:4, f callcc-receiver.scm:4, g callcc-receiver.scm:5, <program> callcc-receiver.scm:6, <prompt> callcc-receiver.scm:1
+callcc-receiver emergency-exit: exit 3 at callcc-receiver.scm:4 (emergency-exit 3) | <lambda@callcc-receiver.scm:4:18> ?, f callcc-receiver.scm:4, g callcc-receiver.scm:5, <program> callcc-receiver.scm:6, <prompt> callcc-receiver.scm:1
 callcc-escape error: error at callcc-escape.scm:5 (car 'x) | g callcc-escape.scm:5, <program> callcc-escape.scm:6, <prompt> callcc-escape.scm:1
 callcc-escape raise: error at callcc-escape.scm:5 (raise 'boom) | g callcc-escape.scm:5, <program> callcc-escape.scm:6, <prompt> callcc-escape.scm:1
 callcc-escape exit: exit 3 at callcc-escape.scm:5 (exit 3) | g callcc-escape.scm:5, <program> callcc-escape.scm:6, <prompt> callcc-escape.scm:1
 callcc-escape emergency-exit: exit 3 at callcc-escape.scm:5 (emergency-exit 3) | g ?, <program> callcc-escape.scm:6, <prompt> callcc-escape.scm:1
-guard-reraise error: error at guard-reraise.scm:4 (guard (e ((string? e) 'no)) (list (car 'x))) | %call-with-prompt ?, f guard-reraise.scm:4, g guard-reraise.scm:6, <program> guard-reraise.scm:7, <prompt> guard-reraise.scm:1
-guard-reraise raise: error at guard-reraise.scm:5 (raise 'boom) | <lambda@guard-reraise.scm:4:9> guard-reraise.scm:5, %call-with-prompt ?, f guard-reraise.scm:4, g guard-reraise.scm:6, <program> guard-reraise.scm:7, <prompt> guard-reraise.scm:1
-guard-reraise exit: exit 3 at guard-reraise.scm:5 (exit 3) | <lambda@guard-reraise.scm:4:9> guard-reraise.scm:5, %call-with-prompt ?, f guard-reraise.scm:4, g guard-reraise.scm:6, <program> guard-reraise.scm:7, <prompt> guard-reraise.scm:1
-guard-reraise emergency-exit: exit 3 at guard-reraise.scm:5 (emergency-exit 3) | <lambda@guard-reraise.scm:4:9> ?, %call-with-prompt ?, f guard-reraise.scm:4, g guard-reraise.scm:6, <program> guard-reraise.scm:7, <prompt> guard-reraise.scm:1
+guard-reraise error: error at guard-reraise.scm:4 (guard (e ((string? e) 'no)) (list (car 'x))) | f guard-reraise.scm:4, g guard-reraise.scm:6, <program> guard-reraise.scm:7, <prompt> guard-reraise.scm:1
+guard-reraise raise: error at guard-reraise.scm:5 (raise 'boom) | <lambda@guard-reraise.scm:4:9> guard-reraise.scm:5, f guard-reraise.scm:4, g guard-reraise.scm:6, <program> guard-reraise.scm:7, <prompt> guard-reraise.scm:1
+guard-reraise exit: exit 3 at guard-reraise.scm:5 (exit 3) | <lambda@guard-reraise.scm:4:9> guard-reraise.scm:5, f guard-reraise.scm:4, g guard-reraise.scm:6, <program> guard-reraise.scm:7, <prompt> guard-reraise.scm:1
+guard-reraise emergency-exit: exit 3 at guard-reraise.scm:5 (emergency-exit 3) | <lambda@guard-reraise.scm:4:9> ?, f guard-reraise.scm:4, g guard-reraise.scm:6, <program> guard-reraise.scm:7, <prompt> guard-reraise.scm:1
 wind-before error: error at wind-before.scm:4 (car 'x) | <lambda@wind-before.scm:4:23> wind-before.scm:4, f wind-before.scm:4, g wind-before.scm:5, <program> wind-before.scm:6, <prompt> wind-before.scm:1
 wind-before raise: error at wind-before.scm:4 (raise 'boom) | <lambda@wind-before.scm:4:23> wind-before.scm:4, f wind-before.scm:4, g wind-before.scm:5, <program> wind-before.scm:6, <prompt> wind-before.scm:1
 wind-before exit: exit 3 at wind-before.scm:4 (exit 3) | <lambda@wind-before.scm:4:23> wind-before.scm:4, f wind-before.scm:4, g wind-before.scm:5, <program> wind-before.scm:6, <prompt> wind-before.scm:1
@@ -94,10 +94,10 @@ load error: error at loaded.scm:1 (car 'x) | h loaded.scm:1, load loaded.scm:2, 
 load raise: error at loaded.scm:1 (raise 'boom) | h loaded.scm:1, load loaded.scm:2, f load.scm:5, g load.scm:6, <program> load.scm:7, <prompt> load.scm:1
 load exit: exit 3 at loaded.scm:1 (exit 3) | h loaded.scm:1, load loaded.scm:2, f load.scm:5, g load.scm:6, <program> load.scm:7, <prompt> load.scm:1
 load emergency-exit: exit 3 at loaded.scm:1 (emergency-exit 3) | h ?, load loaded.scm:2, f load.scm:5, g load.scm:6, <program> load.scm:7, <prompt> load.scm:1
-library error: error at none | h ?, <program> ?, <prompt> ?
-library raise: error at none | h ?, <program> ?, <prompt> ?
-library exit: exit 3 at none | h ?, <program> ?, <prompt> ?
-library emergency-exit: exit 3 at none | h ?, <program> ?, <prompt> ?
+library error: error at library.scm:5 (car 'x) | h library.scm:5, <program> library.scm:6, <prompt> library.scm:2
+library raise: error at library.scm:5 (raise 'boom) | h library.scm:5, <program> library.scm:6, <prompt> library.scm:2
+library exit: exit 3 at library.scm:5 (exit 3) | h library.scm:5, <program> library.scm:6, <prompt> library.scm:2
+library emergency-exit: exit 3 at library.scm:5 (emergency-exit 3) | h ?, <program> library.scm:6, <prompt> library.scm:2
 library-file error: error at file.sld:4 (car 'x) | h file.sld:4, <program> file.sld:5, <prompt> file.sld:1
 library-file raise: error at file.sld:4 (raise 'boom) | h file.sld:4, <program> file.sld:5, <prompt> file.sld:1
 library-file exit: exit 3 at file.sld:4 (exit 3) | h file.sld:4, <program> file.sld:5, <prompt> file.sld:1
