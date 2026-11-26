@@ -2028,7 +2028,7 @@ interleaved A/B runs.
     the call sites' caches keeping theirs (a deoptimization cycle compiled
     immediately); what is left costs less than a few percent. No code
     changed.
-- [ ] **M13-06 · `BigInteger` division for `pi` and `chudnovsky`**
+- [x] **M13-06 · `BigInteger` division for `pi` and `chudnovsky`**
   - #298's follow-up: 87% of `pi`'s JFR samples are in `java.math`, 67% in
     `MutableBigInteger.mulsub` and `divideMagnitude`, the JDK's schoolbook
     division, which it uses unless the divisor has 80 words and the
@@ -2046,6 +2046,16 @@ interleaved A/B runs.
     around each threshold, `pi`, `chudnovsky` and `bench-check` measured
     JIT and native, interleaved; or design.md D1 records why the JDK's
     stays, with the measurements.
+  - Done (design.md D1, "Integer division"): Knuth's algorithm D on 64-bit
+    digits (`ArithmeticDivision`) for divisors and quotients of 8 32-bit
+    digits or more, and past the JDK's Burnikel-Ziegler thresholds for
+    divisors of up to 256; `pi`'s 552 multi-digit divisions a run have
+    divisors of 6 to 104 digits, `chudnovsky`'s 10 of 10 to 76. On GraalVM
+    25.6, `pi` 0.65 times as long in the JIT's steady state (28.4 → 18.4 ms
+    at the report's count) and 0.72 natively, `chudnovsky` 0.92 and 0.88;
+    first runs natively 0.74 and 0.94, on the JVM unchanged.
+    `exact-integer-sqrt` stays the JDK's: a Karatsuba square root on this
+    division is faster only past 104 digits (a follow-up).
 - [x] **M13-07 · What got slower over M12**
   - M12's exit: `bench-check`'s baselines, both sets of 12 runs, were
     above M11's for `peval` (86.7 → 95.7 ms, 1.10), `fibc` (54.1 → 57.6,

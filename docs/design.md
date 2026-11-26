@@ -1845,6 +1845,95 @@ Each entry: the decision, why, and what was rejected.
     fast paths, with overflow checks on the `long` path. `SBigInteger`,
     `SRational` and `SComplex` go through one generic path marked
     `@TruffleBoundary`, so compiled code stays small for the common cases.
+  - **Integer division (M13-06).** `quotient`, `remainder`, `modulo` and
+    the `truncate/` and `floor/` families divide big integers with Knuth's
+    algorithm D on 64-bit digits (`ArithmeticDivision`), where the JDK's
+    `BigInteger.divideAndRemainder` runs it on 32-bit digits
+    (`MutableBigInteger.divideKnuth`) below its Burnikel-Ziegler thresholds
+    (a divisor of 80 32-bit digits and a quotient of 40). A quarter as many
+    steps in the inner loop (multiply and subtract), each a 64×64-bit product
+    (`Math.unsignedMultiplyHigh`, a Graal intrinsic); each quotient digit
+    estimated by Möller and Granlund's 2/1 division with a reciprocal of the
+    divisor's top digit (no 128-bit division), then Knuth's test against the
+    second digit and, rarely, an add-back. The digits come from and go back
+    to `BigInteger`s through their bytes, linear in the size. No library
+    (AGENTS.md "Never").
+    - **What divides.** #298 and M12's report had `pi` at 7.5 times the
+      fastest in the JIT's steady state, 87% of JFR's samples in
+      `java.math` and 67% in the JDK's schoolbook division. Replaying both
+      programs' integer arithmetic (one run of the benchmark, digits 50 to
+      500): `pi` divides 677 times, 19 of them fixnums and 106 by a one-digit
+      2 or 4; the other 552 by divisors of 6 to 104 32-bit digits, 368 of
+      them balanced (a product of two numbers of the divisor's size divided
+      by it: `(quotient (* x y) one)`), and 24 past the JDK's thresholds
+      (divisors of 84 to 104 digits, quotients of 41 to 52); and it takes
+      300 `exact-integer-sqrt`s of 11 to 208 digits, whose Karatsuba square
+      root (JDK 25's) divides inside `java.math`. `chudnovsky` divides 10
+      times, once per number of digits, divisors of 10 to 76 digits and
+      quotients of 6 to 52, and takes 10 square roots of 11 to 105 digits.
+      In JFR's execution samples on the JVM (1 ms), `pi`'s time was 50% in
+      `quotient`'s division and 28% in `exact-integer-sqrt`; `chudnovsky`'s
+      24% and 11%, the rest mostly our generic arithmetic (`Arithmetic.real`
+      and `apply`, `SBigInteger.normalize`) on its many small products.
+    - **Thresholds**, measured (Apple M3 Max, GraalVM 25.6's JIT, a loop of
+      `divideAndRemainder` against ours on random operands, a 1-minute load
+      of 2.1 to 2.3; ours over the JDK's, by divisor × quotient 32-bit
+      digits): 6×6 1.08, 8×8 1.00, 16×16 0.60, 26×26 0.39, 52×52 0.30,
+      76×76 0.26; past the JDK's thresholds, where it is subquadratic, 80×80
+      0.43, 104×52 0.46, 128×128 0.41, 256×256 0.66, 400×400 0.95, 640×640
+      1.34; and small quotients, where the conversions dominate, 8×4 1.80,
+      11×5 1.30, 16×4 0.96, 52×2 1.42, 52×8 0.62 (GraalVM 25.5's, at a load
+      of 7.6, within 0.1 of these but 8×8 0.91 and 8×4 1.16). So ours takes
+      a divisor and a quotient of 8 digits or more, and past the JDK's
+      thresholds divisors of up to 256; the JDK divides the rest.
+      `NumbersTest` checks the results against `divideAndRemainder` on
+      random operands of both signs at and around each threshold, and on
+      operands that make the rare steps happen (it fails with the add-back
+      left out).
+    - **Small methods.** The quotient digit's estimate, the multiply and
+      subtract and the add-back are methods of their own, as the JDK's
+      `mulsub` and `divadd` are. With the loops in one method (GraalVM
+      25.5), the JVM's host compiler first ran them in the bytecode
+      interpreter until on-stack replacement, and the add-back's first time
+      in compiled code sent the division back there: `pi`'s third and fourth
+      iterations took 116 and 107 ms against 22 at the tenth, and its first
+      142 to 152 against main's 112 to 129; `chudnovsky`'s steady state was
+      1.1 to 1.2 times main's over 10 iterations. Small methods are compiled
+      once called often enough.
+    - **Measured** on GraalVM 25.6 (interleaved: main `92cac7a`, this
+      change, and a second copy of each, A/A; 8 rounds of fresh processes,
+      25 iterations each, at the report's counts, `pi` 10 and `chudnovsky`
+      100; the median over processes of the first iteration and of the
+      median of the last 10; a 1-minute load of 2.3 to 5.2, sampled before
+      and after each run, none left out; ms, main and its copy → this change
+      and its copy):
+
+      | | `pi` first | `pi` steady | `chudnovsky` first | `chudnovsky` steady |
+      |---|--:|--:|--:|--:|
+      | JIT | 113, 114 → 112, 113 | 28.5, 28.3 → 18.3, 18.4 | 169, 167 → 167, 169 | 16.3, 16.3 → 14.8, 15.1 |
+      | Native | 38.1, 37.8 → 27.9, 28.1 | 31.9, 31.9 → 23.0, 23.0 | 43.4, 43.4 → 41.0, 41.0 | 22.6, 22.7 → 19.8, 19.9 |
+
+      `pi` takes 0.65 times as long in the JIT's steady state and 0.72
+      natively, and 0.74 natively in its first run; `chudnovsky` 0.92, 0.88
+      and 0.94. The JIT's first runs are unchanged: the interpreter's, until
+      Truffle has compiled the program. On GraalVM 25.5 (main `ec70c8d`, 6
+      rounds at a load of 3.9 to 9.2) the steady states moved alike: `pi`
+      28.9 → 19.0 ms with the JIT and 32.7 → 25.4 natively, `chudnovsky`
+      16.4 → 15.2 and 22.9 → 20.6. The square roots are untouched, and now
+      the larger part of `pi`: in JFR's samples after the change (25.5), 37%
+      in `exact-integer-sqrt` and 33% in the division (of the samples, 14%
+      in the multiply and subtract and 11% in the conversions to and from
+      digits).
+    - *Rejected:* a Newton reciprocal or Burnikel-Ziegler below the JDK's
+      thresholds: at these sizes `BigInteger.multiply` is schoolbook too
+      (Karatsuba from 80 digits), so a reciprocal costs more than one
+      division. Exact division (Jebelean's) for divisors known to divide:
+      none of these programs' divisions is exact (rationals' gcd
+      normalization would be, in `SRational`, outside the numbers area).
+      Zimmermann's Karatsuba square root on this division, in place of the
+      JDK's: 0.83 to 1.02 times the JDK's time at `pi`'s sizes up to 104
+      digits, 0.57 to 0.73 at 125 to 208 (6 calls each per run); not taken
+      here, a follow-up.
 - **Literal pairs are immutable (M10-07).** R7RS §3.4 (*"literal
   constants ... are immutable ... it is an error to attempt to store a new
   value into a location that is denoted by an immutable object"*) and
