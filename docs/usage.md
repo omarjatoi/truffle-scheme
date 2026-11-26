@@ -123,11 +123,11 @@ stderr), 66 if the file can't be read and 64 for a malformed `-I`.
 
 ### Errors
 
-An uncaught error prints `ERROR: `, where it is, and its message, on one line
-on stderr (design.md D8, "Messages"). Where is `file:line:column`, as in
-stack traces: the innermost call in the program's code (a procedure that
-raised in tail position has returned, so it is its caller's call), or a
-syntax error's form. An error object's message comes first, then `: ` and its
+An uncaught error prints `ERROR: `, where it is, and its message, on a line
+on stderr (design.md D8, "Messages"), then its stack trace (below). Where is
+`file:line:column`, as in stack traces: the innermost call in the program's
+code (a procedure that raised in tail position has returned, so it is its
+caller's call), or a syntax error's form, which has no stack trace. An error object's message comes first, then `: ` and its
 irritants, written. A primitive's message names it, the argument's position,
 what it expected, and the argument. A raised object that isn't an error
 object prints as `uncaught exception:` and the object:
@@ -143,10 +143,13 @@ bazel-bin/scheme docs/examples/errors/syntax.scm 2>&1 || echo "exit status $?"
 <!-- readme: output -->
 ```text
 ERROR: raise.scm:8:1: uncaught exception: (negative-age -3)
+    at <program>(raise.scm:8:1)
 exit status 70
 ERROR: error.scm:8:1: average: no numbers in: ()
+    at <program>(error.scm:8:1)
 exit status 70
 ERROR: primitive.scm:4:1: vector-ref: argument 2 is not an index from 0 to 2: 3
+    at <program>(primitive.scm:4:1)
 exit status 70
 ERROR: syntax.scm:4:3: syntax error: if takes 2 or 3 subforms: (if (< x 0) -1 0 1)
 exit status 70
