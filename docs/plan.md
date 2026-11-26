@@ -2143,6 +2143,29 @@ interleaved A/B runs.
     443/432), but the 7 space programs run in every mode, 105 → 122 s
     (the longest 39 → 45 s, off the critical path, `unit_compile`'s
     `SandboxTest` at about 130 s).
+- [x] **M13-14 · Variables' names for tools**
+  - GraalVM 25.6 (#316) adds `BytecodeRootNode.getInstrumentationNodeObject`,
+    through which a Bytecode DSL root gives a tagged node its node object;
+    `ReadVariableTag` and `WriteVariableTag` require one that names the
+    variable, which D13 had left out for want of a way to give it (and of
+    a shipped tool that uses them). With no tool attached, the runtime must
+    pay nothing (D13, as for M12-06's and M13-09's tools paths), JIT,
+    native image or interpreter.
+  - **Done when** design.md D13 records the decision, in a PR of its own;
+    reads and writes of the variables a program names are tagged, with node
+    objects that name them, in a `ToolsTest` with an instrument of its own,
+    which passes compiled and under both tortures, across a continuation
+    re-entered in a frame copied for it; the bytecode without tools is
+    unchanged; every tools test passes.
+  - Done (design.md D13, "Variables' reads and writes", #318): a
+    reference to a variable the program names is a read, a `set!` or a
+    top-level definition a write, each named when a tool asks, from the
+    instructions its tag encloses; a macro's use that expands to a bare
+    reference is located at the identifier. The debugger, the DAP server
+    and the Chrome inspector use neither tag; without them, an instrument
+    that asked for them failed every Scheme root (the generated
+    `prepareForInstrumentation` rejects a tag the language doesn't
+    provide). Under `UNTRUSTED` the guest's roots keep the tags they had.
 
 **Exit:** every task above is done, or its note records what was measured and
 why it isn't; `docs/benchmarks.md` and `bench/thresholds.json` are regenerated

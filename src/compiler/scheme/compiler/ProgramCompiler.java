@@ -14,6 +14,8 @@ import com.oracle.truffle.api.Truffle;
 import com.oracle.truffle.api.bytecode.BytecodeConfig;
 import com.oracle.truffle.api.bytecode.BytecodeNode;
 import com.oracle.truffle.api.bytecode.BytecodeRootNodes;
+import com.oracle.truffle.api.debug.DebuggerTags;
+import com.oracle.truffle.api.instrumentation.StandardTags;
 import com.oracle.truffle.api.source.Source;
 import com.oracle.truffle.api.source.SourceSection;
 
@@ -326,15 +328,26 @@ public final class ProgramCompiler implements SchemeCompiler {
         return state.interaction.cell(name);
     }
 
+    /**
+     * The configuration of the guest's roots under UNTRUSTED (above): source information and every
+     * tag but the reads and writes of variables, which no limit counts (design.md D13, "Variables'
+     * reads and writes"), so that the sandbox's interpreter runs no more tag instructions, and
+     * {@code sandbox.MaxASTDepth} measures the same depth, as before they were tagged. A tool that
+     * asks for them still gets them.
+     */
+    private static final BytecodeConfig SANDBOXED = SchemeRootNodeGen.newConfigBuilder().addSource() //
+                    .addTag(DebuggerTags.AlwaysHalt.class).addTag(StandardTags.RootTag.class).addTag(StandardTags.RootBodyTag.class) //
+                    .addTag(StandardTags.StatementTag.class).addTag(StandardTags.CallTag.class).addTag(StandardTags.ExpressionTag.class).build();
+
     /** {@code topLevel}: what each root records as the top level it was compiled in, or null for the interaction environment's. */
     private static RootCallTarget generate(SchemeLanguage language, Ast.Lambda program, Object topLevel) {
         SchemeRootNode[] root = new SchemeRootNode[1];
         // With source information, so guest stack traces and tools see file, line and column (D13);
-        // under UNTRUSTED with every tag too, so that the sandbox's walk sees how deep the root is
+        // under UNTRUSTED with the tags too, so that the sandbox's walk sees how deep the root is
         // (design.md D10, "sandbox.MaxASTDepth under UNTRUSTED"). A workaround for a Truffle 25.5 bug,
         // reproduced by scheme.test.upstream.UpstreamAstDepthTest (docs/upstream.md): when that test
         // fails after a Truffle upgrade, WITH_SOURCE does for every policy.
-        BytecodeConfig config = SchemeContext.get(null).materializesTags() ? BytecodeConfig.COMPLETE : BytecodeConfig.WITH_SOURCE;
+        BytecodeConfig config = SchemeContext.get(null).materializesTags() ? SANDBOXED : BytecodeConfig.WITH_SOURCE;
         BytecodeRootNodes<SchemeRootNode> nodes = SchemeRootNodeGen.create(language, config, b -> root[0] = new CodeGenerator(b, topLevel).generate(program));
         // Every root of the unit is loaded (its call target made, which is when instruments see a
         // root) with the outermost, not when its first closure is made: a debugger resolves a line

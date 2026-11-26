@@ -170,7 +170,9 @@ final class CodeGenerator {
      * Truffle's standard instrumentation tags for an expression (design.md D13): every call is a
      * call; each expression of a body sequence, a let's body and each root's body is a statement; an
      * expression in value position is an expression (in tail position its operation is a void
-     * return). Tags cost nothing until a tool attaches.
+     * return); a reference to a variable is a read and an assignment or a top-level definition a
+     * write, if the variable is one the user's code names ({@link #named}). Tags cost nothing until
+     * a tool attaches.
      */
     private Class<?>[] tags(Expr e, Ctx ctx) {
         if (!located()) {
@@ -186,7 +188,33 @@ final class CodeGenerator {
         if (ctx == Ctx.VALUE && !(e instanceof Lambda fn && fn.program)) {
             tags.add(StandardTags.ExpressionTag.class);
         }
+        if (named(e)) {
+            tags.add(e instanceof Ast.LocalRef || e instanceof Ast.GlobalRef ? StandardTags.ReadVariableTag.class : StandardTags.WriteVariableTag.class);
+        }
         return tags.toArray(new Class<?>[0]);
+    }
+
+    /**
+     * Whether {@code e} reads or writes a variable that tools name (design.md D13, "Variables' reads
+     * and writes"): a local tools show ({@link Var#visible}), or a global that isn't one of the
+     * runtime's internals ({@code %}-prefixed), where {@code e} has a location of its own in this
+     * root's source. A reference a macro's template makes from another file (a library's) has none,
+     * so it isn't tagged at the macro's use.
+     */
+    private boolean named(Expr e) {
+        String name;
+        if (e instanceof Ast.LocalRef r && r.var.visible()) {
+            name = r.var.name.toString();
+        } else if (e instanceof Ast.LocalSet s && s.var.visible()) {
+            name = s.var.name.toString();
+        } else if (e instanceof Ast.GlobalRef g) {
+            name = g.cell.name.toString();
+        } else if (e instanceof Ast.GlobalSet s) {
+            name = s.cell.name.toString();
+        } else {
+            return false;
+        }
+        return !name.startsWith("%") && usable(e.source) != null;
     }
 
     private State state() {

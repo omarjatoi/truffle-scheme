@@ -5,8 +5,8 @@ import java.util.Set;
 
 import com.oracle.truffle.api.Assumption;
 import com.oracle.truffle.api.CompilerAsserts;
-import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.HostCompilerDirectives.InliningCutoff;
 import com.oracle.truffle.api.RootCallTarget;
 import com.oracle.truffle.api.bytecode.BytecodeNode;
@@ -18,14 +18,15 @@ import com.oracle.truffle.api.bytecode.LocalAccessor;
 import com.oracle.truffle.api.bytecode.LocalRangeAccessor;
 import com.oracle.truffle.api.bytecode.Operation;
 import com.oracle.truffle.api.bytecode.OperationProxy;
-import com.oracle.truffle.api.bytecode.ShortCircuitOperation;
 import com.oracle.truffle.api.bytecode.ShortCircuitOperation.Operator;
+import com.oracle.truffle.api.bytecode.ShortCircuitOperation;
 import com.oracle.truffle.api.bytecode.StoreBytecodeIndex;
+import com.oracle.truffle.api.bytecode.TagTreeNode;
 import com.oracle.truffle.api.bytecode.Variadic;
 import com.oracle.truffle.api.bytecode.Yield;
 import com.oracle.truffle.api.dsl.Bind;
-import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.Cached.Shared;
+import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.Fallback;
 import com.oracle.truffle.api.dsl.ReportPolymorphism;
 import com.oracle.truffle.api.dsl.Specialization;
@@ -256,6 +257,16 @@ public abstract class SchemeRootNode extends RootNode implements BytecodeRootNod
     @Override
     protected void prepareForInstrumentation(Set<Class<?>> materializedTags) {
         getLanguage(SchemeLanguage.class).noTags.invalidate();
+    }
+
+    /**
+     * What a tool sees of a tagged node: for a read or a write of a variable, an object that names
+     * the variable ({@link VariableAccess}, design.md D13 "Variables' reads and writes"); for any
+     * other, nothing. Only tools ask: the generated tag node's {@code getNodeObject} calls it.
+     */
+    @Override
+    public Object getInstrumentationNodeObject(TagTreeNode node) {
+        return VariableAccess.of(this, node);
     }
 
     /**
