@@ -6,7 +6,9 @@ it. The executable takes VM options only as `--vm.` ones; a collector (chosen wh
 built), a class path and an option the isolate would ignore are errors. Every class of option takes
 effect or fails clearly (plan.md M10-04, docs/usage.md "Options"), and so does every option in an
 argument file, `--vm.@file` (plan.md M11-03). Constant options are fixed when the image is built
-(plan.md M11-07)."""
+(plan.md M11-07). GraalVM 25.6's `--vm.XX:+PrintFlagsFinal` lists the options, and
+`--vm.XX:+AbortVMOnCompilationFailure` ends the process when a runtime compilation fails, but not
+when one bails out (plan.md M13-13)."""
 
 import argparse
 import os
@@ -279,10 +281,12 @@ COMPILED = """(import (scheme base) (scheme write))
 
 def compilation_failures(o):
     """GraalVM 25.6 (GR-80621, GR-80734): `--vm.XX:+AbortVMOnCompilationFailure`, which the other
-    native tests run the launcher with (harness.NATIVE_TEST_OPTIONS), sets the Graal compiler's
-    CompilationFailureAction to ExitVM: a compilation that fails ends the process, where without it
-    the code silently stays in the interpreter, and a bailout, which the runtime treats as no
-    failure, doesn't. `--vm.XX:+PrintFlagsFinal` lists the image's options, with their origins."""
+    native tests run the launcher with (harness.native_test_options), sets the Graal compiler's
+    CompilationFailureAction to ExitVM: a compilation that fails ends the process (after a second
+    attempt that dumps the compiler's graphs), where without it the code silently stays in the
+    interpreter; a bailout, transient or permanent (as Truffle's deoptimization-cycle detection and a
+    graph too big are), doesn't. `--vm.XX:+PrintFlagsFinal` lists the image's options, with their
+    origins."""
     native = rlocation(o.native)
     tmp = tempfile.mkdtemp(dir=os.environ.get('TEST_TMPDIR'))
     program = os.path.join(tmp, 'compiled.scm')
@@ -302,7 +306,8 @@ def compilation_failures(o):
     out, _ = run([native] + at_once + [crash, program])
     check(out == 'done', f'without the option, a failed compilation should leave the program running interpreted: {out!r}')
     out, err = run([native] + at_once + abort + [crash, program], status=None)
-    check(out == '' and 'Exiting VM after retry compilation of Isolated: compiled-at-once' in err,
+    exiting = [line for line in err.splitlines() if line.startswith('Exiting VM after retry compilation of ')]
+    check(out == '' and exiting and exiting[0].endswith('compiled-at-once'),
           f'with --vm.XX:+AbortVMOnCompilationFailure, a failed compilation should end the process:\n{out}\n{err}')
     for bailout in ('Bailout', 'PermanentBailout'):
         out, err = run([native] + at_once + abort + [crash + ':' + bailout, program])

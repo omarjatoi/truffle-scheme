@@ -32,8 +32,9 @@ final class Launch {
      * The compile and torture modes' assertions: Java's, and Truffle's expensive ones, which since
      * GraalVM 25.6 only {@code truffle.DetailedAssertions} turns on (GR-80770): among them, that a
      * context reference is read with a node of its own language, and that a Bytecode DSL root's
-     * bytecode is valid each time it is built. They cost these tests no measurable time on the
-     * executors (plan.md M13-13).
+     * bytecode is valid each time it is built. Measured on the executors, they cost the conformance
+     * and diff tests no time beyond the runs' noise, and the space programs run in every mode a few
+     * seconds each (plan.md M13-13).
      */
     static final List<String> ASSERTION_VM_ARGS = List.of("-ea", "-Dtruffle.DetailedAssertions=true");
     /** Interpreter only. */

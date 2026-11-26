@@ -42,6 +42,19 @@ TRUFFLE_VM_ARGS = [
 ]
 LAUNCHER_MAIN = 'scheme.launcher/scheme.launcher.SchemeMain'
 
+
+def native_test_options():
+    """The native launcher's options in the native tests: a runtime compilation that fails ends the
+    process (GraalVM 25.6, GR-80621: the Graal compiler's CompilationFailureAction=ExitVM) where it
+    would leave the code in the interpreter silently, and a bailout doesn't
+    (//tests:launcher_vm_native checks both). Under `bazel test`, the compiler's diagnostics of the
+    failure go to the test's undeclared outputs."""
+    options = ['--vm.XX:+AbortVMOnCompilationFailure']
+    outputs = os.environ.get('TEST_UNDECLARED_OUTPUTS_DIR')
+    if outputs:
+        options.append('--vm.XX:DumpPath=' + join(outputs, 'graal_dumps'))
+    return options
+
 # The `scheme` launcher's JVM options (design.md D17), each group unless the JVM options (the
 # command's, JDK_JAVA_OPTIONS or JAVA_TOOL_OPTIONS) already set what it sets.
 # The collector (M8-05): the serial one, unless they choose another (the JVM refuses two).
@@ -661,7 +674,7 @@ def _run_native(launcher, section, compile):
         env = dict(os.environ)
         env.update(binding.split('=', 1) for binding in section.env)
         try:
-            p = subprocess.run([launcher] + options + library_path + [f'--end-status={_NATIVE_END_STATUS}', section.file] + section.args,
+            p = subprocess.run([launcher] + native_test_options() + options + library_path + [f'--end-status={_NATIVE_END_STATUS}', section.file] + section.args,
                                cwd=workdir, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                stderr=subprocess.STDOUT, timeout=_NATIVE_SECTION_TIMEOUT, check=False)
             output = p.stdout.decode('utf-8', errors='replace')

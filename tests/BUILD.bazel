@@ -564,7 +564,9 @@ harness_test(
         "@jvm//:org_antlr_antlr4_runtime",
         "@jvm//:org_graalvm_truffle_truffle_sl",
     ],
-    size = "small",
+    # medium (300 s), not small (60 s): its few dozen JVMs took 20-30 s in CI, 35-53 s on busy
+    # executors, and once timed out at 60 s (#316).
+    size = "medium",
 )
 
 # design.md D17 "VM options": the native launcher's --vm. options take effect, or are errors that

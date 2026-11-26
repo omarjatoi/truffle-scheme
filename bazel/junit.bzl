@@ -6,6 +6,13 @@ load("//bazel:java.bzl", "BYTECODE_ROOT_JAVACOPTS", "SCHEME_JAVACOPTS")
 load("//bazel:java_module.bzl", "java_module_jar")
 load("//bazel:jvm_test.bzl", "junit_test")
 
+# Truffle's expensive assertions, which since GraalVM 25.6 -ea (bazel/jvm_test.bzl) no longer turns
+# on by itself (GR-80770): among them, that a context reference is read with a node of its own
+# language, and that a Bytecode DSL root's bytecode is valid each time it is built. The compile and
+# torture modes run with them, as tests/driver's do (Launch.ASSERTION_VM_ARGS): measured on the
+# executors, they cost these tests no time beyond the runs' noise (plan.md M13-13).
+_DETAILED_ASSERTIONS = "-Dtruffle.DetailedAssertions=true"
+
 # mode: (JVM options, size, tags). The JIT's background compiler threads take a second core.
 _UNIT_MODES = {
     "jit": ([], "medium", ["cpu:2"]),
@@ -14,13 +21,13 @@ _UNIT_MODES = {
         "-Dpolyglot.engine.CompileImmediately=true",
         "-Dpolyglot.engine.BackgroundCompilation=false",
         "-Dpolyglot.engine.CompilationFailureAction=Throw",
-        "-Dtruffle.DetailedAssertions=true",
+        _DETAILED_ASSERTIONS,
     ], "large", []),
     # Torture (the constant option scheme.Torture, design.md D17 "Constant options").
-    "torture": (["-Dpolyglot.scheme.Torture=shared", "-Dtruffle.DetailedAssertions=true"], "medium", ["cpu:2"]),
+    "torture": (["-Dpolyglot.scheme.Torture=shared", _DETAILED_ASSERTIONS], "medium", ["cpu:2"]),
     # Torture whose captures stay owned, so the frames are resumed in place (design.md "Owned
     # segments"); what a continuation reaches is still copied and checked.
-    "torture_owned": (["-Dpolyglot.scheme.Torture=owned", "-Dtruffle.DetailedAssertions=true"], "medium", ["cpu:2"]),
+    "torture_owned": (["-Dpolyglot.scheme.Torture=owned", _DETAILED_ASSERTIONS], "medium", ["cpu:2"]),
 }
 
 def unit_tests(name, tests, support, kinds, resources = {}, extra_srcs = {}):

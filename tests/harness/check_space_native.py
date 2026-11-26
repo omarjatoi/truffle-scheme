@@ -2,12 +2,13 @@
 launcher's 256 MB, never overflow the stack (AGENTS.md rule 4, design.md "Stack-depth spill").
 
 Each program runs with the Graal JIT in the background on every stack, and interpreted only and
-compiled at once on two of them. A program passes when it prints `--expect` and exits 0."""
+compiled at once on two of them, with harness.native_test_options(): a runtime compilation that
+fails ends the run. A program passes when it prints `--expect` and exits 0."""
 
 import argparse
 import subprocess
 
-from harness import check, log, rlocation
+from harness import check, log, native_test_options, rlocation
 
 # `--stack-size` values (the evaluation thread's stack; `default` evaluates on the native
 # executable's main thread, 8 MB), and None for the launcher's default, 256 MB (design.md D17).
@@ -23,7 +24,7 @@ TIMEOUT = 300  # seconds per run
 
 
 def run(native, program, stack, options):
-    command = [native] + ([f'--stack-size={stack}'] if stack else []) + options + [program]
+    command = [native] + native_test_options() + ([f'--stack-size={stack}'] if stack else []) + options + [program]
     try:
         p = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                            timeout=TIMEOUT, check=False)
