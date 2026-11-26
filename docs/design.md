@@ -6739,22 +6739,31 @@ Each entry: the decision, why, and what was rejected.
       - *`memq` and `assv`.* `dynamic` looks every variable up with `assv`
         in an association list that grows with each definition read
         (`dynamic-top-level-env`), and `compiler` walks its declarations
-        and environments with `memq` and `assq`; `dynamic` also reads its
-        input file in each iteration, with the reader behind boundaries. The primitives' loop
+        and environments with `memq` and `assq`. The primitives' loop
         (`ListVectorPrimitives.Member.find`, behind a `@TruffleBoundary`)
         is compiled ahead of time in the native image, without the
-        profile and inlining HotSpot gives it on the JVM. A key compared
-        by identity or by its code point (`memq`, `assq`, and `memv` and
-        `assv` of anything but a number) is now walked by a loop without a
-        boundary, which the Truffle compiler compiles with its caller,
-        natively as on the JVM; `equal?`'s and numbers' walks stay behind
-        the boundary. MEMBER_RESULT
+        profile and inlining HotSpot gives it on the JVM. *Measured and
+        not kept:* a loop without a boundary for a key compared by
+        identity or by its code point (`memq`, `assq`, and `memv` and
+        `assv` of anything but a number), which the Truffle compiler
+        compiles with each caller, natively as on the JVM. Against the
+        same build without it (4 interleaved rounds with an A/A copy, 5
+        iterations at the report's counts, load 6.8-8.2), the steady
+        state: `dynamic` 0.94 natively (A/A 1.02) and 1.03 on the JVM
+        (1.02), but `compiler` 1.05 natively (0.97) and 1.11 on the JVM
+        (1.03), `matrix` unchanged; `bench-check`'s 20 JIT programs (2
+        rounds, load 3.9-7.6) a geometric mean of 1.01 on the JVM and 1.00
+        natively. The walks stay behind the boundary.
+      - *The reader.* `dynamic` reads its input file in each iteration,
+        with the reader behind boundaries: most of the 29% of other
+        boundaries in its row above.
       - *The collector.* With the serial collector's default policy
         (`Adaptive2`, "Not changed: the collector, ...", above) the native
         launcher collected 116 times in 10 iterations of `dynamic` (558 ms
         of pauses) against the JVM's 12 (146 ms), and 227 times in
         `compiler` (454 ms) against 16 (287 ms); `matrix` 126 (91 ms)
-        against 24 (100 ms). M12-04 measured the policies on `dynamic` (above), whose time was the same under each, so the default stays.
+        against 24 (100 ms). M12-04 measured the policies on `dynamic`
+        (above): its time was the same under each, so the default stays.
       - *`map`'s and `apply`'s lists.* `map` over two lists called its
         procedure with `apply` (`Lists.toArray`, an `ArrayList`,
         `Apply.tailCall`, and the circular-list check): 9% of `matrix`'s
@@ -6765,14 +6774,17 @@ Each entry: the decision, why, and what was rejected.
         0.396 to 0.343.
       - *The rest.* `matrix`'s native gap after that is in runtime-compiled
         code (0.204 s against the JVM's 0.183), with `reverse` (3%) and
-        `make-vector`'s fill (3%) behind boundaries. `compiler` is still
-        compiling at its tenth iteration natively (0.39 s, the JVM's 0.26):
-        958 code installations in 5 iterations, and its largest
-        compilations (`gen-call`, 18,800 nodes) take longer to arrive.
-        The waits on the VM's mutex are the evaluation thread stopped at
-        safepoints, for collections and installed code; under load they
-        grew to 12-31% of the samples, which is why these profiles were
-        taken on a quiet machine.
+        `make-vector`'s fill (3%) behind boundaries. `compiler`'s native
+        iterations are still falling at the tenth (0.39 s, the JVM's 0.26),
+        with 958 code installations in its first 5. The waits on the VM's
+        mutex (`RuntimeVMMutex`, in SubstrateVM's safepoint and thread
+        code) grew to 12-31% of the samples under load, which is why these
+        profiles were taken on a quiet machine.
+      - *So:* `matrix`'s gap was mostly `apply`'s lists (fixed); `dynamic`'s
+        is the association-list walks and the reader, compiled ahead of
+        time, and its collections (12%, which no policy shortened);
+        `compiler`'s the same walks and its slower warm-up. Those are
+        recorded here.
   - **Rejected: a 1 GB minimum heap for the native launcher (#189).** The
     image was built for a while with `-R:MinHeapSize=1g`, a default for the
     executable's minimum heap that its own `-Xms` or `-XX:MinHeapSize=`

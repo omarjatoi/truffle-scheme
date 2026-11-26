@@ -2075,7 +2075,7 @@ interleaved A/B runs.
     expansion budget sooner; recorded, not changed); `startup` and
     `dynamic` have no slower build. No code changed, so no threshold was
     re-measured.
-- [ ] **M13-08 · `compiler`, `matrix` and `dynamic`**
+- [x] **M13-08 · `compiler`, `matrix` and `dynamic`**
   - M12's report, after `pi`'s and the call protocol's programs: steady
     state ×fastest `compiler` 5.8 (JIT) and 7.0 (native), `matrix` 4.3
     and 5.3, `dynamic` 2.4 and 3.6; first runs `compiler` 15.9 and 15.6,
@@ -2092,6 +2092,22 @@ interleaved A/B runs.
     and what they spend their time on recorded in bench/README.md; fixes
     kept with a test and interleaved A/B runs, JIT and native, first runs
     and steady state.
+  - Done (bench/README.md "`compiler`, `matrix` and `dynamic`"; design.md
+    D17 "`compiler`, `matrix` and `dynamic`", and "Calls and tail calls"):
+    the hottest compilations read as their final schedules (`matrix`'s
+    continuation-passing loops and tail-call chains, `dynamic`'s
+    `ast-gen` at the inlining budget, `compiler`'s association-list walks
+    and `gen-call`); the native gaps sampled on an image with symbols:
+    `memq` and `assv` compiled ahead of time (`compiler` 11%, `dynamic`
+    16%), the collector (`dynamic` 12%), `apply`'s lists (`matrix` 9%).
+    Kept: `map` and `for-each` over two lists without `apply` (steady
+    state `matrix` 0.84 on the JVM and 0.85 natively, `dynamic` 0.95 and
+    0.86) and `eqv?` in compiled code (`compiler` 0.96 on the JVM).
+    Measured and not kept: the `memq` and `assv` walks compiled with their
+    callers (`compiler` 1.11 on the JVM), the second tail call out of the
+    trampoline's loop (`matrix` 0.86, `compiler` 1.04 natively), and an
+    inlining expansion budget of 16,000 or 20,000 (`compiler` 1.10-1.18
+    natively, `quicksort` 1.13).
 - [x] **M13-09 · Stepping over a `raise` that a `guard` catches**
   - #299's follow-up: `guard` captures a composable continuation
     (DELIMITED, D4) and drops it when a clause catches. That isn't an
