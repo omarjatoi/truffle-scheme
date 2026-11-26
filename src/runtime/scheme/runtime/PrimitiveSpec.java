@@ -2,8 +2,6 @@ package scheme.runtime;
 
 import java.util.function.Supplier;
 
-import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
-
 /**
  * A primitive procedure: its name, arity ({@code maxArgs} -1 means any number), and a factory for
  * the node that implements it. An area's primitives are the constants of its enum, each its own
@@ -68,9 +66,11 @@ public record PrimitiveSpec(String name, int minArgs, int maxArgs, Supplier<Prim
         }
     }
 
-    @TruffleBoundary
+    /**
+     * Named as the program calls it (design.md D8, "Messages"): a %-primitive's public procedure is
+     * its name without the %, as the polyglot library renames them and io.scm's procedures are.
+     */
     private SchemeError arityError(int count) {
-        String expected = maxArgs < 0 ? "at least " + minArgs : minArgs == maxArgs ? Integer.toString(minArgs) : minArgs + " to " + maxArgs;
-        return new SchemeError(name + ": expected " + expected + " arguments, got " + count);
+        return SchemeError.arity(name.startsWith("%") ? name.substring(1) : name, minArgs, maxArgs, count);
     }
 }

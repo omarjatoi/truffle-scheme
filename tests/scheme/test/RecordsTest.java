@@ -114,14 +114,14 @@ public class RecordsTest {
     public void wrongTypesAndAritiesAreErrors() {
         String defs = POINT + "(define-record-type other (make-other x) other? (x other-x))";
         String message = "(lambda (thunk) (guard (e ((error-object? e) (error-object-message e))) (thunk)))";
-        check(defs, "(\"point-x: not a record of type point: #<record other>\" \"set-point-x!: not a record of type point: 5\")",
+        check(defs, "(\"point-x: argument 1 is not a record of type point\" \"set-point-x!: argument 1 is not a record of type point\")",
                         "(let ((m " + message + ")) (list (m (lambda () (point-x (make-other 1)))) (m (lambda () (set-point-x! 5 0)))))");
-        check(defs, "(\"make-point: expected 2 arguments, got 1\" \"point-x: expected 1 arguments, got 0\")",
+        check(defs, "(\"make-point: expected 2 arguments, got 1\" \"point-x: expected 1 argument, got 0\")",
                         "(let ((m " + message + ")) (list (m (lambda () (make-point 1))) (m (lambda () (point-x)))))");
         // Records are not vectors, pairs or procedures (design.md D1), and only their own type's.
         check(defs, "(#f #f #f #f #f #t)", "(let ((p (make-point 1 2))) (list (vector? p) (pair? p) (procedure? p) (other? p) (point? (vector 1 2)) (point? p)))");
         // A field the constructor names must be a field.
-        check("", "\"define-record-type: z is not a field of point\"",
+        check("", "\"define-record-type: not a field of point\"",
                         "(guard (e ((error-object? e) (error-object-message e))) (let () (define-record-type point (make-point z) point? (x point-x)) 'defined))");
     }
 

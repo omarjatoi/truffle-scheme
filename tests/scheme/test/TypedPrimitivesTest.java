@@ -217,8 +217,8 @@ public class TypedPrimitivesTest {
     @Test
     public void errorsAreThePrimitives() {
         String guard = "(define-syntax message (syntax-rules () ((_ e) (guard (c (#t (error-object-message c))) e))))";
-        check(guard, "(\"car: not a pair: 1\" \"cdr: not a pair: ()\" \"vector-ref: not a valid index for a vector of length 2: 2\"" +
-                        " \"vector-set!: vector is immutable (a literal)\")",
+        check(guard, "(\"car: argument 1 is not a pair\" \"cdr: argument 1 is not a pair\" \"vector-ref: argument 2 is not an index from 0 to 1\"" +
+                        " \"vector-set!: argument 1 is not a mutable vector (it is a literal)\")",
                         "(list (message (car 1)) (message (cdr '())) (message (vector-ref (vector 1 2) 2)) (message (vector-set! #(1 2) 0 3)))");
         check(guard + " (define (f x) (+ 1 x))", "(#t #t)",
                         "(list (string? (message (f 'a))) (string? (message (< 1 'b))))");
@@ -244,7 +244,7 @@ public class TypedPrimitivesTest {
                         """, "located.scm").buildLiteral();
         try (Context context = Context.create(SCHEME)) {
             PolyglotException e = assertThrows(PolyglotException.class, () -> context.eval(source));
-            assertTrue(e.getMessage(), e.getMessage().contains("car: not a pair: 5"));
+            assertTrue(e.getMessage(), e.getMessage().contains("car: argument 1 is not a pair: 5"));
             List<String> frames = new ArrayList<>();
             for (PolyglotException.StackFrame frame : e.getPolyglotStackTrace()) {
                 if (frame.isGuestFrame() && frame.getSourceLocation() != null) {

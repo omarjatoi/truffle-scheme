@@ -79,12 +79,12 @@ public class PrimitivesInPlaceTest {
     @Test
     public void errorsInTailPositionAreRaisedInTheCaller() {
         String f = "(define (f x) (car x))";
-        check(f, "(caught \"car: not a pair: 1\")", "(guard (e ((error-object? e) (list 'caught (error-object-message e)))) (f 1))");
+        check(f, "(caught \"car: argument 1 is not a pair\")", "(guard (e ((error-object? e) (list 'caught (error-object-message e)))) (f 1))");
         // The handler runs in the frame of the call of f: a continuation captured there sees (+ 100 []).
         check(f, "101", "(+ 100 (call/cc (lambda (k) (with-exception-handler (lambda (e) (k 1)) (lambda () (f 1))))))");
         check(f, "(1 . 101)", "(cons 1 (+ 100 (call/cc (lambda (k) (with-exception-handler (lambda (e) (k 1)) (lambda () (+ 0 (f 1))))))))");
         // Arity errors too, in tail position and not.
-        check("(define (t) (car)) (define (n) (+ 1 (car)))", "(\"car: expected 1 arguments, got 0\" \"car: expected 1 arguments, got 0\")",
+        check("(define (t) (car)) (define (n) (+ 1 (car)))", "(\"car: expected 1 argument, got 0\" \"car: expected 1 argument, got 0\")",
                         "(list (guard (e (#t (error-object-message e))) (t)) (guard (e (#t (error-object-message e))) (n)))");
         // A primitive error in tail position deep in non-tail recursion (frames spilled to the heap).
         check("", "caught", "(guard (e (#t 'caught)) (let loop ((i 0)) (if (= i 100000) (vector-ref (vector) i) (+ 1 (loop (+ i 1))))))");
@@ -101,7 +101,7 @@ public class PrimitivesInPlaceTest {
         check(defs, "(1 (2) 42 3 2 6 c #\\x escaped (1 . 2) #t (2 1) again)", calls.replace("%s", "tail"));
         check(defs, "((1) ((2)) (42) (3) (2) (6) (c) (#\\x) (escaped) ((1 . 2)) (#t) ((2 1)) (again))", calls.replace("%s", "non-tail"));
         // A wrong arity at a site that has already run the primitive in place.
-        check(defs, "(1 \"car: expected 1 arguments, got 2\")",
+        check(defs, "(1 \"car: expected 1 argument, got 2\")",
                         "(list (tail car '(1)) (guard (e (#t (error-object-message e))) (tail car '(1) 2)))");
     }
 
@@ -163,7 +163,7 @@ public class PrimitivesInPlaceTest {
                         "(map (lambda (f) (non-tail f 1 2)) (list + - * quotient cons < vector eqv? (lambda (a b) (string-append \"a\" \"b\"))))");
         // Errors are raised where the trampoline's call site raises them, with the arity checked.
         String apply = "(define (apply-it f . xs) (apply f xs)) (define (run f . xs) (+ 0 (apply apply-it f xs)))";
-        check(apply, "(\"car: not a pair: 1\" \"car: expected 1 arguments, got 2\" 101)",
+        check(apply, "(\"car: argument 1 is not a pair\" \"car: expected 1 argument, got 2\" 101)",
                         "(list (guard (e (#t (error-object-message e))) (run car 1)) (guard (e (#t (error-object-message e))) (run car '(1) 2))" +
                                         " (+ 100 (call/cc (lambda (k) (with-exception-handler (lambda (e) (k 1)) (lambda () (run car 1)))))))");
     }

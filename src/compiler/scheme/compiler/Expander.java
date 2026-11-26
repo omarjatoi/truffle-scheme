@@ -270,7 +270,10 @@ public final class Expander {
         }
     }
 
-    /** A syntax error about {@code form}, naming its line (or the innermost line seen). */
+    /**
+     * A syntax error about {@code form}, located at it (or at the innermost form with a location):
+     * {@code syntax error: <message>}, the form the irritant (design.md D8, "Messages").
+     */
     SchemeError syntaxError(String message, Object form) {
         return syntax(message, form);
     }
@@ -278,7 +281,7 @@ public final class Expander {
     @TruffleBoundary
     private SchemeError syntax(String message, Object form) {
         Syntax at = form instanceof Syntax s && s.source != null ? s : current;
-        return SchemeError.syntax("syntax error: " + message + ": " + Printer.print(Syntax.toDatum(form), Printer.Mode.WRITE) + location(at), at == null ? null : at.source, false);
+        return SchemeError.syntax("syntax error: " + message, Syntax.toDatum(form), at == null ? null : at.source, false);
     }
 
     /**
@@ -291,21 +294,12 @@ public final class Expander {
         if (f.size() < 2 || !(Syntax.toDatum(f.get(1)) instanceof SString message)) {
             return syntax("syntax-error needs a message string", form);
         }
-        StringBuilder text = new StringBuilder("syntax error: ").append(message);
         Object irritants = SConstant.EMPTY_LIST;
         for (int i = f.size() - 1; i >= 2; i--) {
             irritants = new SPair(Syntax.toDatum(f.get(i)), irritants);
         }
-        for (Object rest = irritants; rest instanceof SPair p; rest = p.cdr) {
-            text.append(' ').append(Printer.print(p.car, Printer.Mode.WRITE));
-        }
         Syntax at = form instanceof Syntax s && s.source != null ? s : current;
-        text.append(location(at));
-        return SchemeError.syntax(text.toString(), at == null ? null : at.source, new SErrorObject(message, irritants, SErrorObject.Kind.OTHER));
-    }
-
-    private static String location(Syntax at) {
-        return at == null ? "" : " (" + at.source.getSource().getName() + ", line " + at.source.getStartLine() + ", column " + at.source.getStartColumn() + ")";
+        return SchemeError.syntax(at == null ? null : at.source, new SErrorObject(message, irritants, SErrorObject.Kind.OTHER));
     }
 
     /** The elements of a proper list (syntax objects stay wrapped), or a syntax error. */
@@ -721,8 +715,9 @@ public final class Expander {
             if (e.isSyntaxError()) {
                 throw e;
             }
-            SourceSection at = source.hasCharacters() && reader.line() <= source.getLineCount() ? source.createSection(reader.line()) : null;
-            throw SchemeError.syntax("syntax error: " + e.getMessage() + " (" + source.getName() + ")", at, reader.ranIntoEnd());
+            // Where the token the reader failed on starts: its line and column (design.md D8).
+            SourceSection at = source.hasCharacters() && reader.errorIndex() <= source.getLength() ? source.createSection(reader.errorIndex(), 0) : null;
+            throw SchemeError.syntax("syntax error: " + reader.errorText(), null, at, reader.ranIntoEnd());
         }
         return forms;
     }
@@ -736,8 +731,7 @@ public final class Expander {
         Object cycle = CircularCode.find(form);
         if (cycle != null) {
             Syntax at = form instanceof Syntax s && s.source != null ? s : null;
-            throw SchemeError.syntax("syntax error: circular structure in code (outside a literal): " + Printer.print(Syntax.toDatum(cycle), Printer.Mode.WRITE) + location(at),
-                            at == null ? null : at.source, false);
+            throw SchemeError.syntax("syntax error: circular structure in code (outside a literal)", Syntax.toDatum(cycle), at == null ? null : at.source, false);
         }
     }
 

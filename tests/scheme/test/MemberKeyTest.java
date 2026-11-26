@@ -49,7 +49,7 @@ public class MemberKeyTest {
 
     @Test
     public void improperAndCircularListsStillRaise() {
-        assertEquals("(\"memv: not a proper list\" \"memq: not a proper list\" \"assv: not a pair: 2\")",
+        assertEquals("(\"memv: argument 2 is not a proper list\" \"memq: argument 2 is not a proper list\" \"assv: argument 2 has an element that is not a pair\")",
                         write("(map (lambda (thunk) (guard (e ((error-object? e) (error-object-message e))) (thunk) 'none)) " +
                                         "(list (lambda () (memv #\\z (cons #\\a #\\b))) (lambda () (let ((c (list 'a 'b))) (set-cdr! (cdr c) c) (memq 'z c))) " +
                                         "(lambda () (assv #\\z (list (cons #\\a 1) 2)))))"));

@@ -72,7 +72,7 @@ public class ExceptionsTest {
     @Test
     public void primitiveErrorsAreRaisedWhereThePrimitiveWasCalled() {
         // D8: a primitive's error reaches Scheme handlers as an error object.
-        check("(#t \"car: not a pair: 1\" ())", "(guard (e ((error-object? e) (list #t (error-object-message e) (error-object-irritants e)))) (car 1))");
+        check("(#t \"car: argument 1 is not a pair\" (1))", "(guard (e ((error-object? e) (list #t (error-object-message e) (error-object-irritants e)))) (car 1))");
         check("handled", "(guard (e (#t 'handled)) (undefined-variable-here))");
         check("handled", "(guard (e (#t 'handled)) ((lambda (x) x)))");
         check("handled", "(guard (e (#t 'handled)) (1 2))");
@@ -119,7 +119,7 @@ public class ExceptionsTest {
     public void uncaughtRaises() {
         assertTrue(failure("(raise 'boom)")[1].contains("uncaught exception: boom"));
         assertTrue(failure("(error \"bad thing:\" 1 'two)")[1].contains("bad thing: 1 two"));
-        assertTrue(failure("(car 1)")[1].contains("car: not a pair: 1"));
+        assertTrue(failure("(car 1)")[1].contains("car: argument 1 is not a pair: 1"));
         // A guard whose clauses don't match lets the raise through.
         assertTrue(failure("(guard (e ((string? e) 'no)) (raise 'through))")[1].contains("uncaught exception: through"));
     }

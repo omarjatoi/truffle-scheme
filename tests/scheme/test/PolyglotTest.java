@@ -473,7 +473,7 @@ public class PolyglotTest {
                                     (message (lambda () (foreign-invoke items 'size)))
                                     (message (lambda () (java-type "java.io.File")))))
                             """);
-            assertEquals("(#t #t #f \"foreign-new: not supported by this foreign value\" \"foreign-invoke: no such member: size\" \"java-type: no such class, or not accessible: Access to host class java.io.File is not allowed.\")",
+            assertEquals("(#t #t #f \"foreign-new: argument 1 is not a value that supports foreign-new\" \"foreign-invoke: argument 2 is not a member of argument 1\" \"java-type: no such class, or not accessible: Access to host class java.io.File is not allowed.\")",
                             probe.execute(new ArrayList<>(List.of(1))).toString());
         }
     }

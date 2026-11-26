@@ -10,7 +10,6 @@ import scheme.reader.NumberParser;
 import scheme.runtime.PrimitiveNode;
 import scheme.runtime.PrimitiveSpec;
 import scheme.runtime.PrimitiveSpec.Result;
-import scheme.runtime.SchemeError;
 import scheme.runtime.printer.Printer;
 import scheme.runtime.value.MultipleValues;
 import scheme.runtime.value.SBigInteger;
@@ -38,6 +37,12 @@ final class NumberPrimitives {
     @FunctionalInterface
     interface F2 {
         Object apply(Object x, Object y);
+    }
+
+    /** A fold's step: the result so far and the argument number {@code position}. */
+    @FunctionalInterface
+    interface Step {
+        Object apply(Object acc, Object x, int position);
     }
 
     /** This area's primitives, as {@code Builtins} registers them. */
@@ -186,9 +191,9 @@ final class NumberPrimitives {
                 case IS_EXACT_INTEGER:
                     return new TypePredicate(Arithmetic::isExactInteger);
                 case IS_EXACT:
-                    return new Unary(x -> Arithmetic.isExact(Arithmetic.check("exact?", x)));
+                    return new Unary(x -> Arithmetic.isExact(Arithmetic.check("exact?", 1, x)));
                 case IS_INEXACT:
-                    return new Unary(x -> !Arithmetic.isExact(Arithmetic.check("inexact?", x)));
+                    return new Unary(x -> !Arithmetic.isExact(Arithmetic.check("inexact?", 1, x)));
                 case IS_FINITE:
                     return new Unary(x -> finite(x, true));
                 case IS_INFINITE:
@@ -196,11 +201,11 @@ final class NumberPrimitives {
                 case IS_NAN:
                     return new Unary(x -> nan(x));
                 case IS_ZERO:
-                    return new Unary(x -> Arithmetic.numericEquals("zero?", x, 0L));
+                    return new Unary(x -> Arithmetic.numericEquals("zero?", x, 1, 0L, 2));
                 case IS_POSITIVE:
-                    return new Unary(x -> Arithmetic.compare("positive?", x, 0L) == 1);
+                    return new Unary(x -> Arithmetic.compare("positive?", x, 1, 0L, 2) == 1);
                 case IS_NEGATIVE:
-                    return new Unary(x -> Arithmetic.compare("negative?", x, 0L) == -1);
+                    return new Unary(x -> Arithmetic.compare("negative?", x, 1, 0L, 2) == -1);
                 case IS_ODD:
                     return new Unary(x -> !even("odd?", x));
                 case IS_EVEN:
@@ -210,9 +215,9 @@ final class NumberPrimitives {
                 case MIN:
                     return new Extremum("min", -1);
                 case ABS:
-                    return new Unary(x -> x instanceof Double d ? Math.abs(d) : Arithmetic.sign(Arithmetic.checkReal("abs", x)) < 0 ? Arithmetic.sub(0L, x) : x);
+                    return new Unary(x -> x instanceof Double d ? Math.abs(d) : Arithmetic.sign(Arithmetic.checkReal("abs", 1, x)) < 0 ? Arithmetic.sub(0L, x) : x);
                 case SQUARE:
-                    return new Unary(x -> Arithmetic.mul(x, x));
+                    return new Unary(x -> Arithmetic.apply("square", Arithmetic.Op.MUL, x, x, 1));
                 case QUOTIENT:
                     return new Binary((n, d) -> Arithmetic.divide("quotient", n, d, false)[0]);
                 case REMAINDER:
@@ -272,25 +277,25 @@ final class NumberPrimitives {
                 case EXPT:
                     return new Binary(Arithmetic::expt);
                 case MAKE_RECTANGULAR:
-                    return new Binary((a, b) -> SComplex.make(Arithmetic.checkReal("make-rectangular", a), Arithmetic.checkReal("make-rectangular", b)));
+                    return new Binary((a, b) -> SComplex.make(Arithmetic.checkReal("make-rectangular", 1, a), Arithmetic.checkReal("make-rectangular", 2, b)));
                 case MAKE_POLAR:
                     return new Binary(Arithmetic::makePolar);
                 case REAL_PART:
-                    return new Unary(x -> Arithmetic.realPart(Arithmetic.check("real-part", x)));
+                    return new Unary(x -> Arithmetic.realPart(Arithmetic.check("real-part", 1, x)));
                 case IMAG_PART:
-                    return new Unary(x -> Arithmetic.imagPart(Arithmetic.check("imag-part", x)));
+                    return new Unary(x -> Arithmetic.imagPart(Arithmetic.check("imag-part", 1, x)));
                 case MAGNITUDE:
                     return new Unary(Arithmetic::magnitude);
                 case ANGLE:
                     return new Unary(Arithmetic::angle);
                 case EXACT:
-                    return new Unary(x -> Arithmetic.exact("exact", x));
+                    return new Unary(x -> Arithmetic.exact("exact", 1, x));
                 case INEXACT:
-                    return new Unary(x -> Arithmetic.inexact(Arithmetic.check("inexact", x)));
+                    return new Unary(x -> Arithmetic.inexact(Arithmetic.check("inexact", 1, x)));
                 case EXACT_TO_INEXACT:
-                    return new Unary(x -> Arithmetic.inexact(Arithmetic.check("exact->inexact", x)));
+                    return new Unary(x -> Arithmetic.inexact(Arithmetic.check("exact->inexact", 1, x)));
                 case INEXACT_TO_EXACT:
-                    return new Unary(x -> Arithmetic.exact("inexact->exact", x));
+                    return new Unary(x -> Arithmetic.exact("inexact->exact", 1, x));
                 case NUMBER_TO_STRING:
                     return new NumberToString();
                 case STRING_TO_NUMBER:
@@ -329,9 +334,9 @@ final class NumberPrimitives {
     /** gcd and lcm: a left fold from the identity, over exact or inexact integers. */
     static final class Fold extends PrimitiveNode {
         private final Object identity;
-        private final F2 f;
+        private final Step f;
 
-        Fold(Object identity, F2 f) {
+        Fold(Object identity, Step f) {
             this.identity = identity;
             this.f = f;
         }
@@ -340,7 +345,7 @@ final class NumberPrimitives {
         public Object invoke(Object[] args) {
             Object acc = identity;
             for (int i = 1; i < args.length; i++) {
-                acc = f.apply(acc, args[i]);
+                acc = f.apply(acc, args[i], i);
             }
             return acc;
         }
@@ -348,7 +353,7 @@ final class NumberPrimitives {
 
     @TruffleBoundary
     private static boolean finite(Object x, boolean finite) {
-        Arithmetic.check(finite ? "finite?" : "infinite?", x);
+        Arithmetic.check(finite ? "finite?" : "infinite?", 1, x);
         double re = Arithmetic.flo(Arithmetic.realPart(x));
         double im = Arithmetic.flo(Arithmetic.imagPart(x));
         return Double.isFinite(re) && Double.isFinite(im);
@@ -356,27 +361,27 @@ final class NumberPrimitives {
 
     @TruffleBoundary
     private static boolean infinite(Object x) {
-        Arithmetic.check("infinite?", x);
+        Arithmetic.check("infinite?", 1, x);
         return Double.isInfinite(Arithmetic.flo(Arithmetic.realPart(x))) || Double.isInfinite(Arithmetic.flo(Arithmetic.imagPart(x)));
     }
 
     @TruffleBoundary
     private static boolean nan(Object x) {
-        Arithmetic.check("nan?", x);
+        Arithmetic.check("nan?", 1, x);
         return Double.isNaN(Arithmetic.flo(Arithmetic.realPart(x))) || Double.isNaN(Arithmetic.flo(Arithmetic.imagPart(x)));
     }
 
     @TruffleBoundary
     private static boolean even(String who, Object x) {
-        Arithmetic.checkInteger(who, x);
+        Arithmetic.checkInteger(who, 1, x);
         return x instanceof Double d ? Math.IEEEremainder(d, 2) == 0 : !Arithmetic.numerator(x).testBit(0);
     }
 
     /** numerator and denominator: of the exact value, inexact for an inexact argument. */
     @TruffleBoundary
     private static Object fraction(String who, Object x, boolean numerator) {
-        Arithmetic.checkReal(who, x);
-        Object exact = Arithmetic.exact(who, x);
+        Arithmetic.checkReal(who, 1, x);
+        Object exact = Arithmetic.exact(who, 1, x);
         Object part = SBigInteger.normalize(numerator ? Arithmetic.numerator(exact) : Arithmetic.denominator(exact));
         return x instanceof Double ? Arithmetic.flo(part) : part;
     }
@@ -384,7 +389,7 @@ final class NumberPrimitives {
     @TruffleBoundary
     private static Object exactIntegerSqrt(Object k) {
         if (!Arithmetic.isExactInteger(k) || Arithmetic.numerator(k).signum() < 0) {
-            throw Arithmetic.notA("exact-integer-sqrt", "non-negative exact integer", k);
+            throw Arithmetic.notA("exact-integer-sqrt", 1, "non-negative exact integer", k);
         }
         java.math.BigInteger[] sr = Arithmetic.numerator(k).sqrtAndRemainder();
         return new MultipleValues(new Object[]{SBigInteger.normalize(sr[0]), SBigInteger.normalize(sr[1])});
@@ -398,9 +403,9 @@ final class NumberPrimitives {
             if (args.length == 1) {
                 return 0L;
             }
-            Object acc = Arithmetic.check("+", args[1]);
+            Object acc = Arithmetic.check("+", 1, args[1]);
             for (int i = 2; i < args.length; i++) {
-                acc = add.execute(acc, args[i]);
+                acc = add.execute(acc, args[i], i);
             }
             return acc;
         }
@@ -418,11 +423,11 @@ final class NumberPrimitives {
                 } else if (args[1] instanceof SComplex) {
                     return Arithmetic.negate(args[1]);
                 }
-                return sub.execute(0L, args[1]);
+                return sub.execute(0L, args[1], 1);
             }
-            Object acc = Arithmetic.check("-", args[1]);
+            Object acc = Arithmetic.check("-", 1, args[1]);
             for (int i = 2; i < args.length; i++) {
-                acc = sub.execute(acc, args[i]);
+                acc = sub.execute(acc, args[i], i);
             }
             return acc;
         }
@@ -436,9 +441,9 @@ final class NumberPrimitives {
             if (args.length == 1) {
                 return 1L;
             }
-            Object acc = Arithmetic.check("*", args[1]);
+            Object acc = Arithmetic.check("*", 1, args[1]);
             for (int i = 2; i < args.length; i++) {
-                acc = mul.execute(acc, args[i]);
+                acc = mul.execute(acc, args[i], i);
             }
             return acc;
         }
@@ -467,17 +472,17 @@ final class NumberPrimitives {
         @Override
         public Object invoke(Object[] args) {
             if (kind == EQ) {
-                Arithmetic.check(name, args[1]);
+                Arithmetic.check(name, 1, args[1]);
             } else {
-                Arithmetic.checkReal(name, args[1]);
+                Arithmetic.checkReal(name, 1, args[1]);
             }
             boolean result = true;
             for (int i = 2; i < args.length; i++) {
                 boolean ok;
                 if (kind == EQ && (args[i - 1] instanceof SComplex || args[i] instanceof SComplex)) {
-                    ok = Arithmetic.numericEquals(name, args[i - 1], args[i]);
+                    ok = Arithmetic.numericEquals(name, args[i - 1], i - 1, args[i], i);
                 } else {
-                    int c = compare.execute(args[i - 1], args[i]);
+                    int c = compare.execute(args[i - 1], args[i], name, i);
                     ok = c != Arithmetic.UNORDERED && switch (kind) {
                         case EQ -> c == 0;
                         case LT -> c < 0;
@@ -497,11 +502,11 @@ final class NumberPrimitives {
         @Override
         public Object invoke(Object[] args) {
             if (args.length == 2) {
-                return Arithmetic.div(1L, args[1]);
+                return Arithmetic.apply("/", Arithmetic.Op.DIV, 1L, args[1], 1);
             }
-            Object acc = Arithmetic.check("/", args[1]);
+            Object acc = Arithmetic.check("/", 1, args[1]);
             for (int i = 2; i < args.length; i++) {
-                acc = Arithmetic.div(acc, args[i]);
+                acc = Arithmetic.apply("/", Arithmetic.Op.DIV, acc, args[i], i);
             }
             return acc;
         }
@@ -524,11 +529,11 @@ final class NumberPrimitives {
 
         @TruffleBoundary
         private static Object extremum(String name, int direction, Object[] args) {
-            Object best = Arithmetic.checkReal(name, args[1]);
+            Object best = Arithmetic.checkReal(name, 1, args[1]);
             boolean inexact = best instanceof Double;
             boolean nan = best instanceof Double d && Double.isNaN(d);
             for (int i = 2; i < args.length; i++) {
-                Object x = Arithmetic.checkReal(name, args[i]);
+                Object x = Arithmetic.checkReal(name, i, args[i]);
                 inexact |= x instanceof Double;
                 nan |= x instanceof Double d && Double.isNaN(d);
                 if (nan) {
@@ -552,7 +557,7 @@ final class NumberPrimitives {
         @Override
         public Object invoke(Object[] args) {
             Object x = Arithmetic.log(args[1]);
-            return args.length == 2 ? x : Arithmetic.div(x, Arithmetic.log(args[2]));
+            return args.length == 2 ? x : Arithmetic.div(x, Arithmetic.log(args[2], 2));
         }
     }
 
@@ -567,8 +572,8 @@ final class NumberPrimitives {
 
         @TruffleBoundary
         private static Object atan2(Object y, Object x) {
-            Arithmetic.checkReal("atan", y);
-            Arithmetic.checkReal("atan", x);
+            Arithmetic.checkReal("atan", 1, y);
+            Arithmetic.checkReal("atan", 2, x);
             return StrictMath.atan2(Arithmetic.flo(y), Arithmetic.flo(x));
         }
     }
@@ -587,8 +592,8 @@ final class NumberPrimitives {
 
         @TruffleBoundary
         private static String convert(Object z, Object radixValue) {
-            Arithmetic.check("number->string", z);
-            int radix = radix("number->string", radixValue);
+            Arithmetic.check("number->string", 1, z);
+            int radix = radix("number->string", 2, radixValue);
             if (radix == 10 || (z instanceof Double d && !Double.isFinite(d))) {
                 return Printer.print(z, Printer.Mode.DISPLAY);
             }
@@ -606,7 +611,7 @@ final class NumberPrimitives {
                     return Printer.print(d, Printer.Mode.DISPLAY);
                 }
                 // -0.0 has no exact counterpart; "#i-0" reads back as 0.0.
-                return (d == 0 && 1 / d < 0 ? "-" : "") + real(Arithmetic.exact("number->string", d), radix);
+                return (d == 0 && 1 / d < 0 ? "-" : "") + real(Arithmetic.exact("number->string", 1, d), radix);
             }
             String n = Arithmetic.numerator(x).toString(radix);
             return x instanceof SRational ? n + "/" + Arithmetic.denominator(x).toString(radix) : n;
@@ -623,18 +628,18 @@ final class NumberPrimitives {
         @TruffleBoundary
         private static Object parse(Object string, Object radixValue) {
             if (!(string instanceof SString s)) {
-                throw Arithmetic.notA("string->number", "string", string);
+                throw Arithmetic.notA("string->number", 1, "string", string);
             }
-            Object number = NumberParser.parse(s.toString(), radix("string->number", radixValue));
+            Object number = NumberParser.parse(s.toString(), radix("string->number", 2, radixValue));
             return number == null ? (Object) false : number;
         }
     }
 
     @TruffleBoundary
-    static int radix(String who, Object value) {
+    static int radix(String who, int position, Object value) {
         if (value instanceof Long r && (r == 2 || r == 8 || r == 10 || r == 16)) {
             return (int) (long) r;
         }
-        throw new SchemeError(who + ": radix must be 2, 8, 10 or 16: " + Printer.print(value, Printer.Mode.WRITE));
+        throw Arithmetic.notA(who, position, "radix (2, 8, 10 or 16)", value);
     }
 }

@@ -5,11 +5,8 @@ import java.util.ArrayList;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 
 import scheme.runtime.SchemeError;
-import scheme.runtime.printer.Printer;
 import scheme.runtime.value.SConstant;
-import scheme.runtime.value.SErrorObject;
 import scheme.runtime.value.SPair;
-import scheme.runtime.value.SString;
 
 /** Helpers for primitives that take lists. */
 final class Lists {
@@ -18,12 +15,12 @@ final class Lists {
     }
 
     /**
-     * The elements of a proper list, or a SchemeError naming the primitive ({@link #notAProperList}).
+     * The elements of a proper list, {@code who}'s argument number {@code position}, or a SchemeError naming both ({@link #notAProperList}).
      * Circular lists are rejected (design.md D9): a slow pointer follows at half speed (Floyd's
      * tortoise and hare) and meets the walk only on a cycle.
      */
     @TruffleBoundary
-    static Object[] toArray(String who, Object list) {
+    static Object[] toArray(String who, int position, Object list) {
         ArrayList<Object> items = new ArrayList<>();
         Object slow = list;
         Object rest = list;
@@ -33,12 +30,12 @@ final class Lists {
             if ((items.size() & 1) == 0) {
                 slow = ((SPair) slow).cdr;
                 if (slow == rest) {
-                    throw notAProperList(who, list);
+                    throw notAProperList(who, position, list);
                 }
             }
         }
         if (rest != SConstant.EMPTY_LIST) {
-            throw notAProperList(who, list);
+            throw notAProperList(who, position, list);
         }
         return items.toArray();
     }
@@ -49,12 +46,12 @@ final class Lists {
      * on a cycle (write's datum labels).
      */
     @TruffleBoundary
-    static SchemeError notAProperList(String who, Object list) {
-        return new SchemeError(new SErrorObject(SString.of(who + ": not a proper list"), new SPair(list, SConstant.EMPTY_LIST), SErrorObject.Kind.OTHER));
+    static SchemeError notAProperList(String who, int position, Object list) {
+        return SchemeError.argument(who, position, "proper list", list);
     }
 
     @TruffleBoundary
-    static SchemeError notAPair(String who, Object value) {
-        return new SchemeError(who + ": not a pair: " + Printer.print(value, Printer.Mode.WRITE));
+    static SchemeError notAPair(String who, int position, Object value) {
+        return SchemeError.argument(who, position, "pair", value);
     }
 }

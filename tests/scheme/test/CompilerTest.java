@@ -103,14 +103,15 @@ public class CompilerTest {
 
     @Test
     public void errors() {
-        assertTrue(error("(car 1)").getMessage().contains("car: not a pair"));
+        assertTrue(error("(car 1)").getMessage().contains("car: argument 1 is not a pair: 1"));
         assertTrue(error("undefined-variable").getMessage().contains("unbound variable: undefined-variable"));
-        assertTrue(error("((lambda (x) x))").getMessage().contains("wrong number of arguments"));
-        assertTrue(error("(car)").getMessage().contains("car: expected 1 arguments, got 0"));
-        assertTrue(error("(1 2)").getMessage().contains("not a procedure: 1"));
+        assertTrue(error("((lambda (x) x))").getMessage().contains(": expected 1 argument, got 0"));
+        assertTrue(error("(define (f x) x) (f)").getMessage().contains("f: expected 1 argument, got 0"));
+        assertTrue(error("(car)").getMessage().contains("car: expected 1 argument, got 0"));
+        assertTrue(error("(1 2)").getMessage().contains("application: not a procedure: 1"));
         assertTrue(error("(set! nope 1)").getMessage().contains("unbound variable: nope"));
         assertTrue(error("(lambda (x x) x)").getMessage().contains("syntax error"));
         assertTrue(error("(define-syntax foo 1)").getMessage().contains("not a transformer"));
-        assertTrue(error("(+ 1 \"a\")").getMessage().contains("not a number"));
+        assertTrue(error("(+ 1 \"a\")").getMessage().contains("+: argument 2 is not a number: \"a\""));
     }
 }

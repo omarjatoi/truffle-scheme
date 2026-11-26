@@ -180,7 +180,7 @@ final class ProcessTimePrimitives {
         @Override
         public Object invoke(Object[] args) {
             if (!(args[1] instanceof SString name)) {
-                throw ControlPrimitives.notA("get-environment-variable", "string", args[1]);
+                throw ControlPrimitives.notA("get-environment-variable", 1, "string", args[1]);
             }
             return lookup(SchemeContext.get(this).getEnv(), name);
         }

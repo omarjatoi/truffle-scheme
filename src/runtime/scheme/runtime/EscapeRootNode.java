@@ -66,7 +66,7 @@ public final class EscapeRootNode extends RootNode {
     public Object execute(VirtualFrame frame) {
         Object[] arguments = frame.getArguments();
         if (arguments.length != 2) {
-            throw SchemeRootNode.arityError(1, 1, arguments.length - 1);
+            throw SchemeRootNode.arityError(this, 1, 1, arguments.length - 1);
         }
         SchemeContext context = SchemeContext.get(this);
         Target target = new Target();

@@ -58,12 +58,28 @@ public final class Reader {
         return line;
     }
 
+    /** The last error's message, without its position: what a syntax error in program text says. */
+    public String errorText() {
+        return errorText;
+    }
+
+    /** Where the last error was: the UTF-16 index of the token it is about (what sections count). */
+    public int errorIndex() {
+        return errorIndex;
+    }
+
     /** Starts folding case, as if the text began with {@code #!fold-case} ({@code include-ci}). */
     public void setFoldCase(boolean fold) {
         this.foldCase = fold;
     }
 
     private int line = 1;
+    /** The index of the first character of this line, and of the line before. */
+    private int lineStart;
+    private int previousLineStart;
+    /** The last error's message and its token's index (see {@link #error}). */
+    private String errorText;
+    private int errorIndex;
     /** Whether a read has seen the end of the input. */
     private boolean sawEnd;
     /** The UTF-16 index of the next character (what {@link SourceSection}s count). */
@@ -107,11 +123,13 @@ public final class Reader {
     private int next() {
         int c = pushed > 0 ? pushback[--pushed] : in.next();
         sawEnd |= c < 0;
-        if (c == '\n') {
-            line++;
-        }
         if (c != -1) {
             position += Character.charCount(c);
+        }
+        if (c == '\n') {
+            line++;
+            previousLineStart = lineStart;
+            lineStart = position;
         }
         return c;
     }
@@ -119,6 +137,7 @@ public final class Reader {
     private void unread(int c) {
         if (c == '\n') {
             line--;
+            lineStart = previousLineStart;
         }
         if (c != -1) {
             position -= Character.charCount(c);
@@ -135,9 +154,24 @@ public final class Reader {
                         c == '[' || c == ']' || c == '{' || c == '}';
     }
 
+    /**
+     * A read error about the token that starts at {@link #tokenStart} (design.md D8, "Messages"):
+     * {@code read: <message> at line <l>, column <c>}, a port having no source section to locate it.
+     * Program text makes a syntax error of it instead, located by {@link #errorIndex}.
+     */
     @TruffleBoundary
     private SchemeError error(String message) {
-        return new SchemeError(new SErrorObject(SString.of(message + " (line " + line + ")"), SConstant.EMPTY_LIST, SErrorObject.Kind.READ));
+        errorText = message;
+        errorIndex = tokenStart;
+        String at = " at line " + tokenLine + ", column " + tokenColumn;
+        return new SchemeError(new SErrorObject(SString.of("read: " + message + at), SConstant.EMPTY_LIST, SErrorObject.Kind.READ));
+    }
+
+    /** Marks the next character as the start of a token, or of a comment or directive. */
+    private void markToken() {
+        tokenStart = position;
+        tokenLine = line;
+        tokenColumn = position - lineStart + 1;
     }
 
     // ------------------------------------------------------------------------------------------
@@ -160,8 +194,10 @@ public final class Reader {
     /** The value of the last ATOM or ABBREVIATION token, or the number of a LABEL_DEF/REF. */
     private Object tokenValue;
     private int tokenLabel;
-    /** Where the last token starts. */
+    /** Where the last token starts: its index, line and column. */
     private int tokenStart;
+    private int tokenLine = 1;
+    private int tokenColumn = 1;
 
     /** Skips whitespace, line comments, nested block comments and directives. */
     private void skipAtmosphere() {
@@ -175,6 +211,8 @@ public final class Reader {
                     c = next();
                 }
             } else if (c == '#') {
+                // A block comment's or a directive's errors are about where it starts.
+                markToken();
                 next();
                 int c2 = peek();
                 if (c2 == '|') {
@@ -227,7 +265,7 @@ public final class Reader {
 
     private Kind nextToken() {
         skipAtmosphere();
-        tokenStart = position;
+        markToken();
         int c = next();
         switch (c) {
             case -1:

@@ -38,7 +38,7 @@
 (define (write obj . port) (%write obj (%output-port port)))
 (define (write-shared obj . port) (%write-shared obj (%output-port port)))
 (define (write-simple obj . port) (%write-simple obj (%output-port port)))
-(define (newline . port) (%write-char #\newline (%output-port port)))
+(define (newline . port) (%newline (%output-port port)))
 (define (write-char char . port) (%write-char char (%output-port port)))
 (define (write-u8 byte . port) (%write-u8 byte (%output-port port)))
 (define (flush-output-port . port) (%flush-output-port (%output-port port)))

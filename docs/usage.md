@@ -121,6 +121,80 @@ to 255, and 1 for `#f` or anything else, an integer outside 0–255 among
 them), 0 when it ends, 70 after an uncaught error (whose message goes to
 stderr), 66 if the file can't be read and 64 for a malformed `-I`.
 
+### Errors
+
+An uncaught error prints `ERROR: `, where it is, and its message, on a line
+on stderr (design.md D8, "Messages"), then its stack trace (below). Where is
+`file:line:column`, as in stack traces: the innermost call in the program's
+code (a procedure that raised in tail position has returned, so it is its
+caller's call), or a syntax error's form, which has no stack trace. An error object's message comes first, then `: ` and its
+irritants, written. A primitive's message names it, the argument's position,
+what it expected, and the argument. A raised object that isn't an error
+object prints as `uncaught exception:` and the object:
+
+<!-- readme: run -->
+```sh
+bazel-bin/scheme docs/examples/errors/raise.scm 2>&1 || echo "exit status $?"
+bazel-bin/scheme docs/examples/errors/error.scm 2>&1 || echo "exit status $?"
+bazel-bin/scheme docs/examples/errors/primitive.scm 2>&1 || echo "exit status $?"
+bazel-bin/scheme docs/examples/errors/syntax.scm 2>&1 || echo "exit status $?"
+```
+
+<!-- readme: output -->
+```text
+ERROR: raise.scm:8:1: uncaught exception: (negative-age -3)
+    at <program>(raise.scm:8:1)
+exit status 70
+ERROR: error.scm:8:1: average: no numbers in: ()
+    at <program>(error.scm:8:1)
+exit status 70
+ERROR: primitive.scm:4:1: vector-ref: argument 2 is not an index from 0 to 2: 3
+    at <program>(primitive.scm:4:1)
+exit status 70
+ERROR: syntax.scm:4:3: syntax error: if takes 2 or 3 subforms: (if (< x 0) -1 0 1)
+exit status 70
+```
+
+<!-- readme: file docs/examples/errors/raise.scm -->
+```scheme
+(import (scheme base))
+
+(define (check-age age)
+  (if (negative? age)
+      (raise (list 'negative-age age))
+      age))
+
+(check-age -3)
+```
+
+<!-- readme: file docs/examples/errors/error.scm -->
+```scheme
+(import (scheme base))
+
+(define (average numbers)
+  (if (null? numbers)
+      (error "average: no numbers in" numbers)
+      (/ (apply + numbers) (length numbers))))
+
+(average '())
+```
+
+<!-- readme: file docs/examples/errors/primitive.scm -->
+```scheme
+(import (scheme base))
+
+(define scores (vector 90 85 77))
+(vector-ref scores 3)
+```
+
+<!-- readme: file docs/examples/errors/syntax.scm -->
+```scheme
+(import (scheme base))
+
+(define (sign x)
+  (if (< x 0) -1 0 1))
+```
+
 After an uncaught error's message comes its stack trace, innermost call
 first (design.md D8, "Stack traces"): each frame's procedure (`<program>`
 for a top-level form), with the file, line and column of where it was.

@@ -12,6 +12,9 @@ import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.PolyglotException;
 import org.junit.Test;
 
+import com.oracle.truffle.api.interop.InteropLibrary;
+import com.oracle.truffle.api.interop.UnsupportedMessageException;
+
 import scheme.compiler.Expander;
 import scheme.compiler.SyntacticEnvironment;
 import scheme.compiler.Transformer;
@@ -124,7 +127,7 @@ public class ExpanderTest {
     }
 
     @Test
-    public void syntaxErrors() {
+    public void syntaxErrors() throws UnsupportedMessageException {
         assertTrue(showError("(lambda (x x) x)").getMessage().contains("duplicate parameter x"));
         assertTrue(showError("(lambda () (define a 1) (define a 2) a)").getMessage().contains("duplicate definition of a"));
         assertTrue(showError("(lambda () (define a 1))").getMessage().contains("at least one expression"));
@@ -135,7 +138,8 @@ public class ExpanderTest {
         assertTrue(showError("(lambda (1) 1)").getMessage().contains("invalid parameter 1"));
         assertTrue(showError("(define-syntax m 5)").getMessage().contains("not a transformer"));
         assertTrue(showError("(include \"x.scm\")").getMessage().contains("cannot find file x.scm"));
-        assertTrue(showError("(display 1)\n(syntax-rules ())").getMessage().contains("line 2"));
+        // The location is the error's, not in its message (design.md D8, "Messages").
+        assertEquals(2, InteropLibrary.getUncached().getSourceLocation(showError("(display 1)\n(syntax-rules ())")).getStartLine());
     }
 
     // ------------------------------------------------------------------------------------------
@@ -260,7 +264,8 @@ public class ExpanderTest {
     public void macroErrorsNameTheLine() {
         try (Context context = Context.create(SCHEME)) {
             PolyglotException e = assertThrows(PolyglotException.class, () -> context.eval(SCHEME, "(define x 1)\n(define-syntax m x)"));
-            assertTrue(e.getMessage(), e.getMessage().contains("not a transformer") && e.getMessage().contains("line 2"));
+            assertTrue(e.getMessage(), e.getMessage().contains("not a transformer"));
+            assertEquals(e.getMessage(), 2, e.getSourceLocation().getStartLine());
         }
     }
 

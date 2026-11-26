@@ -256,10 +256,7 @@ public final class ProgramCompiler implements SchemeCompiler {
      * D13). One from {@code syntax-error} keeps its message and irritants.
      */
     private static SchemeError raisable(SchemeError e) {
-        if (!e.isSyntaxError()) {
-            return e;
-        }
-        return e.getErrorObject() != null ? new SchemeError(e.getErrorObject()) : new SchemeError(e.getMessage());
+        return e.raisable();
     }
 
     // The interaction environment as interop's top scope (design.md D10, D15).

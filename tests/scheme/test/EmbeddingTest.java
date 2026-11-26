@@ -751,7 +751,7 @@ public class EmbeddingTest {
                 AbstractTruffleException e = assertThrows(AbstractTruffleException.class, () -> interop.execute(cell.valueOrNull(), 5L));
                 assertTrue(interop.isException(e));
                 assertEquals(ExceptionType.RUNTIME_ERROR, interop.getExceptionType(e));
-                assertEquals("car: not a pair: 5", interop.asString(interop.getExceptionMessage(e)));
+                assertEquals("car: argument 1 is not a pair: 5", interop.asString(interop.getExceptionMessage(e)));
                 assertFalse(interop.hasExceptionCause(e));
                 assertTrue(interop.hasSourceLocation(e));
                 assertEquals("lib.scm:2 (car x)", at(interop.getSourceLocation(e)));
@@ -769,7 +769,7 @@ public class EmbeddingTest {
                 assertEquals(List.of("inner lib.scm:2 (car x)", "outer lib.scm:4 (inner x)"), frames.subList(0, 2));
                 // The exception is also the raised object: here, the error object.
                 assertTrue(interop.hasMembers(e));
-                assertEquals("car: not a pair: 5", interop.asString(interop.readMember(e, "message")));
+                assertEquals("car: argument 1 is not a pair", interop.asString(interop.readMember(e, "message")));
                 assertEquals("error-object", interop.asString(interop.getMetaSimpleName(interop.getMetaObject(e))));
             } finally {
                 context.leave();
@@ -794,7 +794,7 @@ public class EmbeddingTest {
                             """));
             assertTrue(e.isGuestException());
             assertFalse(e.isExit() || e.isInterrupted() || e.isCancelled() || e.isInternalError() || e.isSyntaxError());
-            assertEquals("car: not a pair: 2", e.getMessage());
+            assertEquals("car: argument 1 is not a pair: 2", e.getMessage());
             assertEquals("user.scm:2 (car y)", at(e.getSourceLocation()));
             assertEquals(List.of("<lambda@user.scm:2:8> 2", "run 4", "<program> 5", "<prompt> 1"), guestFrames(e));
 
@@ -866,7 +866,7 @@ public class EmbeddingTest {
                             (go)
                             (k 'not-a-number)
                             """));
-            assertEquals("+: not a number: not-a-number", e.getMessage());
+            assertEquals("+: argument 2 is not a number: not-a-number", e.getMessage());
             assertEquals("resumed.scm:3 (+ 1 (call/cc (lambda (c) (set! k c) n)))", at(e.getSourceLocation()));
             // wait and go returned long ago: their frames come from the continuation.
             assertEquals(List.of("wait 3", "go 5", "<program> 6"), guestFrames(e).subList(0, 3));

@@ -218,7 +218,9 @@ public class UnhandledErrorTest {
             assertTrue(e.isSyntaxError());
             Value error = e.getGuestObject();
             assertTrue(error.isException());
-            assertEquals(e.getMessage(), error.getMember("message").asString());
+            // The message, then its irritant, the form (design.md D8, "Messages").
+            assertEquals("syntax error: if takes 2 or 3 subforms", error.getMember("message").asString());
+            assertEquals(e.getMessage(), error.getMember("message").asString() + ": (if)");
         }
     }
 }

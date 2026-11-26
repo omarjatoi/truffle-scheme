@@ -454,10 +454,11 @@ assertFalse(bindings.hasMember("no-such-variable"));
 An error that a call or an `eval` doesn't handle surfaces as a
 `PolyglotException` whose `isGuestException()` is true, once the
 `dynamic-wind` after-thunks it leaves have run (D8). Its message is the error
-object's message and irritants, or `uncaught exception: <obj>` for a raised
-object that isn't an error object, and its guest object (`getGuestObject()`)
-is the raised object (D10): an error object has its `message` and
-`irritants` as members. Afterwards the dynamic environment (parameters,
+object's message, then `: ` and its irritants, written (D8, "Messages"), or
+`uncaught exception: <obj>` for a raised object that isn't an error object;
+where it is, `getSourceLocation()`, isn't part of it. Its guest object
+(`getGuestObject()`) is the raised object (D10): an error object has its
+`message` and `irritants` as members. Afterwards the dynamic environment (parameters,
 handlers, `dynamic-wind`) is the caller's again, and the context goes on
 working.
 
@@ -494,7 +495,7 @@ sees through `InteropLibrary`:
 | | A Scheme error (`raise` of any object, `error`, a primitive's error) | A syntax error | `exit`, `emergency-exit` | `Context.interrupt` | `close(true)`, a resource limit |
 |---|---|---|---|---|---|
 | `isGuestException()` | true | true | true | true | true |
-| `getMessage()`, `getExceptionMessage` | the error object's message and irritants, or `uncaught exception: <obj>` | the error, with its file, line and column | Truffle's, `Exit was called with exit code 3.` | Truffle's | Truffle's |
+| `getMessage()`, `getExceptionMessage` | the error object's message and irritants, or `uncaught exception: <obj>` | `syntax error: <what is wrong>: <form>`, its location not part of it | Truffle's, `Exit was called with exit code 3.` | Truffle's | Truffle's |
 | `getSourceLocation()`, `getSourceLocation` | the innermost Scheme frame's expression, never the standard libraries' code | the form | the program's call of `exit` or `emergency-exit`, or, after a tail call, its caller's call: as for an error | the running procedure's definition (Truffle's: where it polled) | the same |
 | `getPolyglotStackTrace()`, `getExceptionStackTrace` | the Scheme frames left, innermost first: each named after its binding (or `<lambda@file.scm:3:5>`) at the line of its call; with frames a deep recursion moved to the heap and frames of a re-entered continuation; a procedure whose tail call raised has no frame (proper tail calls); the standard libraries' frames are internal (`isInternal` through interop) and left out, except one running when re-entered through a continuation (docs/upstream.md) | none | the Scheme frames on the Java stack: not those a deep recursion moved to the heap or a re-entered continuation's (Truffle's, design.md D8) | the Scheme frames (the innermost without a line) | the same |
 | `getGuestObject()` | the raised object, also an exception: its `toString()` is its `write` syntax, its meta object its type (`error-object` for an error object, with `message` and `irritants` members) | an error object | null | Truffle's interrupt exception | null |
