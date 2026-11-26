@@ -900,6 +900,26 @@ public class EmbeddingTest {
         }
     }
 
+    /**
+     * A library a program defines is located in the program, as one in a file is located in its
+     * file (design.md D8): its body's frames and the error's location. They had no location at all.
+     */
+    @Test
+    public void aLibraryInTheProgramIsLocatedInIt() {
+        try (Context context = context()) {
+            PolyglotException e = error(context, source("inline.scm", """
+                            (define-library (test body)
+                              (import (scheme base))
+                              (begin
+                                (define (h) (list (car 'x)))
+                                (list (h))))
+                            (import (test body))
+                            """));
+            assertEquals("inline.scm:4 (car 'x)", at(e.getSourceLocation()));
+            assertEquals(List.of("h 4", "<program> 5", "<prompt> 1"), guestFrames(e).subList(0, 3));
+        }
+    }
+
     /** The exit a program ends with, from a context of its own (an exit closes it). */
     private static PolyglotException exit(String name, String text) {
         return exit(Context.newBuilder(SCHEME).out(new ByteArrayOutputStream()), name, text);
